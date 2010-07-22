@@ -1,0 +1,4 @@
+syntax regex
+^ebin/.*.beam
+.*~
+^.eunit/*
