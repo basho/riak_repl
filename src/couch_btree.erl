@@ -17,15 +17,14 @@
 -export([fold_reduce/6, fold_reduce/7, lookup/2, get_state/1, set_options/2, get_node/2]).
 % -export([diff/2]).
 
--define(CHUNK_THRESHOLD, 16#4ff).
-
 -record(btree,
     {fd,
     root,
     extract_kv = fun({Key, Value}) -> {Key, Value} end,
     assemble_kv =  fun(Key, Value) -> {Key, Value} end,
     less = fun(A, B) -> A < B end,
-    reduce = nil
+    reduce = nil,
+    chunk_threshold = 16#4ff
     }).
 
 extract(#btree{extract_kv=Extract}, Value) ->
@@ -244,10 +243,10 @@ complete_root(Bt, KPs) ->
 
 chunkify(_Bt, []) ->
     [];
-chunkify(Bt, InList) ->
+chunkify(#btree{chunk_threshold = DefChunkThreshold} = Bt, InList) ->
     case size(term_to_binary(InList)) of
-    Size when Size > ?CHUNK_THRESHOLD ->
-        NumberOfChunksLikely = ((Size div ?CHUNK_THRESHOLD) + 1),
+    Size when Size > DefChunkThreshold ->
+        NumberOfChunksLikely = ((Size div DefChunkThreshold) + 1),
         ChunkThreshold = Size div NumberOfChunksLikely,
         chunkify(Bt, InList, ChunkThreshold, [], 0, []);
     _Else ->

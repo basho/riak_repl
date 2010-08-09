@@ -38,13 +38,15 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+%% NOTE: Must mirror the record definition in couch_btree.erl.
 -record(btree,
     {fd,
     root,
     extract_kv = fun({Key, Value}) -> {Key, Value} end,
     assemble_kv =  fun(Key, Value) -> {Key, Value} end,
     less = fun(A, B) -> A < B end,
-    reduce = nil
+    reduce = nil,
+    chunk_threshold = 16#4ff
     }).
     
 -record(kv_node, {values}).
@@ -328,9 +330,41 @@ diff_merge([{KeyA,HashA}|ListA], [{KeyB,HashB}|ListB], Acc) when KeyA < KeyB ->
 diff_merge([{KeyA,HashA}|ListA], [{KeyB,HashB}|ListB], Acc) when KeyA > KeyB ->
   diff_merge([{KeyA,HashA}|ListA], ListB, [{KeyB,HashB}|Acc]).
 
+-ifdef(TEST).
+
+counterexample_1_test_() ->
+    fun() ->
+            L1 = [{7495817868,3538506915}],
+            L2 = L1 ++ [{0,0}],
+            [{0,0}] = lists_to_diff(L1, L2)
+    end.
+
+counterexample_2_test_() ->
+    %% This test will fail if CHUNK_THRESHOLD in couch_btree.erl is reduced
+    %% from 16#4ff down to 16#1ff.
+    fun() ->
+            %% f(L1).
+            %% f(L2).
+            %% f(Counter).
+            %% Counter = eqc:counterexample().
+            %% [{L1, _}, {L2,_,_,_}] = Counter.
+            %% io:format("L1 = ~w,\n", [L1]).
+            %% io:format("L2 = ~w,\n", [L2]).
+            L1 = [{6563270977,-7449584467},{-503947359,2180544135},{4372445702,-72870531},{7404280954,-8800367436},{-8681558892,-40855653},{-5022587429,-9775401170},{-3323502402,-1296633965},{-642890215,530457253},{4237883314,914053890},{-5762691147,-9511274948},{-3691885159,-210552701},{-1539072523,23749962},{-138739462,-2921054928},{-394763102,5042143458},{5120927325,-9148543393},{9693018919,405870372},{4047032260,3782911466},{2306789791,9062130857},{-8129229857,5464247847},{3690332760,8812310750},{-9561981236,9514412071},{3680325041,-4254493324},{1356568505,-7194464766},{-6874117362,-4538002133},{-5976760513,5203425054},{-3163494883,-7091668162},{4739798580,-7674070968},{-3242872077,8483417420},{6644269556,-1530570727},{7331175768,-1015125576}],
+            L2 = [{2306789791,9062130857},{5120927325,-9148543393},{-1539072523,23749962},{3680325041,-4254493324},{-8681558892,-40855653},{-5976760513,5203425054},{-5022587429,-9775401170},{-503947359,2180544135},{3690332760,8812310750},{-3163494883,-7091668162},{4047032260,3782911466},{-9561981236,0},{6644269556,-1530570727},{4372445702,-72870531},{-6874117362,-4538002133},{7331175768,-1015125576},{-5762691147,-9511274948},{-642890215,530457253},{-138739462,-2921054928},{4739798580,-7674070968},{-3691885159,-210552701},{4237883314,914053890},{9693018919,405870372},{1356568505,-7194464766},{7404280954,-8800367436},{6563270977,-7449584467},{-3242872077,8483417420},{-394763102,5042143458},{-8129229857,5464247847},{-3323502402,-1296633965}],
+            %% Expected 1 diffs (0 ins 1 mod 0 del) but got 30
+            [{-9561981236,9514412071}] = lists_to_diff(L1, L2)
+    end.
+
 -ifdef(EQC).
 
-%%% QuickCheck....
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
+%% EUnit
+
+prop_subsetdiff_test_() ->
+    {timeout, 180, fun() -> ?assert(eqc:quickcheck(eqc:numtests(2000, ?QC_OUT(prop_shuffle(100, 10))))) end}.
 
 %% 
 %% Example usage (your relative path may differ)
@@ -358,12 +392,7 @@ prop_shuffle(MaxLen, MaxDeltas) ->
           begin
               File1 = "./hack_diff_foo_1",
               File2 = "./hack_diff_foo_2",
-              os:cmd("rm -rf " ++ File1 ++ " " ++ File2),
-              T1 = list_to_couch_merkle(File1, L1),
-              T2 = list_to_couch_merkle(File2, L2),
-              Diffs = couch_merkle:diff(T1, T2),
-              couch_merkle:close(T1),
-              couch_merkle:close(T2),
+              Diffs = lists_to_diff(File1, L1, File2, L2),
               %% Fudge = 0,
               InsertKeys = [K || {insert, K, _} <- Deltas],
               DupInsertsP = not (lists:usort(InsertKeys) == lists:sort(InsertKeys)),
@@ -374,7 +403,9 @@ prop_shuffle(MaxLen, MaxDeltas) ->
                   length(Diffs) == (NumI + NumM + NumD) ->
                       true;
                  true ->
-                      {length(Diffs), NumI, NumM, NumD, Diffs}
+                      ?WHENFAIL(
+                         io:format("Expected ~p diffs (~p ins ~p mod ~p del) but got ~p\n", [(NumI + NumM + NumD), NumI, NumM, NumD, length(Diffs)]),
+                         false)
               end
           end)).
 
@@ -388,8 +419,14 @@ list_to_couch_merkle(File, L) ->
 
 counter_to_diff(CounterExample) ->
     [{L1, _}, {L2, _, _, _}] = CounterExample,
+    lists_to_diff(L1, L2).
+
+lists_to_diff(L1, L2) ->
     File1 = "hack_diff_foo_x",
     File2 = "hack_diff_foo_y",
+    lists_to_diff(File1, L1, File2, L2).
+
+lists_to_diff(File1, L1, File2, L2) ->
     os:cmd("rm -rf " ++ File1 ++ " " ++ File2),
     T1 = list_to_couch_merkle(File1, L1),
     T2 = list_to_couch_merkle(File2, L2),
@@ -493,3 +530,5 @@ hack_shuffle(L) ->
     [X || {_, X} <- lists:sort(L2)].
 
 -endif.   %% EQC
+-endif.   %% TEST
+
