@@ -25,7 +25,7 @@
 -behaviour(gen_server2).
 
 %% API
--export([open/1, open/2,
+-export([open/1, open/2, open/3,
          equals/2,
          root/1,
          update/3, update_many/2, updatea/3,
@@ -70,7 +70,10 @@ open(Filename) ->
   open(Filename, true).
   
 open(Filename, Create) ->
-  gen_server2:start_link(?MODULE, [Filename, Create], [{spawn_opt, [{fullsweep_after, 100}]}]).
+open(Filename, Create, []).
+
+open(Filename, Create, BtreeOptions) ->
+  gen_server2:start_link(?MODULE, [Filename, Create, BtreeOptions], [{spawn_opt, [{fullsweep_after, 100}]}]).
   
 equals(Server1, Server2) ->
   {_, Hash1} = root(Server1),
@@ -110,11 +113,11 @@ tree(Server) ->
 %% gen_server2 callbacks
 %% ====================================================================
 
-init([Filename, Create]) ->
+init([Filename, Create, BtreeOptions]) ->
   put(couch_merkle, Filename),
   case {filelib:is_file(Filename),Create} of
-    {true, _} -> open_existing(Filename);
-    {false, true} -> open_new(Filename);
+    {true, _} -> open_existing(Filename, BtreeOptions);
+    {false, true} -> open_new(Filename, BtreeOptions);
     {false, false} -> {error, enoent}
   end.
 
@@ -170,16 +173,16 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %% ====================================================================
 
-open_existing(Filename) ->
+open_existing(Filename, BtreeOptions) ->
   {ok, Fd} = couch_file:open(Filename),
   {ok, #db_header{local_docs_btree_state=HeaderBtree}} = couch_file:read_header(Fd),
-  couch_btree:open(HeaderBtree, Fd, [{reduce, fun reduce/2}]).
+  couch_btree:open(HeaderBtree, Fd, BtreeOptions ++ [{reduce, fun reduce/2}]).
   
-open_new(Filename) ->
+open_new(Filename, BtreeOptions) ->
   {ok, Fd} = couch_file:open(Filename, [create]),
   Header = #db_header{},
   ok = couch_file:write_header(Fd, Header),
-  couch_btree:open(nil, Fd, [{reduce, fun reduce/2}]).
+  couch_btree:open(nil, Fd, BtreeOptions ++ [{reduce, fun reduce/2}]).
 
 handle_update(Key, Hash, Bt) ->
   {ok, Bt2} = couch_btree:add(Bt, [{Key, Hash}]),

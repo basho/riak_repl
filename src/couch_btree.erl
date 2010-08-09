@@ -49,7 +49,9 @@ set_options(Bt, [{join, Assemble}|Rest]) ->
 set_options(Bt, [{less, Less}|Rest]) ->
     set_options(Bt#btree{less=Less}, Rest);
 set_options(Bt, [{reduce, Reduce}|Rest]) ->
-    set_options(Bt#btree{reduce=Reduce}, Rest).
+    set_options(Bt#btree{reduce=Reduce}, Rest);
+set_options(Bt, [{chunk_threshold, Bytes}|Rest]) ->
+    set_options(Bt#btree{chunk_threshold=Bytes}, Rest).
 
 open(State, Fd, Options) ->
     {ok, set_options(#btree{root=State, fd=Fd}, Options)}.
