@@ -1,20 +1,38 @@
-%%%-------------------------------------------------------------------
-%%% File:      couch_merkle.erl
-%%% @author    Cliff Moon <> []
-%%% @copyright 2009 Cliff Moon
-%%% @doc  
-%%%
-%%% @end  
-%%%
-%%% @since 2009-07-21 by Cliff Moon
-%%%-------------------------------------------------------------------
+%% -------------------------------------------------------------------
+%%
+%% couch_merkle
+%%
+%% Copyright (c) 2009 Cliff Moon.  All Rights Reserved.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
 -module(couch_merkle).
 -author('cliff@powerset.com').
 
 -behaviour(gen_server2).
 
 %% API
--export([open/1, open/2, equals/2, root/1, update/3, update_many/2, updatea/3, delete/2, deletea/2, diff/2, close/1, tree/1]).
+-export([open/1, open/2,
+         equals/2,
+         root/1,
+         update/3, update_many/2, updatea/3,
+         delete/2, deletea/2,
+         diff/2,
+         close/1,
+         tree/1]).
 
 %% gen_server2 callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -32,22 +50,16 @@
 -record(kv_node, {values}).
 -record(kp_node, {children}).
 
--define(HEADER_SIG, <<$f, $y, $c, 0>>).
-
 -include("couch_db.hrl").
 
--ifndef(EUNIT).
+-ifdef(EUNIT).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 %%====================================================================
 %% API
 %%====================================================================
-%%--------------------------------------------------------------------
-%% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
-%% @doc Starts the server
-%% @end 
-%%--------------------------------------------------------------------
+
 open(Filename) ->
   open(Filename, true).
   
@@ -57,7 +69,6 @@ open(Filename, Create) ->
 equals(Server1, Server2) ->
   {_, Hash1} = root(Server1),
   {_, Hash2} = root(Server2),
-  ?debugFmt("equals(~p, ~p)", [Hash1, Hash2]),
   Hash1 == Hash2.
   
 root(Server) ->
@@ -82,30 +93,17 @@ diff(Server1, Server2) ->
   Bt1 = tree(Server1),
   Bt2 = tree(Server2),
   handle_diff(Bt1, Bt2).
-  
-%lookup(Server, Key) ->
-%  gen_server2:call(Server, {lookup, Key}).
-  
-%leaves(Server) ->
-%  gen_server2:call(Server, leaves).
-  
+
 close(Server) ->
   gen_server2:cast(Server, close).
   
 tree(Server) ->
   gen_server2:call(Server, tree).
-%%====================================================================
-%% gen_server2 callbacks
-%%====================================================================
 
-%%--------------------------------------------------------------------
-%% @spec init(Args) -> {ok, State} |
-%%                         {ok, State, Timeout} |
-%%                         ignore               |
-%%                         {stop, Reason}
-%% @doc Initiates the server
-%% @end 
-%%--------------------------------------------------------------------
+%% ====================================================================
+%% gen_server2 callbacks
+%% ====================================================================
+
 init([Filename, Create]) ->
   put(couch_merkle, Filename),
   case {filelib:is_file(Filename),Create} of
@@ -114,17 +112,7 @@ init([Filename, Create]) ->
     {false, false} -> {error, enoent}
   end.
 
-%%--------------------------------------------------------------------
-%% @spec 
-%% handle_call(Request, From, State) -> {reply, Reply, State} |
-%%                                      {reply, Reply, State, Timeout} |
-%%                                      {noreply, State} |
-%%                                      {noreply, State, Timeout} |
-%%                                      {stop, Reason, Reply, State} |
-%%                                      {stop, Reason, State}
-%% @doc Handling call messages
-%% @end 
-%%--------------------------------------------------------------------
+
 handle_call({update, Key, Hash}, _From, Bt) ->
   Bt2 = handle_update(Key, Hash, Bt),
   {reply, self(), Bt2};
@@ -143,17 +131,11 @@ handle_call(tree, _From, Bt) ->
 handle_call(root, _From, Bt = #btree{root=Root}) ->
   {reply, Root, Bt};
   
-  
 handle_call(leaves, _From, Bt) ->
   {reply, handle_leaves(Bt), Bt}.
 
-%%--------------------------------------------------------------------
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                      {noreply, State, Timeout} |
-%%                                      {stop, Reason, State}
-%% @doc Handling cast messages
-%% @end 
-%%--------------------------------------------------------------------
+
+
 handle_cast({update, Key, Hash}, Bt) ->
   Bt2 = handle_update(Key, Hash, Bt),
   {noreply, Bt2};
@@ -166,38 +148,22 @@ handle_cast(close, Bt) ->
   {stop, normal, Bt}.
 
 
-%%--------------------------------------------------------------------
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                       {noreply, State, Timeout} |
-%%                                       {stop, Reason, State}
-%% @doc Handling all non call/cast messages
-%% @end 
-%%--------------------------------------------------------------------
+
 handle_info(_Info, State) ->
   {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @spec terminate(Reason, State) -> void()
-%% @doc This function is called by a gen_server2 when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any necessary
-%% cleaning up. When it returns, the gen_server2 terminates with Reason.
-%% The return value is ignored.
-%% @end 
-%%--------------------------------------------------------------------
+
 terminate(_Reason, #btree{fd=Fd}) ->
   couch_file:close(Fd).
 
-%%--------------------------------------------------------------------
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @doc Convert process state when code is changed
-%% @end 
-%%--------------------------------------------------------------------
+
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
-%%--------------------------------------------------------------------
-%%% Internal functions
-%%--------------------------------------------------------------------
+%% ====================================================================
+%% Internal functions
+%% ====================================================================
+
 open_existing(Filename) ->
   {ok, Fd} = couch_file:open(Filename),
   {ok, #db_header{local_docs_btree_state=HeaderBtree}} = couch_file:read_header(Fd),
