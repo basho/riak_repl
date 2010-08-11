@@ -29,7 +29,7 @@ add_counter(Name) ->
     add_counter(Name, 0).
 
 add_counter(Name, InitVal) when is_atom(Name) andalso is_integer(InitVal) ->
-    gen_server:call(?MODULE, {add_counter, Name, InitVal}).
+    gen_server:call(?MODULE, {add_counter, Name, InitVal}, infinity).
 
 increment_counter(Name) ->
     increment_counter(Name, 1).

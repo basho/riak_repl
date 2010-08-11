@@ -30,10 +30,10 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 set_repl_config(ReplConfig) ->
-    gen_server:call(?MODULE, {set_repl_config, ReplConfig}).
+    gen_server:call(?MODULE, {set_repl_config, ReplConfig}, infinity).
 
 set_is_leader(IsLeader) when is_boolean(IsLeader) ->
-    gen_server:call(?MODULE, {set_leader, IsLeader}).
+    gen_server:call(?MODULE, {set_leader, IsLeader}, infinity).
 
 %% gen_server 
 
