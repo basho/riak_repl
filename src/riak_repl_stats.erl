@@ -36,13 +36,13 @@ increment_counter(Name) ->
 
 increment_counter(Name, IncrBy) when is_atom(Name) andalso is_integer(IncrBy) ->
     %gen_server:cast(?MODULE, {increment_counter, Name, IncrBy}).
-    ets:update_counter(?MODULE, Name, IncrBy).
+    catch ets:update_counter(?MODULE, Name, IncrBy).
 
 handle_call({add_counter, Name, InitVal}, _From, State=#state{t=T}) -> 
     ets:insert(T, {Name, InitVal}),
     {reply, ok, State}.
 handle_cast({increment_counter, Name, IncrBy}, State=#state{t=T}) -> 
-    ets:update_counter(T, Name, IncrBy),
+    catch ets:update_counter(T, Name, IncrBy),
     {noreply, State}.
 
 handle_info(_Info, State) -> {noreply, State}.
