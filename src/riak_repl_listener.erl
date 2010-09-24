@@ -58,15 +58,18 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 connection_made(Socket, Pid, State) ->
     gen_tcp:controlling_process(Socket, Pid),
+    riak_repl_stats:server_connects(),
     {ok, State}.
 
 connection_error({Reason, Backtrace}, SiteName, State) ->
     io:format("~p:error accepting connection from site:~p:~p",
               [?MODULE, SiteName, {Reason, Backtrace}]),
+    riak_repl_stats:server_connect_errors(),
     {ok, State};
 connection_error(Reason, SiteName, State) ->
     io:format("~p:error accepting connection from site:~p:~p",
               [?MODULE, SiteName, Reason]),
+    riak_repl_stats:server_connect_errors(),
     {ok, State}.
 
 

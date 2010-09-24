@@ -20,5 +20,5 @@ init([]) ->
     {ok, 
      {{simple_one_for_one, 10, 10}, 
       [{undefined,
-        {riak_repl_tcp_client, start, []},
+        {riak_repl_tcp_client, start_link, []},
         temporary, brutal_kill, worker, [riak_repl_tcp_client]}]}}.

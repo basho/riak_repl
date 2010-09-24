@@ -4,7 +4,7 @@
 -author('Andy Gross <andy@basho.com').
 -include("riak_repl.hrl").
 -behaviour(gen_fsm).
--export([start/3]).
+-export([start_link/3]).
 -export([init/1, 
          handle_event/3,
          handle_sync_event/4, 
@@ -29,8 +29,8 @@
           merkle_sz :: non_neg_integer()
          }).
 
-start(Socket, SiteName, ConnectorPid) -> 
-    gen_fsm:start(?MODULE, [Socket, SiteName, ConnectorPid], []).
+start_link(Socket, SiteName, ConnectorPid) -> 
+    gen_fsm:start_link(?MODULE, [Socket, SiteName, ConnectorPid], []).
     
 
 init([Socket, SiteName, ConnectorPid]) ->
@@ -127,9 +127,9 @@ merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_sz=SZ,
 
 handle_info({tcp_closed, _Socket}, _StateName, State) -> {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
-    R = ?MODULE:StateName(binary_to_term(zlib:unzip(Data)), State),
+    R = ?MODULE:StateName(binary_to_term(Data), State),
     ok = inet:setopts(Socket, [{active, once}]),            
-    riak_repl_stats:increment_counter(bytes_recvd, size(Data)),
+    riak_repl_stats:client_bytes_recv(size(Data)),
     R;
 %% no-ops
 handle_info(_I, StateName, State) ->  {next_state, StateName, State}.
@@ -139,15 +139,11 @@ handle_event(_Event, StateName, State) -> {next_state, StateName, State}.
 handle_sync_event(_Ev, _F, StateName, State) -> {reply, ok, StateName, State}.
 
 send(Socket, Data) when is_binary(Data) -> 
-    Msg = zlib:zip(Data),
-    R = gen_tcp:send(Socket, Msg),
-    riak_repl_stats:increment_counter(bytes_sent, size(Msg)),
+    R = gen_tcp:send(Socket, Data),
+    riak_repl_stats:client_bytes_sent(size(Data)),
     R;
 send(Socket, Data) ->
-    Msg = zlib:zip(term_to_binary(Data)),
-    R = gen_tcp:send(Socket, Msg),
-    riak_repl_stats:increment_counter(bytes_sent, size(Msg)),
-    R.
+    send(Socket, term_to_binary(Data)).
 
 update_site_ips(TheirReplConfig, SiteName) ->
     {ok, OurRing} = riak_core_ring_manager:get_my_ring(),

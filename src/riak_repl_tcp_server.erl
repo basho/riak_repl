@@ -5,7 +5,7 @@
 -include("riak_repl.hrl").
 -include_lib("kernel/include/file.hrl").
 -behaviour(gen_fsm).
--export([start/2]).
+-export([start_link/2]).
 -export([init/1, 
          handle_event/3,
          handle_sync_event/4, 
@@ -30,7 +30,8 @@
          }
        ).
 
-start(Socket, SiteName) -> gen_fsm:start(?MODULE, [Socket, SiteName], []).
+start_link(Socket, SiteName) -> 
+    gen_fsm:start_link(?MODULE, [Socket, SiteName], []).
 
 init([Socket, SiteName]) ->
     %io:format("~p starting, sock=~p, sitename=~p~n", 
@@ -132,9 +133,9 @@ connected(_E, State) -> {next_state, connected, State}.
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
-    R = ?MODULE:StateName(binary_to_term(zlib:unzip(Data)), State),
+    R = ?MODULE:StateName(binary_to_term(Data), State),
     ok = inet:setopts(Socket, [{active, once}]),            
-    riak_repl_stats:increment_counter(bytes_recvd, size(Data)),
+    riak_repl_stats:server_bytes_recv(size(Data)),
     R;
 handle_info({repl, RObj}, StateName, State=#state{socket=Socket}) ->
     ok = send(Socket, {diff_obj, RObj}),
@@ -151,15 +152,12 @@ handle_event(_E, StateName, State) -> {next_state, StateName, State}.
 handle_sync_event(_E,_F,StateName,State) -> {reply,ok,StateName,State}.
 
 send(Sock,Data) when is_binary(Data) -> 
-    Msg = zlib:zip(Data),
-    R = gen_tcp:send(Sock,Msg),
-    riak_repl_stats:increment_counter(bytes_sent, size(Msg)),
+    R = gen_tcp:send(Sock,Data),
+    riak_repl_stats:server_bytes_sent(size(Data)),
     R;
 send(Sock,Data) -> 
-    Msg = zlib:zip(term_to_binary(Data)),
-    R = gen_tcp:send(Sock, Msg),
-    riak_repl_stats:increment_counter(bytes_sent, size(Msg)),
-    R.
+    send(Sock, term_to_binary(Data)).
+
 vclock_diff(Partition, DiffVClocks, #state{client=Client, socket=Socket}) ->
     Keys = [K || {K, _V} <- DiffVClocks],
     case riak_repl_fsm:get_vclocks(Partition, Keys) of

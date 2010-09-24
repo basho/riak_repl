@@ -73,9 +73,11 @@ do_connect(Host, Port, SiteName, PPid) ->
         {ok, Socket} ->
             {ok, Pid} = riak_repl_client_sup:start_client(Socket, SiteName, PPid),
             ok = gen_tcp:controlling_process(Socket, Pid),
-            PPid ! {connect, ok, {Host, Port}, Pid};
+            PPid ! {connect, ok, {Host, Port}, Pid},
+            riak_repl_stats:client_connects();
         {error, Reason} ->
-            PPid ! {connect, error, {Host, Port}, Reason}
+            PPid ! {connect, error, {Host, Port}, Reason},
+            riak_repl_stats:client_connect_errors()
     end.
 
 next_connect_addr(State=#state{pending=[], tried=[Addr|NewPending]}) ->

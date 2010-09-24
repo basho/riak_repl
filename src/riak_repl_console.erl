@@ -31,12 +31,19 @@ del_site([SiteName]) ->
     ok = maybe_set_ring(Ring, NewRing).
 
 status([]) ->
-    Stats1 = ets:tab2list(riak_repl_stats),
-    format_counter_stats(Stats1).
+    Config = get_config(),
+    Stats1 = lists:sort(ets:tab2list(riak_repl_stats)),
+    LeaderStats = leader_stats(),
+    ClientStats = client_stats(),
+    ServerStats = server_stats(),
+    format_counter_stats(Config++Stats1++LeaderStats++ClientStats++ServerStats).
 
 %% helper functions
 
 format_counter_stats([]) -> ok;
+format_counter_stats([{K,V}|T]) when is_list(K) ->
+    io:format("~s: ~p~n", [K,V]),
+    format_counter_stats(T);
 format_counter_stats([{K,V}|T]) ->
     io:format("~p: ~p~n", [K,V]),
     format_counter_stats(T).
@@ -61,3 +68,62 @@ maybe_set_ring(_R1, R2) ->
 get_ring() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_repl_ring:ensure_config(Ring).
+
+get_config() ->
+    {ok, R} = riak_core_ring_manager:get_my_ring(),
+    case riak_repl_ring:get_repl_config(R) of
+        undefined ->
+            [];
+        Repl ->
+            case dict:find(sites, Repl) of
+                error ->
+                    [];
+                {ok, Sites} ->
+                    lists:flatten([format_site(S) || S <- Sites])
+            end ++
+            case dict:find(listeners, Repl) of
+                error ->
+                    [];
+                {ok, Listeners} ->
+                    lists:flatten([format_listener(L) || L <- Listeners])
+            end
+    end.
+
+format_site(S) ->
+    [{S#repl_site.name ++ "_ips", format_ips(S#repl_site.addrs)},
+     {S#repl_site.name ++ "_last_sync", calendar:now_to_local_time(S#repl_site.last_sync)}].
+        
+format_ips(IPs) ->
+    string:join([format_ip(IP) || IP <- IPs], ", ").
+
+format_ip({Addr,Port}) ->
+    lists:flatten(io_lib:format("~s:~p", [Addr, Port])).
+
+format_listener(L) ->
+    [{"listener_" ++ atom_to_list(L#repl_listener.nodename),
+      format_ip(L#repl_listener.listen_addr)}].
+
+leader_stats() ->
+    try
+        LeaderNode = riak_repl_leader:leader_node(),
+        LeaderPid = rpc:call(LeaderNode, erlang, whereis, [riak_repl_leader]),
+        LeaderStats = rpc:call(LeaderNode, erlang, process_info, [LeaderPid, [message_queue_len,
+                                                                              total_heap_size,
+                                                                              heap_size,
+                                                                              stack_size,
+                                                                              reductions,
+                                                                              garbage_collection]]),
+        [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
+    catch
+        _:_ ->
+            []
+    end.
+
+client_stats() ->
+    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup)],
+    [{client_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
+
+server_stats() ->
+    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup)],
+    [{server_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
+    
