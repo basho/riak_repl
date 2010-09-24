@@ -74,7 +74,7 @@ init_repl_config(OldRing, NewRing) ->
     NewRC = riak_repl_ring:get_repl_config(NewRing),
     case {OldRC, NewRC} of
         {undefined, undefined} ->
-            update_ring(riak_repl_ring:initial_config());
+            update_ring(riak_repl_ring:init_repl_config());
 
         {_, undefined} ->
             update_ring(OldRC);
@@ -88,6 +88,7 @@ init_repl_config(OldRing, NewRing) ->
 %% Given a new repl config, update the system-local ring.
 %%
 update_ring(ReplConfig) ->
+    error_logger:info_msg("Repushing new replconfig!\n", []),
     F = fun(Ring, _) ->
                 {new_ring, riak_repl_ring:set_repl_config(Ring, ReplConfig)}
         end,

@@ -38,7 +38,7 @@ init([InstallHook]) ->
     {ok, #state{}}.
 
 leader_node() ->
-    gen_leader:call(?MODULE, leader_node).
+    gen_leader:call(?MODULE, leader_node, infinity).
 
 postcommit(Object) ->
     gen_leader:leader_cast(?MODULE, {repl, Object}).
