@@ -120,10 +120,10 @@ leader_stats() ->
     end.
 
 client_stats() ->
-    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup)],
+    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
     [{client_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
 
 server_stats() ->
-    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup)],
+    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined],
     [{server_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
     
