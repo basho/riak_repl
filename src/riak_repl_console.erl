@@ -113,7 +113,7 @@ leader_stats() ->
                                                                               stack_size,
                                                                               reductions,
                                                                               garbage_collection]]),
-        [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
+        [{leader, LeaderNode}] ++ [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
     catch
         _:_ ->
             []
