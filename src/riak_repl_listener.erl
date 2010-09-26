@@ -30,12 +30,13 @@ sock_opts() -> [binary,
 new_connection(Socket, State) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, SiteName} ->
-            case riak_repl_server_sup:start_server(Socket, binary_to_list(SiteName)) of
-                {ok, undefined} -> {ok, State};
-                {ok, Pid} ->       connection_made(Socket, Pid, State);
-                {error, Reason} -> connection_error(Reason, binary_to_list(SiteName),
-                                                    State);
-                ignore ->          {ok, State}
+            SiteNameBin = binary_to_list(SiteName),
+            case riak_repl_server_sup:start_server(Socket, SiteNameBin) of
+                {ok, Pid} ->
+                    connection_made(Socket, Pid, State);
+                {error, Reason} ->
+                    gen_tcp:close(Socket),
+                    connection_error(Reason, SiteNameBin, State)
             end;
         {error, Reason} ->
             connection_error(Reason, "unknown", State)

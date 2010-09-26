@@ -48,7 +48,8 @@ init([Socket, SiteName]) ->
         ok ->
             riak_repl_leader:add_receiver_pid(self()),
             {ok, wait_peerinfo, State};
-        redirect -> ignore
+        redirect ->
+            {stop, normal}
     end.
 
 maybe_redirect(Socket, PeerInfo) ->
