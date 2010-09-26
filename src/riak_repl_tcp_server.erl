@@ -133,6 +133,8 @@ connected(_E, State) -> {next_state, connected, State}.
 
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
     {stop, normal, State};
+handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
+    {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R = ?MODULE:StateName(binary_to_term(Data), State),
     ok = inet:setopts(Socket, [{active, once}]),            

@@ -125,7 +125,10 @@ merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_sz=SZ,
             {next_state, merkle_recv, State#state{merkle_sz=LeftBytes}}
     end.
 
-handle_info({tcp_closed, _Socket}, _StateName, State) -> {stop, normal, State};
+handle_info({tcp_closed, _Socket}, _StateName, State) ->
+    {stop, normal, State};
+handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
+    {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R = ?MODULE:StateName(binary_to_term(Data), State),
     ok = inet:setopts(Socket, [{active, once}]),            
