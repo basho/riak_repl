@@ -6,7 +6,7 @@
 -define(REPL_CONN_RETRY, 30000).
 -define(DEFAULT_REPL_PORT, 9010).
 -define(NEVER_SYNCED, {0, 0, 0}).
--define(MERKLE_BUFSZ, 1048576*10).
+-define(MERKLE_BUFSZ, 1048576).
 -define(MERKLE_CHUNKSZ, 65536).
 -define(FSM_SOCKOPTS, [{active, once}, {packet, 4}]).
 -define(REPL_VERSION, 3).
