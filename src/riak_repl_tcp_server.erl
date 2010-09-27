@@ -73,7 +73,7 @@ listener_for_node(Node) ->
 
 wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
-        true -> {next_state, merkle_send, State, 0};
+        true -> next_state(merkle_send, State);
         false -> {stop, normal, State}
     end.
 
@@ -84,10 +84,10 @@ merkle_send(timeout, State=#state{partitions=[],
         undefined ->
             {ok, FSI} = application:get_env(riak_repl, fullsync_interval),
             erlang:send_after(timer:minutes(FSI), self(), fullsync),
-            {next_state, connected, State#state{fullsync_ival=FSI}};
+            next_state(connected, State#state{fullsync_ival=FSI});
         _ ->
             erlang:send_after(timer:minutes(State#state.fullsync_ival), self(), fullsync),
-            {next_state, connected, State}
+            next_state(connected, State)
     end;
 merkle_send(timeout, State=#state{socket=Socket, 
                                   sitename=SiteName,
@@ -95,11 +95,11 @@ merkle_send(timeout, State=#state{socket=Socket,
                                   work_dir=WorkDir}) ->
     case riak_repl_util:make_merkle(Partition, WorkDir) of
         {error, node_not_available} ->
-            {next_state, merkle_send, State#state{partitions=T}, 0};            
+            next_state(merkle_send, State#state{partitions=T});
         {error, Reason} ->
             error_logger:error_msg("get_merkle error ~p for partition ~p~n", 
                                    [Reason, Partition]),
-            {next_state, merkle_send, State#state{partitions=T}, 0};
+            next_state(merkle_send, State#state{partitions=T});
 
         {ok, MerkleFile, MerklePid, _Root} ->
             couch_merkle:close(MerklePid),
@@ -111,7 +111,7 @@ merkle_send(timeout, State=#state{socket=Socket,
                                   [Partition, SiteName]),
             ok = send_chunks(FP, Socket),
             file:delete(MerkleFile),
-            {next_state, merkle_wait_ack, State#state{partitions=T}}
+            next_state(merkle_wait_ack, State#state{partitions=T})
     end.
 
 send_chunks(FP, Socket) ->
@@ -123,13 +123,13 @@ send_chunks(FP, Socket) ->
     end.
 
 merkle_wait_ack({ack, _Partition, []}, State) ->
-    {next_state, merkle_send, State, 0};
+    next_state(merkle_send, State);
 merkle_wait_ack({ack,Partition,DiffVClocks}, State=#state{socket=Socket}) ->
     vclock_diff(Partition, DiffVClocks, State),
     ok = send(Socket, {partition_complete, Partition}),
-    {next_state, merkle_send, State, 0}.
+    next_state(merkle_send, State).
 
-connected(_E, State) -> {next_state, connected, State}.
+connected(_E, State) -> next_state(connected, State).
 
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
     {stop, normal, State};
@@ -142,16 +142,16 @@ handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R;
 handle_info({repl, RObj}, StateName, State=#state{socket=Socket}) ->
     ok = send(Socket, {diff_obj, RObj}),
-    {next_state, StateName, State};
+    next_state(StateName, State);
 handle_info(fullsync, connected, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Partitions = riak_repl_util:get_partitions(Ring),
-    {next_state, merkle_send, State#state{partitions=Partitions}, 0};
+    next_state(merkle_send, State#state{partitions=Partitions});
 %% no-ops
-handle_info(_I, StateName, State) -> {next_state, StateName, State}.
+handle_info(_I, StateName, State) -> next_state(StateName, State).
 terminate(_Reason, _StateName, _State) -> ok.
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
-handle_event(_E, StateName, State) -> {next_state, StateName, State}.
+handle_event(_E, StateName, State) -> next_state(StateName, State).
 handle_sync_event(_E,_F,StateName,State) -> {reply,ok,StateName,State}.
 
 send(Sock,Data) when is_binary(Data) -> 
@@ -194,3 +194,8 @@ do_send({B,K}, Client, Socket) ->
         {ok, Obj} -> ok = send(Socket, {diff_obj, Obj});
         _ -> ok
     end.
+
+next_state(merkle_send, State) ->
+    {next_state, merkle_send, State, 0};
+next_state(StateName, State) ->
+    {next_state, StateName, State}.
