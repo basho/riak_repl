@@ -60,21 +60,44 @@ make_merkle(Partition, Dir) ->
         true ->
             FileName = filename:join(Dir,integer_to_list(Partition)++".merkle"),
             {ok, DMerkle} = couch_merkle:open(FileName),
-            MakerPid = spawn(fun() -> merkle_maker(DMerkle, [], 0) end),
+
+            %% Spawn/monitor the merkle maker process. Note that the
+            %% merkle_maker process also monitors us; if the riak_kv_vnode:fold
+            %% blows up, we want to ensure that the maker process gets taken
+            %% down. We don't use links here since this is a utility function
+            %% and we can't make any guarantees about the state of trap_exit flag.
+            Self = self(),
+            {MakerPid, Mref} = spawn_monitor(fun() -> merkle_maker0(Self, DMerkle) end),
+
             F = fun(K, V, MPid) -> MPid ! {K, erlang:phash2(V)}, MPid end,
             riak_kv_vnode:fold({Partition,OwnerNode}, F, MakerPid),
-            MakerPid ! {finish, self()},
-            receive ok -> ok end,
-            {ok, FileName, DMerkle, couch_merkle:root(DMerkle)};
+            MakerPid ! finish,
+
+            %% Wait for merkle maker process to exit
+            receive
+                {'DOWN', Mref, process, _, normal} ->
+                    {ok, FileName, DMerkle, couch_merkle:root(DMerkle)};
+                {'DOWN', Mref, process, _, Reason} ->
+                    error_logger:error_msg("merkle_maker exited with reason: ~p\n", [Reason]),
+                    {error, merkle_maker_failed}
+            end;
+
         false ->
             {error, node_not_available}
     end.
 
+merkle_maker0(OwnerPid, DMerklePid) ->
+    erlang:monitor(process, OwnerPid),
+    merkle_maker(DMerklePid, [], 0).
+
 merkle_maker(DMerklePid, Buffer, Size) ->
-    receive 
-        {finish, Pid}  ->
+    receive
+        {'DOWN', _, _, _, _} ->
+            %% Owner process has exited -- do likewise
+            ok;
+        finish ->
             couch_merkle:update_many(DMerklePid, Buffer),
-            Pid ! ok;
+            ok;
         {K, H} ->
             PackedKey = binpack_bkey(K),
             NewSize = Size+size(PackedKey)+4,
