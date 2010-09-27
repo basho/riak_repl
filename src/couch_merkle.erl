@@ -52,7 +52,7 @@ open(Filename) ->
   open(Filename, true).
   
 open(Filename, Create) ->
-  gen_server2:start_link(?MODULE, [Filename, Create], [{spawn_opt, [{fullsweep_after, 100}]}]).
+  gen_server2:start_link(?MODULE, [Filename, Create], []).
   
 equals(Server1, Server2) ->
   {_, Hash1} = root(Server1),
