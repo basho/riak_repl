@@ -5,10 +5,10 @@
 -behaviour(supervisor).
 -include("riak_repl.hrl").
 -export([start_link/0, init/1, stop/1]).
--export([start_server/2]).
+-export([start_server/1]).
 
-start_server(Socket, Sitename) ->
-    supervisor:start_child(?MODULE, [Socket, Sitename]).
+start_server(Sitename) ->
+    supervisor:start_child(?MODULE, [Sitename]).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).

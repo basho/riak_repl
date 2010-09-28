@@ -31,7 +31,7 @@ new_connection(Socket, State) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, SiteName} ->
             SiteNameBin = binary_to_list(SiteName),
-            case riak_repl_server_sup:start_server(Socket, SiteNameBin) of
+            case riak_repl_server_sup:start_server(SiteNameBin) of
                 {ok, Pid} ->
                     connection_made(Socket, Pid, State);
                 {error, Reason} ->
@@ -59,6 +59,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 connection_made(Socket, Pid, State) ->
     gen_tcp:controlling_process(Socket, Pid),
+    riak_repl_tcp_server:set_socket(Pid, Socket),
     riak_repl_stats:server_connects(),
     {ok, State}.
 

@@ -5,7 +5,7 @@
 -include("riak_repl.hrl").
 -include_lib("kernel/include/file.hrl").
 -behaviour(gen_fsm).
--export([start_link/2]).
+-export([start_link/1]).
 -export([init/1, 
          handle_event/3,
          handle_sync_event/4, 
@@ -15,7 +15,9 @@
 -export([wait_peerinfo/2,
          merkle_send/2,
          merkle_wait_ack/2,
-         connected/2]).
+         connected/2,
+         set_socket/2]).
+
 -record(state, 
         {
           socket :: repl_socket(),       %% peer socket
@@ -30,27 +32,18 @@
          }
        ).
 
-start_link(Socket, SiteName) -> 
-    gen_fsm:start_link(?MODULE, [Socket, SiteName], []).
+start_link(SiteName) -> 
+    gen_fsm:start_link(?MODULE, [SiteName], []).
 
-init([Socket, SiteName]) ->
+init([SiteName]) ->
     %io:format("~p starting, sock=~p, sitename=~p~n", 
     %          [?MODULE, Socket, SiteName]),
-    Props = riak_repl_fsm:common_init(Socket, SiteName),
-    State = #state{
-      socket=Socket,
-      sitename=SiteName,
-      client=proplists:get_value(client, Props),
-      my_pi=proplists:get_value(my_pi, Props),
-      work_dir=proplists:get_value(work_dir,Props),
-      partitions=proplists:get_value(partitions, Props)},
-    case maybe_redirect(Socket,  State#state.my_pi) of
-        ok ->
-            riak_repl_leader:add_receiver_pid(self()),
-            {ok, wait_peerinfo, State};
-        redirect ->
-            {stop, normal}
-    end.
+    {ok, wait_peerinfo, #state{sitename=SiteName}}.
+
+
+set_socket(Pid, Socket) ->
+    gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
+
 
 maybe_redirect(Socket, PeerInfo) ->
     OurNode = node(),
@@ -152,6 +145,25 @@ handle_info(_I, StateName, State) -> next_state(StateName, State).
 terminate(_Reason, _StateName, _State) -> ok.
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 handle_event(_E, StateName, State) -> next_state(StateName, State).
+
+handle_sync_event({set_socket,Socket},_F,_StateName,
+                  State=#state{sitename=SiteName}) -> 
+    Props = riak_repl_fsm:common_init(Socket, SiteName),
+    NewState = State#state{
+      socket=Socket,
+      sitename=SiteName,
+      client=proplists:get_value(client, Props),
+      my_pi=proplists:get_value(my_pi, Props),
+      work_dir=proplists:get_value(work_dir,Props),
+      partitions=proplists:get_value(partitions, Props)},
+    case maybe_redirect(Socket,  NewState#state.my_pi) of
+        ok ->
+            riak_repl_leader:add_receiver_pid(self()),
+            {reply, ok, wait_peerinfo, NewState};
+        redirect ->
+            {stop, normal, ok, NewState}
+    end;
+
 handle_sync_event(_E,_F,StateName,State) -> {reply,ok,StateName,State}.
 
 send(Sock,Data) when is_binary(Data) -> 
