@@ -26,8 +26,14 @@ get_vclocks(Partition, KeyList)
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
         true ->
-            riak_kv_vnode:get_vclocks({Partition, OwnerNode}, KeyList);
+            get_each_vclock({Partition, OwnerNode}, KeyList, []);
         false ->
             {error, node_not_available}
     end.
     
+
+get_each_vclock(_Id, [], Acc) ->
+    lists:reverse(Acc);
+get_each_vclock(Id, [Key | Rest], Acc) ->
+    [Vclock] = riak_kv_vnode:get_vclocks(Id, [Key]),
+    get_each_vclock(Id, Rest, [Vclock | Acc]).
