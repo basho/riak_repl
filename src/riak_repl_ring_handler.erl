@@ -74,11 +74,9 @@ init_repl_config(OldRing, NewRing) ->
     NewRC = riak_repl_ring:get_repl_config(NewRing),
     case {OldRC, NewRC} of
         {undefined, undefined} ->
-            update_ring(riak_repl_ring:init_repl_config());
-
+            update_ring(riak_repl_ring:initial_config());
         {_, undefined} ->
             update_ring(OldRC);
-
         _ ->
             NewRing
     end.
