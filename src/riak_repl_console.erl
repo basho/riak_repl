@@ -98,8 +98,7 @@ get_config() ->
     end.
 
 format_site(S) ->
-    [{S#repl_site.name ++ "_ips", format_ips(S#repl_site.addrs)},
-     {S#repl_site.name ++ "_last_sync", calendar:now_to_local_time(S#repl_site.last_sync)}].
+    [{S#repl_site.name ++ "_ips", format_ips(S#repl_site.addrs)}].
         
 format_ips(IPs) ->
     string:join([format_ip(IP) || IP <- IPs], ", ").
