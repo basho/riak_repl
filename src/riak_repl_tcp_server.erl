@@ -59,7 +59,8 @@ init([SiteName]) ->
 maybe_redirect(Socket, PeerInfo) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
-        OurNode -> ok = send(Socket, {peerinfo, PeerInfo});
+        OurNode ->
+            send(Socket, {peerinfo, PeerInfo});
         OtherNode -> 
             OtherListener = listener_for_node(OtherNode),
             {Ip, Port} = OtherListener#repl_listener.listen_addr,
@@ -119,12 +120,21 @@ merkle_send(timeout, State=#state{socket=Socket,
             {ok, FileInfo} = file:read_file_info(MerkleFile),
             FileSize = FileInfo#file_info.size,
             {ok, FP} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
-            ok = send(Socket, {merkle, FileSize, Partition}),
-            error_logger:info_msg("Syncing partition ~p with site ~p~n",
-                                  [Partition, SiteName]),
-            ok = send_chunks(FP, Socket),
-            file:delete(MerkleFile),
-            next_state(merkle_wait_ack, State#state{partitions=T})
+            try
+                ok = send(Socket, {merkle, FileSize, Partition}),
+                error_logger:info_msg("Syncing partition ~p with site ~p~n",
+                                      [Partition, SiteName]),
+                ok = send_chunks(FP, Socket),
+                next_state(merkle_wait_ack, State#state{partitions=T})
+            catch
+                _:Err ->
+                    error_logger:info_msg("Syncing partition ~p with site ~p failed: ~p~n",
+                                          [Partition, SiteName, Err]),
+                    {stop, normal, State}
+            after
+                file:close(FP),
+                file:delete(MerkleFile)
+            end
     end.
 
 send_chunks(FP, Socket) ->
@@ -132,7 +142,7 @@ send_chunks(FP, Socket) ->
         {ok, Data} ->
             ok = send(Socket, {merk_chunk, Data}),
             send_chunks(FP, Socket);
-        eof -> ok = file:close(FP)
+        eof -> ok
     end.
 
 merkle_wait_ack(cancel_fullsync, State) ->
@@ -144,7 +154,7 @@ merkle_wait_ack({ack, _Partition, []}, State) ->
     next_state(merkle_send, State);
 merkle_wait_ack({ack,Partition,DiffVClocks}, State=#state{socket=Socket}) ->
     vclock_diff(Partition, DiffVClocks, State),
-    ok = send(Socket, {partition_complete, Partition}),
+    send(Socket, {partition_complete, Partition}),
     next_state(merkle_send, State).
 
 connected(_E, State) -> next_state(connected, State).
@@ -155,11 +165,11 @@ handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R = ?MODULE:StateName(binary_to_term(Data), State),
-    ok = inet:setopts(Socket, [{active, once}]),            
+    inet:setopts(Socket, [{active, once}]),            
     riak_repl_stats:server_bytes_recv(size(Data)),
     R;
 handle_info({repl, RObj}, StateName, State=#state{socket=Socket}) ->
-    ok = send(Socket, {diff_obj, RObj}),
+    send(Socket, {diff_obj, RObj}),
     next_state(StateName, State);
 handle_info(fullsync, connected, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -242,7 +252,7 @@ maybe_send(BKey, V1, V2, Client, Socket) ->
             
 do_send({B,K}, Client, Socket) ->
     case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
-        {ok, Obj} -> ok = send(Socket, {diff_obj, Obj});
+        {ok, Obj} -> send(Socket, {diff_obj, Obj});
         _ -> ok
     end.
 
