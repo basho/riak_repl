@@ -36,7 +36,7 @@ start_link(Socket, SiteName, ConnectorPid) ->
 init([Socket, SiteName, ConnectorPid]) ->
     %io:format("~p starting, sock=~p, site=~p, pid=~p~n", 
     %          [?MODULE, Socket, SiteName, self()]),
-    ok = gen_tcp:send(Socket, SiteName),
+    gen_tcp:send(Socket, SiteName),
     Props = riak_repl_fsm:common_init(Socket, SiteName),
     State = #state{
       socket=Socket, 
@@ -46,7 +46,7 @@ init([Socket, SiteName, ConnectorPid]) ->
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
       partitions=proplists:get_value(partitions, Props)},
-    ok = send(Socket, {peerinfo, State#state.my_pi}),
+    send(Socket, {peerinfo, State#state.my_pi}),
     {ok, wait_peerinfo, State}.
 
 wait_peerinfo({redirect, IP, Port}, State=#state{connector_pid=P}) ->
@@ -94,7 +94,7 @@ merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_sz=SZ,
             ok = file:close(FP),
             case riak_repl_util:make_merkle(PT, WorkDir) of
                 {error, _} ->
-                    ok = send(Socket, {ack, PT, []}),
+                    send(Socket, {ack, PT, []}),
                     {next_state, merkle_exchange, State};                    
                 {ok, MerkleFN, OurMerkle, _OurRoot} ->
                     {ok, TheirMerkle} = couch_merkle:open(FN),
@@ -103,20 +103,21 @@ merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_sz=SZ,
                     [file:delete(F) || F <- [MerkleFN, FN]],
                     case MerkleDiff of
                         [] -> 
-                            ok = send(Socket, {ack, PT, []}),
+                            send(Socket, {ack, PT, []}),
                             {next_state, merkle_exchange, State};
                         DiffKeys0 ->  
                             DiffKeys = [riak_repl_util:binunpack_bkey(K) || 
                                            {K,_} <- DiffKeys0],
                             case riak_repl_fsm:get_vclocks(PT, DiffKeys) of
                                 {error, node_not_available} ->
-                                    ok = send(Socket, {ack, PT, []});
+                                    send(Socket, {ack, PT, []});
                                 {error, Reason} ->
                                     error_logger:error_msg(
                                       "~p:getting vclocks for ~p: ~p~n",
                                       [?MODULE, PT, Reason]),
-                                    ok = send(Socket, {ack, PT, []});
-                                VClocks -> ok = send(Socket, {ack, PT, VClocks})
+                                    send(Socket, {ack, PT, []});
+                                VClocks ->
+                                    send(Socket, {ack, PT, VClocks})
                             end,
                             {next_state, merkle_exchange, State}
                     end
@@ -131,7 +132,7 @@ handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R = ?MODULE:StateName(binary_to_term(Data), State),
-    ok = inet:setopts(Socket, [{active, once}]),            
+    inet:setopts(Socket, [{active, once}]),            
     riak_repl_stats:client_bytes_recv(size(Data)),
     R;
 %% no-ops

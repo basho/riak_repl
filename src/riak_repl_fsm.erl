@@ -8,7 +8,7 @@
 
 common_init(Socket, SiteName) ->
     process_flag(trap_exit, true),        
-    ok = inet:setopts(Socket, ?FSM_SOCKOPTS),
+    inet:setopts(Socket, ?FSM_SOCKOPTS),
     {ok, Client} = riak:local_client(),
     PI = riak_repl_util:make_peer_info(),
     Partitions = riak_repl_util:get_partitions(PI#peer_info.ring),    
