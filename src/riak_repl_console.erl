@@ -5,7 +5,7 @@
 -include("riak_repl.hrl").
 -export([add_listener/1, del_listener/1]).
 -export([add_site/1, del_site/1]).
--export([status/1]).
+-export([status/1, start_fullsync/1, stop_fullsync/1]).
 
 add_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
@@ -37,6 +37,14 @@ status([]) ->
     ClientStats = client_stats(),
     ServerStats = server_stats(),
     format_counter_stats(Config++Stats1++LeaderStats++ClientStats++ServerStats).
+
+start_fullsync([]) ->
+    [riak_repl_tcp_server:start_fullsync(Pid) || Pid <- server_pids()],
+    ok.
+
+stop_fullsync([]) ->
+    [riak_repl_tcp_server:stop_fullsync(Pid) || Pid <- server_pids()],
+    ok.
 
 %% helper functions
 
@@ -124,6 +132,8 @@ client_stats() ->
     [{client_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
 
 server_stats() ->
-    Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined],
-    [{server_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
+    [{server_stats, [{P, erlang:process_info(P, message_queue_len)} || 
+                        P <- server_pids()]}].
     
+server_pids() ->
+    [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined].
