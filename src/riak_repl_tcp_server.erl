@@ -5,7 +5,9 @@
 -include("riak_repl.hrl").
 -include_lib("kernel/include/file.hrl").
 -behaviour(gen_fsm).
--export([start_link/1]).
+-export([start_link/1,
+         start_fullsync/1,
+         stop_fullsync/1]).
 -export([init/1, 
          handle_event/3,
          handle_sync_event/4, 
@@ -34,6 +36,13 @@
 
 start_link(SiteName) -> 
     gen_fsm:start_link(?MODULE, [SiteName], []).
+
+start_fullsync(Pid) ->
+    %% TODO: Make fullsync message tie into event system for consistency
+    Pid ! fullsync.
+
+stop_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, stop_fullsync).
 
 init([SiteName]) ->
     %io:format("~p starting, sock=~p, sitename=~p~n", 
@@ -68,20 +77,20 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true -> next_state(merkle_send, State);
         false -> {stop, normal, State}
-    end.
-
-merkle_send(timeout, State=#state{partitions=[], 
-                                  sitename=SiteName}) ->
-    error_logger:info_msg("Full-sync with ~p complete~n", [SiteName]),
-    case State#state.fullsync_ival of
-        undefined ->
-            {ok, FSI} = application:get_env(riak_repl, fullsync_interval),
-            erlang:send_after(timer:minutes(FSI), self(), fullsync),
-            next_state(connected, State#state{fullsync_ival=FSI});
-        _ ->
-            erlang:send_after(timer:minutes(State#state.fullsync_ival), self(), fullsync),
-            next_state(connected, State)
     end;
+wait_peerinfo(stop_fullsync, State) ->
+    {next_state, wait_peerinfo, State}.
+
+merkle_send(stop_fullsync, State) ->
+    Remaining = length(State#state.partitions),
+    error_logger:info_msg("Full-sync with ~p stopped; ~p partitions remaining.\n",
+                          [State#state.sitename, Remaining]),
+    erlang:send_after(State#state.fullsync_ival, self(), fullsync),
+    next_state(connected, State#state { partitions = [] });
+merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
+    error_logger:info_msg("Full-sync with ~p complete~n", [SiteName]),
+    erlang:send_after(State#state.fullsync_ival, self(), fullsync),
+    next_state(connected, State);
 merkle_send(timeout, State=#state{socket=Socket, 
                                   sitename=SiteName,
                                   partitions=[Partition|T],
@@ -115,6 +124,11 @@ send_chunks(FP, Socket) ->
         eof -> ok = file:close(FP)
     end.
 
+merkle_wait_ack(stop_fullsync, State) ->
+    Remaining = length(State#state.partitions),
+    error_logger:info_msg("Full-sync with ~p stop requested; ~p partitions remaining.\n",
+                          [State#state.sitename, Remaining]),
+    next_state(merkle_wait_ack, State#state { partitions = [] });
 merkle_wait_ack({ack, _Partition, []}, State) ->
     next_state(merkle_send, State);
 merkle_wait_ack({ack,Partition,DiffVClocks}, State=#state{socket=Socket}) ->
@@ -155,6 +169,7 @@ handle_sync_event({set_socket,Socket},_F,_StateName,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
       work_dir=proplists:get_value(work_dir,Props),
+      fullsync_ival=timer:minutes(FullsyncIval),
       partitions=proplists:get_value(partitions, Props)},
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
