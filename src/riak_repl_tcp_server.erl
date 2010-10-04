@@ -30,7 +30,7 @@
           work_dir :: string(),   %% working directory for this repl session
           partitions=[] :: list(),%% list of local partitions
           merkle_wip=[] :: list(),%% merkle work in progress
-          fullsync_ival :: undefined|non_neg_integer()
+          fullsync_ival :: undefined|disabled|non_neg_integer()
          }
        ).
 
@@ -77,8 +77,16 @@ listener_for_node(Node) ->
 
 wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
-        true -> next_state(merkle_send, State);
-        false -> {stop, normal, State}
+        true ->
+            case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
+                true ->
+                    next_state(merkle_send, State);
+                false ->
+                    schedule_fullsync(State),
+                    next_state(connected, State)
+            end;
+        false ->
+            {stop, normal, State}
     end;
 wait_peerinfo(cancel_fullsync, State) ->
     {next_state, wait_peerinfo, State}.
@@ -87,11 +95,11 @@ merkle_send(cancel_fullsync, State) ->
     Remaining = length(State#state.partitions),
     error_logger:info_msg("Full-sync with ~p cancelled; ~p partitions remaining.\n",
                           [State#state.sitename, Remaining]),
-    erlang:send_after(State#state.fullsync_ival, self(), fullsync),
+    schedule_fullsync(State),
     next_state(connected, State#state { partitions = [] });
 merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
     error_logger:info_msg("Full-sync with ~p complete~n", [SiteName]),
-    erlang:send_after(State#state.fullsync_ival, self(), fullsync),
+    schedule_fullsync(State),
     riak_repl_stats:server_fullsyncs(),
     next_state(connected, State);
 merkle_send(timeout, State=#state{socket=Socket, 
@@ -165,14 +173,20 @@ handle_event(_E, StateName, State) -> next_state(StateName, State).
 
 handle_sync_event({set_socket,Socket},_F, _StateName,
                   State=#state{sitename=SiteName}) -> 
+    case application:get_env(riak_repl, fullsync_interval) of
+        {ok, disabled} ->
+            FullsyncIval = disabled;
+        {ok, FullsyncIvalMins} ->
+            FullsyncIval = timer:minutes(FullsyncIvalMins)
+    end,
     Props = riak_repl_fsm:common_init(Socket, SiteName),
     NewState = State#state{
       socket=Socket,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
       work_dir=proplists:get_value(work_dir,Props),
-      fullsync_ival=timer:minutes(FullsyncIval),
-      partitions=proplists:get_value(partitions, Props)},
+      partitions=proplists:get_value(partitions, Props),
+      fullsync_ival=FullsyncIval},
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
             riak_repl_leader:add_receiver_pid(self()),
@@ -231,6 +245,15 @@ do_send({B,K}, Client, Socket) ->
         {ok, Obj} -> ok = send(Socket, {diff_obj, Obj});
         _ -> ok
     end.
+
+schedule_fullsync(State) ->
+    case State#state.fullsync_ival of
+        disabled ->
+            ok;
+        Interval ->
+            erlang:send_after(Interval, self(), fullsync)
+    end.
+
 
 next_state(merkle_send, State) ->
     {next_state, merkle_send, State, 0};
