@@ -8,7 +8,7 @@
 -export([start_link/1,
          set_socket/2,
          start_fullsync/1,
-         stop_fullsync/1,
+         cancel_fullsync/1,
          status/1, status/2]).
 -export([init/1, 
          handle_event/3,
@@ -41,8 +41,8 @@ start_fullsync(Pid) ->
     %% TODO: Make fullsync message tie into event system for consistency
     Pid ! fullsync.
 
-stop_fullsync(Pid) ->
-    gen_fsm:send_event(Pid, stop_fullsync).
+cancel_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, cancel_fullsync).
     
 status(Pid) ->
     status(Pid, infinity).
@@ -80,12 +80,12 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
         true -> next_state(merkle_send, State);
         false -> {stop, normal, State}
     end;
-wait_peerinfo(stop_fullsync, State) ->
+wait_peerinfo(cancel_fullsync, State) ->
     {next_state, wait_peerinfo, State}.
 
-merkle_send(stop_fullsync, State) ->
+merkle_send(cancel_fullsync, State) ->
     Remaining = length(State#state.partitions),
-    error_logger:info_msg("Full-sync with ~p stopped; ~p partitions remaining.\n",
+    error_logger:info_msg("Full-sync with ~p cancelled; ~p partitions remaining.\n",
                           [State#state.sitename, Remaining]),
     erlang:send_after(State#state.fullsync_ival, self(), fullsync),
     next_state(connected, State#state { partitions = [] });
@@ -127,9 +127,9 @@ send_chunks(FP, Socket) ->
         eof -> ok = file:close(FP)
     end.
 
-merkle_wait_ack(stop_fullsync, State) ->
+merkle_wait_ack(cancel_fullsync, State) ->
     Remaining = length(State#state.partitions),
-    error_logger:info_msg("Full-sync with ~p stop requested; ~p partitions remaining.\n",
+    error_logger:info_msg("Full-sync with ~p cancelled; ~p partitions remaining.\n",
                           [State#state.sitename, Remaining]),
     next_state(merkle_wait_ack, State#state { partitions = [] });
 merkle_wait_ack({ack, _Partition, []}, State) ->
