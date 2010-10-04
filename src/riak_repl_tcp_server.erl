@@ -6,8 +6,10 @@
 -include_lib("kernel/include/file.hrl").
 -behaviour(gen_fsm).
 -export([start_link/1,
+         set_socket/2,
          start_fullsync/1,
-         stop_fullsync/1]).
+         stop_fullsync/1,
+         status/1, status/2]).
 -export([init/1, 
          handle_event/3,
          handle_sync_event/4, 
@@ -17,9 +19,7 @@
 -export([wait_peerinfo/2,
          merkle_send/2,
          merkle_wait_ack/2,
-         connected/2,
-         set_socket/2]).
-
+         connected/2]).
 -record(state, 
         {
           socket :: repl_socket(),       %% peer socket
@@ -43,16 +43,18 @@ start_fullsync(Pid) ->
 
 stop_fullsync(Pid) ->
     gen_fsm:send_event(Pid, stop_fullsync).
+    
+status(Pid) ->
+    status(Pid, infinity).
 
-init([SiteName]) ->
-    %io:format("~p starting, sock=~p, sitename=~p~n", 
-    %          [?MODULE, Socket, SiteName]),
-    {ok, wait_peerinfo, #state{sitename=SiteName}}.
-
+status(Pid, Timeout) ->
+    gen_fsm:sync_send_all_state_event(Pid, status, Timeout).
 
 set_socket(Pid, Socket) ->
     gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
-
+    
+init([SiteName]) ->
+    {ok, wait_peerinfo, #state{sitename=SiteName}}.
 
 maybe_redirect(Socket, PeerInfo) ->
     OurNode = node(),
@@ -90,6 +92,7 @@ merkle_send(stop_fullsync, State) ->
 merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
     error_logger:info_msg("Full-sync with ~p complete~n", [SiteName]),
     erlang:send_after(State#state.fullsync_ival, self(), fullsync),
+    riak_repl_stats:server_fullsyncs(),
     next_state(connected, State);
 merkle_send(timeout, State=#state{socket=Socket, 
                                   sitename=SiteName,
@@ -160,12 +163,11 @@ terminate(_Reason, _StateName, _State) -> ok.
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 handle_event(_E, StateName, State) -> next_state(StateName, State).
 
-handle_sync_event({set_socket,Socket},_F,_StateName,
+handle_sync_event({set_socket,Socket},_F, _StateName,
                   State=#state{sitename=SiteName}) -> 
     Props = riak_repl_fsm:common_init(Socket, SiteName),
     NewState = State#state{
       socket=Socket,
-      sitename=SiteName,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
       work_dir=proplists:get_value(work_dir,Props),
@@ -174,12 +176,20 @@ handle_sync_event({set_socket,Socket},_F,_StateName,
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
             riak_repl_leader:add_receiver_pid(self()),
-            {reply, ok, wait_peerinfo, NewState};
+            reply(ok, wait_peerinfo, NewState);
         redirect ->
             {stop, normal, ok, NewState}
     end;
-
-handle_sync_event(_E,_F,StateName,State) -> {reply,ok,StateName,State}.
+handle_sync_event(status,_F,StateName,State) ->
+    case StateName of
+        SN when SN =:= merkle_send;
+                SN =:= merkle_wait_ack ->
+            Left = length(State#state.partitions),
+            Desc = {fullsync, Left, left};
+        _ ->
+            Desc = StateName
+    end,
+    reply({status, Desc}, StateName, State).
 
 send(Sock,Data) when is_binary(Data) -> 
     R = gen_tcp:send(Sock,Data),
@@ -226,3 +236,8 @@ next_state(merkle_send, State) ->
     {next_state, merkle_send, State, 0};
 next_state(StateName, State) ->
     {next_state, StateName, State}.
+
+reply(Reply, merkle_send, State) ->
+    {reply, Reply, merkle_send, State, 0};
+reply(Reply, StateName, State) ->
+    {reply, Reply, StateName, State}.

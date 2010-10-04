@@ -132,8 +132,19 @@ client_stats() ->
     [{client_stats, [{P, erlang:process_info(P, message_queue_len)} || P <- Pids]}].
 
 server_stats() ->
-    [{server_stats, [{P, erlang:process_info(P, message_queue_len)} || 
-                        P <- server_pids()]}].
-    
+    [{server_stats, [server_stats(P) || P <- server_pids()]}].
+
+server_stats(Pid) ->
+    %% try and work out what state the TCP server is in.  In the middle
+    %% of merkle generation etc this could take a long time, so punt with a
+    %% too_busy message rather than hold up status
+    State = try
+                riak_repl_tcp_server:status(Pid, 100)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+                        
 server_pids() ->
     [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined].

@@ -19,6 +19,7 @@
          server_bytes_recv/1,
          server_connects/0,
          server_connect_errors/0,
+         server_fullsyncs/0,
          add_counter/1,
          add_counter/2,
          increment_counter/1,
@@ -56,7 +57,9 @@ server_connects() ->
 
 server_connect_errors() ->
     increment_counter(server_connect_errors).
-    
+
+server_fullsyncs() ->
+    increment_counter(server_fullsyncs).    
 
 init([]) -> 
     T = ets:new(?MODULE, [public, named_table, set, {write_concurrency, true}]),
@@ -64,6 +67,7 @@ init([]) ->
                                           server_bytes_recv,
                                           server_connects,
                                           server_connect_errors,
+                                          server_fullsyncs,
                                           client_bytes_sent,
                                           client_bytes_recv,
                                           client_connects,
