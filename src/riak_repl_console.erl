@@ -10,8 +10,13 @@
 add_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
-    NewRing = riak_repl_ring:add_listener(Ring, Listener),
-    ok = maybe_set_ring(Ring, NewRing).
+    case lists:member(Listener#repl_listener.nodename, riak_core_ring:all_members(Ring)) of
+        true ->
+            NewRing = riak_repl_ring:add_listener(Ring, Listener),
+            ok = maybe_set_ring(Ring, NewRing);
+        false ->
+            io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
+    end.
 
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
