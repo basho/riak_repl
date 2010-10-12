@@ -81,6 +81,10 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
         true ->
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
+                    error_logger:info_msg("Full-sync starting with site ~p "
+                                          "(~p partitions)",
+                                          [State#state.sitename, 
+                                           length(State#state.partitions)]),
                     next_state(merkle_send, State);
                 false ->
                     schedule_fullsync(State),
