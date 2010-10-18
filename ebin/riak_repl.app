@@ -17,6 +17,7 @@
                   'riak_repl_controller',
                   'riak_repl_fsm', 
                   'riak_repl_leader',
+                  'riak_repl_leader_helper',
                   'riak_repl_listener',
                   'riak_repl_listener_sup',
                   'riak_repl_put_fsm',

@@ -24,7 +24,7 @@ init([]) ->
         undefined ->
             {ok, #state{ring=Ring}};
         _ ->
-            reset_leader(Ring),
+            update_leader(Ring),
             {ok, #state{ring=Ring}}
     end.
 
@@ -35,7 +35,7 @@ handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
 handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     %% Ring has changed.
     FinalRing = init_repl_config(OldRing, NewRing),
-    reset_leader(FinalRing),
+    update_leader(FinalRing),
     riak_repl_controller:set_repl_config(riak_repl_ring:get_repl_config(FinalRing)),
     {ok, State#state{ring=FinalRing}};
 handle_event(_Event, State) ->
@@ -96,18 +96,37 @@ update_ring(ReplConfig) ->
 
 
 %%
-%% Stop and restart the leader if appropriate; it's always necessary
-%% to stop the leader as this function is only invoked when the ring
-%% has changed in some way.
+%% Pass updated configuration settings the the leader
 %%
-reset_leader(Ring) ->
-    riak_repl_sup:stop_leader(),
+update_leader(Ring) ->
+    AllNodes = riak_core_ring:all_members(Ring),
+    case riak_repl_ring:get_repl_config(Ring) of
+        undefined ->
+            ok;
+        RC ->
+            Listeners = listener_nodes(RC),
+            NonListeners = ordsets:to_list(
+                             ordsets:subtract(ordsets:from_list(AllNodes),
+                                              ordsets:from_list(Listeners))),
 
-    case should_start_leader(Ring) of
-        {true, Args} ->
-            riak_repl_sup:start_leader(Args);
-        _ ->
-            ok
+            case {has_sites(RC), has_listeners(RC)} of
+                {_, true} ->
+                    Candidates=Listeners,
+                    Workers=NonListeners;
+                {true, false} ->
+                    Candidates=AllNodes,
+                    Workers=[];
+                {false, false} ->
+                    Candidates=[],
+                    Workers=[]
+            end,       
+            case Listeners of 
+                [] ->
+                    ok; % No need to install hook if nobody is listening
+                _ ->
+                    riak_repl:install_hook()
+            end,            
+            riak_repl_leader:set_candidates(Candidates, Workers)
     end.
 
 has_sites(ReplConfig) ->
@@ -119,26 +138,3 @@ has_listeners(ReplConfig) ->
 listener_nodes(ReplConfig) ->
     Listeners = dict:fetch(listeners, ReplConfig),
     [L#repl_listener.nodename || L <- Listeners].
-
-should_start_leader(Ring) ->
-    AllNodes = riak_core_ring:all_members(Ring),
-    case riak_repl_ring:get_repl_config(Ring) of
-        undefined ->
-            {false, [[], [], false]};
-        RC ->
-            Listeners = listener_nodes(RC),
-            Workers = ordsets:to_list(
-                        ordsets:subtract(ordsets:from_list(AllNodes),
-                                         ordsets:from_list(Listeners))),
-            case {has_sites(RC), has_listeners(RC)} of
-                {true, true} ->
-                    {true, [Listeners, Workers, true]};
-                {true, false} ->
-                    {true, [AllNodes, [], false]};
-                {false, true} ->
-                    {true, [Listeners, Workers, true]};
-                {false, false} ->
-                    {false, [[], [], false]}
-            end
-    end.
-

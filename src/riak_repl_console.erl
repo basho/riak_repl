@@ -116,20 +116,31 @@ format_listener(L) ->
       format_ip(L#repl_listener.listen_addr)}].
 
 leader_stats() ->
-    try
-        LeaderNode = riak_repl_leader:leader_node(),
-        LeaderPid = rpc:call(LeaderNode, erlang, whereis, [riak_repl_leader]),
-        LeaderStats = rpc:call(LeaderNode, erlang, process_info, [LeaderPid, [message_queue_len,
-                                                                              total_heap_size,
-                                                                              heap_size,
-                                                                              stack_size,
-                                                                              reductions,
-                                                                              garbage_collection]]),
-        [{leader, LeaderNode}] ++ [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
-    catch
-        _:_ ->
-            []
-    end.
+    LeaderNode = riak_repl_leader:leader_node(),
+    LocalStats = 
+        try
+            LocalProcInfo = erlang:process_info(whereis(riak_repl_leader),
+                                                [message_queue_len, heap_size]),
+            [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
+        catch _:_ ->
+                []
+        end,
+    RemoteStats =
+        try
+            LeaderPid = rpc:call(LeaderNode, erlang, whereis, [riak_repl_leader]),
+            LeaderStats = rpc:call(LeaderNode, erlang, process_info,
+                                   [LeaderPid, [message_queue_len,
+                                                total_heap_size,
+                                                heap_size,
+                                                stack_size,
+                                                reductions,
+                                                garbage_collection]]),
+            [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
+        catch
+            _:_ ->
+                []
+        end,
+    [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats.
 
 client_stats() ->
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
