@@ -2,3 +2,4 @@ syntax regex
 ^ebin/.*.beam
 .*~
 ^.eunit/*
+deps
