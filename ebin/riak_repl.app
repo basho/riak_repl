@@ -20,6 +20,7 @@
                   'riak_repl_leader_helper',
                   'riak_repl_listener',
                   'riak_repl_listener_sup',
+                  'riak_repl_merkle_helper',
                   'riak_repl_put_fsm',
                   'riak_repl_ring',
                   'riak_repl_ring_handler',

@@ -12,6 +12,7 @@
          ensure_site_dir/1,
          binpack_bkey/1,
          binunpack_bkey/1,
+         merkle_filename/3,
          make_merkle/2]).
 
 make_peer_info() ->
@@ -52,6 +53,16 @@ binpack_bkey({B, K}) ->
 
 binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) -> 
     {B,K}.
+
+
+merkle_filename(WorkDir, Partition, Type) ->
+    case Type of
+        ours ->
+            Ext=".merkle";
+        theirs ->
+            Ext=".theirs"
+    end,
+    filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 make_merkle(Partition, Dir) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
