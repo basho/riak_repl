@@ -13,6 +13,7 @@
          code_change/4]).
 -export([wait_peerinfo/2,
          merkle_recv/2,
+         merkle_build/2,
          merkle_exchange/2]).
 
 -record(state, {
@@ -25,8 +26,11 @@
           work_dir :: string(),
           merkle_pt :: non_neg_integer(),
           merkle_fp :: term(),
-          merkle_fn :: string(),
-          merkle_sz :: non_neg_integer()
+          merkle_their_fn :: string(),
+          merkle_their_sz :: non_neg_integer(),
+          merkle_our_fn :: string(),
+          merkle_ref :: undefined | reference(),
+          helper_pid :: undefined | pid()
          }).
 
 start_link(Socket, SiteName, ConnectorPid) -> 
@@ -67,11 +71,11 @@ wait_peerinfo({diff_obj, Obj}, State) ->
     riak_repl_util:do_repl_put(Obj),
     {next_state, wait_peerinfo, State}.
 merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
-    MerkleFN = filename:join(WorkDir,integer_to_list(Partition)++".theirs"),
-    {ok, FP} = file:open(MerkleFN, [write, raw, binary, delayed_write]),
+    TheirFn = riak_repl_util:merkle_filename(WorkDir, Partition, theirs),
+    {ok, FP} = file:open(TheirFn, [write, raw, binary, delayed_write]),
     {next_state, merkle_recv, State#state{merkle_fp=FP, 
-                                          merkle_fn=MerkleFN,
-                                          merkle_sz=Size, 
+                                          merkle_their_fn=TheirFn,
+                                          merkle_their_sz=Size, 
                                           merkle_pt=Partition}};
 merkle_exchange({partition_complete,_Partition}, State) ->
     {next_state, merkle_exchange, State};
@@ -82,50 +86,70 @@ merkle_exchange({diff_obj, Obj}, State) ->
 merkle_recv({diff_obj, Obj}, State) ->
     riak_repl_util:do_repl_put(Obj),
     {next_state, merkle_recv, State};   
-merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_sz=SZ, 
-                                             merkle_fn=FN, merkle_pt=PT,
-                                             work_dir=WorkDir, 
-                                             socket=Socket}) ->
+merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_their_sz=SZ,
+                                             merkle_pt=PT,
+                                             work_dir=WorkDir}) ->
     ok = file:write(FP, Data),
     LeftBytes = SZ - size(Data),
     case LeftBytes of
         0 ->
             ok = file:sync(FP),
             ok = file:close(FP),
-            case riak_repl_util:make_merkle(PT, WorkDir) of
-                {error, _} ->
-                    send(Socket, {ack, PT, []}),
-                    {next_state, merkle_exchange, State};                    
-                {ok, MerkleFN, OurMerkle, _OurRoot} ->
-                    {ok, TheirMerkle} = couch_merkle:open(FN),
-                    MerkleDiff = couch_merkle:diff(TheirMerkle, OurMerkle),
-                    [couch_merkle:close(M) || M <- [OurMerkle, TheirMerkle]],
-                    [file:delete(F) || F <- [MerkleFN, FN]],
-                    case MerkleDiff of
-                        [] -> 
-                            send(Socket, {ack, PT, []}),
-                            {next_state, merkle_exchange, State};
-                        DiffKeys0 ->  
-                            DiffKeys = [riak_repl_util:binunpack_bkey(K) || 
-                                           {K,_} <- DiffKeys0],
-                            case riak_repl_fsm:get_vclocks(PT, DiffKeys) of
-                                {error, node_not_available} ->
-                                    send(Socket, {ack, PT, []});
-                                {error, Reason} ->
-                                    error_logger:error_msg(
-                                      "~p:getting vclocks for ~p: ~p~n",
-                                      [?MODULE, PT, Reason]),
-                                    send(Socket, {ack, PT, []});
-                                VClocks ->
-                                    send(Socket, {ack, PT, VClocks})
-                            end,
-                            {next_state, merkle_exchange, State}
-                    end
+            OurFn = riak_repl_util:merkle_filename(WorkDir, PT, ours),
+            file:delete(OurFn), % make sure we get a clean copy
+            error_logger:info_msg("Full-sync with site ~p; client hashing "
+                                  "partition ~p data\n",
+                                  [State#state.sitename, PT]),
+            {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
+            case riak_repl_merkle_helper:make_merkle(Pid, PT, OurFn) of
+                {ok, Ref} ->
+                    {next_state, merkle_build, State#state{helper_pid = Pid,
+                                                           merkle_our_fn = OurFn,
+                                                           merkle_ref = Ref}};
+                {error, Reason} ->
+                    merkle_build_error(Reason, State)
             end;
         _ ->
-            {next_state, merkle_recv, State#state{merkle_sz=LeftBytes}}
+            {next_state, merkle_recv, State#state{merkle_their_sz=LeftBytes}}
     end.
 
+merkle_build({diff_obj, Obj}, State) ->
+    riak_repl_util:do_repl_put(Obj),
+    {next_state, merkle_build, State};
+merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
+    Socket = State#state.socket,
+    PT = State#state.merkle_pt,
+    {ok, OurMerkle} = couch_merkle:open(State#state.merkle_our_fn),    
+    {ok, TheirMerkle} = couch_merkle:open(State#state.merkle_their_fn),
+    MerkleDiff = couch_merkle:diff(TheirMerkle, OurMerkle),
+    [couch_merkle:close(M) || M <- [OurMerkle, TheirMerkle]],
+    file:delete(State#state.merkle_our_fn),
+    file:delete(State#state.merkle_their_fn),
+    case MerkleDiff of
+        [] -> 
+            send(Socket, {ack, PT, []}),
+            {next_state, merkle_exchange, State#state{helper_pid = undefined,
+                                                      merkle_ref = undefined}};
+        DiffKeys0 ->  
+            DiffKeys = [riak_repl_util:binunpack_bkey(K) || 
+                           {K,_} <- DiffKeys0],
+            case riak_repl_fsm:get_vclocks(PT, DiffKeys) of
+                {error, node_not_available} ->
+                    send(Socket, {ack, PT, []});
+                {error, Reason} ->
+                    error_logger:error_msg(
+                      "~p:getting vclocks for ~p: ~p~n",
+                      [?MODULE, PT, Reason]),
+                    send(Socket, {ack, PT, []});
+                VClocks ->
+                    send(Socket, {ack, PT, VClocks})
+            end,
+            {next_state, merkle_exchange, State#state{helper_pid = undefined,
+                                                      merkle_ref = undefined}}
+    end;
+merkle_build({Ref, {error, Reason}}, State=#state{merkle_ref = Ref}) ->
+    merkle_build_error(Reason, State).
+        
 handle_info({tcp_closed, _Socket}, _StateName, State) ->
     {stop, normal, State};
 handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
@@ -168,5 +192,13 @@ update_site_ips(TheirReplConfig, SiteName) ->
     riak_core_ring_manager:ring_trans(F, MyNewRC),
     ok.    
 
-
-    
+merkle_build_error(Reason, State) ->
+    %% No way to communicate back errors, just ack with no diffs
+    error_logger:error_msg("Full-sync with site ~p; partition ~p hash "
+                           "tree build failed: ~p. Skipping partition.\n",
+                           [State#state.sitename, State#state.merkle_pt,
+                            Reason]),
+    send(State#state.socket, {ack, State#state.merkle_pt, []}),
+    {next_state, merkle_exchange, State#state{helper_pid = undefined,
+                                              merkle_ref = undefined}}.
+     

@@ -12,8 +12,7 @@
          ensure_site_dir/1,
          binpack_bkey/1,
          binunpack_bkey/1,
-         merkle_filename/3,
-         make_merkle/2]).
+         merkle_filename/3]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -63,63 +62,3 @@ merkle_filename(WorkDir, Partition, Type) ->
             Ext=".theirs"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
-
-make_merkle(Partition, Dir) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    OwnerNode = riak_core_ring:index_owner(Ring, Partition),
-    case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
-        true ->
-            FileName = filename:join(Dir,integer_to_list(Partition)++".merkle"),
-            {ok, DMerkle} = couch_merkle:open(FileName),
-
-            %% Spawn/monitor the merkle maker process. Note that the
-            %% merkle_maker process also monitors us; if the riak_kv_vnode:fold
-            %% blows up, we want to ensure that the maker process gets taken
-            %% down. We don't use links here since this is a utility function
-            %% and we can't make any guarantees about the state of trap_exit flag.
-            Self = self(),
-            {MakerPid, Mref} = spawn_monitor(fun() -> merkle_maker0(Self, DMerkle) end),
-
-            F = fun(K, V, MPid) -> MPid ! {K, erlang:phash2(V)}, MPid end,
-            riak_kv_vnode:fold({Partition,OwnerNode}, F, MakerPid),
-            MakerPid ! finish,
-
-            %% Wait for merkle maker process to exit
-            receive
-                {'DOWN', Mref, process, _, normal} ->
-                    {ok, FileName, DMerkle, couch_merkle:root(DMerkle)};
-                {'DOWN', Mref, process, _, Reason} ->
-                    error_logger:error_msg("merkle_maker exited with reason: ~p\n", [Reason]),
-                    {error, merkle_maker_failed}
-            end;
-
-        false ->
-            {error, node_not_available}
-    end.
-
-merkle_maker0(OwnerPid, DMerklePid) ->
-    erlang:monitor(process, OwnerPid),
-    merkle_maker(DMerklePid, [], 0).
-
-merkle_maker(DMerklePid, Buffer, Size) ->
-    receive
-        {'DOWN', _, _, _, _} ->
-            %% Owner process has exited -- do likewise
-            ok;
-        finish ->
-            couch_merkle:update_many(DMerklePid, Buffer),
-            ok;
-        {K, H} ->
-            PackedKey = binpack_bkey(K),
-            NewSize = Size+size(PackedKey)+4,
-            NewBuf = [{PackedKey, H}|Buffer],
-            case NewSize >= ?MERKLE_BUFSZ of 
-                true ->
-                    couch_merkle:update_many(DMerklePid, NewBuf),
-                    merkle_maker(DMerklePid, [], 0);
-                false ->
-                    merkle_maker(DMerklePid, NewBuf, NewSize)
-            end
-    end.
-            
-            
