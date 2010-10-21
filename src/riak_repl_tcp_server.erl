@@ -23,6 +23,7 @@
          merkle_wait_ack/2,
          merkle_diff/2,
          connected/2]).
+-type now() :: {integer(),integer(),integer()}.
 -record(state, 
         {
           socket :: repl_socket(),       %% peer socket
@@ -39,6 +40,8 @@
           merkle_fn :: string(),                    % Filename for merkle tree
           merkle_fd,                                % Merkle file handle
           partition :: undefined|non_neg_integer(), % partition being syncd
+          partition_start :: undefined|now(),       % start time for partition
+          stage_start :: undefined|now(),           % start time for stage
           fullsync_ival :: undefined|disabled|non_neg_integer(),
           diff_vclocks=[]
          }
@@ -113,7 +116,8 @@ merkle_send(timeout, State=#state{partitions=cancelled}) ->
     error_logger:info_msg("Full-sync with site ~p cancelled.\n",
                           [State#state.sitename]),
     schedule_fullsync(State),
-    next_state(connected, State);
+    next_state(connected, State#state{partition_start = undefined,
+                                      stage_start = undefined});
 merkle_send(timeout, State=#state{sitename=SiteName,
                                   partitions=[Partition|T],
                                   work_dir=WorkDir}) ->
@@ -121,6 +125,7 @@ merkle_send(timeout, State=#state{sitename=SiteName,
     file:delete(FileName), % make sure we get a clean copy
     error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
                           [SiteName, Partition]),
+    Now = now(),
     {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
     case riak_repl_merkle_helper:make_merkle(Pid, Partition, FileName) of
         {ok, Ref} ->
@@ -128,6 +133,8 @@ merkle_send(timeout, State=#state{sitename=SiteName,
                                                  merkle_ref = Ref,
                                                  merkle_fn = FileName,
                                                  partition = Partition,
+                                                 partition_start = Now,
+                                                 stage_start = Now,
                                                  partitions = T});
         {error, Reason} ->
             error_logger:info_msg("Full-sync ~p with ~p skipped: ~p\n",
@@ -150,11 +157,15 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
     FileSize = FileInfo#file_info.size,
     {ok, MerkleFd} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
     file:delete(MerkleFile), % will not be removed until file handle closed
-    error_logger:info_msg("Full-sync with site ~p (server); sending partition ~p data\n",
-                          [State#state.sitename, State#state.partition]),
+    error_logger:info_msg("Full-sync with site ~p (server); sending partition"
+                          " ~p data (built in ~p secs)\n",
+                          [State#state.sitename, State#state.partition,
+                           elapsed_secs(State#state.stage_start)]),
+    Now = now(),
     send(State#state.socket, {merkle, FileSize, State#state.partition}),
     next_state(merkle_xfer, State#state{helper_pid = undefined,
                                         merkle_ref = undefined,
+                                        stage_start = Now,
                                         merkle_fd = MerkleFd});
 merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref ->
     error_logger:info_msg("Full-sync with site ~p (server); partition ~p skipped: ~p\n",
@@ -173,14 +184,21 @@ merkle_xfer(timeout, State) ->
             next_state(merkle_xfer, State);
         eof ->
             file:close(MerkleFd),
-            next_state(merkle_wait_ack, State#state{merkle_fd = undefined})
+            error_logger:info_msg("Full-sync with site ~p (server); awaiting partition"
+                                  " ~p diffs (sent in ~p secs)\n",
+                                  [State#state.sitename, State#state.partition,
+                                   elapsed_secs(State#state.stage_start)]),
+            Now = now(),
+            next_state(merkle_wait_ack, State#state{merkle_fd = undefined,
+                                                    stage_start = Now})
     end.
 
 merkle_wait_ack(cancel_fullsync, State) ->
     next_state(merkle_wait_ack,  do_cancel_fullsync(State));
 merkle_wait_ack({ack,Partition,DiffVClocks}, 
                 State=#state{partition=Partition}) ->
-    next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks}).
+    next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks,
+                                        stage_start = now()}).
 
 merkle_diff(cancel_fullsync, State) ->
     next_state(merkle_send, do_cancel_fullsync(State));
@@ -191,9 +209,12 @@ merkle_diff(timeout, #state{partitions=cancelled}=State) ->
                                         diff_vclocks = []});
 merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
     send(State#state.socket, {partition_complete, State#state.partition}),
-    error_logger:info_msg("Full-sync with site ~p; partition ~p complete\n",
-                          [State#state.sitename, State#state.partition]),
-    next_state(merkle_send, State#state{partition = undefined});
+    error_logger:info_msg("Full-sync with site ~p; partition ~p complete (~p secs).\n",
+                          [State#state.sitename, State#state.partition,
+                           elapsed_secs(State#state.partition_start)]),
+    next_state(merkle_send, State#state{partition = undefined,
+                                        partition_start = undefined,
+                                        stage_start = undefined});
 merkle_diff(timeout, #state{diff_vclocks=[DiffVClock|Rest]}=State) ->
     vclock_diff(State#state.partition, [DiffVClock], State),
     next_state(merkle_diff, State#state{diff_vclocks=Rest}).
@@ -327,6 +348,11 @@ do_cancel_fullsync(State) ->  % already cancelled
                           "cancel already requested.\n",
                           [State#state.sitename]),
     State.
+
+%% Work out the elapsed time in seconds, rounded to centiseconds.
+elapsed_secs(Then) ->
+    CentiSecs = timer:now_diff(now(), Then) div 10000,
+    CentiSecs / 100.0.
 
 %% Make sure merkle_send and merkle_diff get sent timeout messages
 %% to process their queued work
