@@ -21,6 +21,7 @@
          merkle_build/2,
          merkle_build_cancelled/2,
          merkle_wait_ack/2,
+         merkle_diff/2,
          connected/2]).
 -record(state, 
         {
@@ -38,7 +39,8 @@
           merkle_fn :: string(),                    % Filename for merkle tree
           merkle_fd,                                % Merkle file handle
           partition :: undefined|non_neg_integer(), % partition being syncd
-          fullsync_ival :: undefined|disabled|non_neg_integer()
+          fullsync_ival :: undefined|disabled|non_neg_integer(),
+          diff_vclocks=[]
          }
        ).
 
@@ -182,6 +184,8 @@ merkle_build_cancelled(finalize_cancel, State) ->
         Fd ->
             file:close(Fd)
     end,
+    %% TODO: Send message to client to clean up and go back to
+    %% connected state.  Client could be stuck in merkle_recv
     NewState = State#state{helper_pid = undefined,
                            merkle_ref = undefined,
                            merkle_fd = undefined},
@@ -189,16 +193,20 @@ merkle_build_cancelled(finalize_cancel, State) ->
 
 merkle_wait_ack(cancel_fullsync, State) ->
     next_state(merkle_wait_ack,  do_cancel_fullsync(State));
-merkle_wait_ack({ack, _Partition, []}, State) ->
-    next_state(merkle_send, State);
 merkle_wait_ack({ack, _Partition, _}, #state{partitions=cancelled}=State) ->
     next_state(merkle_send, State);
-merkle_wait_ack({ack,Partition,DiffVClocks}, State=#state{socket=Socket}) ->
-    vclock_diff(Partition, DiffVClocks, State),
-    send(Socket, {partition_complete, Partition}),
+merkle_wait_ack({ack,Partition,DiffVClocks}, 
+                State=#state{partition=Partition}) ->
+    next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks}).
+
+merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
+    send(State#state.socket, {partition_complete, State#state.partition}),
     error_logger:info_msg("Full-sync with site ~p; partition ~p complete\n",
                           [State#state.sitename, State#state.partition]),
-    next_state(merkle_send, State).
+    next_state(merkle_send, State#state{partition = undefined});
+merkle_diff(timeout, #state{diff_vclocks=[DiffVClock|Rest]}=State) ->
+    vclock_diff(State#state.partition, [DiffVClock], State),
+    next_state(merkle_diff, State#state{diff_vclocks=Rest}).
 
 connected(_E, State) -> next_state(connected, State).
 
@@ -330,8 +338,11 @@ do_cancel_fullsync(State) when is_list(State#state.partitions) ->
 do_cancel_fullsync(State) ->  % already cancelled
     State.
 
-next_state(merkle_send, State) ->
-    {next_state, merkle_send, State, 0};
+%% Make sure merkle_send and merkle_diff get sent timeout messages
+%% to process their queued work
+next_state(StateName, State) when StateName =:= merkle_send; 
+                                  StateName =:= merkle_diff ->
+    {next_state, StateName, State, 0};
 next_state(StateName, State) ->
     {next_state, StateName, State}.
 
