@@ -12,8 +12,7 @@
 %% API
 -export([start_link/1,
          make_merkle/3,
-         diff/4,
-         cancel/1]).
+         diff/4]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -42,11 +41,6 @@ make_merkle(Pid, Partition, Filename) ->
 diff(Pid, Partition, TheirFn, OurFn) ->
     gen_server:call(Pid, {diff, Partition, TheirFn, OurFn}).
 
-cancel(undefined) ->
-    ok;
-cancel(Pid) ->
-    gen_server:call(Pid, cancel).
-
 %% ====================================================================
 %% gen_server callbacks
 %% ====================================================================
@@ -54,15 +48,7 @@ cancel(Pid) ->
 init([OwnerFsm]) ->
     process_flag(trap_exit, true),
     {ok, #state{owner_fsm = OwnerFsm}}.
-    
-handle_call(cancel, _From, State) ->
-    case State#state.merkle_pid of
-        undefined ->
-            ok;
-        Pid when is_pid(Pid) ->
-            couch_merkle:close(Pid)
-    end,
-    {stop, normal, ok, State};
+
 handle_call({make_merkle, Partition, FileName}, _From, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
