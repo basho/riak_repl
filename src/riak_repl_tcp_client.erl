@@ -65,7 +65,8 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo,
                               TheirPeerInfo#peer_info.ring), SiteName),
             {next_state, merkle_exchange, State};
         false ->
-            error_logger:error_msg("invalid peer_info ~p~n",[TheirPeerInfo]),
+            error_logger:error_msg("Replication (client) - invalid peer_info ~p~n",
+                                   [TheirPeerInfo]),
             {stop, normal, State}
     end;
 wait_peerinfo({diff_obj, Obj}, State) ->
@@ -76,7 +77,7 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     %% file
     OurFn = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
     file:delete(OurFn), % make sure we get a clean copy
-    error_logger:info_msg("Full-sync with site ~p; client hashing "
+    error_logger:info_msg("Full-sync with site ~p (client); hashing "
                           "partition ~p data\n",
                           [State#state.sitename, Partition]),
     {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
@@ -85,7 +86,7 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
             HelperPid = Pid,
             OurFn2 = OurFn;
         {error, Reason} ->
-            error_logger:info_msg("Full-sync with site ~p; client hashing "
+            error_logger:info_msg("Full-sync with site ~p (client); hashing "
                                   "partition ~p data failed: ~p\n",
                                   [State#state.sitename, Partition, Reason]),
             %% No good way to cancel the send in the current protocol
@@ -129,7 +130,7 @@ merkle_recv({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
     merkle_recv_next(State#state{merkle_ref = undefined,
                                  helper_pid = undefined});
 merkle_recv({Ref, {error, Reason}}, State=#state{merkle_ref = Ref}) ->
-    error_logger:info_msg("Full-sync with site ~p; client hashing "
+    error_logger:info_msg("Full-sync with site ~p (client); hashing "
                           "partition ~p data failed: ~p\n",
                           [State#state.sitename, State#state.merkle_pt, Reason]),
     merkle_recv_next(State#state{merkle_our_fn = undefined,
@@ -145,7 +146,7 @@ merkle_diff({Ref, {merkle_diff, BkeyVclock}}, State=#state{merkle_ref = Ref}) ->
      State#state{bkey_vclocks = [BkeyVclock | State#state.bkey_vclocks]}};
 merkle_diff({Ref, {error, Reason}}, State=#state{merkle_ref = Ref}) ->
     send(State#state.socket, {ack, State#state.merkle_pt, []}),
-    error_logger:error_msg("Full-sync with site ~p; vclock lookup for "
+    error_logger:error_msg("Full-sync with site ~p (client); vclock lookup for "
                            "partition ~p failed: ~p. Skipping partition.\n",
                            [State#state.sitename, State#state.merkle_pt,
                             Reason]),

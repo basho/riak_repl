@@ -119,7 +119,7 @@ merkle_send(timeout, State=#state{sitename=SiteName,
                                   work_dir=WorkDir}) ->
     FileName = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
     file:delete(FileName), % make sure we get a clean copy
-    error_logger:info_msg("Full-sync with site ~p; hashing partition ~p data\n",
+    error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
                           [SiteName, Partition]),
     {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
     case riak_repl_merkle_helper:make_merkle(Pid, Partition, FileName) of
@@ -150,14 +150,14 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
     FileSize = FileInfo#file_info.size,
     {ok, MerkleFd} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
     file:delete(MerkleFile), % will not be removed until file handle closed
-    error_logger:info_msg("Full-sync with site ~p; sending partition ~p data\n",
+    error_logger:info_msg("Full-sync with site ~p (server); sending partition ~p data\n",
                           [State#state.sitename, State#state.partition]),
     send(State#state.socket, {merkle, FileSize, State#state.partition}),
     next_state(merkle_xfer, State#state{helper_pid = undefined,
                                         merkle_ref = undefined,
                                         merkle_fd = MerkleFd});
 merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref ->
-    error_logger:info_msg("Full-sync with site ~p; partition ~p skipped: ~p\n",
+    error_logger:info_msg("Full-sync with site ~p (server); partition ~p skipped: ~p\n",
                           [ State#state.sitename, State#state.partition, Reason]),
     next_state(merkle_send, State#state{helper_pid = undefined,
                                         merkle_ref = undefined,
