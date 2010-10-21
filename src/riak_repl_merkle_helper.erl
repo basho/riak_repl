@@ -12,6 +12,7 @@
 %% API
 -export([start_link/1,
          make_merkle/3,
+         diff/4,
          cancel/1]).
 
 %% gen_server callbacks
@@ -37,6 +38,9 @@ start_link(OwnerFsm) ->
 
 make_merkle(Pid, Partition, Filename) ->
     gen_server:call(Pid, {make_merkle, Partition, Filename}).
+
+diff(Pid, Partition, TheirFn, OurFn) ->
+    gen_server:call(Pid, {diff, Partition, TheirFn, OurFn}).
 
 cancel(undefined) ->
     ok;
@@ -85,8 +89,28 @@ handle_call({make_merkle, Partition, FileName}, _From, State) ->
             {reply, {ok, Ref}, NewState};
         false ->
             {stop, normal, {error, node_not_available}, State}
-    end.
-
+    end;
+handle_call({diff, Partition, TheirFn, OurFn}, From, State) ->
+    {ok, TheirMerkle} = couch_merkle:open(TheirFn),
+    {ok, OurMerkle} = couch_merkle:open(OurFn),
+    file:delete(TheirFn), % delete the files after open to guarantee cleanup
+    file:delete(OurFn),
+    Ref = make_ref(),
+    gen_server:reply(From, {ok, Ref}),
+    MerkleDiff = couch_merkle:diff(TheirMerkle, OurMerkle), % potentially *huge* list
+    couch_merkle:close(TheirMerkle),
+    couch_merkle:close(OurMerkle),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    OwnerNode = riak_core_ring:index_owner(Ring, Partition),
+    case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
+        true ->
+            Id = {Partition, OwnerNode},
+            send_vclocks(MerkleDiff, Id, State#state.owner_fsm, Ref);
+        false ->
+            gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
+    end,
+    {stop, normal, State}.
+    
 handle_cast({K, H}, State) ->
     PackedKey = riak_repl_util:binpack_bkey(K),
     NewSize = State#state.size+size(PackedKey)+4,
@@ -107,6 +131,7 @@ handle_cast(finish, State) ->
     _Mref = erlang:monitor(process, State#state.merkle_pid),
     couch_merkle:close(State#state.merkle_pid),
     {noreply, State}.
+
 
 handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.merkle_pid ->
     case Reason of 
@@ -145,3 +170,15 @@ code_change(_OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+send_vclocks([], _Id, Fsm, Ref) ->
+    gen_fsm:send_event(Fsm, {Ref, merkle_done});
+send_vclocks([{PackedKey, _} | Rest], Id, Fsm, Ref) ->
+    Key = riak_repl_util:binunpack_bkey(PackedKey),
+    case catch riak_kv_vnode:get_vclocks(Id, [Key]) of
+        [{_Bkey, _Vclock} = BkeyVclock] ->
+            gen_fsm:send_event(Fsm, {Ref, {merkle_diff, BkeyVclock}}),
+            send_vclocks(Rest, Id, Fsm, Ref);
+        Reason ->
+            gen_fsm:send_event(Fsm, {Ref, {error, Reason}})
+    end.
