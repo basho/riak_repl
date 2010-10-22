@@ -12,7 +12,8 @@
          ensure_site_dir/1,
          binpack_bkey/1,
          binunpack_bkey/1,
-         merkle_filename/3]).
+         merkle_filename/3,
+         valid_host_ip/1]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -62,3 +63,17 @@ merkle_filename(WorkDir, Partition, Type) ->
             Ext=".theirs"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
+
+%% Returns true if the IP address given is a valid host IP address            
+valid_host_ip(IP) ->     
+    {ok, IFs} = inet:getif(),
+    {ok, NormIP} = normalize_ip(IP),
+    ValidIPs = [ValidIP || {ValidIP, _, _} <- IFs],
+    lists:member(NormIP, ValidIPs).
+
+%% Convert IP address the tuple form
+normalize_ip(IP) when is_list(IP) ->
+    inet_parse:address(IP);
+normalize_ip(IP) when is_tuple(IP) ->
+    {ok, IP}.
+

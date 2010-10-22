@@ -12,8 +12,18 @@ add_listener([NodeName, IP, Port]) ->
     Listener = make_listener(NodeName, IP, Port),
     case lists:member(Listener#repl_listener.nodename, riak_core_ring:all_members(Ring)) of
         true ->
-            NewRing = riak_repl_ring:add_listener(Ring, Listener),
-            ok = maybe_set_ring(Ring, NewRing);
+            case catch rpc:call(Listener#repl_listener.nodename,
+                                riak_repl_util, valid_host_ip, [IP]) of
+                true ->
+                    NewRing = riak_repl_ring:add_listener(Ring, Listener),
+                    ok = maybe_set_ring(Ring, NewRing);
+                false ->
+                    io:format("~p is not a valid IP address for ~p\n",
+                              [IP, Listener#repl_listener.nodename]);
+                Error ->
+                    io:format("Node ~p must be available to add listener: ~p\n",
+                              [Listener#repl_listener.nodename, Error])
+            end;
         false ->
             io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
     end.

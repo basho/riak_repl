@@ -172,14 +172,25 @@ ensure_listeners([Listener|Rest], State) ->
 ensure_listener(L, State) when L#repl_listener.nodename =:= node() ->
     case get_monitor(L, State) of
         not_found ->
-            {ok, Pid} = riak_repl_listener_sup:start_listener(L),
-            monitor_item(L, Pid, State);
+            start_listener(L, State);
         _ ->
             ignore
     end;
 ensure_listener(_L, _State) -> ignore.
 
 
+start_listener(L, State) ->
+    {IP, Port} = L#repl_listener.listen_addr,
+    case riak_repl_util:valid_host_ip(IP) of
+        true ->
+            {ok, Pid} = riak_repl_listener_sup:start_listener(L),
+            monitor_item(L, Pid, State);
+        false ->
+            error_logger:error_msg("Cannot start replication listener "
+                                   "on ~s:~p - invalid address.\n",
+                                   [IP, Port])
+    end.
+       
 %% ets/monitor book-keeping
 
 monitor_item(I, Pid, #state{monitors=M}) ->
