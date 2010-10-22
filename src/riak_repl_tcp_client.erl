@@ -169,7 +169,11 @@ handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R;
 %% no-ops
 handle_info(_I, StateName, State) ->  {next_state, StateName, State}.
-terminate(_Reason, _StateName, _State) ->  ok.
+terminate(_Reason, _StateName, State) ->
+    %% Clean up the working directory on crash/exit
+    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
+    os:cmd(Cmd).
+
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 handle_event(_Event, StateName, State) -> {next_state, StateName, State}.
 handle_sync_event(_Ev, _F, StateName, State) -> {reply, ok, StateName, State}.

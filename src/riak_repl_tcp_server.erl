@@ -244,7 +244,11 @@ handle_info(fullsync, connected, State) ->
     next_state(merkle_send, do_start_fullsync(State));
 %% no-ops
 handle_info(_I, StateName, State) -> next_state(StateName, State).
-terminate(_Reason, _StateName, _State) -> ok.
+terminate(_Reason, _StateName, State) -> 
+    %% Clean up the working directory on crash/exit
+    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
+    os:cmd(Cmd).
+
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 handle_event(_E, StateName, State) -> next_state(StateName, State).
 

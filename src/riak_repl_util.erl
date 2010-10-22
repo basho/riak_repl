@@ -13,7 +13,8 @@
          binpack_bkey/1,
          binunpack_bkey/1,
          merkle_filename/3,
-         valid_host_ip/1]).
+         valid_host_ip/1,
+         format_socketaddrs/1]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -77,3 +78,10 @@ normalize_ip(IP) when is_list(IP) ->
 normalize_ip(IP) when is_tuple(IP) ->
     {ok, IP}.
 
+format_socketaddrs(Socket) ->
+    {ok, {LocalIP, LocalPort}} = inet:sockname(Socket),
+    {ok, {RemoteIP, RemotePort}} = inet:peername(Socket),
+    lists:flatten(io_lib:format("~s:~p-~s:~p", [inet_parse:ntoa(LocalIP),
+                                                LocalPort,
+                                                inet_parse:ntoa(RemoteIP),
+                                                RemotePort])).
