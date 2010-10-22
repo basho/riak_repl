@@ -26,7 +26,9 @@
           merkle_pt :: non_neg_integer(),
           merkle_fp :: term(),
           merkle_fn :: string(),
-          merkle_sz :: non_neg_integer()
+          merkle_sz :: non_neg_integer(),
+          count :: non_neg_integer(),
+          ack_freq :: pos_integer()
          }).
 
 start_link(Socket, SiteName, ConnectorPid) -> 
@@ -38,6 +40,8 @@ init([Socket, SiteName, ConnectorPid]) ->
     %          [?MODULE, Socket, SiteName, self()]),
     gen_tcp:send(Socket, SiteName),
     Props = riak_repl_fsm:common_init(Socket, SiteName),
+    AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
+                                 ?REPL_DEFAULT_ACK_FREQUENCY),
     State = #state{
       socket=Socket, 
       sitename=SiteName,
@@ -45,7 +49,9 @@ init([Socket, SiteName, ConnectorPid]) ->
       work_dir=proplists:get_value(work_dir, Props),
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
-      partitions=proplists:get_value(partitions, Props)},
+      partitions=proplists:get_value(partitions, Props),
+      count=0, 
+      ack_freq=AckFreq},
     send(Socket, {peerinfo, State#state.my_pi}),
     {ok, wait_peerinfo, State}.
 
@@ -64,8 +70,7 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo,
             {stop, normal, State}
     end;
 wait_peerinfo({diff_obj, Obj}, State) ->
-    riak_repl_util:do_repl_put(Obj),
-    {next_state, wait_peerinfo, State}.
+    {next_state, wait_peerinfo, do_repl_put(Obj, State)}.
 merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     MerkleFN = filename:join(WorkDir,integer_to_list(Partition)++".theirs"),
     {ok, FP} = file:open(MerkleFN, [write, raw, binary, delayed_write]),
@@ -76,12 +81,10 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
 merkle_exchange({partition_complete,_Partition}, State) ->
     {next_state, merkle_exchange, State};
 merkle_exchange({diff_obj, Obj}, State) ->
-    riak_repl_util:do_repl_put(Obj),
-    {next_state, merkle_exchange, State}.    
+    {next_state, merkle_exchange, do_repl_put(Obj, State)}.    
 
 merkle_recv({diff_obj, Obj}, State) ->
-    riak_repl_util:do_repl_put(Obj),
-    {next_state, merkle_recv, State};   
+    {next_state, merkle_recv, do_repl_put(Obj, State)};
 merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_sz=SZ, 
                                              merkle_fn=FN, merkle_pt=PT,
                                              work_dir=WorkDir, 
@@ -168,5 +171,11 @@ update_site_ips(TheirReplConfig, SiteName) ->
     riak_core_ring_manager:ring_trans(F, MyNewRC),
     ok.    
 
+do_repl_put(Obj, State=#state{count=C, ack_freq=F}) when (C < (F-1)) ->
+    riak_repl_util:do_repl_put(Obj),
+    State#state{count=C+1};
+do_repl_put(Obj, State=#state{socket=S, ack_freq=F}) ->
+    send(S, {q_ack, F}),
+    riak_repl_util:do_repl_put(Obj),
+    State#state{count=0}.
 
-    

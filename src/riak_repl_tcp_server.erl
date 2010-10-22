@@ -30,7 +30,10 @@
           work_dir :: string(),   %% working directory for this repl session
           partitions=[] :: list(),%% list of local partitions
           merkle_wip=[] :: list(),%% merkle work in progress
-          fullsync_ival :: undefined|disabled|non_neg_integer()
+          fullsync_ival :: undefined|disabled|non_neg_integer(),
+          q :: bounded_queue:bounded_queue(),
+          pending :: non_neg_integer(),
+          max_pending :: pos_integer()
          }
        ).
 
@@ -167,14 +170,18 @@ handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
     {stop, normal, State};
 handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
     {stop, normal, State};
-handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
-    R = ?MODULE:StateName(binary_to_term(Data), State),
+handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
+                                                         pending=Pending}) ->
+    Msg = binary_to_term(Data),
+    Reply = case Msg of
+        {q_ack, N} -> drain(StateName, State#state{pending=Pending-N});
+        _ -> ?MODULE:StateName(Msg, State)
+    end,
     inet:setopts(Socket, [{active, once}]),            
     riak_repl_stats:server_bytes_recv(size(Data)),
-    R;
-handle_info({repl, RObj}, StateName, State=#state{socket=Socket}) ->
-    send(Socket, {diff_obj, RObj}),
-    next_state(StateName, State);
+    Reply;
+handle_info({repl, RObj}, StateName, State) ->
+    drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
 handle_info(fullsync, connected, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Partitions = riak_repl_util:get_partitions(Ring),
@@ -193,6 +200,9 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins)
     end,
+    QSize = app_helper:get_env(riak_repl,queue_size,?REPL_DEFAULT_QUEUE_SIZE),
+    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
+                                    ?REPL_DEFAULT_MAX_PENDING),
     Props = riak_repl_fsm:common_init(Socket, SiteName),
     NewState = State#state{
       socket=Socket,
@@ -200,7 +210,10 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
       my_pi=proplists:get_value(my_pi, Props),
       work_dir=proplists:get_value(work_dir,Props),
       partitions=proplists:get_value(partitions, Props),
-      fullsync_ival=FullsyncIval},
+      fullsync_ival=FullsyncIval,
+      q=bounded_queue:new(QSize),
+      max_pending=MaxPending,
+      pending=0},
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
             riak_repl_leader:add_receiver_pid(self()),
@@ -208,7 +221,7 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
         redirect ->
             {stop, normal, ok, NewState}
     end;
-handle_sync_event(status,_F,StateName,State) ->
+handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
     case StateName of
         SN when SN =:= merkle_send;
                 SN =:= merkle_wait_ack ->
@@ -217,7 +230,11 @@ handle_sync_event(status,_F,StateName,State) ->
         _ ->
             Desc = StateName
     end,
-    reply({status, Desc}, StateName, State).
+    Desc1 = [Desc, 
+             {dropped_count, bounded_queue:dropped_count(Q)},
+             {queue_length, bounded_queue:length(Q)},
+             {queue_byte_size, bounded_queue:byte_size(Q)}],
+    reply({status, Desc1}, StateName, State).
 
 send(Sock,Data) when is_binary(Data) -> 
     R = gen_tcp:send(Sock,Data),
@@ -268,6 +285,22 @@ schedule_fullsync(State) ->
             erlang:send_after(Interval, self(), fullsync)
     end.
 
+enqueue(Msg, State=#state{q=Q}) ->
+    State#state{q=bounded_queue:in(Q,Msg)}.
+
+send_diffobj(Msg,State=#state{socket=Socket,pending=Pending}) ->
+    send(Socket,Msg),
+    State#state{pending=Pending+1}.
+
+drain(StateName,State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
+    case bounded_queue:out(Q) of
+        {{value, Msg}, NewQ} ->
+            drain(StateName, send_diffobj(Msg, State#state{q=NewQ}));
+        {empty, NewQ} ->
+            next_state(StateName, State#state{q=NewQ})
+    end;
+drain(StateName,State) ->
+    next_state(StateName,State).
 
 next_state(merkle_send, State) ->
     {next_state, merkle_send, State, 0};

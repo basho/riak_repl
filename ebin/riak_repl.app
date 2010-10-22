@@ -4,7 +4,8 @@
  [{description,  "riak_repl"},
   {id,           "riak_repl"},
   {vsn,          "0.13.0"},
-  {modules,      ['couch_btree',
+  {modules,      ['bounded_queue',
+                  'couch_btree',
                   'couch_file',
                   'couch_merkle',
                   'gen_leader',
@@ -47,6 +48,10 @@
                   % minutes
                   {fullsync_interval, 360},
                   {data_root, "data/riak_repl"},
-                  {merkle_bufsize, 1048576}
+                  {merkle_bufsize, 1048576},
+                  %% bytes
+                  {server_max_pending, 5},
+                  {client_ack_frequency, 5},
+                  {queue_size, 104857600}
                  ]}
 ]}.

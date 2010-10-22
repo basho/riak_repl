@@ -8,6 +8,9 @@
 -define(NEVER_SYNCED, {0, 0, 0}).
 -define(MERKLE_BUFSZ, 1048576).
 -define(MERKLE_CHUNKSZ, 65536).
+-define(REPL_DEFAULT_QUEUE_SIZE, 104857600).
+-define(REPL_DEFAULT_MAX_PENDING, 5).
+-define(REPL_DEFAULT_ACK_FREQUENCY, 5).
 -define(FSM_SOCKOPTS, [{active, once}, {packet, 4}]).
 -define(REPL_VERSION, 3).
 
