@@ -28,7 +28,7 @@
          in/2, 
          out/1, 
          byte_size/1, 
-         length/1,
+         len/1,
          dropped_count/1]).
 
 -ifdef(TEST).
@@ -56,7 +56,7 @@ in(BQ=#bq{m=Max, q=Q, d=D}, Item) when is_binary(Item) ->
     ItemSize = size(Item),
     case ItemSize > Max of
         true ->
-            BQ#bq{q=queue:from_list([Item]),s=ItemSize,d=queue:length(Q)+D};
+            BQ#bq{q=queue:from_list([Item]),s=ItemSize,d=queue:len(Q)+D};
         false ->
             make_fit(BQ, Item, ItemSize)
     end.
@@ -75,10 +75,10 @@ out(BQ=#bq{q=Q,s=Size}) ->
 -spec byte_size(bounded_queue()) -> non_neg_integer().
 byte_size(#bq{s=Size}) -> Size.
 
-%% @spec length(bounded_queue()) ->  non_neg_integer()
+%% @spec len(bounded_queue()) ->  non_neg_integer()
 %% @doc  The number of items in the queue.
--spec length(bounded_queue()) -> non_neg_integer().
-length(#bq{q=Q}) -> queue:len(Q).
+-spec len(bounded_queue()) -> non_neg_integer().
+len(#bq{q=Q}) -> queue:len(Q).
 
 %% @spec dropped_count(bounded_queue()) ->  non_neg_integer()
 %% @doc  The number of items dropped from the queue due to the size bound.
@@ -100,7 +100,7 @@ make_fit(BQ=#bq{q=Q, s=Size}, Item, ItemSize) ->
 
 initialization_test() ->
     Q = new(16),
-    0 = bounded_queue:length(Q),
+    0 = bounded_queue:len(Q),
     0 = bounded_queue:byte_size(Q),
     0 = bounded_queue:dropped_count(Q),
     Q.
@@ -109,7 +109,7 @@ in_test() ->
     Q0 = initialization_test(),
     B = <<1:128/integer>>,
     Q1 = in(Q0, B),
-    1 = bounded_queue:length(Q1),
+    1 = bounded_queue:len(Q1),
     16 = bounded_queue:byte_size(Q1),
     0 = bounded_queue:dropped_count(Q1),
     Q1.
@@ -118,7 +118,7 @@ out_test() ->
     Q0 = in_test(),
     {{value, <<1:128/integer>>}, Q1} = out(Q0),
     {empty, Q2} = out(Q1),
-    0 = bounded_queue:length(Q2),
+    0 = bounded_queue:len(Q2),
     0 = bounded_queue:byte_size(Q2),
     0 = bounded_queue:dropped_count(Q2),
     Q2.
@@ -131,8 +131,16 @@ maxsize_test() ->
     {{value, Item}, Q4} = out(Q3),
     <<2:64/integer>> = Item,
     8 = bounded_queue:byte_size(Q4),
-    1 = bounded_queue:length(Q4),
+    1 = bounded_queue:len(Q4),
     1 = bounded_queue:dropped_count(Q4),
     Q4.
-    
+
+largeitem_test() ->
+    Q0 = initialization_test(),
+    Q1 = in(Q0, <<1:256/integer>>),
+    32 = bounded_queue:byte_size(Q1),
+    1 = bounded_queue:len(Q1),
+    0 = bounded_queue:dropped_count(Q1),
+    Q1.
+
 -endif.

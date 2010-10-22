@@ -18,8 +18,12 @@
          code_change/4]).
 -export([wait_peerinfo/2,
          merkle_send/2,
+         merkle_build/2,
+         merkle_xfer/2,
          merkle_wait_ack/2,
+         merkle_diff/2,
          connected/2]).
+-type now() :: {integer(),integer(),integer()}.
 -record(state, 
         {
           socket :: repl_socket(),       %% peer socket
@@ -28,9 +32,18 @@
           my_pi :: #peer_info{},  %% peer info record 
           merkle_fp :: term(),    %% current merkle filedesc
           work_dir :: string(),   %% working directory for this repl session
-          partitions=[] :: list(),%% list of local partitions
-          merkle_wip=[] :: list(),%% merkle work in progress
+          partitions=[] :: cancelled|list(),%% list of local partitions
+          helper_pid :: undefined|pid(),            % riak_repl_merkle_helper
+                                                    % building merkle tree
+          merkle_ref :: undefined|reference(),      % reference from
+                                                    % riak_repl_merkle_helper
+          merkle_fn :: string(),                    % Filename for merkle tree
+          merkle_fd,                                % Merkle file handle
+          partition :: undefined|non_neg_integer(), % partition being syncd
+          partition_start :: undefined|now(),       % start time for partition
+          stage_start :: undefined|now(),           % start time for stage
           fullsync_ival :: undefined|disabled|non_neg_integer(),
+          diff_vclocks=[],
           q :: bounded_queue:bounded_queue(),
           pending :: non_neg_integer(),
           max_pending :: pos_integer()
@@ -84,11 +97,7 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
         true ->
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
-                    error_logger:info_msg("Full-sync starting with site ~p "
-                                          "(~p partitions)",
-                                          [State#state.sitename, 
-                                           length(State#state.partitions)]),
-                    next_state(merkle_send, State);
+                    next_state(merkle_send, do_start_fullsync(State));
                 false ->
                     schedule_fullsync(State),
                     next_state(connected, State)
@@ -100,69 +109,118 @@ wait_peerinfo(cancel_fullsync, State) ->
     {next_state, wait_peerinfo, State}.
 
 merkle_send(cancel_fullsync, State) ->
-    Remaining = length(State#state.partitions),
-    error_logger:info_msg("Full-sync with ~p cancelled; ~p partitions remaining.\n",
-                          [State#state.sitename, Remaining]),
-    schedule_fullsync(State),
-    next_state(connected, State#state { partitions = [] });
+    next_state(merkle_send, do_cancel_fullsync(State));
 merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
-    error_logger:info_msg("Full-sync with ~p complete~n", [SiteName]),
+    error_logger:info_msg("Full-sync with site ~p complete.\n", [SiteName]),
     schedule_fullsync(State),
     riak_repl_stats:server_fullsyncs(),
     next_state(connected, State);
-merkle_send(timeout, State=#state{socket=Socket, 
-                                  sitename=SiteName,
+merkle_send(timeout, State=#state{partitions=cancelled}) ->
+    error_logger:info_msg("Full-sync with site ~p cancelled.\n",
+                          [State#state.sitename]),
+    schedule_fullsync(State),
+    next_state(connected, State#state{partition_start = undefined,
+                                      stage_start = undefined});
+merkle_send(timeout, State=#state{sitename=SiteName,
                                   partitions=[Partition|T],
                                   work_dir=WorkDir}) ->
-    case riak_repl_util:make_merkle(Partition, WorkDir) of
-        {error, node_not_available} ->
-            next_state(merkle_send, State#state{partitions=T});
+    FileName = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
+    file:delete(FileName), % make sure we get a clean copy
+    error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
+                          [SiteName, Partition]),
+    Now = now(),
+    {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
+    case riak_repl_merkle_helper:make_merkle(Pid, Partition, FileName) of
+        {ok, Ref} ->
+            next_state(merkle_build, State#state{helper_pid = Pid, 
+                                                 merkle_ref = Ref,
+                                                 merkle_fn = FileName,
+                                                 partition = Partition,
+                                                 partition_start = Now,
+                                                 stage_start = Now,
+                                                 partitions = T});
         {error, Reason} ->
-            error_logger:error_msg("get_merkle error ~p for partition ~p~n", 
-                                   [Reason, Partition]),
-            next_state(merkle_send, State#state{partitions=T});
-
-        {ok, MerkleFile, MerklePid, _Root} ->
-            couch_merkle:close(MerklePid),
-            {ok, FileInfo} = file:read_file_info(MerkleFile),
-            FileSize = FileInfo#file_info.size,
-            {ok, FP} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
-            try
-                ok = send(Socket, {merkle, FileSize, Partition}),
-                error_logger:info_msg("Syncing partition ~p with site ~p~n",
-                                      [Partition, SiteName]),
-                ok = send_chunks(FP, Socket),
-                next_state(merkle_wait_ack, State#state{partitions=T})
-            catch
-                _:Err ->
-                    error_logger:info_msg("Syncing partition ~p with site ~p failed: ~p~n",
-                                          [Partition, SiteName, Err]),
-                    {stop, normal, State}
-            after
-                file:close(FP),
-                file:delete(MerkleFile)
-            end
+            error_logger:info_msg("Full-sync ~p with ~p skipped: ~p\n",
+                                  [Partition, SiteName, Reason]),
+            next_state(merkle_send, State#state{helper_pid = undefined,
+                                                merkle_ref = undefined,
+                                                partition = undefined,
+                                                partitions = T})
     end.
 
-send_chunks(FP, Socket) ->
-    case file:read(FP, ?MERKLE_CHUNKSZ) of
+merkle_build(cancel_fullsync, State) ->
+    next_state(merkle_build, do_cancel_fullsync(State));
+merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref,
+                                               partitions = cancelled}) ->
+    next_state(merkle_send, State#state{helper_pid = undefined,
+                                        merkle_ref = undefined});
+merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
+    MerkleFile = State#state.merkle_fn,
+    {ok, FileInfo} = file:read_file_info(MerkleFile),
+    FileSize = FileInfo#file_info.size,
+    {ok, MerkleFd} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
+    file:delete(MerkleFile), % will not be removed until file handle closed
+    error_logger:info_msg("Full-sync with site ~p (server); sending partition"
+                          " ~p data (built in ~p secs)\n",
+                          [State#state.sitename, State#state.partition,
+                           elapsed_secs(State#state.stage_start)]),
+    Now = now(),
+    send(State#state.socket, {merkle, FileSize, State#state.partition}),
+    next_state(merkle_xfer, State#state{helper_pid = undefined,
+                                        merkle_ref = undefined,
+                                        stage_start = Now,
+                                        merkle_fd = MerkleFd});
+merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref ->
+    error_logger:info_msg("Full-sync with site ~p (server); partition ~p skipped: ~p\n",
+                          [ State#state.sitename, State#state.partition, Reason]),
+    next_state(merkle_send, State#state{helper_pid = undefined,
+                                        merkle_ref = undefined,
+                                        partition = undefined}).
+
+merkle_xfer(cancel_fullsync, State) ->
+    next_state(merkle_xfer,  do_cancel_fullsync(State));
+merkle_xfer(timeout, State) ->
+    MerkleFd = State#state.merkle_fd,
+    case file:read(MerkleFd, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
-            ok = send(Socket, {merk_chunk, Data}),
-            send_chunks(FP, Socket);
-        eof -> ok
+            send(State#state.socket, {merk_chunk, Data}),
+            next_state(merkle_xfer, State);
+        eof ->
+            file:close(MerkleFd),
+            error_logger:info_msg("Full-sync with site ~p (server); awaiting partition"
+                                  " ~p diffs (sent in ~p secs)\n",
+                                  [State#state.sitename, State#state.partition,
+                                   elapsed_secs(State#state.stage_start)]),
+            Now = now(),
+            next_state(merkle_wait_ack, State#state{merkle_fd = undefined,
+                                                    stage_start = Now})
     end.
 
 merkle_wait_ack(cancel_fullsync, State) ->
-    Remaining = length(State#state.partitions),
-    error_logger:info_msg("Full-sync with ~p cancelled; ~p partitions remaining.\n",
-                          [State#state.sitename, Remaining]),
-    next_state(merkle_wait_ack, State#state { partitions = [] });
-merkle_wait_ack({ack, _Partition, []}, State) ->
-    next_state(merkle_send, State);
-merkle_wait_ack({ack,Partition,DiffVClocks}, State=#state{socket=Socket}) ->
-    vclock_diff(Partition, DiffVClocks, State),
-    send(Socket, {partition_complete, Partition}),
-    next_state(merkle_send, State).
+    next_state(merkle_wait_ack,  do_cancel_fullsync(State));
+merkle_wait_ack({ack,Partition,DiffVClocks}, 
+                State=#state{partition=Partition}) ->
+    next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks,
+                                        stage_start = now()}).
+
+merkle_diff(cancel_fullsync, State) ->
+    next_state(merkle_send, do_cancel_fullsync(State));
+merkle_diff(timeout, #state{partitions=cancelled}=State) ->
+    %% abandon the diff if the fullsync has been cancelled
+    send(State#state.socket, {partition_complete, State#state.partition}),
+    next_state(merkle_send, State#state{partition = undefined,
+                                        diff_vclocks = []});
+merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
+    send(State#state.socket, {partition_complete, State#state.partition}),
+    error_logger:info_msg("Full-sync with site ~p; partition ~p complete (~p secs).\n",
+                          [State#state.sitename, State#state.partition,
+                           elapsed_secs(State#state.partition_start)]),
+    next_state(merkle_send, State#state{partition = undefined,
+                                        partition_start = undefined,
+                                        stage_start = undefined});
+merkle_diff(timeout, #state{diff_vclocks=[DiffVClock|Rest]}=State) ->
+    vclock_diff(State#state.partition, [DiffVClock], State),
+    next_state(merkle_diff, State#state{diff_vclocks=Rest}).
 
 connected(_E, State) -> next_state(connected, State).
 
@@ -183,12 +241,14 @@ handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
 handle_info({repl, RObj}, StateName, State) ->
     drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
 handle_info(fullsync, connected, State) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Partitions = riak_repl_util:get_partitions(Ring),
-    next_state(merkle_send, State#state{partitions=Partitions});
+    next_state(merkle_send, do_start_fullsync(State));
 %% no-ops
 handle_info(_I, StateName, State) -> next_state(StateName, State).
-terminate(_Reason, _StateName, _State) -> ok.
+terminate(_Reason, _StateName, State) -> 
+    %% Clean up the working directory on crash/exit
+    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
+    os:cmd(Cmd).
+
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
 handle_event(_E, StateName, State) -> next_state(StateName, State).
 
@@ -209,7 +269,6 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
       work_dir=proplists:get_value(work_dir,Props),
-      partitions=proplists:get_value(partitions, Props),
       fullsync_ival=FullsyncIval,
       q=bounded_queue:new(QSize),
       max_pending=MaxPending,
@@ -224,15 +283,23 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
 handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
     case StateName of
         SN when SN =:= merkle_send;
-                SN =:= merkle_wait_ack ->
-            Left = length(State#state.partitions),
-            Desc = {fullsync, Left, left};
+                SN =:= merkle_build;
+                SN =:= merkle_xfer;
+                SN =:= merkle_wait_ack;
+                SN =:= merkle_diff ->
+            case State#state.partitions of
+                cancelled ->
+                    Desc = {fullsync, cancelled};
+                _ ->
+                    Left = length(State#state.partitions),
+                    Desc = {fullsync, Left, left}
+                end;
         _ ->
             Desc = StateName
     end,
     Desc1 = [Desc, 
              {dropped_count, bounded_queue:dropped_count(Q)},
-             {queue_length, bounded_queue:length(Q)},
+             {queue_length, bounded_queue:len(Q)},
              {queue_byte_size, bounded_queue:byte_size(Q)}],
     reply({status, Desc1}, StateName, State).
 
@@ -301,9 +368,37 @@ drain(StateName,State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
     end;
 drain(StateName,State) ->
     next_state(StateName,State).
+    
+do_start_fullsync(State) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Partitions = riak_repl_util:get_partitions(Ring),
+    Remaining = length(Partitions),
+    error_logger:info_msg("Full-sync with site ~p starting; ~p partitions.\n",
+                          [State#state.sitename, Remaining]),
+    State#state{partitions=Partitions}.
 
-next_state(merkle_send, State) ->
-    {next_state, merkle_send, State, 0};
+do_cancel_fullsync(State) when is_list(State#state.partitions) ->
+    Remaining = length(State#state.partitions),
+    error_logger:info_msg("Full-sync with site ~p cancelling; "
+                          "~p partitions remaining.\n",
+                          [State#state.sitename, Remaining]),
+    State#state{partitions = cancelled};
+do_cancel_fullsync(State) ->  % already cancelled
+    error_logger:info_msg("Full-sync with site ~p cancelling; "
+                          "cancel already requested.\n",
+                          [State#state.sitename]),
+    State.
+
+%% Work out the elapsed time in seconds, rounded to centiseconds.
+elapsed_secs(Then) ->
+    CentiSecs = timer:now_diff(now(), Then) div 10000,
+    CentiSecs / 100.0.
+%% Make sure merkle_send and merkle_diff get sent timeout messages
+%% to process their queued work
+next_state(StateName, State) when StateName =:= merkle_send;
+                                  StateName =:= merkle_xfer;
+                                  StateName =:= merkle_diff ->
+    {next_state, StateName, State, 0};
 next_state(StateName, State) ->
     {next_state, StateName, State}.
 

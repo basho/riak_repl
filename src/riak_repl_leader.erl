@@ -1,87 +1,247 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+
+%%===================================================================
+%% Replication leader - responsible for receiving objects to be replicated
+%% by the postcommit hook.  If the node is acting as the leader all
+%% objects will be sent to any connected server sockets, if not the
+%% object will be sent to the node acting as leader.
+%%
+%% riak_repl_leader_helper is used to perform the elections and work
+%% around the gen_leader limit of having a fixed list of candidates.
+%%===================================================================
+
 -module(riak_repl_leader).
--author('Andy Gross <andy@basho.com>').
--behaviour(gen_leader).
--export([start_link/3,init/1,elected/3,surrendered/3,handle_leader_call/4, 
-         handle_leader_cast/3, from_leader/3, handle_call/4,
-         handle_cast/3, handle_DOWN/3, handle_info/2, terminate/2,
-         code_change/4]).
--export([add_receiver_pid/1,
+-behaviour(gen_server).
+
+%% API
+-export([start_link/0,
+         set_candidates/2,
+         leader_node/0,
          postcommit/1,
-         leader_node/0]).
+         add_receiver_pid/1]).
+-export([set_leader/3]).
+-export([helper_pid/0]).
 
--define(LEADER_OPTS, [{vardir, VarDir}, {bcast_type, all}]).
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
 
--record(state, {
-          receivers=[] :: list(),
-          leader_node=undefined :: atom()}).
+-record(state, {helper_pid,  % pid of riak_repl_leader_helper
+                i_am_leader=false :: boolean(), % true if the leader
+                leader_node=undefined :: undefined | node(), % current leader
+                leader_mref=undefined :: undefined | reference(), % monitor
+                candidates=[] :: [node()],      % candidate nodes for leader
+                workers=[node()] :: [node()],   % workers
+                receivers=[] :: [{reference(),pid()}]}). % {Mref,Pid} pairs
+     
+%%%===================================================================
+%%% API
+%%%===================================================================
 
-start_link(Candidates, Workers, InstallHook) ->
-    %%io:format("riak_repl_leader: c=~p, w=~p, h=~p~n", [Candidates, Workers, InstallHook]),
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% Set the list of candidate nodes for replication leader
+set_candidates(Candidates, Workers) ->
+    gen_server:call(?MODULE, {set_candidates, Candidates, Workers}).
+
+%% Return the current leader node
+leader_node() ->
+    gen_server:call(?MODULE, leader_node).
+
+%% Send the object to the leader
+postcommit(Object) ->
+    gen_server:cast(?MODULE, {repl, Object}).
+
+%% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
+%% and removed from the list when it exits. 
+add_receiver_pid(Pid) when is_pid(Pid) ->
+    gen_server:call(?MODULE, {add_receiver_pid, Pid}).
+
+%%%===================================================================
+%%% Callback for riak_repl_leader_helper
+%%%===================================================================
+
+%% Called by riak_repl_leader_helper whenever a leadership election
+%% takes place.
+set_leader(LocalPid, LeaderNode, LeaderPid) ->
+    gen_server:call(LocalPid, {set_leader_node, LeaderNode, LeaderPid}).
+
+%%%===================================================================
+%%% Unit test support for riak_repl_leader_helper
+%%%===================================================================
+
+helper_pid() ->
+    gen_server:call(?MODULE, helper_pid).
+
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
+
+init([]) ->
     process_flag(trap_exit, true),
-    {ok, DataRootDir} = application:get_env(riak_repl, data_root),
-    VarDir = filename:join(DataRootDir, "leader"),
-    ok = filelib:ensure_dir(filename:join(VarDir, ".empty")),
-    [net_adm:ping(C) || C <- Candidates],
-    LOpts = [{workers, Workers}|?LEADER_OPTS],
-    gen_leader:start_link(?MODULE,Candidates,LOpts,?MODULE, [InstallHook], []).
-
-init([InstallHook]) ->
-    riak_repl_listener:close_all_connections(),
-    case InstallHook of
-        true ->
-            riak_repl:install_hook();
-        false ->
-            ignore
-    end,
     {ok, #state{}}.
 
-leader_node() ->
-    gen_leader:call(?MODULE, leader_node, infinity).
+handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
+    Mref = erlang:monitor(process, Pid),
+    UpdReceivers = orddict:store(Mref, Pid, State#state.receivers),
+    {reply, ok, State#state{receivers = UpdReceivers}};
+handle_call({add_receiver_pid, _Pid}, _From, State) ->
+    {reply, {error, not_leader}, State};
 
-postcommit(Object) ->
-    gen_leader:leader_cast(?MODULE, {repl, Object}).
+handle_call(leader_node, _From, State) ->
+    {reply, State#state.leader_node, State};
 
-add_receiver_pid(Pid) when is_pid(Pid) ->
-    gen_leader:leader_call(?MODULE, {add_receiver_pid, Pid}).
+handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
+    case node() of
+        LeaderNode ->
+            {reply, ok, become_leader(LeaderNode, State)};
+        _ ->
+            {reply, ok, new_leader(LeaderNode, LeaderPid, State)}
+    end;
 
-elected(State, _NewElection, _Node) ->
-    error_logger:info_msg("Elected as replication leader~n"),
-    riak_repl_controller:set_is_leader(true),
-    {ok, {i_am_leader, node()}, State#state{leader_node=node()}}.
-
-surrendered(State, {i_am_leader, Node}, _NewElection) ->
-    error_logger:info_msg("Replication leadership surrendered to ~p~n", [Node]),
-    riak_repl_controller:set_is_leader(false),
-    {ok, State#state{leader_node=Node}}.
-
-handle_leader_call({add_receiver_pid, Pid}, _From, 
-                   State=#state{receivers=R}, _E) ->
-    case lists:member(Pid, R) of
-        true ->
+handle_call({set_candidates, CandidatesIn, WorkersIn}, _From, State) ->
+    Candidates = lists:sort(CandidatesIn),
+    Workers = lists:sort(WorkersIn),
+    case {State#state.candidates, State#state.workers} of
+        {Candidates, Workers} -> % no change to candidate list, leave helper alone
             {reply, ok, State};
-        false ->
-            {reply, ok, State#state{receivers=[Pid|R]}}
-    end.
+        {_OldCandidates, _OldWorkers} ->
+            UpdState1 = remonitor_leader(undefined, State),
+            UpdState2 = UpdState1#state{candidates=Candidates, 
+                                        workers=Workers,
+                                        leader_node=undefined},
+            {reply, ok, restart_helper(UpdState2)}
+    end;
+handle_call(helper_pid, _From, State) ->
+    {reply, State#state.helper_pid, State}.
 
-handle_leader_cast({repl, Msg}, State, _Election) ->
-    [P ! {repl, Msg} || P <- State#state.receivers],
+handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
+    case State#state.receivers of
+        [] ->
+            riak_repl_stats:objects_dropped_no_clients();
+        Receivers ->
+            [P ! {repl, Msg} || {_Mref, P} <- Receivers],
+            riak_repl_stats:objects_sent()
+    end,
+    {noreply, State};
+handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
+    gen_server:cast({?MODULE, State#state.leader_node}, {repl, Msg}),
+    riak_repl_stats:objects_forwarded(),
+    {noreply, State};
+handle_cast({repl, _Msg}, State) ->
+    %% No leader currently defined - cannot do anything
+    riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State}.
 
-from_leader({i_am_leader, Node}, State, _NewElection) ->
-    {ok, State#state{leader_node=Node}};
-from_leader(_Command, State, _NewElection) -> {ok, State}.
+handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
+            #state{leader_mref=Mref}=State) ->
+    case State#state.helper_pid of
+        undefined ->
+            ok;
+        Pid ->
+            riak_repl_leader_helper:refresh_leader(Pid)
+    end,
+    {noreply, State#state{leader_node = undefined, leader_mref = undefined}};
+handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
+    %% May be called here with a stale leader_mref, will not matter
+    %% as it will not be in the State#state.receivers so will do nothing.
+    UpdReceivers = orddict:erase(Mref, State#state.receivers),
+    {noreply, State#state{receivers = UpdReceivers}};
+handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
+    {noreply, maybe_start_helper(State)};
+handle_info({'EXIT', Pid, Reason}, State=#state{helper_pid=Pid}) ->
+    error_logger:warning_msg(
+      "Replication leader helper exited without being asked: ~p\n",
+      [Reason]),
+    {noreply, maybe_start_helper(State)}.
 
-handle_call(leader_node, _From, State, _E) ->
-    {reply, State#state.leader_node, State}.
-handle_cast(_Message, State, _E) -> {noreply, State}.
+terminate(_Reason, _State) ->
+    ok.
 
-handle_DOWN(_Node, State, _Election) ->
+code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-handle_info(_Info, State) -> {noreply, State}.
 
-terminate(_Reason, _State) -> ok.
-code_change(_OldVsn, State, _Election, _Extra) -> {ok, State}.
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
 
-  
+become_leader(Leader, State) ->
+    case State#state.leader_node of
+        Leader ->
+            NewState = State,
+            error_logger:info_msg("Re-elected as replication leader~n");
+        _ ->
+            riak_repl_stats:elections_elected(),
+            riak_repl_stats:elections_leader_changed(),
+            riak_repl_controller:set_is_leader(true),
+            NewState1 = State#state{i_am_leader = true, leader_node = Leader},
+            NewState = remonitor_leader(undefined, NewState1),
+            error_logger:info_msg("Elected as replication leader~n")
+    end,
+    NewState.
+
+new_leader(Leader, LeaderPid, State) ->
+    This = node(),
+    case State#state.leader_node of
+        This ->
+            %% this node is surrendering leadership
+            riak_repl_controller:set_is_leader(false), % will close connections
+            riak_repl_stats:elections_leader_changed(),
+            error_logger:info_msg("Replication leadership surrendered to ~p~n", [Leader]);
+        Leader ->
+            error_logger:info_msg("Replication leader kept as ~p~n", [Leader]),
+            ok;
+        _NewLeader ->
+            riak_repl_stats:elections_leader_changed(),
+            error_logger:info_msg("Replication leader set to ~p~n", [Leader]),
+            ok
+    end,
+    %% Set up a monitor on the new leader so we can make the helper
+    %% check the elected node if it ever goes away.  This handles
+    %% the case where all candidate nodes are down and only workers
+    %% remain.
+    NewState = State#state{i_am_leader = false, leader_node = Leader},
+    remonitor_leader(LeaderPid, NewState).
+
+remonitor_leader(LeaderPid, State) ->
+    case State#state.leader_mref of
+        undefined ->
+            ok;
+        OldMref ->
+            erlang:demonitor(OldMref)
+    end,
+    case LeaderPid of
+        undefined ->
+            State#state{leader_mref = undefined};
+        _ ->
+            State#state{leader_mref = erlang:monitor(process, LeaderPid)}
+    end.
+
+%% Restart the helper 
+restart_helper(State) ->    
+    case State#state.helper_pid of
+        undefined -> % no helper running, start one if needed
+            maybe_start_helper(State);
+        {killed, _OldPid} ->
+            %% already been killed - waiting for exit
+            State;
+        OldPid ->
+            %% Tell helper to stop - cannot use gen_server:call
+            %% as may be blocked in an election.  The exit will
+            %% be caught in handle_info and the helper will be restarted.
+            exit(OldPid, kill),
+            State#state{helper_pid = {killed, OldPid}}
+    end.
+
+maybe_start_helper(State) ->
+    %% Start the helper if there are any candidates
+    case State#state.candidates of
+        [] ->
+            Pid = undefined;
+        Candidates ->
+            {ok, Pid} = riak_repl_leader_helper:start_link(self(), Candidates,
+                                                           State#state.workers)
+    end,
+    State#state{helper_pid = Pid}.

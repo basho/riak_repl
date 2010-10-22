@@ -20,6 +20,12 @@
          server_connects/0,
          server_connect_errors/0,
          server_fullsyncs/0,
+         objects_dropped_no_clients/0,
+         objects_dropped_no_leader/0,
+         objects_sent/0,
+         objects_forwarded/0,
+         elections_elected/0,
+         elections_leader_changed/0,
          add_counter/1,
          add_counter/2,
          increment_counter/1,
@@ -61,6 +67,24 @@ server_connect_errors() ->
 server_fullsyncs() ->
     increment_counter(server_fullsyncs).    
 
+objects_dropped_no_clients() ->
+    increment_counter(objects_dropped_no_clients).
+
+objects_dropped_no_leader() ->
+    increment_counter(objects_dropped_no_leader).
+
+objects_sent() ->
+    increment_counter(objects_sent).    
+
+objects_forwarded() ->
+    increment_counter(objects_forwarded).    
+
+elections_elected() ->
+    increment_counter(elections_elected).    
+
+elections_leader_changed() ->
+    increment_counter(elections_leader_changed).    
+
 init([]) -> 
     T = ets:new(?MODULE, [public, named_table, set, {write_concurrency, true}]),
     [ets:insert(T, {Stat, 0}) || Stat <- [server_bytes_sent,
@@ -71,7 +95,13 @@ init([]) ->
                                           client_bytes_sent,
                                           client_bytes_recv,
                                           client_connects,
-                                          client_connect_errors]],
+                                          client_connect_errors,
+                                          objects_dropped_no_clients,
+                                          objects_dropped_no_leader,
+                                          objects_sent,
+                                          objects_forwarded,
+                                          elections_elected,
+                                          elections_leader_changed]],
     [ets:insert(T, {Stat, []}) || Stat <- [client_rx_kbps,
                                            client_tx_kbps,
                                            server_rx_kbps,

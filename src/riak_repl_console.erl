@@ -10,8 +10,23 @@
 add_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
-    NewRing = riak_repl_ring:add_listener(Ring, Listener),
-    ok = maybe_set_ring(Ring, NewRing).
+    case lists:member(Listener#repl_listener.nodename, riak_core_ring:all_members(Ring)) of
+        true ->
+            case catch rpc:call(Listener#repl_listener.nodename,
+                                riak_repl_util, valid_host_ip, [IP]) of
+                true ->
+                    NewRing = riak_repl_ring:add_listener(Ring, Listener),
+                    ok = maybe_set_ring(Ring, NewRing);
+                false ->
+                    io:format("~p is not a valid IP address for ~p\n",
+                              [IP, Listener#repl_listener.nodename]);
+                Error ->
+                    io:format("Node ~p must be available to add listener: ~p\n",
+                              [Listener#repl_listener.nodename, Error])
+            end;
+        false ->
+            io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
+    end.
 
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
@@ -112,20 +127,31 @@ format_listener(L) ->
       format_ip(L#repl_listener.listen_addr)}].
 
 leader_stats() ->
-    try
-        LeaderNode = riak_repl_leader:leader_node(),
-        LeaderPid = rpc:call(LeaderNode, erlang, whereis, [riak_repl_leader]),
-        LeaderStats = rpc:call(LeaderNode, erlang, process_info, [LeaderPid, [message_queue_len,
-                                                                              total_heap_size,
-                                                                              heap_size,
-                                                                              stack_size,
-                                                                              reductions,
-                                                                              garbage_collection]]),
-        [{leader, LeaderNode}] ++ [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
-    catch
-        _:_ ->
-            []
-    end.
+    LeaderNode = riak_repl_leader:leader_node(),
+    LocalStats = 
+        try
+            LocalProcInfo = erlang:process_info(whereis(riak_repl_leader),
+                                                [message_queue_len, heap_size]),
+            [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
+        catch _:_ ->
+                []
+        end,
+    RemoteStats =
+        try
+            LeaderPid = rpc:call(LeaderNode, erlang, whereis, [riak_repl_leader]),
+            LeaderStats = rpc:call(LeaderNode, erlang, process_info,
+                                   [LeaderPid, [message_queue_len,
+                                                total_heap_size,
+                                                heap_size,
+                                                stack_size,
+                                                reductions,
+                                                garbage_collection]]),
+            [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
+        catch
+            _:_ ->
+                []
+        end,
+    [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats.
 
 client_stats() ->
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
