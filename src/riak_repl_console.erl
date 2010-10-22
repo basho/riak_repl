@@ -71,6 +71,7 @@ maybe_set_ring(_R1, R2) ->
         end,
     RC = riak_repl_ring:get_repl_config(R2),
     riak_core_ring_manager:ring_trans(F, RC),
+    riak_core_ring_manager:write_ringfile(),
     ok.
 
 get_ring() ->

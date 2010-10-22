@@ -169,6 +169,7 @@ update_site_ips(TheirReplConfig, SiteName) ->
                 {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
         end,
     riak_core_ring_manager:ring_trans(F, MyNewRC),
+    riak_core_ring_manager:write_ringfile(),
     ok.    
 
 do_repl_put(Obj, State=#state{count=C, ack_freq=F}) when (C < (F-1)) ->
