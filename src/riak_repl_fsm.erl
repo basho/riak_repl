@@ -7,7 +7,6 @@
          get_vclocks/2]).
 
 common_init(Socket, SiteName) ->
-    process_flag(trap_exit, true),        
     inet:setopts(Socket, ?FSM_SOCKOPTS),
     {ok, Client} = riak:local_client(),
     PI = riak_repl_util:make_peer_info(),
