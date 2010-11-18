@@ -7,7 +7,7 @@
 %%
 %%
 -module(riak_repl_merkle_helper).
--behaviour(gen_server).
+-behaviour(gen_server2).
 
 %% API
 -export([start_link/1,
@@ -44,7 +44,7 @@
 %% ===================================================================
 
 start_link(OwnerFsm) ->
-    gen_server:start_link(?MODULE, [OwnerFsm], []).
+    gen_server2:start_link(?MODULE, [OwnerFsm], []).
 
 %% Make a couch_btree of key/object hashes.
 %%
@@ -52,7 +52,7 @@ start_link(OwnerFsm) ->
 %% a gen_fsm event {Ref, merkle_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_merkle(Pid, Partition, Filename) ->
-    gen_server:call(Pid, {make_merkle, Partition, Filename}).
+    gen_server2:call(Pid, {make_merkle, Partition, Filename}).
 
 %% Make a sorted file of key/object hashes.
 %% 
@@ -60,7 +60,7 @@ make_merkle(Pid, Partition, Filename) ->
 %% a gen_fsm event {Ref, keylist_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_keylist(Pid, Partition, Filename) ->
-    gen_server:call(Pid, {make_keylist, Partition, Filename}).
+    gen_server2:call(Pid, {make_keylist, Partition, Filename}).
    
 %% Convert a couch_btree to a sorted keylist file.
 %%
@@ -68,14 +68,14 @@ make_keylist(Pid, Partition, Filename) ->
 %% Sends a gen_fsm event {Ref, converted} on success or
 %% {Ref, {error, Reason}} on failure
 merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
-    gen_server:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}).
+    gen_server2:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}).
     
 %% Computes the difference between two keylist sorted files.
 %% Returns {ok, Ref} or {error, Reason}
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
 diff(Pid, Partition, TheirFn, OurFn) ->
-    gen_server:call(Pid, {diff, Partition, TheirFn, OurFn}).
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn}).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -96,11 +96,11 @@ handle_call({make_merkle, Partition, FileName}, _From, State) ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
                              Folder = fun(K, V, MPid) -> 
-                                              gen_server:cast(MPid, {merkle, K, hash_object(V)}),
+                                              gen_server2:cast(MPid, {merkle, K, hash_object(V)}),
                                               MPid
                                       end,
                              riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
-                             gen_server:cast(Self, merkle_finish)
+                             gen_server2:cast(Self, merkle_finish)
                      end,
             FolderPid = spawn_link(Worker),
             Ref = make_ref(),
@@ -123,11 +123,11 @@ handle_call({make_keylist, Partition, Filename}, _From, State) ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
                              Folder = fun(K, V, MPid) -> 
-                                              gen_server:cast(MPid, {kl, K, hash_object(V)}),
+                                              gen_server2:cast(MPid, {kl, K, hash_object(V)}),
                                               MPid
                                       end,
                              riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
-                             gen_server:cast(Self, kl_finish)
+                             gen_server2:cast(Self, kl_finish)
                      end,
             FolderPid = spawn_link(Worker),
             Ref = make_ref(),
@@ -144,7 +144,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     %% write to files this process will crash and the caller
     %% will discover the problem.
     Ref = make_ref(),
-    gen_server:reply(From, {ok, Ref}),
+    gen_server2:reply(From, {ok, Ref}),
 
     %% Iterate over the couch file and write out to the keyfile
     {ok, InFileBtree} = open_couchdb(MerkleFn),
@@ -172,7 +172,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
     %% read files this process will crash and the caller
     %% will discover the problem.
     Ref = make_ref(),
-    gen_server:reply(From, {ok, Ref}),
+    gen_server2:reply(From, {ok, Ref}),
 
     {ok, RemoteFile} = file:open(RemoteFilename,
                                  [read, binary, raw, read_ahead]),
