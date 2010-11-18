@@ -2,11 +2,10 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 
 %%
-%% 'merkle' tree helper process.
-%% Must exit after returning an {Ref, {error, Blah}} or {Ref, merkle_built}.
+%% Fullsync helper process - offloads key/hash generation and comparion
+%% from the main TCP server/client processes.
 %%
-%%
--module(riak_repl_merkle_helper).
+-module(riak_repl_fullsync_helper).
 -behaviour(gen_server2).
 
 %% API

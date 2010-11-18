@@ -33,10 +33,10 @@
           merkle_fp :: term(),    %% current merkle filedesc
           work_dir :: string(),   %% working directory for this repl session
           partitions=[] :: cancelled|list(),%% list of local partitions
-          helper_pid :: undefined|pid(),            % riak_repl_merkle_helper
+          helper_pid :: undefined|pid(),            % riak_repl_fullsync_helper
                                                     % building merkle tree
           merkle_ref :: undefined|reference(),      % reference from
-                                                    % riak_repl_merkle_helper
+                                                    % riak_repl_fullsync_helper
           merkle_fn :: string(),                    % Filename for merkle tree
           merkle_fd,                                % Merkle file handle
           partition :: undefined|non_neg_integer(), % partition being syncd
@@ -132,8 +132,8 @@ merkle_send(timeout, State=#state{sitename=SiteName,
     error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
                           [SiteName, Partition]),
     Now = now(),
-    {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-    case riak_repl_merkle_helper:make_merkle(Pid, Partition, FileName) of
+    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+    case riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName) of
         {ok, Ref} ->
             next_state(merkle_build, State#state{helper_pid = Pid, 
                                                  merkle_ref = Ref,

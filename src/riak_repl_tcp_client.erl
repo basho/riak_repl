@@ -89,8 +89,8 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     error_logger:info_msg("Full-sync with site ~p (client); hashing "
                           "partition ~p data\n",
                           [State#state.sitename, Partition]),
-    {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-    case riak_repl_merkle_helper:make_keylist(Pid, Partition, OurFn) of
+    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+    case riak_repl_fullsync_helper:make_keylist(Pid, Partition, OurFn) of
         {ok, OurKeyListRef} ->
             OurKeyListPid = Pid,
             OurFn2 = OurFn;
@@ -132,8 +132,8 @@ merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, their_merkle_sz=SZ}) 
         0 ->
             ok = file:sync(FP),
             ok = file:close(FP),
-            {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-            {ok, Ref} = riak_repl_merkle_helper:merkle_to_keylist(Pid,
+            {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+            {ok, Ref} = riak_repl_fullsync_helper:merkle_to_keylist(Pid,
                            State#state.their_merkle_fn, State#state.their_kl_fn),
             {next_state, merkle_recv, State#state{merkle_fp = undefined,
                                                   their_kl_pid = Pid,
@@ -250,8 +250,8 @@ merkle_recv_next(#state{our_kl_ref = undefined,
             send(State#state.socket, {ack, State#state.merkle_pt, []}),
             {next_state, merkle_exchange, State};
         false ->
-            {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-            {ok, Ref} = riak_repl_merkle_helper:diff(Pid, State#state.merkle_pt,
+            {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+            {ok, Ref} = riak_repl_fullsync_helper:diff(Pid, State#state.merkle_pt,
                                                      TheirFn, OurFn),
             {next_state, merkle_diff, State#state{diff_pid=Pid,
                                                   our_kl_ref=Ref}}
