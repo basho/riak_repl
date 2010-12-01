@@ -11,6 +11,7 @@
                   'gen_leader',
                   'riak_repl', 
                   'riak_repl_app', 
+                  'riak_repl_cinfo',
                   'riak_repl_client_sup',
                   'riak_repl_connector',
                   'riak_repl_connector_sup',

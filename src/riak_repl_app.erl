@@ -14,6 +14,11 @@ start(_Type, _StartArgs) ->
     IncarnationId = erlang:phash2({make_ref(), now()}),
     application:set_env(riak_repl, incarnation, IncarnationId),
     ok = ensure_dirs(),
+
+    %% Register our cluster_info app callback modules, with catch if
+    %% the app is missing or packaging is broken.
+    catch cluster_info:register_app(riak_repl_cinfo),
+
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
