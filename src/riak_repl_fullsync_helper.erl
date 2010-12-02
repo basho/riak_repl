@@ -146,13 +146,15 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     gen_server2:reply(From, {ok, Ref}),
 
     %% Iterate over the couch file and write out to the keyfile
-    {ok, InFileBtree} = open_couchdb(MerkleFn),
+    {ok, InFileFd, InFileBtree} = open_couchdb(MerkleFn),
     {ok, OutFile} = file:open(KeyListFn, [binary, write, raw, delayed_write]),
     couch_btree:foldl(InFileBtree, fun({K, V}, _Acc) ->
                                            B = term_to_binary({K, V}),
                                            ok = file:write(OutFile, <<(size(B)):32, B/binary>>),
                                            {ok, ok}
                                    end, ok),
+    %%% FIND OUT HOW TO CLOSE THE .THEIRS FILE
+    couch_file:close(InFileFd),
     file:close(OutFile),
 
     %% Verify the file is really sorted
@@ -301,7 +303,8 @@ hash_object(RObjBin) ->
 open_couchdb(Filename) ->
     {ok, Fd} = couch_file:open(Filename),
     {ok, #db_header{local_docs_btree_state=HeaderBtree}} = couch_file:read_header(Fd),
-    couch_btree:open(HeaderBtree, Fd).
+    {ok, Btree} =  couch_btree:open(HeaderBtree, Fd),
+    {ok, Fd, Btree}.
 
 itr_new(File, Tag) ->
     erlang:put(Tag, 0),

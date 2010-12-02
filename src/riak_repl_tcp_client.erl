@@ -175,11 +175,17 @@ merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
                            "partition ~p failed: ~p. Skipping partition.\n",
                            [State#state.sitename, State#state.merkle_pt,
                             Reason]),
-    {next_state, merkle_exchange, State#state{bkey_vclocks=[]}};
+    {next_state, merkle_exchange, 
+     cleanup_partition(State#state{bkey_vclocks=[],
+                                   diff_pid = undefined,
+                                   our_kl_ref = Ref})};
 merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
     send(State#state.socket,
          {ack, State#state.merkle_pt, State#state.bkey_vclocks}),
-    {next_state, merkle_exchange, State#state{bkey_vclocks=[]}}.
+    {next_state, merkle_exchange, 
+     cleanup_partition(State#state{bkey_vclocks=[],
+                                   diff_pid = undefined,
+                                   our_kl_ref = Ref})}.
 
 handle_info({tcp_closed, _Socket}, _StateName, State) ->
     {stop, normal, State};
@@ -248,7 +254,7 @@ merkle_recv_next(#state{our_kl_ref = undefined,
             %% Something has gone wrong, just ack the server
             %% as the protocol currently has no way to report errors
             send(State#state.socket, {ack, State#state.merkle_pt, []}),
-            {next_state, merkle_exchange, State};
+            {next_state, merkle_exchange, cleanup_partition(State)};
         false ->
             {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
             {ok, Ref} = riak_repl_fullsync_helper:diff(Pid, State#state.merkle_pt,
@@ -258,3 +264,33 @@ merkle_recv_next(#state{our_kl_ref = undefined,
     end;
 merkle_recv_next(State) ->
     {next_state, merkle_recv, State}.
+
+cleanup_partition(State) ->
+    case State#state.merkle_fp of
+        undefined ->
+            ok;
+        Fp ->
+            file:close(Fp)
+    end,
+    case State#state.their_merkle_fn of
+        undefined ->
+            ok;
+        TheirMerkleFn ->
+            file:delete(TheirMerkleFn)
+    end,
+    case State#state.their_kl_fn of
+        undefined ->
+            ok;
+        TheirKlFn ->
+            file:delete(TheirKlFn)
+    end,
+    case State#state.our_kl_fn of
+        undefined ->
+            ok;
+        OurKlFn ->
+            file:delete(OurKlFn)
+    end,
+    State#state{merkle_fp = undefined,
+                their_merkle_fn = undefined,
+                their_kl_fn = undefined,
+                our_kl_fn = undefined}.
