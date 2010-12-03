@@ -153,7 +153,6 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
                                            ok = file:write(OutFile, <<(size(B)):32, B/binary>>),
                                            {ok, ok}
                                    end, ok),
-    %%% FIND OUT HOW TO CLOSE THE .THEIRS FILE
     couch_file:close(InFileFd),
     file:close(OutFile),
 
