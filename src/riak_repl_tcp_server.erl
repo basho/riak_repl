@@ -9,6 +9,8 @@
          set_socket/2,
          start_fullsync/1,
          cancel_fullsync/1,
+         pause_fullsync/1,
+         resume_fullsync/1,
          status/1, status/2]).
 -export([init/1, 
          handle_event/3,
@@ -43,6 +45,7 @@
           partition_start :: undefined|now(),       % start time for partition
           stage_start :: undefined|now(),           % start time for stage
           fullsync_ival :: undefined|disabled|non_neg_integer(),
+          paused=false :: true|false,               % true if paused
           diff_vclocks=[],
           diff_recv,                                % differences receives from client
           diff_sent,                                % differences sent
@@ -63,6 +66,12 @@ start_fullsync(Pid) ->
 cancel_fullsync(Pid) ->
     gen_fsm:send_event(Pid, cancel_fullsync).
     
+pause_fullsync(Pid) ->
+    gen_fsm:send_all_state_event(Pid, pause_fullsync).
+
+resume_fullsync(Pid) ->
+    gen_fsm:send_all_state_event(Pid, resume_fullsync).
+
 status(Pid) ->
     status(Pid, infinity).
 
@@ -124,6 +133,14 @@ merkle_send(timeout, State=#state{partitions=cancelled}) ->
     schedule_fullsync(State),
     next_state(connected, State#state{partition_start = undefined,
                                       stage_start = undefined});
+merkle_send(timeout, State=#state{paused=true}) ->
+    %% If pause requested while previous partition was fullsyncing
+    %% and there are partitions left, drop into connected state.
+    %% Check after partitions=[] clause to make sure a fullsync completes
+    %% if pause was on the last partition.
+    error_logger:info_msg("Full-sync with site ~p paused. ~p partitions pending.\n",
+                          [State#state.sitename, length(State#state.partitions)]),
+    next_state(connected, State);
 merkle_send(timeout, State=#state{sitename=SiteName,
                                   partitions=[Partition|T],
                                   work_dir=WorkDir}) ->
@@ -294,7 +311,36 @@ terminate(_Reason, _StateName, State) ->
     os:cmd(Cmd).
 
 code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
-handle_event(_E, StateName, State) -> next_state(StateName, State).
+
+handle_event(resume_fullsync, StateName, State) ->
+    NewState = State#state{paused = false},
+    case fullsync_partitions_pending(NewState) andalso StateName =:= connected of
+        true ->
+            %% If in connected stated an there are pending partitions, drop back
+            %% into merkle_send to resume the sync
+            error_logger:info_msg("Full-sync with site ~p resumed.  "
+                                  "~p partitions.\n",
+                                  [State#state.sitename,
+                                   length(State#state.partitions)]),
+            next_state(merkle_send, NewState);
+        _ ->
+            %% Otherwise there could have been a pause/resume while other work
+            %% was being completed (e.g. during merkle_build).  Stay in the same
+            %% state and the FSM will get to the right place.
+            error_logger:info_msg("Full-sync with site ~p resumed.\n",
+                                  [State#state.sitename]),
+            next_state(StateName, NewState)
+    end;
+handle_event(pause_fullsync, StateName, State) ->
+    case State#state.partition of
+        undefined ->
+            error_logger:info_msg("Full-sync with site ~p paused.\n",
+                                  [State#state.sitename]);
+        _ ->
+            error_logger:info_msg("Full-sync with site ~p pausing after next partition.\n",
+                                  [State#state.sitename])
+    end,
+    next_state(StateName, State#state{paused = true}).
 
 handle_sync_event({set_socket,Socket},_F, _StateName,
                   State=#state{sitename=SiteName}) -> 
@@ -325,26 +371,27 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
             {stop, normal, ok, NewState}
     end;
 handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
-    case StateName of
-        SN when SN =:= merkle_send;
-                SN =:= merkle_build;
-                SN =:= merkle_xfer;
-                SN =:= merkle_wait_ack;
-                SN =:= merkle_diff ->
-            case State#state.partitions of
-                cancelled ->
-                    Desc = {fullsync, cancelled};
-                _ ->
-                    Left = length(State#state.partitions),
-                    Desc = {fullsync, Left, left}
-                end;
-        _ ->
-            Desc = StateName
-    end,
-    Desc1 = [Desc, 
-             {dropped_count, bounded_queue:dropped_count(Q)},
-             {queue_length, bounded_queue:len(Q)},
-             {queue_byte_size, bounded_queue:byte_size(Q)}],
+    Desc = 
+        case State#state.partitions of
+            [] ->
+                [];
+            cancelled ->
+                [cancelled];
+            Partitions ->
+                Left = length(Partitions),
+                [{fullsync, Left, left}]
+        end ++
+        case State#state.paused of
+            true ->
+                [paused];
+            false ->
+                []
+        end ++
+        [{state, StateName}],
+    Desc1 = Desc ++ 
+        [{dropped_count, bounded_queue:dropped_count(Q)},
+         {queue_length, bounded_queue:len(Q)},
+         {queue_byte_size, bounded_queue:byte_size(Q)}],
     reply({status, Desc1}, StateName, State).
 
 maybe_send(RObj, ClientVC, Socket) ->
@@ -389,8 +436,14 @@ drain(StateName,State) ->
     next_state(StateName,State).
     
 do_start_fullsync(State) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Partitions = riak_repl_util:get_partitions(Ring),
+    case fullsync_partitions_pending(State) of
+        true ->
+            Partitions = State#state.partitions; % resuming from pause
+        false ->
+            %% last sync completed or was cancelled
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            Partitions = riak_repl_util:get_partitions(Ring)
+    end,
     Remaining = length(Partitions),
     error_logger:info_msg("Full-sync with site ~p starting; ~p partitions.\n",
                           [State#state.sitename, Remaining]),
@@ -407,6 +460,16 @@ do_cancel_fullsync(State) ->  % already cancelled
                           "cancel already requested.\n",
                           [State#state.sitename]),
     State.
+
+%% Returns true if there are any fullsync partitions pending
+fullsync_partitions_pending(State) ->
+    case State#state.partitions of
+        Ps when is_list(Ps), length(Ps) > 0 ->
+            true;
+        _ ->
+            false
+    end.
+                 
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
 elapsed_secs(Then) ->

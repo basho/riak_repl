@@ -5,7 +5,8 @@
 -include("riak_repl.hrl").
 -export([add_listener/1, del_listener/1]).
 -export([add_site/1, del_site/1]).
--export([status/1, start_fullsync/1, cancel_fullsync/1]).
+-export([status/1, start_fullsync/1, cancel_fullsync/1,
+         pause_fullsync/1, resume_fullsync/1]).
 
 add_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
@@ -59,6 +60,14 @@ start_fullsync([]) ->
 
 cancel_fullsync([]) ->
     [riak_repl_tcp_server:cancel_fullsync(Pid) || Pid <- server_pids()],
+    ok.
+
+pause_fullsync([]) ->
+    [riak_repl_tcp_server:pause_fullsync(Pid) || Pid <- server_pids()],
+    ok.
+
+resume_fullsync([]) ->
+    [riak_repl_tcp_server:resume_fullsync(Pid) || Pid <- server_pids()],
     ok.
 
 %% helper functions
