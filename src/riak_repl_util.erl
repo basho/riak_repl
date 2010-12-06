@@ -13,6 +13,7 @@
          binpack_bkey/1,
          binunpack_bkey/1,
          merkle_filename/3,
+         keylist_filename/3,
          valid_host_ip/1,
          format_socketaddrs/1]).
 
@@ -62,6 +63,15 @@ merkle_filename(WorkDir, Partition, Type) ->
             Ext=".merkle";
         theirs ->
             Ext=".theirs"
+    end,
+    filename:join(WorkDir,integer_to_list(Partition)++Ext).
+
+keylist_filename(WorkDir, Partition, Type) ->
+    case Type of
+        ours ->
+            Ext=".ours.sterm";
+        theirs ->
+            Ext=".theirs.sterm"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 

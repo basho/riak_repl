@@ -26,11 +26,15 @@
           work_dir :: string(),
           merkle_pt :: non_neg_integer(),
           merkle_fp :: term(),
-          merkle_their_fn :: string(),
-          merkle_their_sz :: non_neg_integer(),
-          merkle_our_fn :: string(),
-          merkle_ref :: undefined | reference(),
-          helper_pid :: undefined | pid(),
+          their_merkle_fn :: string(),
+          their_merkle_sz :: non_neg_integer(),
+          their_kl_fn :: string(),
+          their_kl_pid  :: undefined | pid(),
+          their_kl_ref :: undefined | pending | reference(),  % pending state until pid created
+          our_kl_fn :: string(),
+          our_kl_ref :: undefined | reference(),
+          our_kl_pid :: undefined | pid(),
+          diff_pid :: undefined | pid(),
           bkey_vclocks=[] :: [{any(),any()}],
           count :: non_neg_integer(),
           ack_freq :: pos_integer()
@@ -80,15 +84,15 @@ wait_peerinfo({diff_obj, Obj}, State) ->
 merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     %% Kick off the merkle build in parallel with receiving the remote
     %% file
-    OurFn = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
+    OurFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
     file:delete(OurFn), % make sure we get a clean copy
     error_logger:info_msg("Full-sync with site ~p (client); hashing "
                           "partition ~p data\n",
                           [State#state.sitename, Partition]),
-    {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-    case riak_repl_merkle_helper:make_merkle(Pid, Partition, OurFn) of
-        {ok, Ref} ->
-            HelperPid = Pid,
+    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+    case riak_repl_fullsync_helper:make_keylist(Pid, Partition, OurFn) of
+        {ok, OurKeyListRef} ->
+            OurKeyListPid = Pid,
             OurFn2 = OurFn;
         {error, Reason} ->
             error_logger:info_msg("Full-sync with site ~p (client); hashing "
@@ -96,19 +100,22 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
                                   [State#state.sitename, Partition, Reason]),
             %% No good way to cancel the send in the current protocol
             %% just accept the data and return empty list of diffs
-            Ref = undefined,
-            HelperPid = undefined,
+            OurKeyListRef = undefined,
+            OurKeyListPid = undefined,
             OurFn2 = undefined
     end,
-    TheirFn = riak_repl_util:merkle_filename(WorkDir, Partition, theirs),
-    {ok, FP} = file:open(TheirFn, [write, raw, binary, delayed_write]),
+    TheirMerkleFn = riak_repl_util:merkle_filename(WorkDir, Partition, theirs),
+    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
+    {ok, FP} = file:open(TheirMerkleFn, [write, raw, binary, delayed_write]),
     {next_state, merkle_recv, State#state{merkle_fp=FP, 
-                                          merkle_their_fn=TheirFn,
-                                          merkle_their_sz=Size, 
+                                          their_merkle_fn=TheirMerkleFn,
+                                          their_merkle_sz=Size, 
                                           merkle_pt=Partition,
-                                          merkle_our_fn = OurFn2,
-                                          helper_pid = HelperPid,
-                                          merkle_ref = Ref}};
+                                          their_kl_fn = TheirKeyListFn,
+                                          their_kl_ref = pending,
+                                          our_kl_fn = OurFn2,
+                                          our_kl_pid = OurKeyListPid,
+                                          our_kl_ref = OurKeyListRef}};
 
 
 merkle_exchange({partition_complete,_Partition}, State) ->
@@ -118,45 +125,67 @@ merkle_exchange({diff_obj, Obj}, State) ->
 
 merkle_recv({diff_obj, Obj}, State) ->
     {next_state, merkle_recv, do_repl_put(Obj, State)};
-merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, merkle_their_sz=SZ}) ->
+merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, their_merkle_sz=SZ}) ->
     ok = file:write(FP, Data),
     LeftBytes = SZ - size(Data),
     case LeftBytes of
         0 ->
             ok = file:sync(FP),
             ok = file:close(FP),
-            merkle_recv_next(State#state{merkle_fp = undefined});
+            {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+            {ok, Ref} = riak_repl_fullsync_helper:merkle_to_keylist(Pid,
+                           State#state.their_merkle_fn, State#state.their_kl_fn),
+            {next_state, merkle_recv, State#state{merkle_fp = undefined,
+                                                  their_kl_pid = Pid,
+                                                  their_kl_ref = Ref}};
         _ ->
-            {next_state, merkle_recv, State#state{merkle_their_sz=LeftBytes}}
+            {next_state, merkle_recv, State#state{their_merkle_sz=LeftBytes}}
     end;
-merkle_recv({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
-    merkle_recv_next(State#state{merkle_ref = undefined,
-                                 helper_pid = undefined});
-merkle_recv({Ref, {error, Reason}}, State=#state{merkle_ref = Ref}) ->
+merkle_recv({Ref, keylist_built}, State=#state{our_kl_ref = Ref}) ->
+    merkle_recv_next(State#state{our_kl_ref = undefined,
+                                 our_kl_pid = undefined});
+merkle_recv({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
     error_logger:info_msg("Full-sync with site ~p (client); hashing "
                           "partition ~p data failed: ~p\n",
                           [State#state.sitename, State#state.merkle_pt, Reason]),
-    merkle_recv_next(State#state{merkle_our_fn = undefined,
-                                 helper_pid = undefined,
-                                 merkle_ref = undefined}).
-
+    merkle_recv_next(State#state{our_kl_fn = undefined,
+                                 our_kl_pid = undefined,
+                                 our_kl_ref = undefined});
+merkle_recv({Ref, converted}, State=#state{their_kl_ref = Ref}) ->
+    file:delete(State#state.their_merkle_fn),
+    merkle_recv_next(State#state{their_merkle_fn = undefined,
+                                 their_kl_ref = undefined,
+                                 their_kl_pid = undefined});
+merkle_recv({Ref, {error, Reason}}, State=#state{their_kl_ref = Ref}) ->
+    error_logger:info_msg("Full-sync with site ~p (client); converting btree "
+                          "partition ~p data failed: ~p\n",
+                          [State#state.sitename, State#state.merkle_pt, Reason]),
+    merkle_recv_next(State#state{their_kl_fn = undefined,
+                                 their_kl_pid = undefined,
+                                 their_kl_ref = undefined}).
 
 merkle_diff({diff_obj, Obj}, State) -> % *not* from the merkle diff
     {next_state, merkle_diff, do_repl_put(Obj, State)};
-merkle_diff({Ref, {merkle_diff, BkeyVclock}}, State=#state{merkle_ref = Ref}) ->
+merkle_diff({Ref, {merkle_diff, BkeyVclock}}, State=#state{our_kl_ref = Ref}) ->
     {next_state, merkle_diff,
      State#state{bkey_vclocks = [BkeyVclock | State#state.bkey_vclocks]}};
-merkle_diff({Ref, {error, Reason}}, State=#state{merkle_ref = Ref}) ->
+merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
     send(State#state.socket, {ack, State#state.merkle_pt, []}),
     error_logger:error_msg("Full-sync with site ~p (client); vclock lookup for "
                            "partition ~p failed: ~p. Skipping partition.\n",
                            [State#state.sitename, State#state.merkle_pt,
                             Reason]),
-    {next_state, merkle_exchange, State#state{bkey_vclocks=[]}};
-merkle_diff({Ref, merkle_done}, State=#state{merkle_ref = Ref}) ->
+    {next_state, merkle_exchange, 
+     cleanup_partition(State#state{bkey_vclocks=[],
+                                   diff_pid = undefined,
+                                   our_kl_ref = Ref})};
+merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
     send(State#state.socket,
          {ack, State#state.merkle_pt, State#state.bkey_vclocks}),
-    {next_state, merkle_exchange, State#state{bkey_vclocks=[]}}.
+    {next_state, merkle_exchange, 
+     cleanup_partition(State#state{bkey_vclocks=[],
+                                   diff_pid = undefined,
+                                   our_kl_ref = Ref})}.
 
 handle_info({tcp_closed, _Socket}, _StateName, State) ->
     {stop, normal, State};
@@ -216,21 +245,52 @@ do_repl_put(Obj, State=#state{socket=S, ack_freq=F}) ->
 %% Decide when it is time to leave the merkle_recv state and whether
 %% to go ahead with the diff (in merkle_diff) or on error, just ack
 %% and return to merkle_exchange.    
-merkle_recv_next(#state{merkle_ref = undefined, merkle_fp = undefined}=State) ->
-    TheirFn = State#state.merkle_their_fn, 
-    OurFn = State#state.merkle_our_fn,
+merkle_recv_next(#state{our_kl_ref = undefined, 
+                        their_kl_ref = undefined}=State) ->
+    TheirFn = State#state.their_kl_fn, 
+    OurFn = State#state.our_kl_fn,
     case TheirFn =:= undefined orelse OurFn =:= undefined of
         true ->
             %% Something has gone wrong, just ack the server
             %% as the protocol currently has no way to report errors
             send(State#state.socket, {ack, State#state.merkle_pt, []}),
-            {next_state, merkle_exchange, State};
+            {next_state, merkle_exchange, cleanup_partition(State)};
         false ->
-            {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-            {ok, Ref} = riak_repl_merkle_helper:diff(Pid, State#state.merkle_pt,
+            {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+            {ok, Ref} = riak_repl_fullsync_helper:diff(Pid, State#state.merkle_pt,
                                                      TheirFn, OurFn),
-            {next_state, merkle_diff, State#state{helper_pid=Pid,
-                                                  merkle_ref=Ref}}
+            {next_state, merkle_diff, State#state{diff_pid=Pid,
+                                                  our_kl_ref=Ref}}
     end;
 merkle_recv_next(State) ->
     {next_state, merkle_recv, State}.
+
+cleanup_partition(State) ->
+    case State#state.merkle_fp of
+        undefined ->
+            ok;
+        Fp ->
+            file:close(Fp)
+    end,
+    case State#state.their_merkle_fn of
+        undefined ->
+            ok;
+        TheirMerkleFn ->
+            file:delete(TheirMerkleFn)
+    end,
+    case State#state.their_kl_fn of
+        undefined ->
+            ok;
+        TheirKlFn ->
+            file:delete(TheirKlFn)
+    end,
+    case State#state.our_kl_fn of
+        undefined ->
+            ok;
+        OurKlFn ->
+            file:delete(OurKlFn)
+    end,
+    State#state{merkle_fp = undefined,
+                their_merkle_fn = undefined,
+                their_kl_fn = undefined,
+                our_kl_fn = undefined}.

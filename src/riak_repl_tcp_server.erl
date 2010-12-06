@@ -33,10 +33,10 @@
           merkle_fp :: term(),    %% current merkle filedesc
           work_dir :: string(),   %% working directory for this repl session
           partitions=[] :: cancelled|list(),%% list of local partitions
-          helper_pid :: undefined|pid(),            % riak_repl_merkle_helper
+          helper_pid :: undefined|pid(),            % riak_repl_fullsync_helper
                                                     % building merkle tree
           merkle_ref :: undefined|reference(),      % reference from
-                                                    % riak_repl_merkle_helper
+                                                    % riak_repl_fullsync_helper
           merkle_fn :: string(),                    % Filename for merkle tree
           merkle_fd,                                % Merkle file handle
           partition :: undefined|non_neg_integer(), % partition being syncd
@@ -44,6 +44,9 @@
           stage_start :: undefined|now(),           % start time for stage
           fullsync_ival :: undefined|disabled|non_neg_integer(),
           diff_vclocks=[],
+          diff_recv,                                % differences receives from client
+          diff_sent,                                % differences sent
+          diff_errs,                                % errors retrieving different keys
           q :: bounded_queue:bounded_queue(),
           pending :: non_neg_integer(),
           max_pending :: pos_integer()
@@ -129,8 +132,8 @@ merkle_send(timeout, State=#state{sitename=SiteName,
     error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
                           [SiteName, Partition]),
     Now = now(),
-    {ok, Pid} = riak_repl_merkle_helper:start_link(self()),
-    case riak_repl_merkle_helper:make_merkle(Pid, Partition, FileName) of
+    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+    case riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName) of
         {ok, Ref} ->
             next_state(merkle_build, State#state{helper_pid = Pid, 
                                                  merkle_ref = Ref,
@@ -201,26 +204,67 @@ merkle_wait_ack(cancel_fullsync, State) ->
 merkle_wait_ack({ack,Partition,DiffVClocks}, 
                 State=#state{partition=Partition}) ->
     next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks,
-                                        stage_start = now()}).
+                                        stage_start = now(),
+                                        diff_sent = 0,
+                                        diff_recv = 0,
+                                        diff_errs = 0}).
 
 merkle_diff(cancel_fullsync, State) ->
-    next_state(merkle_send, do_cancel_fullsync(State));
+    next_state(merkle_diff, do_cancel_fullsync(State));
 merkle_diff(timeout, #state{partitions=cancelled}=State) ->
     %% abandon the diff if the fullsync has been cancelled
     send(State#state.socket, {partition_complete, State#state.partition}),
     next_state(merkle_send, State#state{partition = undefined,
-                                        diff_vclocks = []});
+                                        diff_vclocks = [],
+                                        diff_sent = undefined,
+                                        diff_recv = undefined,
+                                        diff_errs = undefined,
+                                        stage_start = undefined});
 merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
     send(State#state.socket, {partition_complete, State#state.partition}),
-    error_logger:info_msg("Full-sync with site ~p; partition ~p complete (~p secs).\n",
+    DiffsSent = State#state.diff_sent,
+    DiffsRecv = State#state.diff_recv,
+    case DiffsRecv of
+        N when is_integer(N), N > 0 ->
+            Pct = 100 * DiffsSent div DiffsRecv;
+        0 ->
+            Pct = 0
+    end,
+    error_logger:info_msg("Full-sync with site ~p; partition ~p complete (~p secs).\n"
+                          "Updated ~p/~p (~p%) keys. ~p errors.\n",
                           [State#state.sitename, State#state.partition,
-                           elapsed_secs(State#state.partition_start)]),
+                           elapsed_secs(State#state.partition_start),
+                           DiffsSent, DiffsRecv, Pct, State#state.diff_errs]),
     next_state(merkle_send, State#state{partition = undefined,
                                         partition_start = undefined,
+                                        diff_sent = undefined,
+                                        diff_recv = undefined,
+                                        diff_errs = undefined,
                                         stage_start = undefined});
-merkle_diff(timeout, #state{diff_vclocks=[DiffVClock|Rest]}=State) ->
-    vclock_diff(State#state.partition, [DiffVClock], State),
-    next_state(merkle_diff, State#state{diff_vclocks=Rest}).
+merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
+    Client = State#state.client,
+    Recv = State#state.diff_recv,
+    Sent = State#state.diff_sent,
+    Errs  = State#state.diff_errs,
+    case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
+        {ok, RObj} ->
+            case maybe_send(RObj, ClientVC, State#state.socket) of
+                skipped ->
+                    next_state(merkle_diff, State#state{diff_vclocks = Rest,
+                                                        diff_recv = Recv + 1});
+                _ ->
+                    next_state(merkle_diff, State#state{diff_vclocks = Rest,
+                                                        diff_recv = Recv + 1,
+                                                        diff_sent = Sent + 1})
+            end;
+        {error, notfound} ->
+            next_state(merkle_diff, State#state{diff_vclocks = Rest,
+                                                diff_recv = Recv + 1});
+        _ ->
+            next_state(merkle_diff, State#state{diff_vclocks = Rest,
+                                                diff_recv = Recv + 1,
+                                                diff_errs = Errs + 1})
+    end.
 
 connected(_E, State) -> next_state(connected, State).
 
@@ -303,46 +347,21 @@ handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
              {queue_byte_size, bounded_queue:byte_size(Q)}],
     reply({status, Desc1}, StateName, State).
 
+maybe_send(RObj, ClientVC, Socket) ->
+    ServerVC = riak_object:vclock(RObj),
+    case vclock:descends(ClientVC, ServerVC) of
+        true ->
+            skipped;
+        false ->
+            send(Socket, {diff_obj, RObj})
+    end.
+
 send(Sock,Data) when is_binary(Data) -> 
     R = gen_tcp:send(Sock,Data),
     riak_repl_stats:server_bytes_sent(size(Data)),
     R;
 send(Sock,Data) -> 
     send(Sock, term_to_binary(Data)).
-
-vclock_diff(Partition, DiffVClocks, #state{client=Client, socket=Socket}) ->
-    Keys = [K || {K, _V} <- DiffVClocks],
-    case riak_repl_fsm:get_vclocks(Partition, Keys) of
-        {error, node_not_available} ->
-            [];
-        {error, Reason} ->
-            error_logger:error_msg("~p:getting vclocks for ~p:~p~n",
-                                   [?MODULE, Partition, Reason]),
-            [];
-        OurVClocks ->
-            vclock_diff1(DiffVClocks, OurVClocks, Client, Socket, 0)
-    end.
-
-vclock_diff1([],_,_,_,Count) -> Count;
-vclock_diff1([{K,VC}|T], OurVClocks, Client, Socket, Count) ->
-    case proplists:get_value(K, OurVClocks) of
-        undefined -> vclock_diff1(T, OurVClocks, Client, Socket, Count);
-        VC -> vclock_diff1(T, OurVClocks, Client, Socket, Count);
-        OurVClock -> 
-            maybe_send(K, OurVClock, VC, Client, Socket),
-            vclock_diff1(T, OurVClocks, Client, Socket, Count+1)
-    end.
-
-maybe_send(BKey, V1, V2, Client, Socket) ->
-    case vclock:descends(V2, V1) of 
-        true -> nop; 
-        false -> ok = do_send(BKey, Client, Socket) end.
-            
-do_send({B,K}, Client, Socket) ->
-    case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
-        {ok, Obj} -> send(Socket, {diff_obj, Obj});
-        _ -> ok
-    end.
 
 schedule_fullsync(State) ->
     case State#state.fullsync_ival of
