@@ -47,12 +47,22 @@ del_site([SiteName]) ->
     ok = maybe_set_ring(Ring, NewRing).
 
 status([]) ->
+    status2(true);
+status(quiet) ->
+    status2(false).
+
+status2(Verbose) ->
     Config = get_config(),
     Stats1 = lists:sort(ets:tab2list(riak_repl_stats)),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
-    format_counter_stats(Config++Stats1++LeaderStats++ClientStats++ServerStats).
+    All = Config++Stats1++LeaderStats++ClientStats++ServerStats,
+    if Verbose ->
+            format_counter_stats(All);
+       true ->
+            All
+    end.
 
 start_fullsync([]) ->
     [riak_repl_tcp_server:start_fullsync(Pid) || Pid <- server_pids()],
