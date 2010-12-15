@@ -172,6 +172,8 @@ merkle_build(cancel_fullsync, State) ->
     next_state(merkle_build, do_cancel_fullsync(State));
 merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref,
                                                partitions = cancelled}) ->
+    %% Partition sync was cancelled before transferring any data
+    %% to the client, go back to the idle state.
     next_state(merkle_send, State#state{helper_pid = undefined,
                                         merkle_ref = undefined});
 merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
@@ -198,6 +200,9 @@ merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref 
                                         partition = undefined}).
 
 merkle_xfer(cancel_fullsync, State) ->
+    %% Even on cancel, keep sending the file.  The client reads until it has
+    %% enough bytes, so stopping sending would leave it in
+    %% riak_repl_tcp_client:merkle_recv.
     next_state(merkle_xfer,  do_cancel_fullsync(State));
 merkle_xfer(timeout, State) ->
     MerkleFd = State#state.merkle_fd,
@@ -484,7 +489,9 @@ next_state(StateName, State) when StateName =:= merkle_send;
 next_state(StateName, State) ->
     {next_state, StateName, State}.
 
-reply(Reply, merkle_send, State) ->
-    {reply, Reply, merkle_send, State, 0};
+reply(Reply, StateName, State) when StateName =:= merkle_send;
+                                    StateName =:= merkle_xfer;
+                                    StateName =:= merkle_diff ->
+    {reply, Reply, StateName, State, 0};
 reply(Reply, StateName, State) ->
     {reply, Reply, StateName, State}.
