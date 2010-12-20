@@ -150,23 +150,14 @@ merkle_send(timeout, State=#state{sitename=SiteName,
                           [SiteName, Partition]),
     Now = now(),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    case riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName) of
-        {ok, Ref} ->
-            next_state(merkle_build, State#state{helper_pid = Pid, 
-                                                 merkle_ref = Ref,
-                                                 merkle_fn = FileName,
-                                                 partition = Partition,
-                                                 partition_start = Now,
-                                                 stage_start = Now,
-                                                 partitions = T});
-        {error, Reason} ->
-            error_logger:info_msg("Full-sync ~p with ~p skipped: ~p\n",
-                                  [Partition, SiteName, Reason]),
-            next_state(merkle_send, State#state{helper_pid = undefined,
-                                                merkle_ref = undefined,
-                                                partition = undefined,
-                                                partitions = T})
-    end.
+    {ok, Ref} = riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName),
+    next_state(merkle_build, State#state{helper_pid = Pid, 
+                                         merkle_ref = Ref,
+                                         merkle_fn = FileName,
+                                         partition = Partition,
+                                         partition_start = Now,
+                                         stage_start = Now,
+                                         partitions = T}).
 
 merkle_build(cancel_fullsync, State) ->
     next_state(merkle_build, do_cancel_fullsync(State));

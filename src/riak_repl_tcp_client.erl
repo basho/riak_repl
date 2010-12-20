@@ -84,26 +84,15 @@ wait_peerinfo({diff_obj, Obj}, State) ->
 merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     %% Kick off the merkle build in parallel with receiving the remote
     %% file
-    OurFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-    file:delete(OurFn), % make sure we get a clean copy
+    OurKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
+    file:delete(OurKeyListFn), % make sure we get a clean copy
     error_logger:info_msg("Full-sync with site ~p (client); hashing "
                           "partition ~p data\n",
                           [State#state.sitename, Partition]),
-    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    case riak_repl_fullsync_helper:make_keylist(Pid, Partition, OurFn) of
-        {ok, OurKeyListRef} ->
-            OurKeyListPid = Pid,
-            OurFn2 = OurFn;
-        {error, Reason} ->
-            error_logger:info_msg("Full-sync with site ~p (client); hashing "
-                                  "partition ~p data failed: ~p\n",
-                                  [State#state.sitename, Partition, Reason]),
-            %% No good way to cancel the send in the current protocol
-            %% just accept the data and return empty list of diffs
-            OurKeyListRef = undefined,
-            OurKeyListPid = undefined,
-            OurFn2 = undefined
-    end,
+    {ok, OurKeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, OurKeyListRef} = riak_repl_fullsync_helper:make_keylist(OurKeyListPid,
+                                                                 Partition,
+                                                                 OurKeyListFn),
     TheirMerkleFn = riak_repl_util:merkle_filename(WorkDir, Partition, theirs),
     TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
     {ok, FP} = file:open(TheirMerkleFn, [write, raw, binary, delayed_write]),
@@ -113,11 +102,9 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
                                           merkle_pt=Partition,
                                           their_kl_fn = TheirKeyListFn,
                                           their_kl_ref = pending,
-                                          our_kl_fn = OurFn2,
+                                          our_kl_fn = OurKeyListFn,
                                           our_kl_pid = OurKeyListPid,
                                           our_kl_ref = OurKeyListRef}};
-
-
 merkle_exchange({partition_complete,_Partition}, State) ->
     {next_state, merkle_exchange, State};
 merkle_exchange({diff_obj, Obj}, State) ->
