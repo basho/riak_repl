@@ -5,7 +5,8 @@
 -include("riak_repl.hrl").
 -behaviour(gen_fsm).
 -export([start_link/1,
-         set_listeners/2]).
+         set_listeners/2,
+         status/1, status/2]).
 -export([async_connect/3]).
 -export([init/1, 
          handle_event/3,
@@ -64,6 +65,15 @@ start_link(SiteName) ->
 set_listeners(Pid, Addresses) ->
     gen_fsm:send_all_state_event(Pid, {set_listeners, Addresses}).
 
+%% Return a {status, [...]} tuple
+status(Pid) ->
+    status(Pid, infinity).
+
+%% Return a {status, [...] tuple with timeout
+status(Pid, Timeout) ->
+    gen_fsm:sync_send_all_state_event(Pid, status, Timeout).
+
+
 %% ====================================================================
 %% gen_fsm callbacks
 %% ====================================================================
@@ -121,9 +131,8 @@ connecting({connect_failed, _Reason}, State) ->
 wait_peerinfo({redirect, IPAddr, Port}, State) ->
     case lists:member({IPAddr, Port}, State#state.listeners) of
         false ->
-            %% TODO: Add redirect counter
             riak_repl_stats:client_redirect(),
-           error_logger:info_msg("Redirected IP ~p not in listeners ~p\n",
+            error_logger:info_msg("Redirected IP ~p not in listeners ~p\n",
                                   [{IPAddr, Port}, State#state.listeners]);
         _ ->
             ok
@@ -278,8 +287,25 @@ handle_event({set_listeners, Listeners}, StateName, State) ->
             {next_state, StateName, State#state{pending = Listeners,
                                                 listeners = Listeners}}
     end.
-handle_sync_event(Event, _From, StateName, State) -> 
-    {stop, {unexpected_event, Event}, StateName, State}.
+handle_sync_event(status, _From, StateName, State) ->
+    Desc =
+        [{site, State#state.sitename}] ++
+        case State#state.listener of
+            undefined ->
+                [{waiting_to_retry, State#state.listeners}];
+            {connected, IPAddr, Port} ->
+                [{connected, IPAddr, Port}];
+            {Pid, IPAddr, Port} ->
+                [{connecting, Pid, IPAddr, Port}]
+        end ++
+        case State#state.merkle_pt of
+            undefined ->
+                [];
+            Partition ->
+                [{fullsync, Partition}]
+        end ++
+        [{state, StateName}],
+    {reply, {status, Desc}, StateName, State}.
 
 
 %% ====================================================================
@@ -392,7 +418,8 @@ cleanup_partition(State) ->
         OurKlFn ->
             file:delete(OurKlFn)
     end,
-    State#state{merkle_fp = undefined,
+    State#state{merkle_pt = undefined,
+                merkle_fp = undefined,
                 their_merkle_fn = undefined,
                 their_kl_fn = undefined,
                 our_kl_fn = undefined}.
