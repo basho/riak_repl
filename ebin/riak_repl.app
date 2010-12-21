@@ -47,6 +47,11 @@
                   riak_rep_sup]},
   {mod,          {riak_repl_app, []}},
   {env,          [
+                  %% milliseconds to wait after checking all listeners 
+                  {client_retry_timeout, 30000}, 
+                  %% milliseconds to wait for successfull connect
+                  {client_connect_timeout, 15000},
+
                   {fullsync_on_connect, true},
                   % minutes
                   {fullsync_interval, 360},

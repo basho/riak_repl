@@ -87,13 +87,15 @@ init([SiteName]) ->
 maybe_redirect(Socket, PeerInfo) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
+        undefined -> % leader not elected yet
+            stop;
         OurNode ->
             send(Socket, {peerinfo, PeerInfo});
         OtherNode -> 
             OtherListener = listener_for_node(OtherNode),
             {Ip, Port} = OtherListener#repl_listener.listen_addr,
             send(Socket, {redirect, Ip, Port}),
-            redirect
+            stop
     end.
 
 listener_for_node(Node) ->
@@ -349,21 +351,21 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
     QSize = app_helper:get_env(riak_repl,queue_size,?REPL_DEFAULT_QUEUE_SIZE),
     MaxPending = app_helper:get_env(riak_repl,server_max_pending,
                                     ?REPL_DEFAULT_MAX_PENDING),
-    Props = riak_repl_fsm:common_init(Socket, SiteName),
+    Props = riak_repl_fsm:common_init(Socket),
     NewState = State#state{
       socket=Socket,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
-      work_dir=proplists:get_value(work_dir,Props),
       fullsync_ival=FullsyncIval,
       q=bounded_queue:new(QSize),
       max_pending=MaxPending,
       pending=0},
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
+            {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
             riak_repl_leader:add_receiver_pid(self()),
-            reply(ok, wait_peerinfo, NewState);
-        redirect ->
+            reply(ok, wait_peerinfo, NewState#state{work_dir = WorkDir});
+        stop ->
             {stop, normal, ok, NewState}
     end;
 handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
