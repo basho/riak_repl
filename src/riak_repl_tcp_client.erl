@@ -122,7 +122,8 @@ wait_peerinfo({redirect, IPAddr, Port}, State) ->
     case lists:member({IPAddr, Port}, State#state.listeners) of
         false ->
             %% TODO: Add redirect counter
-            error_logger:info_msg("Redirected IP ~p not in listeners ~p\n",
+            riak_repl_stats:client_redirect(),
+           error_logger:info_msg("Redirected IP ~p not in listeners ~p\n",
                                   [{IPAddr, Port}, State#state.listeners]);
         _ ->
             ok
@@ -265,17 +266,17 @@ handle_event({set_listeners, Listeners}, StateName, State) ->
     %% is in the list.  If not, stop so the supervisor will restart cleanly
     InListeners = case State#state.listener of
                       undefined ->
-                          true;
+                          true; % not talking to anybody yet, so ok
                       {_, IpAddr, Port} ->
                           lists:member({IpAddr, Port}, Listeners)
                   end,
     case InListeners of 
         false ->
-            {next_state, StateName, State#state{pending = Listeners,
-                                               listeners = Listeners}};
+           %% let the supervisor restart
+            {stop, normal, State};
         true ->
-            %% let the supervisor restart
-            {stop, normal, State}
+            {next_state, StateName, State#state{pending = Listeners,
+                                                listeners = Listeners}}
     end.
 handle_sync_event(Event, _From, StateName, State) -> 
     {stop, {unexpected_event, Event}, StateName, State}.
