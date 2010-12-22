@@ -370,6 +370,7 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
     end;
 handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
     Desc = 
+        [{site, State#state.sitename}] ++
         case State#state.partitions of
             [] ->
                 [];
