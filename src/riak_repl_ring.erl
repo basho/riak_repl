@@ -29,7 +29,7 @@ ensure_config(Ring) ->
             Ring
     end.
 
--spec(get_repl_config/1 :: (ring()) -> {dict()}|undefined).
+-spec(get_repl_config/1 :: (ring()) -> dict()|undefined).
 %% @doc Get the replication config dictionary from Ring.
 get_repl_config(Ring) ->
     case riak_core_ring:get_meta(?MODULE, Ring) of

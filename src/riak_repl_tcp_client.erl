@@ -35,7 +35,7 @@
           client :: tuple(),
           my_pi :: #peer_info{},
           partitions=[] :: list(),
-          work_dir :: string(),
+          work_dir :: undefined | string(),
           merkle_pt :: non_neg_integer(),
           merkle_fp :: term(),
           their_merkle_fn :: string(),
@@ -131,12 +131,12 @@ connecting({connect_failed, _Reason}, State) ->
 wait_peerinfo({redirect, IPAddr, Port}, State) ->
     case lists:member({IPAddr, Port}, State#state.listeners) of
         false ->
-            riak_repl_stats:client_redirect(),
             error_logger:info_msg("Redirected IP ~p not in listeners ~p\n",
                                   [{IPAddr, Port}, State#state.listeners]);
         _ ->
             ok
     end,
+    riak_repl_stats:client_redirect(),
     disconnect(State#state{pending = [{IPAddr, Port} | State#state.pending]});
 wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{socket = Socket,
                                                       my_pi=MyPeerInfo, 
@@ -150,7 +150,7 @@ wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{socket = Socket,
         false ->
             error_logger:error_msg("Replication (client) - invalid peer_info ~p~n",
                                    [TheirPeerInfo]),
-            {stop, normal, State}
+            cleanup_and_stop(State)
     end;
 wait_peerinfo({diff_obj, Obj}, State) ->
     {next_state, wait_peerinfo, do_repl_put(Obj, State)}.
@@ -247,10 +247,16 @@ merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
                                    diff_pid = undefined,
                                    our_kl_ref = Ref})}.
 
-handle_info({tcp_closed, _Socket}, _StateName, State) ->
-    disconnect(State#state{pending = State#state.listeners});
-handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
-    disconnect(State#state{pending = State#state.listeners});
+handle_info({tcp_closed, Socket}, _StateName, #state{socket = Socket} = State) ->
+    cleanup_and_stop(State);
+handle_info({tcp_closed, _Socket}, StateName, State) ->
+    %% Ignore old sockets - e.g. after a redirect
+    {next_state, StateName, State};
+handle_info({tcp_error, Socket, _Reason}, _StateName,  #state{socket = Socket} = State) ->
+    cleanup_and_stop(State);
+handle_info({tcp_error, _Socket, _Reason}, StateName, State) ->    
+    %% Ignore old sockets errors
+    {next_state, StateName, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket}) ->
     R = ?MODULE:StateName(binary_to_term(Data), State),
     inet:setopts(Socket, [{active, once}]),            
@@ -281,8 +287,8 @@ handle_event({set_listeners, Listeners}, StateName, State) ->
                   end,
     case InListeners of 
         false ->
-           %% let the supervisor restart
-            {stop, normal, State};
+            %% let the supervisor restart
+            cleanup_and_stop(State);
         true ->
             {next_state, StateName, State#state{pending = Listeners,
                                                 listeners = Listeners}}
@@ -331,9 +337,28 @@ async_connect(Parent, IPAddr, Port) ->
 disconnect(State) ->
     catch gen_tcp:close(State#state.socket),
     NewState = cleanup_partition(State),
+    remove_workdir(NewState),
     gen_fsm:send_event(self(), try_connect),
-    {next_state, disconnected, NewState#state{socket = undefined,
+    {next_state, disconnected, NewState#state{work_dir = undefined,
+                                              socket = undefined,
                                               listener = undefined}}.
+
+%% Cleanup and stop the server - supervisor will restart
+%% Easier than tracking the helper processes
+cleanup_and_stop(State) ->
+    NewState = cleanup_partition(State),
+    remove_workdir(NewState),
+    {stop, normal, NewState}.
+    
+%% Remove the work dir
+remove_workdir(NewState) ->
+    case NewState#state.work_dir of
+        undefined ->
+            ok;
+        WorkDir ->
+            Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
+            os:cmd(Cmd)
+    end.
 
 send(Socket, Data) when is_binary(Data) -> 
     R = gen_tcp:send(Socket, Data),

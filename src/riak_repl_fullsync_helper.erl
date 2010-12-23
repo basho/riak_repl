@@ -249,6 +249,9 @@ handle_cast({kl, K, H}, State) ->
 handle_cast(kl_finish, State) ->
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
+    gen_server:cast(self(), kl_sort),
+    {noreply, State};
+handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     error_logger:info_msg("Sorted ~s in ~.2f seconds\n",
@@ -274,6 +277,9 @@ handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid -
                                {State#state.ref, {error, {folder_died, Reason}}}),
             {stop, normal, State}
     end;
+handle_info({'EXIT', _Pid,  _Reason}, State) ->
+    %% The calling repl_tcp_server/client has gone away, so should we
+    {stop, normal, State};
 handle_info({'DOWN', _Mref, process, Pid, Exit}, State=#state{merkle_pid = Pid}) ->
     case Exit of
         normal ->
