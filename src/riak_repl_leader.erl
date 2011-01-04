@@ -112,6 +112,7 @@ handle_call({set_candidates, CandidatesIn, WorkersIn}, _From, State) ->
             UpdState2 = UpdState1#state{candidates=Candidates, 
                                         workers=Workers,
                                         leader_node=undefined},
+            riak_repl_controller:set_is_leader(false),
             {reply, ok, restart_helper(UpdState2)}
     end;
 handle_call(helper_pid, _From, State) ->
