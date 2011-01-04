@@ -29,9 +29,7 @@ validate_peer_info(T=#peer_info{}, M=#peer_info{}) ->
     TheirPartitions =:= OurPartitions.
 
 %% Build a default capability from the version information in #peerinfo{}
-capability_from_vsn(PeerInfo) ->
-    %% Replication version as a string of major.minor.micro[releasecandidateblah]
-    ReplVsnStr = PeerInfo#peer_info.repl_version,
+capability_from_vsn(#peer_info{repl_version = ReplVsnStr}) ->
     ReplVsn = parse_vsn(ReplVsnStr),
     case ReplVsn >= {0, 14, 0} of
         true ->
