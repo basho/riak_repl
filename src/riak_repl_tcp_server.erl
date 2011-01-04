@@ -50,9 +50,9 @@
           diff_recv,                                % differences receives from client
           diff_sent,                                % differences sent
           diff_errs,                                % errors retrieving different keys
-          q :: bounded_queue:bounded_queue(),
-          pending :: non_neg_integer(),
-          max_pending :: pos_integer()
+          q :: undefined | bounded_queue:bounded_queue(),
+          pending :: undefined | non_neg_integer(),
+          max_pending :: undefined | pos_integer()
          }
        ).
 
@@ -115,12 +115,26 @@ wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
               State=#state{my_pi=MyPeerInfo}) when is_list(Capability) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
+            %% Set up bounded queue if remote supports it
+            case proplists:get_bool(bounded_queue, Capability) of
+                true ->
+                    QSize = app_helper:get_env(riak_repl,queue_size,
+                                               ?REPL_DEFAULT_QUEUE_SIZE),
+                    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
+                                                    ?REPL_DEFAULT_MAX_PENDING),
+                    State1 = State#state{q = bounded_queue:new(QSize),
+                                         max_pending = MaxPending,
+                                         pending = 0};
+                false ->
+                    State1 = State
+            end,
+                
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
-                    next_state(merkle_send, do_start_fullsync(State));
+                    next_state(merkle_send, do_start_fullsync(State1));
                 false ->
-                    schedule_fullsync(State),
-                    next_state(connected, State)
+                    schedule_fullsync(State1),
+                    next_state(connected, State1)
             end;
         false ->
             {stop, normal, State}
@@ -303,6 +317,9 @@ handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
     inet:setopts(Socket, [{active, once}]),            
     riak_repl_stats:server_bytes_recv(size(Data)),
     Reply;
+handle_info({repl, RObj}, StateName, State) when State#state.q == undefined ->
+    send(State#state.socket, term_to_binary({diff_obj, RObj})),
+    next_state(StateName, State);
 handle_info({repl, RObj}, StateName, State) ->
     drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
 handle_info(fullsync, connected, State) ->
@@ -354,18 +371,12 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins)
     end,
-    QSize = app_helper:get_env(riak_repl,queue_size,?REPL_DEFAULT_QUEUE_SIZE),
-    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
-                                    ?REPL_DEFAULT_MAX_PENDING),
     Props = riak_repl_fsm:common_init(Socket),
     NewState = State#state{
       socket=Socket,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
-      fullsync_ival=FullsyncIval,
-      q=bounded_queue:new(QSize),
-      max_pending=MaxPending,
-      pending=0},
+      fullsync_ival=FullsyncIval},
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
             {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
@@ -393,10 +404,15 @@ handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
                 []
         end ++
         [{state, StateName}],
-    Desc1 = Desc ++ 
-        [{dropped_count, bounded_queue:dropped_count(Q)},
-         {queue_length, bounded_queue:len(Q)},
-         {queue_byte_size, bounded_queue:byte_size(Q)}],
+    case Q of
+        undefined ->
+            Desc1 = Desc ++ [{bounded_queue, disabled}];
+        _ ->
+            Desc1 = Desc ++ 
+                [{dropped_count, bounded_queue:dropped_count(Q)},
+                 {queue_length, bounded_queue:len(Q)},
+                 {queue_byte_size, bounded_queue:byte_size(Q)}]
+    end,
     reply({status, Desc1}, StateName, State).
 
 maybe_send(RObj, ClientVC, Socket) ->
