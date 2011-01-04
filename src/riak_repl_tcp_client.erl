@@ -138,9 +138,15 @@ wait_peerinfo({redirect, IPAddr, Port}, State) ->
     end,
     riak_repl_stats:client_redirect(),
     disconnect(State#state{pending = [{IPAddr, Port} | State#state.pending]});
-wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{socket = Socket,
-                                                      my_pi=MyPeerInfo, 
-                                                      sitename=SiteName}) ->
+wait_peerinfo({peerinfo, TheirPeerInfo}, State) ->
+    %% Forward compatibility with post-0.14.0 - will allow protocol negotiation
+    %% rather than setting capabilities based on version
+    Capability = riak_repl_util:capability_from_vsn(TheirPeerInfo),
+    wait_peerinfo({peerinfo, TheirPeerInfo, Capability}, State);
+wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
+              State=#state{socket = Socket,
+                           my_pi=MyPeerInfo,
+                           sitename=SiteName}) when is_list(Capability) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
             {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
