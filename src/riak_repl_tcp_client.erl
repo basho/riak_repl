@@ -109,17 +109,14 @@ disconnected(try_connect, State) ->
 connecting({connected, Socket}, State) ->
     gen_tcp:send(Socket, State#state.sitename),
     Props = riak_repl_fsm:common_init(Socket),
-    AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
-                                 ?REPL_DEFAULT_ACK_FREQUENCY),
+
     {_ConnPid, IPAddr, Port} = State#state.listener,
     NewState = State#state{
               listener = {connected, IPAddr, Port},
               socket=Socket, 
               client=proplists:get_value(client, Props),
               my_pi=proplists:get_value(my_pi, Props),
-              partitions=proplists:get_value(partitions, Props),
-              count=0, 
-              ack_freq=AckFreq},
+              partitions=proplists:get_value(partitions, Props)},
     send(Socket, {peerinfo, NewState#state.my_pi}),
     riak_repl_stats:client_connects(),
     {next_state, wait_peerinfo, NewState};
@@ -138,15 +135,32 @@ wait_peerinfo({redirect, IPAddr, Port}, State) ->
     end,
     riak_repl_stats:client_redirect(),
     disconnect(State#state{pending = [{IPAddr, Port} | State#state.pending]});
-wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{socket = Socket,
-                                                      my_pi=MyPeerInfo, 
-                                                      sitename=SiteName}) ->
+wait_peerinfo({peerinfo, TheirPeerInfo}, State) ->
+    %% Forward compatibility with post-0.14.0 - will allow protocol negotiation
+    %% rather than setting capabilities based on version
+    Capability = riak_repl_util:capability_from_vsn(TheirPeerInfo),
+    wait_peerinfo({peerinfo, TheirPeerInfo, Capability}, State);
+wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
+              State=#state{socket = Socket,
+                           my_pi=MyPeerInfo,
+                           sitename=SiteName}) when is_list(Capability) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
+             %% Set up for bounded queue if remote server supports it
+            case proplists:get_bool(bounded_queue, Capability) of
+                true ->
+                    AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
+                                                 ?REPL_DEFAULT_ACK_FREQUENCY),
+                    State1 = State#state{count=0, 
+                                         ack_freq=AckFreq};
+                false ->
+                    State1 = State
+            end,
+           
             {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
             update_site_ips(riak_repl_ring:get_repl_config(
                               TheirPeerInfo#peer_info.ring), SiteName),
-            {next_state, merkle_exchange, State#state{work_dir = WorkDir}};
+            {next_state, merkle_exchange, State1#state{work_dir = WorkDir}};
         false ->
             error_logger:error_msg("Replication (client) - invalid peer_info ~p~n",
                                    [TheirPeerInfo]),
@@ -387,6 +401,9 @@ update_site_ips(TheirReplConfig, SiteName) ->
     riak_core_ring_manager:write_ringfile(),
     ok.    
 
+do_repl_put(Obj, State=#state{ack_freq = undefined}) -> % q_ack not supported
+    riak_repl_util:do_repl_put(Obj),
+    State;
 do_repl_put(Obj, State=#state{count=C, ack_freq=F}) when (C < (F-1)) ->
     riak_repl_util:do_repl_put(Obj),
     State#state{count=C+1};
