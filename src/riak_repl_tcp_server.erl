@@ -50,9 +50,9 @@
           diff_recv,                                % differences receives from client
           diff_sent,                                % differences sent
           diff_errs,                                % errors retrieving different keys
-          q :: bounded_queue:bounded_queue(),
-          pending :: non_neg_integer(),
-          max_pending :: pos_integer()
+          q :: undefined | bounded_queue:bounded_queue(),
+          pending :: undefined | non_neg_integer(),
+          max_pending :: undefined | pos_integer()
          }
        ).
 
@@ -87,13 +87,15 @@ init([SiteName]) ->
 maybe_redirect(Socket, PeerInfo) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
+        undefined -> % leader not elected yet
+            stop;
         OurNode ->
             send(Socket, {peerinfo, PeerInfo});
         OtherNode -> 
             OtherListener = listener_for_node(OtherNode),
             {Ip, Port} = OtherListener#repl_listener.listen_addr,
             send(Socket, {redirect, Ip, Port}),
-            redirect
+            stop
     end.
 
 listener_for_node(Node) ->
@@ -104,15 +106,35 @@ listener_for_node(Node) ->
                           L#repl_listener.nodename =:= Node],
     hd(NodeListeners).
 
-wait_peerinfo({peerinfo, TheirPeerInfo}, State=#state{my_pi=MyPeerInfo}) ->
+wait_peerinfo({peerinfo, TheirPeerInfo}, State) ->
+    %% Forward compatibility with post-0.14.0 - will allow protocol negotiation
+    %% rather than setting capabilities based on version
+    Capability = riak_repl_util:capability_from_vsn(TheirPeerInfo),
+    wait_peerinfo({peerinfo, TheirPeerInfo, Capability}, State);
+wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
+              State=#state{my_pi=MyPeerInfo}) when is_list(Capability) ->
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
+            %% Set up bounded queue if remote supports it
+            case proplists:get_bool(bounded_queue, Capability) of
+                true ->
+                    QSize = app_helper:get_env(riak_repl,queue_size,
+                                               ?REPL_DEFAULT_QUEUE_SIZE),
+                    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
+                                                    ?REPL_DEFAULT_MAX_PENDING),
+                    State1 = State#state{q = bounded_queue:new(QSize),
+                                         max_pending = MaxPending,
+                                         pending = 0};
+                false ->
+                    State1 = State
+            end,
+                
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
-                    next_state(merkle_send, do_start_fullsync(State));
+                    next_state(merkle_send, do_start_fullsync(State1));
                 false ->
-                    schedule_fullsync(State),
-                    next_state(connected, State)
+                    schedule_fullsync(State1),
+                    next_state(connected, State1)
             end;
         false ->
             {stop, normal, State}
@@ -150,28 +172,21 @@ merkle_send(timeout, State=#state{sitename=SiteName,
                           [SiteName, Partition]),
     Now = now(),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    case riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName) of
-        {ok, Ref} ->
-            next_state(merkle_build, State#state{helper_pid = Pid, 
-                                                 merkle_ref = Ref,
-                                                 merkle_fn = FileName,
-                                                 partition = Partition,
-                                                 partition_start = Now,
-                                                 stage_start = Now,
-                                                 partitions = T});
-        {error, Reason} ->
-            error_logger:info_msg("Full-sync ~p with ~p skipped: ~p\n",
-                                  [Partition, SiteName, Reason]),
-            next_state(merkle_send, State#state{helper_pid = undefined,
-                                                merkle_ref = undefined,
-                                                partition = undefined,
-                                                partitions = T})
-    end.
+    {ok, Ref} = riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName),
+    next_state(merkle_build, State#state{helper_pid = Pid, 
+                                         merkle_ref = Ref,
+                                         merkle_fn = FileName,
+                                         partition = Partition,
+                                         partition_start = Now,
+                                         stage_start = Now,
+                                         partitions = T}).
 
 merkle_build(cancel_fullsync, State) ->
     next_state(merkle_build, do_cancel_fullsync(State));
 merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref,
                                                partitions = cancelled}) ->
+    %% Partition sync was cancelled before transferring any data
+    %% to the client, go back to the idle state.
     next_state(merkle_send, State#state{helper_pid = undefined,
                                         merkle_ref = undefined});
 merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
@@ -198,6 +213,9 @@ merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref 
                                         partition = undefined}).
 
 merkle_xfer(cancel_fullsync, State) ->
+    %% Even on cancel, keep sending the file.  The client reads until it has
+    %% enough bytes, so stopping sending would leave it in
+    %% riak_repl_tcp_client:merkle_recv.
     next_state(merkle_xfer,  do_cancel_fullsync(State));
 merkle_xfer(timeout, State) ->
     MerkleFd = State#state.merkle_fd,
@@ -299,6 +317,9 @@ handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
     inet:setopts(Socket, [{active, once}]),            
     riak_repl_stats:server_bytes_recv(size(Data)),
     Reply;
+handle_info({repl, RObj}, StateName, State) when State#state.q == undefined ->
+    send(State#state.socket, term_to_binary({diff_obj, RObj})),
+    next_state(StateName, State);
 handle_info({repl, RObj}, StateName, State) ->
     drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
 handle_info(fullsync, connected, State) ->
@@ -350,28 +371,23 @@ handle_sync_event({set_socket,Socket},_F, _StateName,
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins)
     end,
-    QSize = app_helper:get_env(riak_repl,queue_size,?REPL_DEFAULT_QUEUE_SIZE),
-    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
-                                    ?REPL_DEFAULT_MAX_PENDING),
-    Props = riak_repl_fsm:common_init(Socket, SiteName),
+    Props = riak_repl_fsm:common_init(Socket),
     NewState = State#state{
       socket=Socket,
       client=proplists:get_value(client, Props),
       my_pi=proplists:get_value(my_pi, Props),
-      work_dir=proplists:get_value(work_dir,Props),
-      fullsync_ival=FullsyncIval,
-      q=bounded_queue:new(QSize),
-      max_pending=MaxPending,
-      pending=0},
+      fullsync_ival=FullsyncIval},
     case maybe_redirect(Socket,  NewState#state.my_pi) of
         ok ->
+            {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
             riak_repl_leader:add_receiver_pid(self()),
-            reply(ok, wait_peerinfo, NewState);
-        redirect ->
+            reply(ok, wait_peerinfo, NewState#state{work_dir = WorkDir});
+        stop ->
             {stop, normal, ok, NewState}
     end;
 handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
     Desc = 
+        [{site, State#state.sitename}] ++
         case State#state.partitions of
             [] ->
                 [];
@@ -388,10 +404,15 @@ handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
                 []
         end ++
         [{state, StateName}],
-    Desc1 = Desc ++ 
-        [{dropped_count, bounded_queue:dropped_count(Q)},
-         {queue_length, bounded_queue:len(Q)},
-         {queue_byte_size, bounded_queue:byte_size(Q)}],
+    case Q of
+        undefined ->
+            Desc1 = Desc ++ [{bounded_queue, disabled}];
+        _ ->
+            Desc1 = Desc ++ 
+                [{dropped_count, bounded_queue:dropped_count(Q)},
+                 {queue_length, bounded_queue:len(Q)},
+                 {queue_byte_size, bounded_queue:byte_size(Q)}]
+    end,
     reply({status, Desc1}, StateName, State).
 
 maybe_send(RObj, ClientVC, Socket) ->
@@ -484,7 +505,9 @@ next_state(StateName, State) when StateName =:= merkle_send;
 next_state(StateName, State) ->
     {next_state, StateName, State}.
 
-reply(Reply, merkle_send, State) ->
-    {reply, Reply, merkle_send, State, 0};
+reply(Reply, StateName, State) when StateName =:= merkle_send;
+                                    StateName =:= merkle_xfer;
+                                    StateName =:= merkle_diff ->
+    {reply, Reply, StateName, State, 0};
 reply(Reply, StateName, State) ->
     {reply, Reply, StateName, State}.

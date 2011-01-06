@@ -64,7 +64,7 @@ handle_call({set_leader, true}, _From, State=#state{is_leader=false}) ->
     {reply, ok, NewState};
 handle_call({set_leader, false}, _From, State=#state{is_leader=true}) ->
     NewState = State#state{is_leader=false},
-    handle_lost_leader(NewState),
+    handle_lost_leader(),
     {reply, ok, NewState}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
@@ -84,11 +84,11 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 handle_became_leader(State=#state{repl_config=RC}) ->
     handle_sites(RC, State).
 
-handle_lost_leader(State=#state{monitors=T}) ->
-    Sites = [I || {repl_monitor, {repl_site, _}, I, _, _} <- ets:tab2list(T)],
-    stop_sites(Sites, State),
+handle_lost_leader() ->
+    RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+    [riak_repl_client_sup:stop_site(SiteName) || 
+        {SiteName, _Pid} <- RunningSiteProcs],
     riak_repl_listener:close_all_connections().
-
 
 handle_down(_MonRef, _Pid, _State) -> ok.
 
@@ -98,41 +98,33 @@ handle_set_repl_config(NewReplConfig,State) ->
 
 %% site management
 
-handle_sites(NewReplConfig,State=#state{repl_config=_OldReplConfig}) ->
-    NewSites = dict:fetch(sites, NewReplConfig),
-    ensure_sites(NewSites, State),
-    stop_sites([], State).
-
-stop_sites([], _State) -> ok;
-stop_sites([Site|Rest], State) ->
-    stop_site(Site, State),
-    stop_sites(Rest, State).
-
-stop_site(S, State) -> 
-    case get_monitor(S, State) of
-        not_found ->
-            ignore;
-        #repl_monitor{pid=Pid, monref=MonRef} ->
-            erlang:demonitor(MonRef),
-            riak_repl_connector:stop(Pid),
-            del_monitor(S, State)
-    end.
-
-ensure_sites([], _State) -> ok;
-ensure_sites([Site|Rest], State) ->
-    ensure_site(Site, State),
-    ensure_sites(Rest, State).
-
-ensure_site(S, State) when State#state.is_leader =:= true ->
-    case get_monitor(S, State) of
-        not_found ->
-            {ok, Pid} = riak_repl_connector_sup:start_connector(S),
-            monitor_item(S, Pid, State);
+handle_sites(NewReplConfig, State) ->
+    case State#state.is_leader of
+        true ->
+            RequiredSites = dict:fetch(sites, NewReplConfig);
         _ ->
-            ignore
-    end;
-ensure_site(_S, _State) -> ignore.
+            RequiredSites = []
+    end,
+    RequiredSiteNames = ordsets:from_list([S#repl_site.name || S <- RequiredSites]),
+    OriginalSiteProcs = riak_repl_client_sup:running_site_procs(),
+    OriginalSiteNames = ordsets:from_list([SN || {SN, _Pid} <- OriginalSiteProcs]),
+
+    %% Stop any sites that are no longer configured
+    ToStop = ordsets:subtract(OriginalSiteNames, RequiredSiteNames),
+    [riak_repl_client_sup:stop_site(SN) || SN <- ToStop],
+
+    %% Start any required sites that are not running
+    ToStart = ordsets:subtract(RequiredSiteNames, OriginalSiteNames),
+    [{ok, _Pid} = riak_repl_client_sup:start_site(SN) || SN <- ToStart],
     
+    %% Update the config of all required sites
+    RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+    [begin
+         {_, Pid} = lists:keyfind(S#repl_site.name, 1, RunningSiteProcs),
+         error_logger:info_msg("Setting listeners for ~p pid ~p: ~p\n", [S#repl_site.name, Pid, RunningSiteProcs]),
+         riak_repl_tcp_client:set_listeners(Pid, S#repl_site.addrs)
+     end || S <- RequiredSites].
+
 
 %% listener management
 

@@ -84,7 +84,13 @@ init([OwnerFsm]) ->
     process_flag(trap_exit, true),
     {ok, #state{owner_fsm = OwnerFsm}}.
 
-handle_call({make_merkle, Partition, FileName}, _From, State) ->
+handle_call({make_merkle, Partition, FileName}, From, State) ->
+    %% Return to caller immediately - under heavy load exceeded the 5s
+    %% default timeout.  Do not wish to block the repl server for
+    %% that long in any case.
+    Ref = make_ref(),
+    gen_server:reply(From, {ok, Ref}),
+
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
@@ -102,16 +108,19 @@ handle_call({make_merkle, Partition, FileName}, _From, State) ->
                              gen_server2:cast(Self, merkle_finish)
                      end,
             FolderPid = spawn_link(Worker),
-            Ref = make_ref(),
             NewState = State#state{ref = Ref, 
                                    merkle_pid = DMerkle, 
                                    folder_pid = FolderPid,
                                    filename = FileName},
-            {reply, {ok, Ref}, NewState};
+            {noreply, NewState};
         false ->
-            {stop, normal, {error, node_not_available}, State}
+            gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
+            {stop, normal, State}
     end;
-handle_call({make_keylist, Partition, Filename}, _From, State) ->
+handle_call({make_keylist, Partition, Filename}, From, State) ->
+    Ref = make_ref(),
+    gen_server:reply(From, {ok, Ref}),
+
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
@@ -129,14 +138,14 @@ handle_call({make_keylist, Partition, Filename}, _From, State) ->
                              gen_server2:cast(Self, kl_finish)
                      end,
             FolderPid = spawn_link(Worker),
-            Ref = make_ref(),
             NewState = State#state{ref = Ref, 
                                    folder_pid = FolderPid,
                                    filename = Filename,
                                    kl_fp = FP},
             {reply, {ok, Ref}, NewState};
         false ->
-            {stop, normal, {error, node_not_available}, State}
+            gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
+            {stop, normal, State}
     end;
 handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
@@ -240,6 +249,9 @@ handle_cast({kl, K, H}, State) ->
 handle_cast(kl_finish, State) ->
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
+    gen_server:cast(self(), kl_sort),
+    {noreply, State};
+handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     error_logger:info_msg("Sorted ~s in ~.2f seconds\n",
@@ -265,6 +277,9 @@ handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid -
                                {State#state.ref, {error, {folder_died, Reason}}}),
             {stop, normal, State}
     end;
+handle_info({'EXIT', _Pid,  _Reason}, State) ->
+    %% The calling repl_tcp_server/client has gone away, so should we
+    {stop, normal, State};
 handle_info({'DOWN', _Mref, process, Pid, Exit}, State=#state{merkle_pid = Pid}) ->
     case Exit of
         normal ->

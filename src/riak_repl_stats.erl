@@ -15,6 +15,7 @@
          client_bytes_recv/1,
          client_connects/0,
          client_connect_errors/0,
+         client_redirect/0,
          server_bytes_sent/1,
          server_bytes_recv/1,
          server_connects/0,
@@ -51,6 +52,9 @@ client_connects() ->
     
 client_connect_errors() ->
     increment_counter(client_connect_errors).
+
+client_redirect() ->
+    increment_counter(client_redirect).
 
 server_bytes_sent(Bytes) ->
     increment_counter(server_bytes_sent, Bytes).
@@ -96,6 +100,7 @@ init([]) ->
                                           client_bytes_recv,
                                           client_connects,
                                           client_connect_errors,
+                                          client_redirect,
                                           objects_dropped_no_clients,
                                           objects_dropped_no_leader,
                                           objects_sent,

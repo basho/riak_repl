@@ -3,9 +3,9 @@
 -module(riak_repl_util).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
--include_lin("riak_core/include/riak_core_vnode.hrl").
 -export([make_peer_info/0,
          validate_peer_info/2,
+         capability_from_vsn/1,
          get_partitions/1,
          do_repl_put/1,
          site_root_dir/1,
@@ -27,6 +27,16 @@ validate_peer_info(T=#peer_info{}, M=#peer_info{}) ->
     TheirPartitions = get_partitions(T#peer_info.ring),
     OurPartitions = get_partitions(M#peer_info.ring),
     TheirPartitions =:= OurPartitions.
+
+%% Build a default capability from the version information in #peerinfo{}
+capability_from_vsn(#peer_info{repl_version = ReplVsnStr}) ->
+    ReplVsn = parse_vsn(ReplVsnStr),
+    case ReplVsn >= {0, 14, 0} of
+        true ->
+            [bounded_queue];
+        false ->
+            []
+    end.
 
 get_partitions(_Ring) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -95,3 +105,14 @@ format_socketaddrs(Socket) ->
                                                 LocalPort,
                                                 inet_parse:ntoa(RemoteIP),
                                                 RemotePort])).
+
+%% Parse the version into major, minor, micro digits, ignoring any release
+%% candidate suffix
+parse_vsn(Str) ->
+    Toks = string:tokens(Str, "."),
+    Vsns = [begin
+                {I,_R} = string:to_integer(T),
+                I
+            end || T <- Toks],
+    list_to_tuple(Vsns).
+

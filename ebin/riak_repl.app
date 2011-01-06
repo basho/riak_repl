@@ -3,7 +3,7 @@
  riak_repl,
  [{description,  "riak_repl"},
   {id,           "riak_repl"},
-  {vsn,          "0.13.0"},
+  {vsn,          "0.14.0"},
   {modules,      ['bounded_queue',
                   'couch_btree',
                   'couch_file',
@@ -13,8 +13,6 @@
                   'riak_repl_app', 
                   'riak_repl_cinfo',
                   'riak_repl_client_sup',
-                  'riak_repl_connector',
-                  'riak_repl_connector_sup',
                   'riak_repl_console',
                   'riak_repl_controller',
                   'riak_repl_fsm', 
@@ -47,6 +45,11 @@
                   riak_rep_sup]},
   {mod,          {riak_repl_app, []}},
   {env,          [
+                  %% milliseconds to wait after checking all listeners 
+                  {client_retry_timeout, 30000}, 
+                  %% milliseconds to wait for successfull connect
+                  {client_connect_timeout, 15000},
+
                   {fullsync_on_connect, true},
                   % minutes
                   {fullsync_interval, 360},

@@ -27,6 +27,12 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+%% Server name has changed for 0.14.0 now that the gen_leader
+%% portion has been broken out into riak_repl_leader_helper. 
+%% During rolling upgrades old gen_leader messages from pre-0.14
+%% would be sent to the gen_server
+-define(SERVER, riak_repl_leader_gs). 
+
 -record(state, {helper_pid,  % pid of riak_repl_leader_helper
                 i_am_leader=false :: boolean(), % true if the leader
                 leader_node=undefined :: undefined | node(), % current leader
@@ -40,24 +46,24 @@
 %%%===================================================================
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% Set the list of candidate nodes for replication leader
 set_candidates(Candidates, Workers) ->
-    gen_server:call(?MODULE, {set_candidates, Candidates, Workers}).
+    gen_server:call(?SERVER, {set_candidates, Candidates, Workers}).
 
 %% Return the current leader node
 leader_node() ->
-    gen_server:call(?MODULE, leader_node).
+    gen_server:call(?SERVER, leader_node).
 
 %% Send the object to the leader
 postcommit(Object) ->
-    gen_server:cast(?MODULE, {repl, Object}).
+    gen_server:cast(?SERVER, {repl, Object}).
 
 %% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
 %% and removed from the list when it exits. 
 add_receiver_pid(Pid) when is_pid(Pid) ->
-    gen_server:call(?MODULE, {add_receiver_pid, Pid}).
+    gen_server:call(?SERVER, {add_receiver_pid, Pid}).
 
 %%%===================================================================
 %%% Callback for riak_repl_leader_helper
@@ -73,7 +79,7 @@ set_leader(LocalPid, LeaderNode, LeaderPid) ->
 %%%===================================================================
 
 helper_pid() ->
-    gen_server:call(?MODULE, helper_pid).
+    gen_server:call(?SERVER, helper_pid).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -112,6 +118,7 @@ handle_call({set_candidates, CandidatesIn, WorkersIn}, _From, State) ->
             UpdState2 = UpdState1#state{candidates=Candidates, 
                                         workers=Workers,
                                         leader_node=undefined},
+            riak_repl_controller:set_is_leader(false),
             {reply, ok, restart_helper(UpdState2)}
     end;
 handle_call(helper_pid, _From, State) ->
@@ -127,7 +134,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     end,
     {noreply, State};
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
-    gen_server:cast({?MODULE, State#state.leader_node}, {repl, Msg}),
+    gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
     riak_repl_stats:objects_forwarded(),
     {noreply, State};
 handle_cast({repl, _Msg}, State) ->
