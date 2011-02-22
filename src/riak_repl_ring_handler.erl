@@ -91,7 +91,6 @@ update_ring(ReplConfig) ->
                 {new_ring, riak_repl_ring:set_repl_config(Ring, ReplConfig)}
         end,
     {ok, FinalRing} = riak_core_ring_manager:ring_trans(F, undefined),
-    riak_core_ring_manager:write_ringfile(),
     FinalRing.
 
 

@@ -397,8 +397,7 @@ update_site_ips(TheirReplConfig, SiteName) ->
     F = fun(InRing, ReplConfig) ->
                 {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
         end,
-    riak_core_ring_manager:ring_trans(F, MyNewRC),
-    riak_core_ring_manager:write_ringfile(),
+    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
     ok.    
 
 do_repl_put(Obj, State=#state{ack_freq = undefined}) -> % q_ack not supported
