@@ -20,9 +20,9 @@
 
 -record(repl_monitor, {
           id     :: tuple(),
-          item   :: mon_item(),
-          monref :: reference(),
-          pid    :: pid()}).
+          item   :: mon_item() | '_',   %% '_' to avoid Dialyzer warning
+          monref :: reference() | '_',
+          pid    :: pid() | '_'}).
 
 %% api
           
