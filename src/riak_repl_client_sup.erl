@@ -26,5 +26,5 @@ stop(_S) -> ok.
 
 %% @private
 init([]) ->
-    {ok, {{one_for_one, 10, 10}, []}}.
+    {ok, {{one_for_one, 100, 10}, []}}.
 
