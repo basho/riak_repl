@@ -20,7 +20,7 @@
 
 -module(repl_leader_eqc).
 
-%-ifdef(EQC).
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -80,7 +80,8 @@ prop_main() ->
                     %% Generate statistics
                     aggregate(zip(state_names(H),command_names(Cmds)), Res == ok)
                  after
-                    stop_slave_driver()
+                    stop_slave_driver(),
+                    net_kernel:stop()
                 end
             end).
 
@@ -542,4 +543,4 @@ register_receiver() ->
     Res = riak_repl_leader:add_receiver_pid(Pid),
     {Res, Pid}.
 
-%-endif. % EQC
+-endif. % EQC
