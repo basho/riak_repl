@@ -16,7 +16,10 @@
 -record(state, {
           repl_config :: dict(),
           monitors    :: ets_tid(),
-          is_leader   :: boolean()}).
+          is_leader   :: boolean(),
+          listener_mon  :: reference(),
+          client_mon  :: reference()
+      }).
 
 -record(repl_monitor, {
           id     :: tuple(),
@@ -49,7 +52,10 @@ init([]) ->
     erlang:send_after(0, self(), set_init_config),
     {ok, #state{repl_config=ReplConfig,
                 monitors=Monitors,
-                is_leader=false}}.
+                is_leader=false,
+                listener_mon=monitor(process, riak_repl_listener_sup),
+                client_mon=monitor(process, riak_repl_client_sup)
+            }}.
 
 handle_call({set_repl_config, ReplConfig}, _From, State) ->
     handle_set_repl_config(ReplConfig, State),
@@ -74,7 +80,31 @@ handle_info(set_init_config, State=#state{repl_config=RC}) ->
     {noreply, State};
 handle_info({'DOWN', MonRef, process, Pid, _}, State) ->
     handle_down(MonRef, Pid, State),
-    {noreply, State}.
+    {noreply, State};
+handle_info({poll, client}, #state{repl_config=RC} = State) ->
+    case whereis(riak_repl_client_sup) of
+        undefined ->
+            erlang:send_after(5000, self(), {poll, client}),
+            {noreply, State};
+        _ ->
+            error_logger:info_msg("riak_repl_client supervisor is back;"
+                " re-adding sites~n", []),
+            handle_sites(RC, State),
+            {noreply, State#state{client_mon = monitor(process, riak_repl_client_sup)}}
+    end;
+handle_info({poll, listener}, #state{repl_config=RC} = State) ->
+    case whereis(riak_repl_listener_sup) of
+        undefined ->
+            erlang:send_after(5000, self(), {poll, listener}),
+            {noreply, State};
+        _ ->
+            error_logger:info_msg("riak_repl_listener supervisor is back;"
+                " re-adding listeners~n", []),
+            Listeners = dict:fetch(listeners, RC),
+            stop_listeners(Listeners, State),
+            ensure_listeners(Listeners, State),
+            {noreply, State#state{listener_mon = monitor(process, riak_repl_listener_sup)}}
+    end.
 
 terminate(_Reason, _State) -> ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -90,6 +120,12 @@ handle_lost_leader() ->
         {SiteName, _Pid} <- RunningSiteProcs],
     riak_repl_listener:close_all_connections().
 
+handle_down(MonRef, _, #state{client_mon=MonRef} = _State) ->
+    error_logger:error_msg("riak_repl_client supervisor is down~n", []),
+    erlang:send_after(100, self(), {poll, client});
+handle_down(MonRef, _, #state{listener_mon=MonRef} = _State) ->
+    error_logger:error_msg("riak_repl_listener supervisor is down~n", []),
+    erlang:send_after(100, self(), {poll, listener});
 handle_down(_MonRef, _Pid, _State) -> ok.
 
 handle_set_repl_config(NewReplConfig,State) ->
