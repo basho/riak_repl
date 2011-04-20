@@ -23,8 +23,9 @@ init([IPAddr, PortNum]) ->
 sock_opts() -> [binary, 
                 {keepalive, true},
                 {nodelay, true},
-                {packet, 4}, 
-                {reuseaddr, true}, 
+                {packet, 4},
+                {reuseaddr, true},
+                {active, false},
                 {backlog, 64}].
 
 new_connection(Socket, State) ->
