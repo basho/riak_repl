@@ -18,7 +18,8 @@
          handle_info/3, 
          terminate/3, 
          code_change/4]).
--export([wait_peerinfo/2,
+-export([send_peerinfo/2,
+         wait_peerinfo/2,
          merkle_send/2,
          merkle_build/2,
          merkle_xfer/2,
@@ -52,7 +53,8 @@
           diff_errs,                                % errors retrieving different keys
           q :: undefined | bounded_queue:bounded_queue(),
           pending :: undefined | non_neg_integer(),
-          max_pending :: undefined | pos_integer()
+          max_pending :: undefined | pos_integer(),
+          election_timeout :: reference()          % reference for the election timeout
          }
        ).
 
@@ -82,21 +84,7 @@ set_socket(Pid, Socket) ->
     gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
     
 init([SiteName]) ->
-    {ok, wait_peerinfo, #state{sitename=SiteName}}.
-
-maybe_redirect(Socket, PeerInfo) ->
-    OurNode = node(),
-    case riak_repl_leader:leader_node()  of
-        undefined -> % leader not elected yet
-            stop;
-        OurNode ->
-            send(Socket, {peerinfo, PeerInfo});
-        OtherNode -> 
-            OtherListener = listener_for_node(OtherNode),
-            {Ip, Port} = OtherListener#repl_listener.listen_addr,
-            send(Socket, {redirect, Ip, Port}),
-            stop
-    end.
+    {ok, send_peerinfo, #state{sitename=SiteName}}.
 
 listener_for_node(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -105,6 +93,31 @@ listener_for_node(Node) ->
     NodeListeners = [L || L <- Listeners,
                           L#repl_listener.nodename =:= Node],
     hd(NodeListeners).
+
+send_peerinfo(timeout, #state{socket=Socket, sitename=SiteName} = State) ->
+    OurNode = node(),
+    case riak_repl_leader:leader_node()  of
+        undefined -> % leader not elected yet
+            %% check again in 5 seconds
+            erlang:send_after(5000, self(), timeout),
+            {next_state, send_peerinfo, State};
+        OurNode ->
+            erlang:cancel_timer(State#state.election_timeout),
+            %% this switches the socket into active mode
+            Props = riak_repl_fsm:common_init(Socket),
+            PI = proplists:get_value(my_pi, Props),
+            send(Socket, {peerinfo, PI}),
+            {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
+            riak_repl_leader:add_receiver_pid(self()),
+            {next_state, wait_peerinfo, State#state{work_dir = WorkDir,
+                    client=proplists:get_value(client, Props),
+                    my_pi=PI}};
+        OtherNode -> 
+            OtherListener = listener_for_node(OtherNode),
+            {Ip, Port} = OtherListener#repl_listener.listen_addr,
+            send(Socket, {redirect, Ip, Port}),
+            {stop, normal, State}
+    end.
 
 wait_peerinfo({peerinfo, TheirPeerInfo}, State) ->
     %% Forward compatibility with post-0.14.0 - will allow protocol negotiation
@@ -324,6 +337,12 @@ handle_info({repl, RObj}, StateName, State) ->
     drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
 handle_info(fullsync, connected, State) ->
     next_state(merkle_send, do_start_fullsync(State));
+handle_info(election_timeout, _StateName, State) ->
+    error_logger:error_msg("Timed out waiting for a leader to be elected~n",
+        []),
+    {stop, normal, State};
+handle_info(timeout, StateName, State) ->
+    ?MODULE:StateName(timeout, State);
 %% no-ops
 handle_info(_I, StateName, State) -> next_state(StateName, State).
 terminate(_Reason, _StateName, State) -> 
@@ -363,28 +382,18 @@ handle_event(pause_fullsync, StateName, State) ->
     end,
     next_state(StateName, State#state{paused = true}).
 
-handle_sync_event({set_socket,Socket},_F, _StateName,
-                  State=#state{sitename=SiteName}) -> 
+handle_sync_event({set_socket,Socket},_F, _StateName, State) -> 
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
             FullsyncIval = disabled;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins)
     end,
-    Props = riak_repl_fsm:common_init(Socket),
     NewState = State#state{
       socket=Socket,
-      client=proplists:get_value(client, Props),
-      my_pi=proplists:get_value(my_pi, Props),
-      fullsync_ival=FullsyncIval},
-    case maybe_redirect(Socket,  NewState#state.my_pi) of
-        ok ->
-            {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
-            riak_repl_leader:add_receiver_pid(self()),
-            reply(ok, wait_peerinfo, NewState#state{work_dir = WorkDir});
-        stop ->
-            {stop, normal, ok, NewState}
-    end;
+      fullsync_ival=FullsyncIval,
+      election_timeout=erlang:send_after(60000, self(), election_timeout)},
+    reply(ok, send_peerinfo, NewState);
 handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
     Desc = 
         [{site, State#state.sitename}] ++
@@ -507,7 +516,8 @@ next_state(StateName, State) ->
 
 reply(Reply, StateName, State) when StateName =:= merkle_send;
                                     StateName =:= merkle_xfer;
-                                    StateName =:= merkle_diff ->
+                                    StateName =:= merkle_diff;
+                                    StateName =:= send_peerinfo ->
     {reply, Reply, StateName, State, 0};
 reply(Reply, StateName, State) ->
     {reply, Reply, StateName, State}.
