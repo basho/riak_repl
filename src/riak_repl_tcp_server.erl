@@ -54,7 +54,7 @@
           q :: undefined | bounded_queue:bounded_queue(),
           pending :: undefined | non_neg_integer(),
           max_pending :: undefined | pos_integer(),
-          election_timeout :: reference()          % reference for the election timeout
+          election_timeout :: undefined | reference() % reference for the election timeout
          }
        ).
 
@@ -111,6 +111,7 @@ send_peerinfo(timeout, #state{socket=Socket, sitename=SiteName} = State) ->
             riak_repl_leader:add_receiver_pid(self()),
             {next_state, wait_peerinfo, State#state{work_dir = WorkDir,
                     client=proplists:get_value(client, Props),
+                    election_timeout=undefined,
                     my_pi=PI}};
         OtherNode -> 
             OtherListener = listener_for_node(OtherNode),
@@ -337,7 +338,8 @@ handle_info({repl, RObj}, StateName, State) ->
     drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
 handle_info(fullsync, connected, State) ->
     next_state(merkle_send, do_start_fullsync(State));
-handle_info(election_timeout, _StateName, State) ->
+handle_info(election_timeout, _StateName,
+            #state{election_timeout=Timer} =State) when is_reference(Timer) ->
     error_logger:error_msg("Timed out waiting for a leader to be elected~n",
         []),
     {stop, normal, State};
