@@ -99,7 +99,7 @@ send_peerinfo(timeout, #state{socket=Socket, sitename=SiteName} = State) ->
     case riak_repl_leader:leader_node()  of
         undefined -> % leader not elected yet
             %% check again in 5 seconds
-            erlang:send_after(5000, self(), timeout),
+            erlang:send_after(5000, self(), election_wait),
             {next_state, send_peerinfo, State};
         OurNode ->
             erlang:cancel_timer(State#state.election_timeout),
@@ -341,8 +341,8 @@ handle_info(election_timeout, _StateName, State) ->
     error_logger:error_msg("Timed out waiting for a leader to be elected~n",
         []),
     {stop, normal, State};
-handle_info(timeout, StateName, State) ->
-    ?MODULE:StateName(timeout, State);
+handle_info(election_wait, send_peerinfo, State) ->
+    ?MODULE:send_peerinfo(timeout, State);
 %% no-ops
 handle_info(_I, StateName, State) -> next_state(StateName, State).
 terminate(_Reason, _StateName, State) -> 
