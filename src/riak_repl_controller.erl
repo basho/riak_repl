@@ -53,8 +53,8 @@ init([]) ->
     {ok, #state{repl_config=ReplConfig,
                 monitors=Monitors,
                 is_leader=false,
-                listener_mon=monitor(process, riak_repl_listener_sup),
-                client_mon=monitor(process, riak_repl_client_sup)
+                listener_mon=erlang:monitor(process, riak_repl_listener_sup),
+                client_mon=erlang:monitor(process, riak_repl_client_sup)
             }}.
 
 handle_call({set_repl_config, ReplConfig}, _From, State) ->
@@ -90,7 +90,7 @@ handle_info({poll, client}, #state{repl_config=RC} = State) ->
             error_logger:info_msg("riak_repl_client supervisor is back;"
                 " re-adding sites~n", []),
             handle_sites(RC, State),
-            {noreply, State#state{client_mon = monitor(process, riak_repl_client_sup)}}
+            {noreply, State#state{client_mon = erlang:monitor(process, riak_repl_client_sup)}}
     end;
 handle_info({poll, listener}, #state{repl_config=RC} = State) ->
     case whereis(riak_repl_listener_sup) of
@@ -103,7 +103,7 @@ handle_info({poll, listener}, #state{repl_config=RC} = State) ->
             Listeners = dict:fetch(listeners, RC),
             stop_listeners(Listeners, State),
             ensure_listeners(Listeners, State),
-            {noreply, State#state{listener_mon = monitor(process, riak_repl_listener_sup)}}
+            {noreply, State#state{listener_mon = erlang:monitor(process, riak_repl_listener_sup)}}
     end.
 
 terminate(_Reason, _State) -> ok.
