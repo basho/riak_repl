@@ -3,7 +3,7 @@
  riak_repl,
  [{description,  "riak_repl"},
   {id,           "riak_repl"},
-  {vsn,          "0.14.0"},
+  {vsn,          "0.14.2"},
   {modules,      ['bounded_queue',
                   'couch_btree',
                   'couch_file',
