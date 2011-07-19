@@ -87,8 +87,8 @@ handle_info({poll, client}, #state{repl_config=RC} = State) ->
             erlang:send_after(5000, self(), {poll, client}),
             {noreply, State};
         _ ->
-            error_logger:info_msg("riak_repl_client supervisor is back;"
-                " re-adding sites~n", []),
+            lager:notice("riak_repl_client supervisor is back; re-adding "
+                " sites."),
             handle_sites(RC, State),
             {noreply, State#state{client_mon = erlang:monitor(process, riak_repl_client_sup)}}
     end;
@@ -98,8 +98,8 @@ handle_info({poll, listener}, #state{repl_config=RC} = State) ->
             erlang:send_after(5000, self(), {poll, listener}),
             {noreply, State};
         _ ->
-            error_logger:info_msg("riak_repl_listener supervisor is back;"
-                " re-adding listeners~n", []),
+            lager:notice("riak_repl_listener supervisor is back; re-adding "
+                "listeners."),
             Listeners = dict:fetch(listeners, RC),
             stop_listeners(Listeners, State),
             ensure_listeners(Listeners, State),
@@ -121,10 +121,10 @@ handle_lost_leader() ->
     riak_repl_listener:close_all_connections().
 
 handle_down(MonRef, _, #state{client_mon=MonRef} = _State) ->
-    error_logger:error_msg("riak_repl_client supervisor is down~n", []),
+    lager:error("riak_repl_client supervisor is down."),
     erlang:send_after(100, self(), {poll, client});
 handle_down(MonRef, _, #state{listener_mon=MonRef} = _State) ->
-    error_logger:error_msg("riak_repl_listener supervisor is down~n", []),
+    lager:error("riak_repl_listener supervisor is down."),
     erlang:send_after(100, self(), {poll, listener});
 handle_down(_MonRef, _Pid, _State) -> ok.
 
@@ -157,7 +157,8 @@ handle_sites(NewReplConfig, State) ->
     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
     [begin
          {_, Pid} = lists:keyfind(S#repl_site.name, 1, RunningSiteProcs),
-         error_logger:info_msg("Setting listeners for ~p pid ~p: ~p\n", [S#repl_site.name, Pid, RunningSiteProcs]),
+         lager:info("Setting listeners for ~p pid ~p: ~p",
+             [S#repl_site.name, Pid, RunningSiteProcs]),
          riak_repl_tcp_client:set_listeners(Pid, S#repl_site.addrs)
      end || S <- RequiredSites].
 
@@ -186,7 +187,7 @@ stop_listener(L, State) ->
         #repl_monitor{pid=Pid, monref=MonRef} ->
             erlang:demonitor(MonRef),
             {IP, Port} = L#repl_listener.listen_addr,
-            error_logger:info_msg("Stopping replication listener on ~s:~p~n",
+            lager:info("Stopping replication listener on ~s:~p",
                                   [IP, Port]),
             riak_repl_listener:stop(Pid),
             del_monitor(L, State)
@@ -214,8 +215,8 @@ start_listener(L, State) ->
             {ok, Pid} = riak_repl_listener_sup:start_listener(L),
             monitor_item(L, Pid, State);
         false ->
-            error_logger:error_msg("Cannot start replication listener "
-                                   "on ~s:~p - invalid address.\n",
+            lager:error("Cannot start replication listener "
+                                   "on ~s:~p - invalid address.",
                                    [IP, Port])
     end.
        
