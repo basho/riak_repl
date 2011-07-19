@@ -159,12 +159,12 @@ wait_peerinfo(cancel_fullsync, State) ->
 merkle_send(cancel_fullsync, State) ->
     next_state(merkle_send, do_cancel_fullsync(State));
 merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
-    error_logger:info_msg("Full-sync with site ~p complete.\n", [SiteName]),
+    lager:info("Full-sync with site ~p completed.", [SiteName]),
     schedule_fullsync(State),
     riak_repl_stats:server_fullsyncs(),
     next_state(connected, State);
 merkle_send(timeout, State=#state{partitions=cancelled}) ->
-    error_logger:info_msg("Full-sync with site ~p cancelled.\n",
+    lager:info("Full-sync with site ~p cancelled.",
                           [State#state.sitename]),
     schedule_fullsync(State),
     next_state(connected, State#state{partition_start = undefined,
@@ -174,7 +174,7 @@ merkle_send(timeout, State=#state{paused=true}) ->
     %% and there are partitions left, drop into connected state.
     %% Check after partitions=[] clause to make sure a fullsync completes
     %% if pause was on the last partition.
-    error_logger:info_msg("Full-sync with site ~p paused. ~p partitions pending.\n",
+    lager:info("Full-sync with site ~p paused. ~p partitions pending.",
                           [State#state.sitename, length(State#state.partitions)]),
     next_state(connected, State);
 merkle_send(timeout, State=#state{sitename=SiteName,
@@ -182,7 +182,7 @@ merkle_send(timeout, State=#state{sitename=SiteName,
                                   work_dir=WorkDir}) ->
     FileName = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
     file:delete(FileName), % make sure we get a clean copy
-    error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
+    lager:info("Full-sync with site ~p; hashing partition ~p data",
                           [SiteName, Partition]),
     Now = now(),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
@@ -209,8 +209,8 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
     FileSize = FileInfo#file_info.size,
     {ok, MerkleFd} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
     file:delete(MerkleFile), % will not be removed until file handle closed
-    error_logger:info_msg("Full-sync with site ~p (server); sending partition"
-                          " ~p data (built in ~p secs)\n",
+    lager:info("Full-sync with site ~p; sending partition"
+                          " ~p data (built in ~p secs)",
                           [State#state.sitename, State#state.partition,
                            elapsed_secs(State#state.stage_start)]),
     Now = now(),
@@ -220,7 +220,7 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
                                         stage_start = Now,
                                         merkle_fd = MerkleFd});
 merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref ->
-    error_logger:info_msg("Full-sync with site ~p (server); partition ~p skipped: ~p\n",
+    lager:info("Full-sync with site ~p; partition ~p skipped: ~p",
                           [ State#state.sitename, State#state.partition, Reason]),
     next_state(merkle_send, State#state{helper_pid = undefined,
                                         merkle_ref = undefined,
@@ -239,8 +239,8 @@ merkle_xfer(timeout, State) ->
             next_state(merkle_xfer, State);
         eof ->
             file:close(MerkleFd),
-            error_logger:info_msg("Full-sync with site ~p (server); awaiting partition"
-                                  " ~p diffs (sent in ~p secs)\n",
+            lager:info("Full-sync with site ~p; awaiting partition"
+                                  " ~p diffs (sent in ~p secs)",
                                   [State#state.sitename, State#state.partition,
                                    elapsed_secs(State#state.stage_start)]),
             Now = now(),
@@ -279,8 +279,8 @@ merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
         0 ->
             Pct = 0
     end,
-    error_logger:info_msg("Full-sync with site ~p; partition ~p complete (~p secs).\n"
-                          "Updated ~p/~p (~p%) keys. ~p errors.\n",
+    lager:info("Full-sync with site ~p; partition ~p complete (~p secs).\n"
+                          "Updated ~p/~p (~p%) keys. ~p errors.",
                           [State#state.sitename, State#state.partition,
                            elapsed_secs(State#state.partition_start),
                            DiffsSent, DiffsRecv, Pct, State#state.diff_errs]),
@@ -340,8 +340,7 @@ handle_info(fullsync, connected, State) ->
     next_state(merkle_send, do_start_fullsync(State));
 handle_info(election_timeout, _StateName,
             #state{election_timeout=Timer} =State) when is_reference(Timer) ->
-    error_logger:error_msg("Timed out waiting for a leader to be elected~n",
-        []),
+    lager:error("Timed out waiting for a leader to be elected"),
     {stop, normal, State};
 handle_info(election_wait, send_peerinfo, State) ->
     ?MODULE:send_peerinfo(timeout, State);
@@ -360,8 +359,8 @@ handle_event(resume_fullsync, StateName, State) ->
         true ->
             %% If in connected stated an there are pending partitions, drop back
             %% into merkle_send to resume the sync
-            error_logger:info_msg("Full-sync with site ~p resumed.  "
-                                  "~p partitions.\n",
+            lager:info("Full-sync with site ~p resumed.  "
+                                  "~p partitions.",
                                   [State#state.sitename,
                                    length(State#state.partitions)]),
             next_state(merkle_send, NewState);
@@ -369,17 +368,17 @@ handle_event(resume_fullsync, StateName, State) ->
             %% Otherwise there could have been a pause/resume while other work
             %% was being completed (e.g. during merkle_build).  Stay in the same
             %% state and the FSM will get to the right place.
-            error_logger:info_msg("Full-sync with site ~p resumed.\n",
+            lager:info("Full-sync with site ~p resumed.",
                                   [State#state.sitename]),
             next_state(StateName, NewState)
     end;
 handle_event(pause_fullsync, StateName, State) ->
     case State#state.partition of
         undefined ->
-            error_logger:info_msg("Full-sync with site ~p paused.\n",
+            lager:info("Full-sync with site ~p paused.",
                                   [State#state.sitename]);
         _ ->
-            error_logger:info_msg("Full-sync with site ~p pausing after next partition.\n",
+            lager:info("Full-sync with site ~p pausing after next partition.",
                                   [State#state.sitename])
     end,
     next_state(StateName, State#state{paused = true}).
@@ -477,19 +476,18 @@ do_start_fullsync(State) ->
             Partitions = riak_repl_util:get_partitions(Ring)
     end,
     Remaining = length(Partitions),
-    error_logger:info_msg("Full-sync with site ~p starting; ~p partitions.\n",
+    lager:info("Full-sync with site ~p starting; ~p partitions.",
                           [State#state.sitename, Remaining]),
     State#state{partitions=Partitions}.
 
 do_cancel_fullsync(State) when is_list(State#state.partitions) ->
     Remaining = length(State#state.partitions),
-    error_logger:info_msg("Full-sync with site ~p cancelling; "
-                          "~p partitions remaining.\n",
+    lager:info("Full-sync with site ~p cancelled; "
+                          "~p partitions remaining.",
                           [State#state.sitename, Remaining]),
     State#state{partitions = cancelled};
 do_cancel_fullsync(State) ->  % already cancelled
-    error_logger:info_msg("Full-sync with site ~p cancelling; "
-                          "cancel already requested.\n",
+    lager:info("Full-sync with site ~p already cancelled.",
                           [State#state.sitename]),
     State.
 

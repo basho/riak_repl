@@ -8,7 +8,7 @@
 -export([start_listener/1]).
 
 start_listener(#repl_listener{listen_addr={IP, Port}}) ->
-    error_logger:info_msg("Starting replication listener on ~s:~p~n",
+    lager:info("Starting replication listener on ~s:~p",
                           [IP, Port]),
     supervisor:start_child(?MODULE, [IP, Port]).
 

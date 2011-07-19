@@ -159,8 +159,8 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
 handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
     {noreply, maybe_start_helper(State)};
 handle_info({'EXIT', Pid, Reason}, State=#state{helper_pid=Pid}) ->
-    error_logger:warning_msg(
-      "Replication leader helper exited without being asked: ~p\n",
+    lager:warning(
+      "Replication leader helper exited unexpectedly: ~p",
       [Reason]),
     {noreply, maybe_start_helper(State)}.
 
@@ -178,14 +178,14 @@ become_leader(Leader, State) ->
     case State#state.leader_node of
         Leader ->
             NewState = State,
-            error_logger:info_msg("Re-elected as replication leader~n");
+            lager:info("Re-elected as replication leader");
         _ ->
             riak_repl_stats:elections_elected(),
             riak_repl_stats:elections_leader_changed(),
             riak_repl_controller:set_is_leader(true),
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
-            error_logger:info_msg("Elected as replication leader~n")
+            lager:info("Elected as replication leader")
     end,
     NewState.
 
@@ -196,13 +196,13 @@ new_leader(Leader, LeaderPid, State) ->
             %% this node is surrendering leadership
             riak_repl_controller:set_is_leader(false), % will close connections
             riak_repl_stats:elections_leader_changed(),
-            error_logger:info_msg("Replication leadership surrendered to ~p~n", [Leader]);
+            lager:info("Replication leadership surrendered to ~p", [Leader]);
         Leader ->
-            error_logger:info_msg("Replication leader kept as ~p~n", [Leader]),
+            lager:info("Replication leader kept as ~p", [Leader]),
             ok;
         _NewLeader ->
             riak_repl_stats:elections_leader_changed(),
-            error_logger:info_msg("Replication leader set to ~p~n", [Leader]),
+            lager:info("Replication leader set to ~p", [Leader]),
             ok
     end,
     %% Set up a monitor on the new leader so we can make the helper

@@ -86,7 +86,7 @@ init_repl_config(OldRing, NewRing) ->
 %% Given a new repl config, update the system-local ring.
 %%
 update_ring(ReplConfig) ->
-    error_logger:info_msg("Repushing new replconfig!\n", []),
+    lager:info("Repushing new replconfig!"),
     F = fun(Ring, _) ->
                 {new_ring, riak_repl_ring:set_repl_config(Ring, ReplConfig)}
         end,

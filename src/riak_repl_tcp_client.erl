@@ -128,7 +128,7 @@ connecting({connect_failed, _Reason}, State) ->
 wait_peerinfo({redirect, IPAddr, Port}, State) ->
     case lists:member({IPAddr, Port}, State#state.listeners) of
         false ->
-            error_logger:info_msg("Redirected IP ~p not in listeners ~p\n",
+            lager:notice("Redirected IP ~p not in listeners ~p",
                                   [{IPAddr, Port}, State#state.listeners]);
         _ ->
             ok
@@ -162,7 +162,7 @@ wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
                               TheirPeerInfo#peer_info.ring), SiteName),
             {next_state, merkle_exchange, State1#state{work_dir = WorkDir}};
         false ->
-            error_logger:error_msg("Replication (client) - invalid peer_info ~p~n",
+            lager:error("Replication - invalid peer_info ~p",
                                    [TheirPeerInfo]),
             cleanup_and_stop(State)
     end;
@@ -173,8 +173,8 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     %% file
     OurKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
     file:delete(OurKeyListFn), % make sure we get a clean copy
-    error_logger:info_msg("Full-sync with site ~p (client); hashing "
-                          "partition ~p data\n",
+    lager:info("Full-sync with site ~p; hashing "
+                          "partition ~p data",
                           [State#state.sitename, Partition]),
     {ok, OurKeyListPid} = riak_repl_fullsync_helper:start_link(self()),
     {ok, OurKeyListRef} = riak_repl_fullsync_helper:make_keylist(OurKeyListPid,
@@ -219,8 +219,8 @@ merkle_recv({Ref, keylist_built}, State=#state{our_kl_ref = Ref}) ->
     merkle_recv_next(State#state{our_kl_ref = undefined,
                                  our_kl_pid = undefined});
 merkle_recv({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
-    error_logger:info_msg("Full-sync with site ~p (client); hashing "
-                          "partition ~p data failed: ~p\n",
+    lager:info("Full-sync with site ~p; hashing "
+                          "partition ~p data failed: ~p",
                           [State#state.sitename, State#state.merkle_pt, Reason]),
     merkle_recv_next(State#state{our_kl_fn = undefined,
                                  our_kl_pid = undefined,
@@ -231,8 +231,8 @@ merkle_recv({Ref, converted}, State=#state{their_kl_ref = Ref}) ->
                                  their_kl_ref = undefined,
                                  their_kl_pid = undefined});
 merkle_recv({Ref, {error, Reason}}, State=#state{their_kl_ref = Ref}) ->
-    error_logger:info_msg("Full-sync with site ~p (client); converting btree "
-                          "partition ~p data failed: ~p\n",
+    lager:info("Full-sync with site ~p; converting btree "
+                          "partition ~p data failed: ~p",
                           [State#state.sitename, State#state.merkle_pt, Reason]),
     merkle_recv_next(State#state{their_kl_fn = undefined,
                                  their_kl_pid = undefined,
@@ -245,8 +245,8 @@ merkle_diff({Ref, {merkle_diff, BkeyVclock}}, State=#state{our_kl_ref = Ref}) ->
      State#state{bkey_vclocks = [BkeyVclock | State#state.bkey_vclocks]}};
 merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
     send(State#state.socket, {ack, State#state.merkle_pt, []}),
-    error_logger:error_msg("Full-sync with site ~p (client); vclock lookup for "
-                           "partition ~p failed: ~p. Skipping partition.\n",
+    lager:error("Full-sync with site ~p; vclock lookup for "
+                           "partition ~p failed: ~p. Skipping partition.",
                            [State#state.sitename, State#state.merkle_pt,
                             Reason]),
     {next_state, merkle_exchange, 

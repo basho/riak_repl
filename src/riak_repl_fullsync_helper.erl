@@ -197,7 +197,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
                                       #diff_state{fsm = State#state.owner_fsm,
                                                   ref = Ref,
                                                   preflist = {Partition, OwnerNode}}),
-                error_logger:info_msg("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.\n",
+                lager:info("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
                                       [Partition, 
                                        erlang:get(remote_reads),
                                        erlang:get(local_reads),
@@ -207,7 +207,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
                     [] ->
                         ok;
                     Errors ->
-                        error_logger:error_msg("Partition ~p: Read Errors.\n",
+                        lager:error("Partition ~p: Read Errors.",
                                               [Partition, Errors])
                 end,
                 gen_fsm:send_event(State#state.owner_fsm, {Ref, diff_done});
@@ -254,7 +254,7 @@ handle_cast(kl_finish, State) ->
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
-    error_logger:info_msg("Sorted ~s in ~.2f seconds\n",
+    lager:info("Sorted ~s in ~.2f seconds",
                           [Filename, ElapsedUsec / 1000000]),
     gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built}),
     {stop, normal, State}.
