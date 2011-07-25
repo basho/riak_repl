@@ -50,7 +50,7 @@ start_link() ->
 
 %% Set the list of candidate nodes for replication leader
 set_candidates(Candidates, Workers) ->
-    gen_server:call(?SERVER, {set_candidates, Candidates, Workers}).
+    gen_server:cast(?SERVER, {set_candidates, Candidates, Workers}).
 
 %% Return the current leader node
 leader_node() ->
@@ -107,23 +107,23 @@ handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
             {reply, ok, new_leader(LeaderNode, LeaderPid, State)}
     end;
 
-handle_call({set_candidates, CandidatesIn, WorkersIn}, _From, State) ->
+handle_call(helper_pid, _From, State) ->
+    {reply, State#state.helper_pid, State}.
+
+handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
     Candidates = lists:sort(CandidatesIn),
     Workers = lists:sort(WorkersIn),
     case {State#state.candidates, State#state.workers} of
         {Candidates, Workers} -> % no change to candidate list, leave helper alone
-            {reply, ok, State};
+            {noreply, State};
         {_OldCandidates, _OldWorkers} ->
             UpdState1 = remonitor_leader(undefined, State),
             UpdState2 = UpdState1#state{candidates=Candidates, 
                                         workers=Workers,
                                         leader_node=undefined},
             riak_repl_controller:set_is_leader(false),
-            {reply, ok, restart_helper(UpdState2)}
+            {noreply, restart_helper(UpdState2)}
     end;
-handle_call(helper_pid, _From, State) ->
-    {reply, State#state.helper_pid, State}.
-
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     case State#state.receivers of
         [] ->
