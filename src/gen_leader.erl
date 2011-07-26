@@ -571,7 +571,9 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
           %% A DOWN message should arrive to solve this situation
           safe_loop(Server,Role,E,Msg)
       end;
-
+    {election} = Msg ->
+      %% We're already in an election, so this is likely an old message.
+      safe_loop(Server, Role, E, Msg);
     {heartbeat, _Node} = Msg ->
       %% io:format("Got {heartbeat, ~w} - ~w (safe_loop)\n", [_Node, E#election.leadernode]),
       safe_loop(Server,Role,E,Msg);
@@ -740,6 +742,56 @@ loop(#server{parent = Parent,
                         false ->
                             loop(Server,Role,E,Msg)
                     end;
+                {election} ->
+                    %% Told to do an election because of a leader conflict.
+                    Mide = E,
+                    E1 = startStage1(Mide),
+                    safe_loop(Server, candidate, E1, Msg);
+                  {checklead, Node} ->
+                    case (E#election.leadernode == Node) of
+                      true ->
+                        %% Leaders match, nothing to do
+                        loop(Server, Role, E, Msg);
+                      false when E#election.leader == self() ->
+                        %% We're a leader and we disagree with the other
+                        %% leader. Tell everyone else to have an election.
+                        Newdown = E#election.down -- [Node],
+                        E1 = E#election{down = Newdown},
+                        lists:foreach(
+                          fun(N) ->
+                              {Name, N} ! {election}
+                          end, E1#election.candidate_nodes),
+                        Mide = E1,
+                        %% Start participating in the election ourselves.
+                        E2 = startStage1(Mide),
+                        safe_loop(Server, candidate, E2, Msg);
+                      false ->
+                        %% Not a leader, just wait to be told to do an
+                        %% election, if applicable.
+                        loop(Server, Role, E, Msg)
+                    end;
+                {send_checklead} ->
+                    case (E#election.leader == self()) of
+                        true ->
+                            case E#election.down of
+                                [] ->
+                                    loop(Server, Role, E, Msg);
+                                Down ->
+                                    %% For any nodes which are down, send them
+                                    %% a message comparing their leader to our
+                                    %% own. This allows us to trigger an
+                                    %% election after a netsplit is healed.
+                                    F = fun(N) ->
+                                      {Name, N} ! {checklead, node()}
+                                    end,
+                                    [F(N) || N <- Down, {ok, up} =/= net_kernel:node_info(N, state)],
+                                    %% schedule another heartbeat
+                                    timer:send_after(E#election.cand_timer_int, {send_checklead}),
+                                    loop(Server, Role, E, Msg)
+                            end;
+                        false ->
+                            loop(Server, Role, E, Msg)
+                    end;
                 {heartbeat, _Node} ->
                     case (E#election.leader == self()) of
                         true ->
@@ -813,6 +865,13 @@ loop(#server{parent = Parent,
                                             {ok, Synch, NewState1} ->
                                                 {NewState1, broadcast({from_leader,Synch}, E1)}
                                         end,
+                                    %% We're the leader and one of our
+                                    %% candidates has gone down. Start sending
+                                    %% out checklead messages to the downed
+                                    %% candidates so we can quickly trigger an
+                                    %% election, if this was a netsplit when
+                                    %% its healed.
+                                    {Name, node()} ! {send_checklead},
                                     loop(Server#server{state=NewState}, Role, NewE, Msg);
                                 false ->
                                     loop(Server, Role, E1,Msg)
