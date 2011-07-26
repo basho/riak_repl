@@ -586,6 +586,9 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
             timer:cancel(E#election.cand_timer),
             E#election{cand_timer = undefined};
           Down ->
+            %% get rid of any queued up candidate_timers, since we just
+            %handled one
+            flush_candidate_timers(),
             %% Some of potential master candidate nodes are down - try to wake them up
             F = fun(N) ->
                     %% io:format("Sending {heartbeat, ~w} to ~w\n", [N, node()]),
@@ -823,6 +826,9 @@ loop(#server{parent = Parent,
                                 E#election{cand_timer=undefined};
                            true ->
                                 %% io:format("Candidate timer - ~w (loop) down: ~w\n", [E#election.leadernode, E#election.down]),
+                                %% get rid of any queued up candidate_timers,
+                                %% since we just handled one
+                                flush_candidate_timers(),
                                 E
                         end,
                     %% This shouldn't happen in the leader - just ignore
@@ -1378,5 +1384,21 @@ broadcast_candidates(E, Synch, IgnoreNodes) ->
             Nodes = [N || {_,N} <- E#election.monitored] -- IgnoreNodes,
             broadcast({from_leader, Synch}, Nodes, E);
         _ ->
+            ok
+    end.
+
+%% the heartbeat messages sent to the downed nodes when the candicate_timer
+%% message is received can take a very long time in the case of a partitioned
+%% network (7 seconds in my testing). Since the candidate_timer is generated
+%% by a send_interval, this means many candidate_timer messages can accumulate
+%% in the mailbox. This function is used to clear them out after handling one
+%% of the candidate_timers, so gen_leader doesn't spend all its time sending
+%% heartbeats.
+flush_candidate_timers() ->
+    receive
+        {candidate_timer} ->
+            flush_candidate_timers()
+    after
+        0 ->
             ok
     end.
