@@ -44,10 +44,8 @@ get_partitions(_Ring) ->
 
 do_repl_put(Object) ->
     ReqId = erlang:phash2(erlang:now()),
-    spawn(
-      fun() ->
-              riak_repl_put_fsm:start(ReqId,Object,1,1,?REPL_FSM_TIMEOUT,self())
-      end).
+    spawn(riak_kv_put_fsm, start,
+          [ReqId, Object, 1, 1, ?REPL_FSM_TIMEOUT, self(), [disable_hooks]]).
 
 site_root_dir(Site) ->
     {ok, DataRootDir} = application:get_env(riak_repl, data_root),
