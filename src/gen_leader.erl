@@ -787,7 +787,7 @@ loop(#server{parent = Parent,
                                     F = fun(N) ->
                                       {Name, N} ! {checklead, node()}
                                     end,
-                                    [F(N) || N <- Down, {ok, up} =/= net_kernel:node_info(N, state)],
+                                    [F(N) || N <- Down],
                                     %% schedule another heartbeat
                                     timer:send_after(E#election.cand_timer_int, {send_checklead}),
                                     loop(Server, Role, E, Msg)
@@ -1300,6 +1300,7 @@ hasBecomeLeader(E,Server,Msg) ->
             %% io:format("==> I am the leader! (acks: ~200p)\n", [E#election.acks]),
             %% Set the internal timeout (corresponds to Periodically)
             timer:send_after(E#election.cand_timer_int, {heartbeat, node()}),
+            {E#election.name, node()} ! {send_checklead},
             %%    (It's meaningful only when I am the leader!)
             loop(Server#server{state = NewState},elected,NewE,Msg);
         false ->
