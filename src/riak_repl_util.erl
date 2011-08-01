@@ -44,8 +44,53 @@ get_partitions(_Ring) ->
 
 do_repl_put(Object) ->
     ReqId = erlang:phash2(erlang:now()),
-    spawn(riak_kv_put_fsm, start,
-          [ReqId, Object, 1, 1, ?REPL_FSM_TIMEOUT, self(), [disable_hooks]]).
+    B = riak_object:bucket(Object),
+    K = riak_object:key(Object),
+    Opts = [disable_hooks, {update_last_modified, false}],
+
+    case B of
+        <<"_rsid_", Idx/binary>> ->
+            {ok, C} = riak:local_client(),
+            SC = riak_search_client:new(C),
+            case riak_kv_util:is_x_deleted(Object) of
+                true ->
+                    lager:debug("Incoming deleted proxy obj ~p/~p", [B, K]),
+                    riak_indexed_doc:remove_entries(C, SC, Idx, K),
+                    riak_kv_put_fsm_sup:start_put_fsm(node(),
+                                                      [ReqId, Object, 1, 1,
+                                                       ?REPL_FSM_TIMEOUT,
+                                                       self(), Opts]),
+                    reap(ReqId, B, K);
+                false ->
+                    lager:debug("Incoming proxy obj ~p/~p", [B, K]),
+                    IdxDoc = riak_object:get_value(Object),
+                    riak_indexed_doc:remove_entries(C, SC, Idx, K),
+                    Postings = riak_indexed_doc:postings(IdxDoc),
+                    SC:index_terms(Postings),
+                    riak_kv_put_fsm_sup:start_put_fsm(node(),
+                                                      [ReqId, Object, 1, 1,
+                                                       ?REPL_FSM_TIMEOUT, self(),
+                                                       Opts])
+            end;
+        _ ->
+            riak_kv_put_fsm_sup:start_put_fsm(node(),
+                                              [ReqId, Object, 1, 1,
+                                               ?REPL_FSM_TIMEOUT, self(),
+                                               Opts]),
+            case riak_kv_util:is_x_deleted(Object) of
+                true ->
+                    lager:debug("Incoming deleted KV obj ~p/~p", [B, K]),
+                    reap(ReqId, B, K);
+                false ->
+                    lager:debug("Incoming KV obj ~p/~p", [B, K]),
+                    ok
+            end
+    end.
+
+reap(ReqId, B, K) ->
+    riak_kv_get_fsm_sup:start_get_fsm(node(),
+                                      [ReqId, B, K, 1, ?REPL_FSM_TIMEOUT,
+                                       self()]).
 
 site_root_dir(Site) ->
     {ok, DataRootDir} = application:get_env(riak_repl, data_root),
