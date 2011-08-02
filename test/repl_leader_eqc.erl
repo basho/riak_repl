@@ -40,7 +40,7 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -define(DBG(Fmt,Args),ok).
-%-define(DBG(Fmt,Args),io:format(user, Fmt, Args)).
+%% -define(DBG(Fmt,Args),io:format(user, Fmt, Args)).
 
 qc_test_() ->
     %% try and clean the repl controller before cover ever runs
@@ -246,7 +246,14 @@ set_candidates(Node, Candidates, Workers, S) ->
     %% Request the helper leader node to make any elections stabalize 
     %% before calling the rest of the quickcheck code, otherwise results
     %% are totally unpredictable.
-    {_HLN, _UpCand} = helper_leader_node(Node, S),
+
+    %% Have to duplicate some work done in next_state here - helper_leader_node
+    %% needs an updated [#replnode{}].
+    ReplNode = get_replnode(Node, S),
+    UpdS = upd_replnode(ReplNode#replnode{candidates = lists:sort(Candidates),
+                                          workers = lists:sort(Workers)},
+                        S),
+    {_HLN, _UpCand} = helper_leader_node(Node, UpdS),
     ?DBG("Set candidates for ~p, HLN=~p, UpCand=~p\n", [Node, _HLN, _UpCand]),
     ok.
 
@@ -361,8 +368,10 @@ add_replnode(Node, S) ->
     S#state{replnodes = UpdReplNodes}.
 
 upd_replnode(ReplNode, S) ->
+    ?DBG("Updating ~p\nin ~p\n", [ReplNode, S]),
     UpdReplNodes = lists:keyreplace(ReplNode#replnode.node, #replnode.node,
                                     S#state.replnodes, ReplNode),
+    ?DBG("Updated ~p\n", [UpdReplNodes]),
     S#state{replnodes = UpdReplNodes}.
 
 %% Check if a node exists in the state
@@ -407,10 +416,12 @@ wait_for_helper(Node, Retries) ->
 %% candidate nodes should be up, otherwise it will block waiting for any
 %% candidate.
 helper_leader_node(N, S) ->
+    ?DBG("Handler leader node ~p\nState:\n~p\n", [N, S]),
     RN = get_replnode(N, S),
     C = RN#replnode.candidates,
     W = RN#replnode.workers,
     CRNs = [get_replnode(X, S) || X <- C],
+    ?DBG("Candidate replication nodes\n~p\n", [CRNs]),
     UpCandidates = [CRN#replnode.node || CRN <- CRNs,
                                          CRN#replnode.running =:= true,
                                          CRN#replnode.type =:= candidate,
