@@ -598,6 +598,31 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
             E
         end,
       safe_loop(Server,Role,NewE,Msg);
+    {checklead, Node} = Msg ->
+      %% in the very exceptional case when a candidate comes up when the
+      %% elected leader is *behind* it in the candidate list *and* all nodes
+      %% before it in the candidate list are up, the candidate will be stuck in
+      %% the safe_loop forever. This is because gen_leader relies on either
+      %% one of the nodes being down, or the nodes responding to the heartbeat
+      %% sent as part of stage1. However, nodes that are up but are NOT the
+      %% leader do not respond to heartbeats. In this very exceptional case,
+      %% we send a heartbeat to the leader in response to the checklead it
+      %% sent us to bootstrap things and get out of this quagmire.
+      case lists:member(Node,E#election.candidate_nodes) and
+           (E#election.status == elec1) of
+        true ->
+          case ( pos(Node,E#election.candidate_nodes) >
+                 pos(node(),E#election.candidate_nodes) ) of
+            true ->
+                io:format("replying to checklead with heartbeat~n"),
+                {Name, Node} ! {heartbeat, self()};
+            _ ->
+                io:format("NOT replying to checklead with heartbeat~n")
+          end;
+        _ ->
+            io:format("NOT replying to checklead with heartbeat~n")
+      end,
+      safe_loop(Server,Role,E,Msg);
     {'DOWN',_Ref,process,From,_Reason} = Msg when Role==waiting_worker ->
       %% We are only monitoring one proc, the leader!
       Node = case From of
