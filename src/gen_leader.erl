@@ -614,13 +614,12 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
           case ( pos(Node,E#election.candidate_nodes) >
                  pos(node(),E#election.candidate_nodes) ) of
             true ->
-                io:format("replying to checklead with heartbeat~n"),
                 {Name, Node} ! {heartbeat, self()};
             _ ->
-                io:format("NOT replying to checklead with heartbeat~n")
+                ok
           end;
         _ ->
-            io:format("NOT replying to checklead with heartbeat~n")
+            ok
       end,
       safe_loop(Server,Role,E,Msg);
     {'DOWN',_Ref,process,From,_Reason} = Msg when Role==waiting_worker ->
