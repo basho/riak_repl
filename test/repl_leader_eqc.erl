@@ -71,15 +71,15 @@ prop_main() ->
                 start_slave_driver(),
                 try
                     {H, {_State, _StateData}, Res} = run_commands(?MODULE,Cmds),
-                    case Res of
-                        ok ->
-                            ok;
-                        _ ->
-                            ?DBG("QC result: ~p\n", [Res])
-                    end,
-                    %% Generate statistics
-                    aggregate(zip(state_names(H),command_names(Cmds)), Res == ok)
-                 after
+                    ?WHENFAIL(begin
+                                  io:format(user, "Test Failed\n~p\n",
+                                            [zip(state_names(H),command_names(Cmds))]),
+                                  io:format(user, "State: ~p\nStateData: ~p\nRes: ~p\n",
+                                            [_State, _StateData, Res])
+                          end,
+                              %% Generate statistics
+                              aggregate(zip(state_names(H),command_names(Cmds)), Res == ok))
+                after
                     stop_slave_driver(),
                     net_kernel:stop()
                 end
@@ -434,7 +434,7 @@ helper_leader_node(N, S) ->
         _ ->
             {ok, Helper} = wait_for_helper(N),
             HelperLN = rpc:call(N, riak_repl_leader_helper,
-                                leader_node, [Helper, 10000], 15000)
+                                leader_node, [Helper, 300000], 305000)
     end,
     {HelperLN, UpCandidates}.
     
@@ -540,6 +540,10 @@ start_leader(Candidates, Workers) ->
 
     ?DBG("Started repl on ~p as ~p with candidates {~p, ~p}\n",
          [node(), Pid, Candidates, Workers]),
+
+    %% Check leader completes election
+    {ok, Helper} = wait_for_helper(node()),
+    _HelperLN = riak_repl_leader_helper:leader_node(Helper, 10000),
     Pid.
 
 
