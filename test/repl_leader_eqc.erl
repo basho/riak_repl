@@ -162,7 +162,10 @@ postcondition(_From, _To, S, {call, ?MODULE, ping, [Node]}, Res) ->
             Res == pang
     end;
 postcondition(_From, _To, S, {call, ?MODULE, check_leaders, _}, LeaderByNode) ->
-    NodesByCandidates = nodes_by_candidates(running_replnodes(S)),
+    NodesByCandidates0 = nodes_by_candidates(running_replnodes(S)),
+    NodesByCandidates = lists:filter(fun({{Candidates, _}, Nodes}) ->
+                lists:all(fun(Cand) -> lists:member(Cand, Nodes) end, Candidates) 
+        end, NodesByCandidates0),
     check_same_leaders(NodesByCandidates, LeaderByNode);
 postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [Node]}, {Node, Res, _Pid}) ->
     %% The node believes itself to be a leader
