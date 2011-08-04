@@ -47,7 +47,7 @@ qc_test_() ->
     code:purge(riak_repl_controller), 
     code:delete(riak_repl_controller),
     ?DBG("Cover modules:\n~p\n", [cover:modules()]),
-    Prop = ?QC_OUT(eqc:numtests(100, prop_main())),
+    Prop = ?QC_OUT(eqc:numtests(40, prop_main())),
     case testcase() of
         [] ->
             {timeout, ?TEST_TIMEOUT, fun() -> ?assert(eqc:quickcheck(Prop)) end};
@@ -127,7 +127,7 @@ next_state_data(_From, _To, S, _Res, {call, ?MODULE, toggle_type, [Node]}) ->
         worker->
             UpdReplNode=ReplNode#replnode{type = candidate};
         candidate ->
-            UpdReplNode=ReplNode#replnode{type = candidate}
+            UpdReplNode=ReplNode#replnode{type = worker}
     end,
     upd_replnode(UpdReplNode, S);
 next_state_data(_From, _To, S, _Res, {call, ?MODULE, set_candidates,
