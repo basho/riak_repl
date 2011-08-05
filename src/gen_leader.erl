@@ -774,28 +774,28 @@ loop(#server{parent = Parent,
                     Mide = E,
                     E1 = startStage1(Mide),
                     safe_loop(Server, candidate, E1, Msg);
-                  {checklead, Node} ->
+                {checklead, Node} ->
                     case (E#election.leadernode == Node) of
-                      true ->
-                        %% Leaders match, nothing to do
-                        loop(Server, Role, E, Msg);
-                      false when E#election.leader == self() ->
-                        %% We're a leader and we disagree with the other
-                        %% leader. Tell everyone else to have an election.
-                        Newdown = E#election.down -- [Node],
-                        E1 = E#election{down = Newdown},
-                        lists:foreach(
-                          fun(N) ->
-                              {Name, N} ! {election}
-                          end, E1#election.candidate_nodes),
-                        Mide = E1,
-                        %% Start participating in the election ourselves.
-                        E2 = startStage1(Mide),
-                        safe_loop(Server, candidate, E2, Msg);
-                      false ->
-                        %% Not a leader, just wait to be told to do an
-                        %% election, if applicable.
-                        loop(Server, Role, E, Msg)
+                        true ->
+                            %% Leaders match, nothing to do
+                            loop(Server, Role, E, Msg);
+                        false when E#election.leader == self() ->
+                            %% We're a leader and we disagree with the other
+                            %% leader. Tell everyone else to have an election.
+                            Newdown = E#election.down -- [Node],
+                            E1 = E#election{down = Newdown},
+                            lists:foreach(
+                              fun(N) ->
+                                  {Name, N} ! {election}
+                              end, E1#election.candidate_nodes),
+                            Mide = E1,
+                            %% Start participating in the election ourselves.
+                            E2 = startStage1(Mide),
+                            safe_loop(Server, candidate, E2, Msg);
+                        false ->
+                            %% Not a leader, just wait to be told to do an
+                            %% election, if applicable.
+                            loop(Server, Role, E, Msg)
                     end;
                 {send_checklead} ->
                     case (E#election.leader == self()) of
