@@ -40,14 +40,14 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -define(DBG(Fmt,Args),ok).
-%-define(DBG(Fmt,Args),io:format(user, Fmt, Args)).
+%% -define(DBG(Fmt,Args),io:format(user, Fmt, Args)).
 
 qc_test_() ->
     %% try and clean the repl controller before cover ever runs
     code:purge(riak_repl_controller), 
     code:delete(riak_repl_controller),
     ?DBG("Cover modules:\n~p\n", [cover:modules()]),
-    Prop = ?QC_OUT(eqc:numtests(100, prop_main())),
+    Prop = ?QC_OUT(eqc:numtests(40, prop_main())),
     case testcase() of
         [] ->
             {timeout, ?TEST_TIMEOUT, fun() -> ?assert(eqc:quickcheck(Prop)) end};
@@ -71,14 +71,14 @@ prop_main() ->
                 start_slave_driver(),
                 try
                     {H, {_State, _StateData}, Res} = run_commands(?MODULE,Cmds),
-                    case Res of
-                        ok ->
-                            ok;
-                        _ ->
-                            ?DBG("QC result: ~p\n", [Res])
-                    end,
-                    %% Generate statistics
-                    aggregate(zip(state_names(H),command_names(Cmds)), Res == ok)
+                    ?WHENFAIL(begin
+                                 io:format(user, "Test Failed\n~p\n",
+                                            [zip(state_names(H),command_names(Cmds))]),
+                                 io:format(user, "State: ~p\nStateData: ~p\nRes: ~p\n",
+                                            [_State, _StateData, Res])
+                             end,
+                             %% Generate statistics
+                             aggregate(zip(state_names(H),command_names(Cmds)), Res == ok))
                  after
                     stop_slave_driver()
                 end
@@ -126,7 +126,7 @@ next_state_data(_From, _To, S, _Res, {call, ?MODULE, toggle_type, [Node]}) ->
         worker->
             UpdReplNode=ReplNode#replnode{type = candidate};
         candidate ->
-            UpdReplNode=ReplNode#replnode{type = candidate}
+            UpdReplNode=ReplNode#replnode{type = worker}
     end,
     upd_replnode(UpdReplNode, S);
 next_state_data(_From, _To, S, _Res, {call, ?MODULE, set_candidates,
@@ -162,16 +162,34 @@ postcondition(_From, _To, S, {call, ?MODULE, ping, [Node]}, Res) ->
             Res == pang
     end;
 postcondition(_From, _To, S, {call, ?MODULE, check_leaders, _}, LeaderByNode) ->
-    NodesByCandidates = nodes_by_candidates(running_replnodes(S)),
+    NodesByCandidates0 = nodes_by_candidates(running_replnodes(S)),
+    NodesByCandidates = lists:filter(fun({{Candidates, _}, Nodes}) ->
+                lists:all(fun(Cand) -> lists:member(Cand, Nodes) end, Candidates) 
+        end, NodesByCandidates0),
     check_same_leaders(NodesByCandidates, LeaderByNode);
-postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [Node]}, {Node, Res, _Pid}) ->
+postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [Node]}, {Leader1, Leader2, Res, _Pid}) when Node == Leader1; Node == Leader2 ->
     %% The node believes itself to be a leader
-    Res == ok;
+    case Res of 
+        ok ->
+            true;
+        _ ->
+            {add_receiver_expected_ok, Res}
+    end;
 postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [_Node]},
-              {_Leader, Res, _Pid}=_R) ->
-    %% Node thinks somebody else is the leader
+              {_Leader1, _Leader2, Res, _Pid}=_R) when _Leader1 /= undefined,
+                                                       _Leader2 /= undefined ->
+    %% Node thinks somebody else is the leader or not sure who the leader is.
+    %% If the candidates/workers is being changed and the node *was* the leader 
+    %% then riak_repl_leader continues to act as the leader until the election
+    %% completes (but sets the leader undefined).  Will only *definitely*
+    %% return {error, not_leader} once the election completes.
     ?DBG("Postcond: n=~p r=~p\n", [_Node, _R]),
-    Res == {error, not_leader};
+    case Res of
+        {error, not_leader} ->
+            true;
+        _ ->
+            {add_receiver_expected_err, Res}
+    end;
 postcondition(_From, _To, _S, _Call, _Res) ->
     true.
 
@@ -210,7 +228,7 @@ start_repl(ReplNode) ->
     ?DBG("Starting slave ~p\n", [Node]),
     ok = start_slave(Node),
     pong = net_adm:ping(Node),
-    {ok, _StartedNodes} = cover:start([Node]),
+    %{ok, _StartedNodes} = cover:start([Node]),
     dbg:n(Node),
     ?DBG("Cover nodes: ~p\n", [_StartedNodes]),
     ?DBG("Started slave ~p\n", [Node]),
@@ -219,7 +237,7 @@ start_repl(ReplNode) ->
 
 stop_repl(Node) ->
     ?DBG("Stopping cover on ~p\n", [Node]),
-    cover:stop([Node]),
+    %cover:stop([Node]),
     ?DBG("Stopping repl on ~p\n", [Node]),
     ok = stop_slave(Node),
     ?DBG("Stopped slave~p\n", [Node]),
@@ -246,7 +264,14 @@ set_candidates(Node, Candidates, Workers, S) ->
     %% Request the helper leader node to make any elections stabalize 
     %% before calling the rest of the quickcheck code, otherwise results
     %% are totally unpredictable.
-    {_HLN, _UpCand} = helper_leader_node(Node, S),
+
+    %% Have to duplicate some work done in next_state here - helper_leader_node
+    %% needs an updated [#replnode{}].
+    ReplNode = get_replnode(Node, S),
+    UpdS = upd_replnode(ReplNode#replnode{candidates = lists:sort(Candidates),
+                                          workers = lists:sort(Workers)},
+                        S),
+    {_HLN, _UpCand} = helper_leader_node(Node, UpdS),
     ?DBG("Set candidates for ~p, HLN=~p, UpCand=~p\n", [Node, _HLN, _UpCand]),
     ok.
 
@@ -269,9 +294,8 @@ check_leaders(S) -> % include a dummy anode from list so
     [F(N) || N <- running_replnodes(S)].
  
 add_receiver(N) ->
-    Leader = rpc:call(N, riak_repl_leader, leader_node, []),
-    {Pid, Res} = rpc:call(N, ?MODULE, register_receiver, []),
-    R = {Leader, Pid, Res},
+    % R = {Leader1, Leader2, Pid, Res},
+    R = rpc:call(N, ?MODULE, register_receiver, []),
     ?DBG("add_receiver: ~p\n", [R]),
     R.
 
@@ -297,10 +321,16 @@ check_same_leaders([{{C,W},Nodes}|Rest], LeaderByNode) ->
     case UniqLeaders of
         [_SingleLeader] ->
             check_same_leaders(Rest, LeaderByNode);
-        _ ->
-            {different_leaders, C, W, Nodes, LeaderByNode}
+        ManyLeaders ->
+            {different_leaders, ManyLeaders,
+             {candidates, C},
+             {workers, W},
+             {nodes, Nodes},
+             {leaders, Leaders},
+             {all_leader_info, LeaderByNode}}
     end.
 
+%% For each node, lookup the current leader and build a {Node, LeaderName} tuple.
 lookup_leaders(Nodes, LeaderByNode) ->
     F = fun(N, A) ->
                 try
@@ -361,8 +391,10 @@ add_replnode(Node, S) ->
     S#state{replnodes = UpdReplNodes}.
 
 upd_replnode(ReplNode, S) ->
+    ?DBG("Updating ~p\nin ~p\n", [ReplNode, S]),
     UpdReplNodes = lists:keyreplace(ReplNode#replnode.node, #replnode.node,
                                     S#state.replnodes, ReplNode),
+    ?DBG("Updated ~p\n", [UpdReplNodes]),
     S#state{replnodes = UpdReplNodes}.
 
 %% Check if a node exists in the state
@@ -407,13 +439,15 @@ wait_for_helper(Node, Retries) ->
 %% candidate nodes should be up, otherwise it will block waiting for any
 %% candidate.
 helper_leader_node(N, S) ->
+    ?DBG("Handler leader node ~p\nState:\n~p\n", [N, S]),
     RN = get_replnode(N, S),
     C = RN#replnode.candidates,
     W = RN#replnode.workers,
     CRNs = [get_replnode(X, S) || X <- C],
+    ?DBG("Candidate replication nodes\n~p\n", [CRNs]),
     UpCandidates = [CRN#replnode.node || CRN <- CRNs,
                                          CRN#replnode.running =:= true,
-                                         CRN#replnode.type =:= candidate,
+                                         lists:member(CRN#replnode.node, C),
                                          CRN#replnode.candidates =:= C,
                                          CRN#replnode.workers =:= W],
     case UpCandidates of
@@ -422,7 +456,7 @@ helper_leader_node(N, S) ->
         _ ->
             {ok, Helper} = wait_for_helper(N),
             HelperLN = rpc:call(N, riak_repl_leader_helper,
-                                leader_node, [Helper, 10000], 15000)
+                                leader_node, [Helper, 300000], 305000)
     end,
     {HelperLN, UpCandidates}.
     
@@ -528,6 +562,10 @@ start_leader(Candidates, Workers) ->
 
     ?DBG("Started repl on ~p as ~p with candidates {~p, ~p}\n",
          [node(), Pid, Candidates, Workers]),
+
+    %% Check leader completes election
+    {ok, Helper} = wait_for_helper(node()),
+    _HelperLN = riak_repl_leader_helper:leader_node(Helper, 10000),
     Pid.
 
 
@@ -539,7 +577,9 @@ register_receiver() ->
                                 ok
                         end
                 end),
+    Leader1 = riak_repl_leader:leader_node(),
     Res = riak_repl_leader:add_receiver_pid(Pid),
-    {Res, Pid}.
+    Leader2 = riak_repl_leader:leader_node(),
+    {Leader1, Leader2, Res, Pid}.
 
 %-endif. % EQC
