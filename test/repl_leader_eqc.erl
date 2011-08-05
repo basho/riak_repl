@@ -168,14 +168,29 @@ postcondition(_From, _To, S, {call, ?MODULE, check_leaders, _}, LeaderByNode) ->
                 lists:all(fun(Cand) -> lists:member(Cand, Nodes) end, Candidates) 
         end, NodesByCandidates0),
     check_same_leaders(NodesByCandidates, LeaderByNode);
-postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [Node]}, {Node, Res, _Pid}) ->
+postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [Node]}, {Leader1, Leader2, Res, _Pid}) when Node == Leader1; Node == Leader2 ->
     %% The node believes itself to be a leader
-    Res == ok;
+    case Res of 
+        ok ->
+            true;
+        _ ->
+            {add_receiver_expected_ok, Res}
+    end;
 postcondition(_From, _To, _S, {call, ?MODULE, add_receiver, [_Node]},
-              {_Leader, Res, _Pid}=_R) ->
-    %% Node thinks somebody else is the leader
+              {_Leader1, _Leader2, Res, _Pid}=_R) when _Leader1 /= undefined,
+                                                       _Leader2 /= undefined ->
+    %% Node thinks somebody else is the leader or not sure who the leader is.
+    %% If the candidates/workers is being changed and the node *was* the leader 
+    %% then riak_repl_leader continues to act as the leader until the election
+    %% completes (but sets the leader undefined).  Will only *definitely*
+    %% return {error, not_leader} once the election completes.
     ?DBG("Postcond: n=~p r=~p\n", [_Node, _R]),
-    Res == {error, not_leader};
+    case Res of
+        {error, not_leader} ->
+            true;
+        _ ->
+            {add_receiver_expected_err, Res}
+    end;
 postcondition(_From, _To, _S, _Call, _Res) ->
     true.
 
@@ -214,7 +229,7 @@ start_repl(ReplNode) ->
     ?DBG("Starting slave ~p\n", [Node]),
     ok = start_slave(Node),
     pong = net_adm:ping(Node),
-    {ok, _StartedNodes} = cover:start([Node]),
+    %{ok, _StartedNodes} = cover:start([Node]),
     dbg:n(Node),
     ?DBG("Cover nodes: ~p\n", [_StartedNodes]),
     ?DBG("Started slave ~p\n", [Node]),
@@ -223,7 +238,7 @@ start_repl(ReplNode) ->
 
 stop_repl(Node) ->
     ?DBG("Stopping cover on ~p\n", [Node]),
-    cover:stop([Node]),
+    %cover:stop([Node]),
     ?DBG("Stopping repl on ~p\n", [Node]),
     ok = stop_slave(Node),
     ?DBG("Stopped slave~p\n", [Node]),
@@ -280,9 +295,8 @@ check_leaders(S) -> % include a dummy anode from list so
     [F(N) || N <- running_replnodes(S)].
  
 add_receiver(N) ->
-    Leader = rpc:call(N, riak_repl_leader, leader_node, []),
-    {Pid, Res} = rpc:call(N, ?MODULE, register_receiver, []),
-    R = {Leader, Pid, Res},
+    % R = {Leader1, Leader2, Pid, Res},
+    R = rpc:call(N, ?MODULE, register_receiver, []),
     ?DBG("add_receiver: ~p\n", [R]),
     R.
 
@@ -308,10 +322,16 @@ check_same_leaders([{{C,W},Nodes}|Rest], LeaderByNode) ->
     case UniqLeaders of
         [_SingleLeader] ->
             check_same_leaders(Rest, LeaderByNode);
-        _ ->
-            {different_leaders, C, W, Nodes, LeaderByNode}
+        ManyLeaders ->
+            {different_leaders, ManyLeaders,
+             {candidates, C},
+             {workers, W},
+             {nodes, Nodes},
+             {leaders, Leaders},
+             {all_leader_info, LeaderByNode}}
     end.
 
+%% For each node, lookup the current leader and build a {Node, LeaderName} tuple.
 lookup_leaders(Nodes, LeaderByNode) ->
     F = fun(N, A) ->
                 try
@@ -558,7 +578,9 @@ register_receiver() ->
                                 ok
                         end
                 end),
+    Leader1 = riak_repl_leader:leader_node(),
     Res = riak_repl_leader:add_receiver_pid(Pid),
-    {Res, Pid}.
+    Leader2 = riak_repl_leader:leader_node(),
+    {Leader1, Leader2, Res, Pid}.
 
 -endif. % EQC
