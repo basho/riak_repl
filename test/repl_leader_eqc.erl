@@ -448,7 +448,7 @@ helper_leader_node(N, S) ->
     ?DBG("Candidate replication nodes\n~p\n", [CRNs]),
     UpCandidates = [CRN#replnode.node || CRN <- CRNs,
                                          CRN#replnode.running =:= true,
-                                         CRN#replnode.type =:= candidate,
+                                         lists:member(CRN#replnode.node, C),
                                          CRN#replnode.candidates =:= C,
                                          CRN#replnode.workers =:= W],
     case UpCandidates of
