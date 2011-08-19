@@ -401,14 +401,14 @@ update_site_ips(TheirReplConfig, SiteName) ->
     ok.    
 
 do_repl_put(Obj, State=#state{ack_freq = undefined}) -> % q_ack not supported
-    riak_repl_util:do_repl_put(Obj),
+    spawn(riak_repl_util, do_repl_put, [Obj]),
     State;
 do_repl_put(Obj, State=#state{count=C, ack_freq=F}) when (C < (F-1)) ->
-    riak_repl_util:do_repl_put(Obj),
+    spawn(riak_repl_util, do_repl_put, [Obj]),
     State#state{count=C+1};
 do_repl_put(Obj, State=#state{socket=S, ack_freq=F}) ->
     send(S, {q_ack, F}),
-    riak_repl_util:do_repl_put(Obj),
+    spawn(riak_repl_util, do_repl_put, [Obj]),
     State#state{count=0}.
     
 %% Decide when it is time to leave the merkle_recv state and whether
