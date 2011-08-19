@@ -82,7 +82,7 @@ status(Pid, Timeout) ->
 
 set_socket(Pid, Socket) ->
     gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
-    
+
 init([SiteName]) ->
     {ok, send_peerinfo, #state{sitename=SiteName}}.
 
@@ -431,14 +431,77 @@ maybe_send(RObj, ClientVC, Socket) ->
         true ->
             skipped;
         false ->
-            send(Socket, {diff_obj, RObj})
+            check_and_send(Socket, {diff_obj, RObj})
     end.
 
-send(Sock,Data) when is_binary(Data) -> 
+check_and_send(Sock, {diff_obj, O}=Data) ->
+    B = riak_object:bucket(O),
+    K = riak_object:key(O),
+    PO = is_proxy_object(B),
+    {ok, C} = riak:local_client(),
+    SHI = is_search_hook_installed(C, B),
+
+    case SHI of
+        true ->
+            send_search(PO, O, B, K, C, Sock);
+        false ->
+            case PO of
+                true -> lager:debug("Outgoing proxy obj ~p/~p", [B, K]);
+                false -> lager:debug("Outgoing KV obj ~p/~p", [B, K])
+            end,
+            send(Sock, term_to_binary(Data))
+    end.
+
+send_search(true, PO, IdxB, K, C, Sock) ->
+    lager:debug("Outgoing idexed KV obj ~p/~p", [IdxB, K]),
+    <<"_rsid_",B/binary>> = IdxB,
+    case C:get(B, K) of
+        {ok, KVO} ->
+            send(Sock, term_to_binary({diff_obj, PO})),
+            send(Sock, term_to_binary({diff_obj, KVO}));
+        Other ->
+            lager:info("Couldn't find expected KV obj ~p/~p ~p", [B, K, Other]),
+            send(Sock, term_to_binary({diff_obj, PO}))
+    end;
+
+send_search(false, KVO, B, K, C, Sock) ->
+    lager:debug("Outgoing idexed KV obj ~p/~p", [B, K]),
+    IdxB = <<"_rsid_",B/binary>>,
+    case C:get(IdxB, K) of
+        {ok, PO} ->
+            send(Sock, term_to_binary({diff_obj, PO})),
+            send(Sock, term_to_binary({diff_obj, KVO}));
+        Other ->
+            lager:info("Couldn't find expected proxy obj ~p/~p ~p",
+                       [IdxB, K, Other]),
+            send(Sock, term_to_binary({diff_obj, KVO}))
+    end.
+
+is_proxy_object(B) ->
+    case binary:matches(B, <<"_rsid_">>) of
+        [] -> false;
+        _ -> true
+    end.
+
+is_search_hook_installed(C, B) ->
+    P = proplists:get_value(precommit, C:get_bucket(B)),
+    case P of
+        [] -> false;
+        _ ->
+            case lists:any(fun search_pre_hook/1, P) of
+                true -> true;
+                false -> false
+            end
+    end.
+
+search_pre_hook({struct, [{<<"mod">>, <<"riak_search_kv_hook">>},_]}) -> true;
+search_pre_hook(_) -> false.
+
+send(Sock, Data) when is_binary(Data) ->
     R = gen_tcp:send(Sock,Data),
     riak_repl_stats:server_bytes_sent(size(Data)),
     R;
-send(Sock,Data) -> 
+send(Sock, Data) ->
     send(Sock, term_to_binary(Data)).
 
 schedule_fullsync(State) ->
