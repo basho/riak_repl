@@ -15,6 +15,8 @@ start(_Type, _StartArgs) ->
     application:set_env(riak_repl, incarnation, IncarnationId),
     ok = ensure_dirs(),
 
+    riak_core:register_application([{bucket_fixup, riak_repl}]),
+
     %% Register our cluster_info app callback modules, with catch if
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
