@@ -51,6 +51,6 @@ strip_postcommit(BucketProps) ->
             CurrentPostcommit=[X]
     end,
     
-    %% Add kv/search hook - make sure there are not duplicate entries
+    %% Add repl hook - make sure there are not duplicate entries
     CurrentPostcommit -- [?REPL_HOOK].
 
