@@ -46,7 +46,7 @@ do_repl_put(Object) ->
     ReqId = erlang:phash2(erlang:now()),
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    Opts = [disable_hooks, {update_last_modified, false}],
+    Opts = [asis, disable_hooks, {update_last_modified, false}],
 
     case B of
         <<"_rsid_", Idx/binary>> ->
