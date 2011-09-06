@@ -61,19 +61,19 @@ equals(Server1, Server2) ->
   Hash1 == Hash2.
   
 root(Server) ->
-  gen_server2:call(Server, root).
+  gen_server2:call(Server, root, infinity).
   
 update(Server, Key, Hash) ->
-  gen_server2:call(Server, {update, Key, Hash}).
+  gen_server2:call(Server, {update, Key, Hash}, infinity).
   
 updatea(Server, Key, Hash) ->
   gen_server2:cast(Server, {update, Key, Hash}).
 
 update_many(Server, KHPairs) ->
-    gen_server2:call(Server, {update_many, KHPairs}).
+    gen_server2:call(Server, {update_many, KHPairs}, infinity).
 
 delete(Server, Key) ->
-  gen_server2:call(Server, {delete, Key}).
+  gen_server2:call(Server, {delete, Key}, infinity).
   
 deletea(Server, Key) ->
   gen_server2:cast(Server, {delete, Key}).
@@ -93,7 +93,7 @@ close(Server) ->
   gen_server2:cast(Server, close).
   
 tree(Server) ->
-  gen_server2:call(Server, tree).
+  gen_server2:call(Server, tree, infinity).
 %%====================================================================
 %% gen_server2 callbacks
 %%====================================================================
