@@ -84,7 +84,17 @@ set_socket(Pid, Socket) ->
     gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
 
 init([SiteName]) ->
-    {ok, send_peerinfo, #state{sitename=SiteName}}.
+    State0 = #state{sitename=SiteName},
+    %% check if there's a previously incomplete fullsync
+    State = case application:get_env({progress, SiteName}) of
+        {ok, Partitions} when is_list(Partitions) ->
+            lager:notice("Resuming incomplete fullsync for ~p, ~p partitions remain",
+                [SiteName, length(Partitions)]),
+            State0#state{partitions=Partitions};
+        _ ->
+            State0
+    end,
+    {ok, send_peerinfo, State}.
 
 listener_for_node(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -160,6 +170,8 @@ merkle_send(cancel_fullsync, State) ->
     next_state(merkle_send, do_cancel_fullsync(State));
 merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
     lager:info("Full-sync with site ~p completed.", [SiteName]),
+    %% no longer need to track progress.
+    application:unset_env(riak_repl, {progress, SiteName}),
     schedule_fullsync(State),
     riak_repl_stats:server_fullsyncs(),
     next_state(connected, State);
@@ -180,6 +192,8 @@ merkle_send(timeout, State=#state{paused=true}) ->
 merkle_send(timeout, State=#state{sitename=SiteName,
                                   partitions=[Partition|T],
                                   work_dir=WorkDir}) ->
+    %% update the stored progress, in case the fullsync aborts
+    application:set_env(riak_repl, {progress, SiteName}, [Partition|T]),
     FileName = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
     file:delete(FileName), % make sure we get a clean copy
     lager:info("Full-sync with site ~p; hashing partition ~p data",
@@ -318,8 +332,11 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
 connected(_E, State) -> next_state(connected, State).
 
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
+    lager:info("Connection for site ~p closed", [State#state.sitename]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
+handle_info({tcp_error, _Socket, Reason}, _StateName, State) ->
+    lager:error("Connection for site ~p closed unexpectedly: ~p",
+        [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
                                                          pending=Pending}) ->
@@ -544,6 +561,8 @@ do_start_fullsync(State) ->
     State#state{partitions=Partitions}.
 
 do_cancel_fullsync(State) when is_list(State#state.partitions) ->
+    %% clear the tracked progress since we're cancelling
+    application:unset_env(riak_repl, {progress, State#state.sitename}),
     Remaining = length(State#state.partitions),
     lager:info("Full-sync with site ~p cancelled; "
                           "~p partitions remaining.",
