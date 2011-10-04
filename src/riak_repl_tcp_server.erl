@@ -84,7 +84,17 @@ set_socket(Pid, Socket) ->
     gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
     
 init([SiteName]) ->
-    {ok, send_peerinfo, #state{sitename=SiteName}}.
+    State0 = #state{sitename=SiteName},
+    %% check if there's a previously incomplete fullsync
+    State = case application:get_env({progress, SiteName}) of
+        {ok, Partitions} when is_list(Partitions) ->
+            error_logger:info_msg("Resuming incomplete fullsync, ~p partitions remain~n",
+                [length(Partitions)]),
+            State0#state{partitions=Partitions};
+        _ ->
+            State0
+    end,
+    {ok, send_peerinfo, State}.
 
 listener_for_node(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -160,10 +170,14 @@ merkle_send(cancel_fullsync, State) ->
     next_state(merkle_send, do_cancel_fullsync(State));
 merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
     error_logger:info_msg("Full-sync with site ~p complete.\n", [SiteName]),
+    %% no longer need to track progress.
+    application:unset_env(riak_repl, {progress, SiteName}),
     schedule_fullsync(State),
     riak_repl_stats:server_fullsyncs(),
     next_state(connected, State);
-merkle_send(timeout, State=#state{partitions=cancelled}) ->
+merkle_send(timeout, State=#state{partitions=cancelled, sitename=SiteName}) ->
+    %% clear the tracked progress since we're cancelling
+    application:unset_env(riak_repl, {progress, SiteName}),
     error_logger:info_msg("Full-sync with site ~p cancelled.\n",
                           [State#state.sitename]),
     schedule_fullsync(State),
@@ -180,6 +194,8 @@ merkle_send(timeout, State=#state{paused=true}) ->
 merkle_send(timeout, State=#state{sitename=SiteName,
                                   partitions=[Partition|T],
                                   work_dir=WorkDir}) ->
+    %% update the stored progress, in case the fullsync aborts
+    application:set_env(riak_repl, {progress, SiteName}, [Partition|T]),
     FileName = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
     file:delete(FileName), % make sure we get a clean copy
     error_logger:info_msg("Full-sync with site ~p (server); hashing partition ~p data\n",
@@ -318,8 +334,11 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
 connected(_E, State) -> next_state(connected, State).
 
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
+    error_logger:info_msg("Connection to site ~p closed~n", [State#state.sitename]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, _Reason}, _StateName, State) ->
+handle_info({tcp_error, _Socket, Reason}, _StateName, State) ->
+    error_logger:error_msg("Connection to site ~p closed unexpectedly: ~p~n",
+        [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
                                                          pending=Pending}) ->
