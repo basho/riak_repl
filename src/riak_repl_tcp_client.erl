@@ -262,11 +262,14 @@ merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
                                    our_kl_ref = Ref})}.
 
 handle_info({tcp_closed, Socket}, _StateName, #state{socket = Socket} = State) ->
+    lager:info("Connection to site ~p closed", [State#state.sitename]),
     cleanup_and_stop(State);
 handle_info({tcp_closed, _Socket}, StateName, State) ->
     %% Ignore old sockets - e.g. after a redirect
     {next_state, StateName, State};
-handle_info({tcp_error, Socket, _Reason}, _StateName,  #state{socket = Socket} = State) ->
+handle_info({tcp_error, Socket, Reason}, _StateName,  #state{socket = Socket} = State) ->
+    lager:error("Connection to site ~p closed unexpectedly: ~p",
+        [State#state.sitename, Reason]),
     cleanup_and_stop(State);
 handle_info({tcp_error, _Socket, _Reason}, StateName, State) ->    
     %% Ignore old sockets errors
