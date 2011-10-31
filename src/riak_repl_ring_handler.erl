@@ -36,7 +36,13 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     %% Ring has changed.
     FinalRing = init_repl_config(OldRing, NewRing),
     update_leader(FinalRing),
-    riak_repl_controller:set_repl_config(riak_repl_ring:get_repl_config(FinalRing)),
+    riak_repl_listener_sup:ensure_listeners(FinalRing),
+    case riak_repl_leader:is_leader() of
+        true ->
+            riak_repl_client_sup:ensure_sites(FinalRing);
+        _ ->
+            ok
+    end,
     {ok, State#state{ring=FinalRing}};
 handle_event(_Event, State) ->
     {ok, State}.

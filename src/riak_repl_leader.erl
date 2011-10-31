@@ -18,6 +18,7 @@
 -export([start_link/0,
          set_candidates/2,
          leader_node/0,
+         is_leader/0,
          postcommit/1,
          add_receiver_pid/1]).
 -export([set_leader/3]).
@@ -55,6 +56,10 @@ set_candidates(Candidates, Workers) ->
 %% Return the current leader node
 leader_node() ->
     gen_server:call(?SERVER, leader_node).
+
+%% Are we the leader?
+is_leader() ->
+    gen_server:call(?SERVER, is_leader).
 
 %% Send the object to the leader
 postcommit(Object) ->
@@ -98,6 +103,9 @@ handle_call({add_receiver_pid, _Pid}, _From, State) ->
 
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
+
+handle_call(is_leader, _From, State) ->
+    {reply, State#state.leader_node == node(), State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
     case node() of
