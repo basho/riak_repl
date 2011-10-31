@@ -1,7 +1,7 @@
 % -*- mode: erlang -*-
 {application, 
  riak_repl,
- [{description,  "riak_repl"},
+ [{description,  "Enterprise replication for Riak"},
   {id,           "riak_repl"},
   {vsn,          "1.0.0"},
   {modules,      ['bounded_queue',
@@ -15,7 +15,7 @@
                   'riak_repl_client_sup',
                   'riak_repl_console',
                   'riak_repl_controller',
-                  'riak_repl_fsm', 
+                  'riak_repl_fsm_common', 
                   'riak_repl_fullsync_helper',
                   'riak_repl_leader',
                   'riak_repl_leader_helper',
