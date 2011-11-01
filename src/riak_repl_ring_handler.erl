@@ -11,6 +11,8 @@
 -export([init/1, handle_event/2, handle_call/2,
          handle_info/2, terminate/2, code_change/3]).
 
+-export([update_leader/1]).
+
 -record(state, { ring :: tuple() }).
 
 
@@ -20,14 +22,7 @@
 
 init([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_repl_ring:get_repl_config(Ring) of
-        undefined ->
-            {ok, #state{ring=Ring}};
-        _ ->
-            update_leader(Ring),
-            {ok, #state{ring=Ring}}
-    end.
-
+    {ok, #state{ring=Ring}}.
 
 handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
     %% Ring is unchanged from previous notification

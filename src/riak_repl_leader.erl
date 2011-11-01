@@ -92,6 +92,7 @@ helper_pid() ->
 
 init([]) ->
     process_flag(trap_exit, true),
+    erlang:send_after(0, self(), update_leader),
     {ok, #state{}}.
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
@@ -150,6 +151,15 @@ handle_cast({repl, _Msg}, State) ->
     riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State}.
 
+handle_info(update_leader, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_repl_ring:get_repl_config(Ring) of
+        undefined ->
+            {noreply, State};
+        _ ->
+            riak_repl_ring_handler:update_leader(Ring),
+            {noreply, State}
+    end;
 handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             #state{leader_mref=Mref}=State) ->
     case State#state.helper_pid of
