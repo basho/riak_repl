@@ -105,7 +105,7 @@ handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
 
 handle_call(is_leader, _From, State) ->
-    {reply, State#state.leader_node == node(), State};
+    {reply, State#state.i_am_leader, State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
     case node() of
@@ -129,7 +129,7 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             UpdState2 = UpdState1#state{candidates=Candidates, 
                                         workers=Workers,
                                         leader_node=undefined},
-            riak_repl_controller:set_is_leader(false),
+            leader_change(State#state.i_am_leader, false),
             {noreply, restart_helper(UpdState2)}
     end;
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
@@ -190,7 +190,7 @@ become_leader(Leader, State) ->
         _ ->
             riak_repl_stats:elections_elected(),
             riak_repl_stats:elections_leader_changed(),
-            riak_repl_controller:set_is_leader(true),
+            leader_change(State#state.i_am_leader, true),
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
             lager:info("Elected as replication leader")
@@ -202,7 +202,7 @@ new_leader(Leader, LeaderPid, State) ->
     case State#state.leader_node of
         This ->
             %% this node is surrendering leadership
-            riak_repl_controller:set_is_leader(false), % will close connections
+            leader_change(State#state.i_am_leader, false), % will close connections
             riak_repl_stats:elections_leader_changed(),
             lager:info("Replication leadership surrendered to ~p", [Leader]);
         Leader ->
@@ -260,3 +260,17 @@ maybe_start_helper(State) ->
                                                            State#state.workers)
     end,
     State#state{helper_pid = Pid}.
+
+leader_change(A, A) ->
+    %% nothing changed
+    ok;
+leader_change(false, true) ->
+    %% we've become the leader
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_client_sup:ensure_sites(Ring);
+leader_change(true, false) ->
+    %% we've lost the leadership
+    RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+    [riak_repl_client_sup:stop_site(SiteName) || 
+        {SiteName, _Pid} <- RunningSiteProcs],
+    riak_repl_listener:close_all_connections().

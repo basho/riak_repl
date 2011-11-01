@@ -31,7 +31,8 @@ ensure_listeners(Ring) ->
         is_pid(Pid)],
     CurrentListeners = lists:map(fun({_Pid, Listener}) -> Listener end,
         CurrentConfig),
-    ConfiguredListeners = dict:fetch(listeners, ReplConfig),
+    ConfiguredListeners = [Listener || Listener <- dict:fetch(listeners, ReplConfig),
+        Listener#repl_listener.nodename == node()],
     ToStop = sets:to_list(
                sets:subtract(
                  sets:from_list(CurrentListeners), 
@@ -60,7 +61,8 @@ start_link() ->
             riak_repl_ring:initial_config();
         RC -> RC
     end,
-    [start_listener(Listener) || Listener <- dict:fetch(listeners, ReplConfig)],
+    [start_listener(Listener) || Listener <- dict:fetch(listeners,
+            ReplConfig), Listener#repl_listener.nodename == node()],
     {ok, Pid}.
 
 
