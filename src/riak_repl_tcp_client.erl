@@ -158,8 +158,8 @@ wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
             end,
            
             {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
-            update_site_ips(riak_repl_ring:get_repl_config(
-                              TheirPeerInfo#peer_info.ring), SiteName),
+            TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
+            update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
             {next_state, merkle_exchange, State1#state{work_dir = WorkDir}};
         false ->
             lager:error("Replication - invalid peer_info ~p",

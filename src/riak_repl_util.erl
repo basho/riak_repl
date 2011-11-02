@@ -19,9 +19,10 @@
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    SafeRing = riak_core_ring:downgrade(1, Ring),
     {ok, RiakVSN} = application:get_key(riak_kv, vsn),
     {ok, ReplVSN} = application:get_key(riak_repl, vsn),
-    #peer_info{riak_version=RiakVSN, repl_version=ReplVSN, ring=Ring}.
+    #peer_info{riak_version=RiakVSN, repl_version=ReplVSN, ring=SafeRing}.
 
 validate_peer_info(T=#peer_info{}, M=#peer_info{}) ->
     TheirPartitions = get_partitions(T#peer_info.ring),
