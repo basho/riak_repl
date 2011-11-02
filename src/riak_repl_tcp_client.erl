@@ -108,7 +108,7 @@ disconnected(try_connect, State) ->
 
 connecting({connected, Socket}, State) ->
     gen_tcp:send(Socket, State#state.sitename),
-    Props = riak_repl_fsm:common_init(Socket),
+    Props = riak_repl_fsm_common:common_init(Socket),
 
     {_ConnPid, IPAddr, Port} = State#state.listener,
     NewState = State#state{
@@ -157,7 +157,7 @@ wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
                     State1 = State
             end,
            
-            {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
+            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
             update_site_ips(riak_repl_ring:get_repl_config(
                               TheirPeerInfo#peer_info.ring), SiteName),
             {next_state, merkle_exchange, State1#state{work_dir = WorkDir}};

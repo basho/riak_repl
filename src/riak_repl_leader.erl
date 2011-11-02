@@ -18,6 +18,7 @@
 -export([start_link/0,
          set_candidates/2,
          leader_node/0,
+         is_leader/0,
          postcommit/1,
          add_receiver_pid/1]).
 -export([set_leader/3]).
@@ -56,6 +57,10 @@ set_candidates(Candidates, Workers) ->
 leader_node() ->
     gen_server:call(?SERVER, leader_node).
 
+%% Are we the leader?
+is_leader() ->
+    gen_server:call(?SERVER, is_leader).
+
 %% Send the object to the leader
 postcommit(Object) ->
     gen_server:cast(?SERVER, {repl, Object}).
@@ -87,6 +92,7 @@ helper_pid() ->
 
 init([]) ->
     process_flag(trap_exit, true),
+    erlang:send_after(0, self(), update_leader),
     {ok, #state{}}.
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
@@ -98,6 +104,9 @@ handle_call({add_receiver_pid, _Pid}, _From, State) ->
 
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
+
+handle_call(is_leader, _From, State) ->
+    {reply, State#state.i_am_leader, State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
     case node() of
@@ -121,7 +130,7 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             UpdState2 = UpdState1#state{candidates=Candidates, 
                                         workers=Workers,
                                         leader_node=undefined},
-            riak_repl_controller:set_is_leader(false),
+            leader_change(State#state.i_am_leader, false),
             {noreply, restart_helper(UpdState2)}
     end;
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
@@ -142,6 +151,15 @@ handle_cast({repl, _Msg}, State) ->
     riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State}.
 
+handle_info(update_leader, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_repl_ring:get_repl_config(Ring) of
+        undefined ->
+            {noreply, State};
+        _ ->
+            riak_repl_ring_handler:update_leader(Ring),
+            {noreply, State}
+    end;
 handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             #state{leader_mref=Mref}=State) ->
     case State#state.helper_pid of
@@ -182,7 +200,7 @@ become_leader(Leader, State) ->
         _ ->
             riak_repl_stats:elections_elected(),
             riak_repl_stats:elections_leader_changed(),
-            riak_repl_controller:set_is_leader(true),
+            leader_change(State#state.i_am_leader, true),
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
             lager:info("Elected as replication leader")
@@ -194,7 +212,7 @@ new_leader(Leader, LeaderPid, State) ->
     case State#state.leader_node of
         This ->
             %% this node is surrendering leadership
-            riak_repl_controller:set_is_leader(false), % will close connections
+            leader_change(State#state.i_am_leader, false), % will close connections
             riak_repl_stats:elections_leader_changed(),
             lager:info("Replication leadership surrendered to ~p", [Leader]);
         Leader ->
@@ -252,3 +270,17 @@ maybe_start_helper(State) ->
                                                            State#state.workers)
     end,
     State#state{helper_pid = Pid}.
+
+leader_change(A, A) ->
+    %% nothing changed
+    ok;
+leader_change(false, true) ->
+    %% we've become the leader
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_client_sup:ensure_sites(Ring);
+leader_change(true, false) ->
+    %% we've lost the leadership
+    RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+    [riak_repl_client_sup:stop_site(SiteName) || 
+        {SiteName, _Pid} <- RunningSiteProcs],
+    riak_repl_listener:close_all_connections().
