@@ -53,6 +53,13 @@ handle_info({repl, RObj}, State) when State#state.q == undefined ->
     {noreply, State};
 handle_info({repl, RObj}, State) ->
     drain(enqueue(term_to_binary({diff_obj, RObj}), State));
+handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
+    lager:info("Connection for site ~p closed", [State#state.sitename]),
+    {stop, normal, State};
+handle_info({tcp_error, _Socket, Reason}, State) ->
+    lager:error("Connection for site ~p closed unexpectedly: ~p",
+        [State#state.sitename, Reason]),
+    {stop, normal, State};
 handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     Msg = binary_to_term(Data),
     Reply = handle_msg(Msg, State),

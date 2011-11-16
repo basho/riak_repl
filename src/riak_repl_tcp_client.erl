@@ -72,6 +72,18 @@ handle_call(_Event, _From, State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 
+handle_info({tcp_closed, Socket}, #state{socket = Socket} = State) ->
+    lager:info("Connection to site ~p closed", [State#state.sitename]),
+    %cleanup_and_stop(State);
+    {stop, normal, State};
+handle_info({tcp_closed, _Socket}, State) ->
+    %% Ignore old sockets - e.g. after a redirect
+    {noreply, State};
+handle_info({tcp_error, Socket, Reason}, #state{socket = Socket} = State) ->
+    lager:error("Connection to site ~p closed unexpectedly: ~p",
+        [State#state.sitename, Reason]),
+    %cleanup_and_stop(State);
+    {stop, normal, State};
 handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
