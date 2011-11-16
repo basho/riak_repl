@@ -15,7 +15,9 @@
          merkle_filename/3,
          keylist_filename/3,
          valid_host_ip/1,
-         format_socketaddrs/1]).
+         format_socketaddrs/1,
+         choose_strategy/2,
+         strategy_module/2]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -149,6 +151,33 @@ format_socketaddrs(Socket) ->
                                                 LocalPort,
                                                 inet_parse:ntoa(RemoteIP),
                                                 RemotePort])).
+
+choose_strategy(ServerStrats, ClientStrats) ->
+    %% find the first common strategy in both lists
+    CalcPref = fun(E, Acc) ->
+            Index = length(Acc) + 1,
+            Preference = math:pow(2, Index),
+            [{E, Preference}|Acc]
+    end,
+    LocalPref = lists:foldl(CalcPref, [], ServerStrats),
+    RemotePref = lists:foldl(CalcPref, [], ClientStrats),
+    %% sum the common strategy preferences together
+    TotalPref = [{S, Pref1+Pref2} || {S, Pref1} <- LocalPref, {RS, Pref2} <- RemotePref, S == RS],
+    case TotalPref of
+        [] ->
+            %% no common strategies, force legacy
+            ?LEGACY_STRATEGY;
+        _ ->
+            %% sort and return the first one
+            element(1, hd(lists:keysort(2, TotalPref)))
+    end.
+
+strategy_module(Strategy, server) ->
+    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
+                "_server"]));
+strategy_module(Strategy, client) ->
+    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
+                "_client"])).
 
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix

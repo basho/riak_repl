@@ -13,6 +13,7 @@
 -define(REPL_DEFAULT_ACK_FREQUENCY, 5).
 -define(FSM_SOCKOPTS, [{active, once}, {packet, 4}]).
 -define(REPL_VERSION, 3).
+-define(LEGACY_STRATEGY, syncv1).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
