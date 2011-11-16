@@ -114,10 +114,10 @@ send_peerinfo(timeout, #state{socket=Socket, sitename=SiteName} = State) ->
         OurNode ->
             erlang:cancel_timer(State#state.election_timeout),
             %% this switches the socket into active mode
-            Props = riak_repl_fsm:common_init(Socket),
+            Props = riak_repl_fsm_common:common_init(Socket),
             PI = proplists:get_value(my_pi, Props),
             send(Socket, {peerinfo, PI}),
-            {ok, WorkDir} = riak_repl_fsm:work_dir(Socket, SiteName),
+            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
             riak_repl_leader:add_receiver_pid(self()),
             {next_state, wait_peerinfo, State#state{work_dir = WorkDir,
                     client=proplists:get_value(client, Props),

@@ -108,7 +108,7 @@ disconnected(try_connect, State) ->
 
 connecting({connected, Socket}, State) ->
     gen_tcp:send(Socket, State#state.sitename),
-    Props = riak_repl_fsm:common_init(Socket),
+    Props = riak_repl_fsm_common:common_init(Socket),
 
     {_ConnPid, IPAddr, Port} = State#state.listener,
     NewState = State#state{
