@@ -17,7 +17,8 @@
          valid_host_ip/1,
          format_socketaddrs/1,
          choose_strategy/2,
-         strategy_module/2]).
+         strategy_module/2,
+         configure_socket/1]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -178,6 +179,29 @@ strategy_module(Strategy, server) ->
 strategy_module(Strategy, client) ->
     list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
                 "_client"])).
+
+%% set some common socket options, based on appenv
+configure_socket(Socket) ->
+    RB = case app_helper:get_env(riak_repl, recbuf) of
+        RecBuf when is_integer(RecBuf), RecBuf > 0 ->
+            [{recbuf, RecBuf}];
+        _ ->
+            []
+    end,
+    SB = case app_helper:get_env(riak_repl, sndbuf) of
+        SndBuf when is_integer(SndBuf), SndBuf > 0 ->
+            [{sndbuf, SndBuf}];
+        _ ->
+            []
+    end,
+
+    SockOpts = RB ++ SB,
+    case SockOpts of
+        [] ->
+            ok;
+        _ ->
+            inet:setopts(Socket, SockOpts)
+    end.
 
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix

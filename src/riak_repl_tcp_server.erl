@@ -38,6 +38,9 @@ init([SiteName]) ->
     {ok, #state{sitename=SiteName}}.
 
 handle_call({set_socket, Socket}, _From, State) ->
+    ok = riak_repl_util:configure_socket(Socket),
+    lager:notice("socket options ~p", [inet:getopts(Socket, [sndbuf,
+                    recbuf])]),
     self() ! send_peerinfo,
     Timeout = erlang:send_after(60000, self(), election_timeout),
     {reply, ok, State#state{socket=Socket, election_timeout=Timeout}}.

@@ -49,6 +49,7 @@ init([SiteName]) ->
 handle_call({connected, Socket}, _From, #state{listener={_, IPAddr, Port}} = State) ->
     lager:notice("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
+    ok = riak_repl_util:configure_socket(Socket),
     gen_tcp:send(Socket, State#state.sitename),
     Props = riak_repl_fsm_common:common_init(Socket),
     NewState = State#state{
