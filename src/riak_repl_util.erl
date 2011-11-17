@@ -19,7 +19,7 @@
          choose_strategy/2,
          strategy_module/2,
          configure_socket/1,
-         repl_helper_send/1]).
+         repl_helper_send/2]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -81,7 +81,6 @@ repl_helper_recv(Object) ->
     case application:get_env(riak_core, repl_helper) of
         undefined -> ok;
         {ok, Mods} ->
-            lager:debug("repl recv helpers: ~p", [Mods]),
             repl_helper_recv(Mods, Object)
     end.
 
@@ -106,35 +105,41 @@ repl_helper_recv([{App, Mod}|T], Object) ->
             repl_helper_recv(T, Object)
     end.
 
-repl_helper_send(Object) ->
-    case application:get_env(riak_core, repl_helper) of
-        undefined -> [];
-        {ok, Mods} ->
-            lager:debug("repl send helpers: ~p", [Mods]),
-            repl_helper_send(Mods, Object, [])
+repl_helper_send(Object, C) ->
+    B = riak_object:bucket(Object),
+    case proplists:get_value(repl, C:get_bucket(B)) of
+        true ->
+            case application:get_env(riak_core, repl_helper) of
+                undefined -> [];
+                {ok, Mods} ->
+                    repl_helper_send(Mods, Object, C, [])
+            end;
+        _ ->
+            lager:debug("Repl disabled for bucket ~p", [B]),
+            cancel
     end.
 
-repl_helper_send([], _O, Acc) ->
+repl_helper_send([], _O, _C, Acc) ->
     Acc;
-repl_helper_send([{App, Mod}|T], Object, Acc) ->
-    try Mod:send(Object) of
+repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
+    try Mod:send(Object, C) of
         Objects when is_list(Objects) ->
-            repl_helper_send(T, Object, Objects ++ Acc);
+            repl_helper_send(T, Object, C, Objects ++ Acc);
         ok ->
-            repl_helper_send(T, Object, Acc);
+            repl_helper_send(T, Object, C, Acc);
         cancel ->
             cancel;
          Other ->
             lager:error("Unexpected result running repl send helper "
                 "~p from application ~p : ~p",
                 [Mod, App, Other]),
-            repl_helper_send(T, Object, Acc)
+            repl_helper_send(T, Object, C, Acc)
     catch
         What:Why ->
             lager:error("Crash while running repl send helper "
                 "~p from application ~p : ~p:~p",
                 [Mod, App, What, Why]),
-            repl_helper_send(T, Object, Acc)
+            repl_helper_send(T, Object, C, Acc)
     end.
 
 site_root_dir(Site) ->

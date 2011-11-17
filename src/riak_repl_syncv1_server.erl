@@ -212,7 +212,7 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
     Errs  = State#state.diff_errs,
     case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
         {ok, RObj} ->
-            case maybe_send(RObj, ClientVC, State#state.socket) of
+            case maybe_send(RObj, ClientVC, State#state.socket, Client) of
                 skipped ->
                     next_state(merkle_diff, State#state{diff_vclocks = Rest,
                                                         diff_recv = Recv + 1});
@@ -309,13 +309,13 @@ elapsed_secs(Then) ->
     CentiSecs = timer:now_diff(now(), Then) div 10000,
     CentiSecs / 100.0.
 
-maybe_send(RObj, ClientVC, Socket) ->
+maybe_send(RObj, ClientVC, Socket, Client) ->
     ServerVC = riak_object:vclock(RObj),
     case vclock:descends(ClientVC, ServerVC) of
         true ->
             skipped;
         false ->
-            case riak_repl_util:repl_helper_send(RObj) of
+            case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
