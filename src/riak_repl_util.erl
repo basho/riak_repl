@@ -18,7 +18,8 @@
          format_socketaddrs/1,
          choose_strategy/2,
          strategy_module/2,
-         configure_socket/1]).
+         configure_socket/1,
+         repl_helper_send/1]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -47,54 +48,94 @@ get_partitions(_Ring) ->
     lists:sort([P || {P, _} <- riak_core_ring:all_owners(Ring)]).
 
 do_repl_put(Object) ->
-    ReqId = erlang:phash2(erlang:now()),
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    Opts = [asis, disable_hooks, {update_last_modified, false}],
+    case repl_helper_recv(Object) of
+        ok ->
+            ReqId = erlang:phash2(erlang:now()),
+            B = riak_object:bucket(Object),
+            K = riak_object:key(Object),
+            Opts = [asis, disable_hooks, {update_last_modified, false}],
 
-    case B of
-        <<"_rsid_", Idx/binary>> ->
-            {ok, C} = riak:local_client(),
-            SC = riak_search_client:new(C),
+            riak_kv_put_fsm_sup:start_put_fsm(node(), [ReqId, Object, 1, 1,
+                    ?REPL_FSM_TIMEOUT,
+                    self(), Opts]),
+
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
-                    lager:debug("Incoming deleted proxy obj ~p/~p", [B, K]),
-                    riak_indexed_doc:remove_entries(C, SC, Idx, K),
-                    riak_kv_put_fsm_sup:start_put_fsm(node(),
-                                                      [ReqId, Object, 1, 1,
-                                                       ?REPL_FSM_TIMEOUT,
-                                                       self(), Opts]),
+                    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
                     reap(ReqId, B, K);
                 false ->
-                    lager:debug("Incoming proxy obj ~p/~p", [B, K]),
-                    IdxDoc = riak_object:get_value(Object),
-                    riak_indexed_doc:remove_entries(C, SC, Idx, K),
-                    Postings = riak_indexed_doc:postings(IdxDoc),
-                    SC:index_terms(Postings),
-                    riak_kv_put_fsm_sup:start_put_fsm(node(),
-                                                      [ReqId, Object, 1, 1,
-                                                       ?REPL_FSM_TIMEOUT, self(),
-                                                       Opts])
+                    lager:debug("Incoming obj ~p/~p", [B, K])
             end;
-        _ ->
-            riak_kv_put_fsm_sup:start_put_fsm(node(),
-                                              [ReqId, Object, 1, 1,
-                                               ?REPL_FSM_TIMEOUT, self(),
-                                               Opts]),
-            case riak_kv_util:is_x_deleted(Object) of
-                true ->
-                    lager:debug("Incoming deleted KV obj ~p/~p", [B, K]),
-                    reap(ReqId, B, K);
-                false ->
-                    lager:debug("Incoming KV obj ~p/~p", [B, K]),
-                    ok
-            end
+        cancel ->
+            lager:debug("Skipping repl received object ~p/~p", [B, K])
     end.
 
 reap(ReqId, B, K) ->
     riak_kv_get_fsm_sup:start_get_fsm(node(),
                                       [ReqId, B, K, 1, ?REPL_FSM_TIMEOUT,
                                        self()]).
+
+repl_helper_recv(Object) ->
+    case application:get_env(riak_core, repl_helper) of
+        undefined -> ok;
+        {ok, Mods} ->
+            lager:debug("repl recv helpers: ~p", [Mods]),
+            repl_helper_recv(Mods, Object)
+    end.
+
+repl_helper_recv([], _O) ->
+    ok;
+repl_helper_recv([{App, Mod}|T], Object) ->
+    try Mod:recv(Object) of
+        ok ->
+            repl_helper_recv(T, Object);
+        cancel ->
+            cancel;
+        Other ->
+            lager:error("Unexpected result running repl recv helper "
+                "~p from application ~p : ~p",
+                [Mod, App, Other]),
+            repl_helper_recv(T, Object)
+    catch
+        What:Why ->
+            lager:error("Crash while running repl recv helper "
+                "~p from application ~p : ~p:~p",
+                [Mod, App, What, Why]),
+            repl_helper_recv(T, Object)
+    end.
+
+repl_helper_send(Object) ->
+    case application:get_env(riak_core, repl_helper) of
+        undefined -> [];
+        {ok, Mods} ->
+            lager:debug("repl send helpers: ~p", [Mods]),
+            repl_helper_send(Mods, Object, [])
+    end.
+
+repl_helper_send([], _O, Acc) ->
+    Acc;
+repl_helper_send([{App, Mod}|T], Object, Acc) ->
+    try Mod:send(Object) of
+        Objects when is_list(Objects) ->
+            repl_helper_send(T, Object, Objects ++ Acc);
+        ok ->
+            repl_helper_send(T, Object, Acc);
+        cancel ->
+            cancel;
+         Other ->
+            lager:error("Unexpected result running repl send helper "
+                "~p from application ~p : ~p",
+                [Mod, App, Other]),
+            repl_helper_send(T, Object, Acc)
+    catch
+        What:Why ->
+            lager:error("Crash while running repl send helper "
+                "~p from application ~p : ~p:~p",
+                [Mod, App, What, Why]),
+            repl_helper_send(T, Object, Acc)
+    end.
 
 site_root_dir(Site) ->
     {ok, DataRootDir} = application:get_env(riak_repl, data_root),
