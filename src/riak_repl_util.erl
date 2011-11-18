@@ -19,7 +19,8 @@
          choose_strategy/2,
          strategy_module/2,
          configure_socket/1,
-         repl_helper_send/2]).
+         repl_helper_send/2,
+         repl_helper_send_realtime/2]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -141,6 +142,37 @@ repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
                 [Mod, App, What, Why]),
             repl_helper_send(T, Object, C, Acc)
     end.
+
+repl_helper_send_realtime(Object, C) ->
+    case application:get_env(riak_core, repl_helper) of
+        undefined -> ok;
+        {ok, Mods} ->
+            repl_helper_send_realtime(Mods, Object, C, [])
+    end.
+
+repl_helper_send_realtime([], _O, _C, Acc) ->
+    Acc;
+repl_helper_send_realtime([{App, Mod}|T], Object, C, Acc) ->
+    try Mod:send_realtime(Object, C) of
+        Objects when is_list(Objects) ->
+            repl_helper_send_realtime(T, Object, C, Objects ++ Acc);
+        ok ->
+            repl_helper_send_realtime(T, Object, C, Acc);
+        cancel ->
+            cancel;
+         Other ->
+            lager:error("Unexpected result running repl realtime send helper "
+                "~p from application ~p : ~p",
+                [Mod, App, Other]),
+            repl_helper_send_realtime(T, Object, C, Acc)
+    catch
+        What:Why ->
+            lager:error("Crash while running repl realtime send helper "
+                "~p from application ~p : ~p:~p",
+                [Mod, App, What, Why]),
+            repl_helper_send_realtime(T, Object, C, Acc)
+    end.
+
 
 site_root_dir(Site) ->
     {ok, DataRootDir} = application:get_env(riak_repl, data_root),

@@ -49,10 +49,26 @@ handle_cast(_Event, State) ->
     {noreply, State}.
 
 handle_info({repl, RObj}, State) when State#state.q == undefined ->
-    send(State#state.socket, term_to_binary({diff_obj, RObj})),
-    {noreply, State};
+    case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
+        Objects when is_list(Objects) ->
+            [send(State#state.socket, term_to_binary({diff_obj, O})) || O <-
+                Objects],
+            send(State#state.socket, term_to_binary({diff_obj, RObj})),
+            {noreply, State};
+        cancel ->
+            {noreply, State}
+    end;
 handle_info({repl, RObj}, State) ->
-    drain(enqueue(term_to_binary({diff_obj, RObj}), State));
+    case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
+        Objects when is_list(Objects) ->
+            %% enqueue all the objects the hook asked us to send
+            NewState = lists:foldl(fun(O, S) ->
+                        enqueue(term_to_binary({diff_obj, O}), S)
+                end, State, [RObj|Objects]),
+            drain(NewState);
+        cancel ->
+            {noreply, State}
+    end;
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("Connection for site ~p closed", [State#state.sitename]),
     {stop, normal, State};
