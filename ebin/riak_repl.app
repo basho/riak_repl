@@ -27,6 +27,8 @@
                   'riak_repl_sup',
                   'riak_repl_syncv1_client',
                   'riak_repl_syncv1_server',
+                  'riak_repl_keylist_client',
+                  'riak_repl_keylist_server',
                   'riak_repl_tcp_client',
                   'riak_repl_tcp_server',
                   'riak_repl_util']},
@@ -57,6 +59,7 @@
                   %% bytes
                   {server_max_pending, 5},
                   {client_ack_frequency, 5},
-                  {queue_size, 104857600}
+                  {queue_size, 104857600},
+                  {fullsync_strategies, [keylist, syncv1]}
                  ]}
 ]}.

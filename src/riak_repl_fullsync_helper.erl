@@ -14,6 +14,7 @@
          make_keylist/3,
          merkle_to_keylist/3,
          diff/4,
+         diff_stream/5,
          itr_fresh/2,
          itr_new/2]).
 
@@ -36,6 +37,8 @@
 -record(diff_state, {fsm,
                      ref,
                      preflist,
+                     count = 0,
+                     replies = 0,
                      diff_hash = 0,
                      missing = 0,
                      errors = []}).
@@ -76,7 +79,10 @@ merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
 diff(Pid, Partition, TheirFn, OurFn) ->
-    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn}).
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, -1}).
+
+diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, Count}).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -178,7 +184,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     end,
     gen_fsm:send_event(State#state.owner_fsm, {Ref, Msg}),
     {stop, normal, State};
-handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
+handle_call({diff, Partition, RemoteFilename, LocalFilename, Count}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
     %% read files this process will crash and the caller
     %% will discover the problem.
@@ -197,6 +203,8 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
                 DiffState = diff_keys(itr_new(RemoteFile, remote_reads),
                                       itr_new(LocalFile, local_reads),
                                       #diff_state{fsm = State#state.owner_fsm,
+                                                  count=Count,
+                                                  replies=Count,
                                                   ref = Ref,
                                                   preflist = {Partition, OwnerNode}}),
                 lager:info("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
@@ -354,6 +362,14 @@ itr_next(Size, File, Tag) ->
             eof
     end.
 
+diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
+    %lager:notice("ran out of replies, waiting for unpause ~p", [Count]),
+    gen_fsm:send_event(FSM, {Ref, diff_paused}),
+    receive
+        {Ref, diff_resume} ->
+            %lager:notice("resuming diff stream"),
+            diff_keys(R, L, DiffState#diff_state{replies=Count})
+    end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
     %% Remote and local keys/hashes match
     diff_keys(RNext(), LNext(), DiffState);
@@ -386,7 +402,8 @@ diff_hash(PBKey, DiffState) ->
             Fsm = DiffState#diff_state.fsm,
             Ref = DiffState#diff_state.ref,
             gen_fsm:send_event(Fsm, {Ref, {merkle_diff, BkeyVclock}}),
-            DiffState#diff_state{diff_hash = UpdDiffHash};
+            DiffState#diff_state{diff_hash = UpdDiffHash,
+                replies=DiffState#diff_state.replies - 1};
         Reason ->
             UpdErrors = orddict:update_counter(Reason, 1, DiffState#diff_state.errors),
             DiffState#diff_state{errors = UpdErrors}
@@ -399,5 +416,6 @@ missing_key(PBKey, DiffState) ->
     Ref = DiffState#diff_state.ref,
     gen_fsm:send_event(Fsm, {Ref, {merkle_diff, {BKey, vclock:fresh()}}}),
     UpdMissing = DiffState#diff_state.missing + 1,
-    DiffState#diff_state{missing = UpdMissing}.
+    DiffState#diff_state{missing = UpdMissing,
+        replies=DiffState#diff_state.replies - 1}.
 
