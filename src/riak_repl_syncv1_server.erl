@@ -51,7 +51,7 @@ start_link(SiteName, Socket, WorkDir, Client) ->
 init([SiteName, Socket, WorkDir, Client]) ->
     State0 = #state{sitename=SiteName, socket=Socket,
         work_dir=WorkDir, client=Client},
-    schedule_fullsync(),
+    riak_repl_util:schedule_fullsync(),
     State = case application:get_env({progress, SiteName}) of
         {ok, Partitions} when is_list(Partitions) ->
             lager:notice("Resuming incomplete fullsync for ~p, ~p partitions remain",
@@ -73,13 +73,13 @@ merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
     lager:info("Full-sync with site ~p completed.", [SiteName]),
     %% no longer need to track progress.
     application:unset_env(riak_repl, {progress, SiteName}),
-    schedule_fullsync(),
+    riak_repl_util:schedule_fullsync(),
     riak_repl_stats:server_fullsyncs(),
     next_state(wait_for_fullsync, State);
 merkle_send(timeout, State=#state{partitions=cancelled}) ->
     lager:info("Full-sync with site ~p cancelled.",
                           [State#state.sitename]),
-    schedule_fullsync(),
+    riak_repl_util:schedule_fullsync(),
     next_state(wait_for_fullsync, State#state{partition_start = undefined,
             stage_start = undefined});
 merkle_send(timeout, State=#state{paused=true}) ->
@@ -250,15 +250,6 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %% internal funtions
-
-schedule_fullsync() ->
-    case application:get_env(riak_repl, fullsync_interval) of
-        {ok, disabled} ->
-            ok;
-        {ok, FullsyncIvalMins} ->
-            FullsyncIval = timer:minutes(FullsyncIvalMins),
-            erlang:send_after(FullsyncIval, self(), start_fullsync)
-    end.
 
 do_start_fullsync(State) ->
     case fullsync_partitions_pending(State) of

@@ -125,7 +125,7 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                                          max_pending = MaxPending,
                                          pending = 0};
                 false ->
-                    State1 = State
+                    State1 = State#state{fullsync_worker = FullsyncWorker}
             end,
                 
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
@@ -160,7 +160,10 @@ send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
             %% this switches the socket into active mode
             Props = riak_repl_fsm_common:common_init(Socket),
             PI = proplists:get_value(my_pi, Props),
-            send(Socket, {peerinfo, PI}),
+            send(Socket, {peerinfo, PI,
+                [bounded_queue, {fullsync_strategies,
+                        app_helper:get_env(riak_repl, fullsync_strategies,
+                            [?LEGACY_STRATEGY])}]}),
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
             riak_repl_leader:add_receiver_pid(self()),
             {noreply, State#state{work_dir = WorkDir,

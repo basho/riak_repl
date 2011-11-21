@@ -13,7 +13,9 @@
          make_merkle/3,
          make_keylist/3,
          merkle_to_keylist/3,
-         diff/4]).
+         diff/4,
+         itr_fresh/2,
+         itr_new/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -321,10 +323,18 @@ open_couchdb(Filename) ->
     {ok, Fd, Btree}.
 
 itr_new(File, Tag) ->
+    case itr_fresh(File, Tag) of
+        eof ->
+            eof;
+        Fun ->
+            Fun()
+    end.
+
+itr_fresh(File, Tag) ->
     erlang:put(Tag, 0),
     case file:read(File, 4) of
         {ok, <<Size:32/unsigned>>} ->
-            itr_next(Size, File, Tag);
+            fun() -> itr_next(Size, File, Tag) end;
         _ ->
             file:close(File),
             eof

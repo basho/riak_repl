@@ -58,7 +58,10 @@ handle_call({connected, Socket}, _From, #state{listener={_, IPAddr, Port}} = Sta
         client=proplists:get_value(client, Props),
         my_pi=proplists:get_value(my_pi, Props),
         partitions=proplists:get_value(partitions, Props)},
-    send(Socket, {peerinfo, NewState#state.my_pi}),
+    send(Socket, {peerinfo, NewState#state.my_pi,
+            [bounded_queue, {fullsync_strategies,
+                    app_helper:get_env(riak_repl, fullsync_strategies,
+                        [?LEGACY_STRATEGY])}]}),
     inet:setopts(Socket, [{active, once}]),
     recv_peerinfo(NewState);
 handle_call({connect_failed, Reason}, _From, State) ->

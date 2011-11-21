@@ -20,7 +20,8 @@
          strategy_module/2,
          configure_socket/1,
          repl_helper_send/2,
-         repl_helper_send_realtime/2]).
+         repl_helper_send_realtime/2,
+         schedule_fullsync/0]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -279,6 +280,16 @@ configure_socket(Socket) ->
             ok;
         _ ->
             inet:setopts(Socket, SockOpts)
+    end.
+
+%% send a start_fullsync to the calling process when it is time for fullsync
+schedule_fullsync() ->
+    case application:get_env(riak_repl, fullsync_interval) of
+        {ok, disabled} ->
+            ok;
+        {ok, FullsyncIvalMins} ->
+            FullsyncIval = timer:minutes(FullsyncIvalMins),
+            erlang:send_after(FullsyncIval, self(), start_fullsync)
     end.
 
 %% Parse the version into major, minor, micro digits, ignoring any release
