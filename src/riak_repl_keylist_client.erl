@@ -46,9 +46,17 @@ init([SiteName, Socket, WorkDir]) ->
 wait_for_fullsync(start_fullsync, State) ->
     case State#state.partitions of
         [] ->
-            %% last sync completed or was cancelled
-            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            Partitions = riak_repl_util:get_partitions(Ring);
+            case app_helper:get_env(riak_repl, {progress,
+                        State#state.sitename}, []) of
+                [] ->
+                    %% last sync completed or was cancelled
+                    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                    Partitions = riak_repl_util:get_partitions(Ring);
+                Progress ->
+                    lager:notice("Resuming failed fullsync at ~p",
+                        [hd(Progress)]),
+                    Partitions = Progress
+            end;
         _ ->
             Partitions = State#state.partitions % resuming from pause
     end,
@@ -57,13 +65,15 @@ wait_for_fullsync(start_fullsync, State) ->
                           [State#state.sitename, Remaining]),
     {next_state, request_partition, State#state{partitions=Partitions}, 0}.
 
-request_partition(timeout, #state{partitions=[]} = State) ->
+request_partition(timeout, #state{partitions=[], sitename=SiteName} = State) ->
+    application:unset_env(riak_repl, {progress, SiteName}),
     lager:info("fullsync with site ~p completed", [State#state.sitename]),
     {next_state, wait_for_fullsync, State};
 request_partition(timeout, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
+    application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
     riak_repl_tcp_client:send(Socket, {partition, P}),
     KeyListFn = riak_repl_util:keylist_filename(WorkDir, P, ours),
-    lager:notice("building keylist for ~p", [P]),
+    lager:notice("building keylist for ~p, ~p remain", [P, length(T)]),
     {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
     {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
                                                                  P,
