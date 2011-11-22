@@ -78,7 +78,7 @@ build_keylist({Ref, keylist_built}, State=#state{kl_ref = Ref, socket=Socket,
     riak_repl_tcp_server:send(Socket, {kl_exchange, Partition}),
     {next_state, wait_keylist, State}.
 
-wait_keylist({kl_hunk, Hunk}, #state{socket=Socket,their_kl_fh=FH0} = State) ->
+wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     FH = case FH0 of
         undefined ->
             {ok, F} = file:open(State#state.their_kl_fn, [write, raw, binary,
@@ -125,7 +125,13 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
             ok
     end,
     {next_state, diff_keylist, State};
-diff_keylist({Ref, diff_paused}, State) ->
+diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
+        diff_ref=Ref} = State) ->
+    %lager:notice("reqursting diff_ack from client"),
+    riak_repl_tcp_server:send(Socket, {diff_ack, Partition}),
+    {next_state, diff_keylist, State};
+diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
+    %lager:notice("client has processed all diffs up to this point"),
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->

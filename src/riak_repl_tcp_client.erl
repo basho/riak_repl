@@ -25,7 +25,8 @@
         ack_freq,
         count,
         work_dir,
-        fullsync_worker
+        fullsync_worker,
+        pool_pid
     }).
 
 start_link(SiteName) ->
@@ -39,10 +40,15 @@ init([SiteName]) ->
             {stop, {site_not_in_ring, SiteName}};
         Site ->
             lager:notice("repl to site ~p", [Site]),
+            {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_put_worker},
+                    {worker_args, []},
+                    %% TODO at least the overflow should be configurable
+                    {size, 0}, {max_overflow, 100},
+                    {checkout_blocks, true}]),
             Listeners = Site#repl_site.addrs,
             State = #state{sitename=SiteName,
                 listeners=Listeners,
-                pending=Listeners},
+                pending=Listeners, pool_pid=Pid},
             {ok, do_async_connect(State)}
     end.
 
@@ -148,15 +154,18 @@ send(Socket, Data) when is_binary(Data) ->
 send(Socket, Data) ->
     send(Socket, term_to_binary(Data)).
 
-do_repl_put(Obj, State=#state{ack_freq = undefined}) -> % q_ack not supported
-    spawn(riak_repl_util, do_repl_put, [Obj]),
+do_repl_put(Obj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
+    Worker = poolboy:checkout(Pool),
+    ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
     State;
-do_repl_put(Obj, State=#state{count=C, ack_freq=F}) when (C < (F-1)) ->
-    spawn(riak_repl_util, do_repl_put, [Obj]),
+do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-1)) ->
+    Worker = poolboy:checkout(Pool),
+    ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
-do_repl_put(Obj, State=#state{socket=S, ack_freq=F}) ->
+do_repl_put(Obj, State=#state{socket=S, ack_freq=F, pool_pid=Pool}) ->
+    Worker = poolboy:checkout(Pool),
+    ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
     send(S, {q_ack, F}),
-    spawn(riak_repl_util, do_repl_put, [Obj]),
     State#state{count=0}.
 
 recv_peerinfo(#state{socket=Socket} = State) ->

@@ -109,14 +109,19 @@ send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
     end,
     case file:read(FH, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
-            riak_repl_tcp_server:send(Socket, {kl_hunk, Data}),
+            riak_repl_tcp_client:send(Socket, {kl_hunk, Data}),
             {next_state, send_keylist, State#state{kl_fh=FH}, 0};
         eof ->
             file:close(FH),
-            riak_repl_tcp_server:send(Socket, kl_eof),
+            riak_repl_tcp_client:send(Socket, kl_eof),
             {next_state, wait_ack, State#state{kl_fh=undefined}}
     end.
 
+wait_ack({diff_ack, Partition}, #state{partition=Partition, socket=Socket} =
+    State) ->
+    %lager:notice("got diff ack ~p", [Partition]),
+    riak_repl_tcp_client:send(Socket, {diff_ack, Partition}),
+    {next_state, wait_ack, State};
 wait_ack(diff_done, State) ->
     {next_state, request_partition, State, 0}.
 
