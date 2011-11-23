@@ -146,30 +146,3 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %% internal funtions
-
-diff_hunk([], Acc) ->
-    lager:debug("differing keys: ~p", [Acc]),
-    Acc;
-diff_hunk([{D, Hash}|Tail], Acc) ->
-    {B, K} = riak_repl_util:binunpack_bkey(D),
-    {ok, C} = riak:local_client(),
-    case C:get(B, K) of
-        {ok, Obj} ->
-            case hash_obj(Obj) of
-                Hash ->
-                    %% same on other side
-                    diff_hunk(Tail, Acc);
-                _ ->
-                    diff_hunk(Tail, [{{B, K}, riak_object:vclock(Obj)}|Acc])
-            end;
-        {error, notfound} ->
-            diff_hunk(Tail, [{{B, K}, vclock:fresh()}|Acc]);
-        _ ->
-            diff_hunk(Tail, [{{B, K}, vclock:fresh()}|Acc])
-    end.
-
-hash_obj(RObj) ->
-    Vclock = riak_object:vclock(RObj),
-    UpdObj = riak_object:set_vclock(RObj, lists:sort(Vclock)),
-    erlang:phash2(term_to_binary(UpdObj)).
-

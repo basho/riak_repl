@@ -159,21 +159,6 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 %% internal funtions
 
-read_kl_hunk(Itr, Size, Acc) ->
-    case Itr() of
-        eof ->
-            {Acc, eof};
-        {Element, NewItr} ->
-            E = term_to_binary(Element),
-            NewSize = Size - byte_size(E),
-            case NewSize < 0 of
-                false ->
-                    read_kl_hunk(NewItr, NewSize, [Element|Acc]);
-                true ->
-                    {[Element|Acc], NewItr}
-            end
-    end.
-
 send_diffs([], Socket, _) ->
     riak_repl_tcp_server:send(Socket, diff_done);
 send_diffs([{{B,K}, ClientVClock}|T], Socket, Client) ->
