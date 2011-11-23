@@ -33,7 +33,9 @@
         their_kl_fh,
         partition,
         diff_pid,
-        diff_ref
+        diff_ref,
+        stage_start,
+        partition_start
     }).
 
 
@@ -51,17 +53,13 @@ wait_for_partition(start_fullsync, State) ->
     %% protocol, so we'll just send it on to the client.
     riak_repl_tcp_server:send(State#state.socket, start_fullsync),
     {next_state, wait_for_partition, State};
-wait_for_partition({ack, Partition, DiffVClocks}, #state{partition=Partition} = State) ->
-    lager:info("got diffs for partition ~p: ~p", [Partition,
-            length(DiffVClocks)]),
-    send_diffs(DiffVClocks, State#state.socket, State#state.client),
-    lager:info("diffs sent"),
-    {next_state, wait_for_partition, State};
 wait_for_partition({partition, Partition}, State) ->
-    {next_state, build_keylist, State#state{partition=Partition}, 0}.
+    lager:notice("Doing fullsync for ~p", [Partition]),
+    {next_state, build_keylist, State#state{partition=Partition,
+            partition_start=now()}, 0}.
 
 build_keylist(timeout, #state{partition=Partition, work_dir=WorkDir} = State) ->
-    lager:notice("building keylist for ~p", [Partition]),
+    lager:notice("Building keylist for ~p", [Partition]),
     %% client wants keylist for this partition
     TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
     KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
@@ -70,13 +68,14 @@ build_keylist(timeout, #state{partition=Partition, work_dir=WorkDir} = State) ->
                                                                  Partition,
                                                                  KeyListFn),
     {next_state, build_keylist, State#state{kl_pid=KeyListPid,
-            kl_ref=KeyListRef, kl_fn=KeyListFn,
+            kl_ref=KeyListRef, kl_fn=KeyListFn, stage_start=now(),
             their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
 build_keylist({Ref, keylist_built}, State=#state{kl_ref = Ref, socket=Socket,
     partition=Partition}) ->
-    lager:notice("built keylist for ~p", [Partition]),
+    lager:notice("Built keylist for ~p (built in ~p secs)", [Partition,
+            riak_repl_util:elapsed_secs(State#state.stage_start)]),
     riak_repl_tcp_server:send(Socket, {kl_exchange, Partition}),
-    {next_state, wait_keylist, State}.
+    {next_state, wait_keylist, State#state{stage_start=now()}}.
 
 wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     FH = case FH0 of
@@ -100,12 +99,15 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
             file:close(FH),
             ok
     end,
-    lager:info("diffing ~p and ~p", [State#state.their_kl_fn,
-            State#state.kl_fn]),
+    lager:notice("Received keylist for ~p (received in ~p secs)",
+        [State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.stage_start)]),
+    lager:notice("Calculating differences for ~p", [State#state.partition]),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
         State#state.kl_fn, State#state.their_kl_fn, 1000),
-    {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid}}.
+    {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
+            stage_start=now()}}.
 
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
         socket=Socket, diff_ref=Ref} = State) ->
@@ -135,6 +137,12 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = 
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
+    lager:notice("Differences exchanged for partition ~p (done in ~p secs)",
+        [State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.stage_start)]),
+    lager:notice("Fullsync for ~p complete (completed in ~p secs)",
+        [State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.partition_start)]),
     riak_repl_tcp_server:send(State#state.socket, diff_done),
     {next_state, wait_for_partition, State}.
 
@@ -158,32 +166,3 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %% internal funtions
-
-send_diffs([], Socket, _) ->
-    riak_repl_tcp_server:send(Socket, diff_done);
-send_diffs([{{B,K}, ClientVClock}|T], Socket, Client) ->
-    case Client:get(B, K) of
-        {ok, Obj} ->
-            maybe_send(Obj, ClientVClock, Socket, Client),
-            send_diffs(T, Socket, Client);
-        {error, notfound} ->
-            send_diffs(T, Socket, Client);
-        _ ->
-            send_diffs(T, Socket, Client)
-    end.
-
-maybe_send(RObj, ClientVC, Socket, Client) ->
-    ServerVC = riak_object:vclock(RObj),
-    case vclock:descends(ClientVC, ServerVC) of
-        true ->
-            skipped;
-        false ->
-            case riak_repl_util:repl_helper_send(RObj, Client) of
-                cancel ->
-                    skipped;
-                Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Socket, {diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Socket, {diff_obj, RObj})
-            end
-    end.
-

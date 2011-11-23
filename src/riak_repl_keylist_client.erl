@@ -33,7 +33,9 @@
         kl_pid,
         kl_ref,
         our_kl_ready,
-        their_kl_ready
+        their_kl_ready,
+        stage_start,
+        partition_start
     }).
 
 start_link(SiteName, Socket, WorkDir) ->
@@ -61,40 +63,44 @@ wait_for_fullsync(start_fullsync, State) ->
             Partitions = State#state.partitions % resuming from pause
     end,
     Remaining = length(Partitions),
-    lager:info("Full-sync with site ~p starting; ~p partitions.",
+    lager:notice("Full-sync with site ~p starting; ~p partitions.",
                           [State#state.sitename, Remaining]),
     {next_state, request_partition, State#state{partitions=Partitions}, 0}.
 
 request_partition(timeout, #state{partitions=[], sitename=SiteName} = State) ->
     application:unset_env(riak_repl, {progress, SiteName}),
-    lager:info("fullsync with site ~p completed", [State#state.sitename]),
+    lager:notice("Fullsync with site ~p completed (in ~p secs)",
+        [State#state.sitename,
+            riak_repl_util:elapsed_secs(State#state.partition_start)]),
     {next_state, wait_for_fullsync, State};
 request_partition(timeout, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
+    lager:notice("Starting fullsync for ~p", [P]),
     application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
     riak_repl_tcp_client:send(Socket, {partition, P}),
     KeyListFn = riak_repl_util:keylist_filename(WorkDir, P, ours),
-    lager:notice("building keylist for ~p, ~p remain", [P, length(T)]),
+    lager:notice("Building keylist for ~p, ~p remain", [P, length(T)]),
     {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
     {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
                                                                  P,
                                                                  KeyListFn),
     {next_state, request_partition, State#state{kl_fn=KeyListFn,
             our_kl_ready=false, their_kl_ready=false,
+            partition_start=now(), stage_start=now(),
             kl_pid=KeyListPid, kl_ref=KeyListRef, partition=P, partitions=T}};
 request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
-    lager:notice("built keylist for ~p", [State#state.partition]),
+    lager:notice("Built keylist for ~p, (built in ~p secs)",
+        [State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.stage_start)]),
     case State#state.their_kl_ready of
         true ->
-            lager:notice("time to exchange keylists"),
-            {next_state, send_keylist, State, 0};
+            {next_state, send_keylist, State#state{stage_start=now()}, 0};
         _ ->
             {next_state, request_partition, State#state{our_kl_ready=true}}
     end;
 request_partition({kl_exchange, P}, #state{partition=P} = State) ->
     case State#state.our_kl_ready of
         true ->
-            lager:notice("time to exchange keylists"),
-            {next_state, send_keylist, State, 0};
+            {next_state, send_keylist, State#state{stage_start=now()}, 0};
         _ ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
     end.
@@ -102,6 +108,7 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
 send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
     FH = case FH0 of
         undefined ->
+            lager:notice("Sending keylist for ~p", [State#state.partition]),
             {ok, F} = file:open(State#state.kl_fn, [read, binary, raw, read_ahead]),
             F;
         _ ->
@@ -114,7 +121,13 @@ send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
         eof ->
             file:close(FH),
             riak_repl_tcp_client:send(Socket, kl_eof),
-            {next_state, wait_ack, State#state{kl_fh=undefined}}
+            lager:notice("Sent keylist for ~p (sent in ~p secs)",
+                [State#state.partition,
+                    riak_repl_util:elapsed_secs(State#state.stage_start)]),
+            lager:notice("Exhanging differences for ~p",
+                [State#state.partition]),
+            {next_state, wait_ack, State#state{kl_fh=undefined,
+                    stage_start=now()}}
     end.
 
 wait_ack({diff_ack, Partition}, #state{partition=Partition, socket=Socket} =
@@ -123,6 +136,9 @@ wait_ack({diff_ack, Partition}, #state{partition=Partition, socket=Socket} =
     riak_repl_tcp_client:send(Socket, {diff_ack, Partition}),
     {next_state, wait_ack, State};
 wait_ack(diff_done, State) ->
+    lager:notice("Differences exchanged for ~p (done in ~p secs)",
+        [State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.stage_start)]),
     {next_state, request_partition, State, 0}.
 
 

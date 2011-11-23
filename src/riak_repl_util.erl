@@ -21,7 +21,8 @@
          configure_socket/1,
          repl_helper_send/2,
          repl_helper_send_realtime/2,
-         schedule_fullsync/0]).
+         schedule_fullsync/0,
+         elapsed_secs/1]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -291,6 +292,11 @@ schedule_fullsync() ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
             erlang:send_after(FullsyncIval, self(), start_fullsync)
     end.
+
+%% Work out the elapsed time in seconds, rounded to centiseconds.
+elapsed_secs(Then) ->
+    CentiSecs = timer:now_diff(now(), Then) div 10000,
+    CentiSecs / 100.0.
 
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix
