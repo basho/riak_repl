@@ -48,16 +48,27 @@ init([SiteName, Socket, WorkDir, Client]) ->
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
-wait_for_partition(start_fullsync, State) ->
+wait_for_partition(Command, State)
+        when Command == start_fullsync; Command == resume_fullsync ->
     %% annoyingly the server is the one that triggers the fullsync in the old
     %% protocol, so we'll just send it on to the client.
-    riak_repl_tcp_server:send(State#state.socket, start_fullsync),
+    riak_repl_tcp_server:send(State#state.socket, Command),
     {next_state, wait_for_partition, State};
 wait_for_partition({partition, Partition}, State) ->
     lager:notice("Doing fullsync for ~p", [Partition]),
     {next_state, build_keylist, State#state{partition=Partition,
-            partition_start=now()}, 0}.
+            partition_start=now()}, 0};
+wait_for_partition(Event, State) ->
+    lager:info("ignoring event ~p", [Event]),
+    {next_state, wait_for_partition, State}.
 
+build_keylist(Command, #state{kl_pid=Pid} = State)
+        when Command == cancel_fullsync; Command == pause_fullsync ->
+    %% kill the worker
+    riak_repl_fullsync_helper:stop(Pid),
+    riak_repl_tcp_server:send(State#state.socket, Command),
+    log_stop(Command, State),
+    {next_state, wait_for_partition, State};
 build_keylist(timeout, #state{partition=Partition, work_dir=WorkDir} = State) ->
     lager:notice("Building keylist for ~p", [Partition]),
     %% client wants keylist for this partition
@@ -77,6 +88,19 @@ build_keylist({Ref, keylist_built}, State=#state{kl_ref = Ref, socket=Socket,
     riak_repl_tcp_server:send(Socket, {kl_exchange, Partition}),
     {next_state, wait_keylist, State#state{stage_start=now()}}.
 
+wait_keylist(Command, #state{their_kl_fh=FH} = State)
+        when Command == pause_fullsync; Command == cancel_fullsync ->
+    case FH of
+        undefined ->
+            ok;
+        _ ->
+            %% close and delete the keylist file
+            file:close(FH),
+            file:delete(State#state.their_kl_fn)
+    end,
+    riak_repl_tcp_server:send(State#state.socket, Command),
+    log_stop(Command, State),
+    {next_state, wait_for_partition, State};
 wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     FH = case FH0 of
         undefined ->
@@ -109,6 +133,12 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
     {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
             stage_start=now()}}.
 
+diff_keylist(Command, #state{diff_pid=Pid} = State)
+        when Command == pause_fullsync; Command == cancel_fullsync ->
+    riak_repl_fullsync_helper:stop(Pid),
+    riak_repl_tcp_server:send(State#state.socket, Command),
+    log_stop(Command, State),
+    {next_state, wait_for_partition, State};
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
         socket=Socket, diff_ref=Ref} = State) ->
     case Client:get(B, K) of
@@ -166,3 +196,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %% internal funtions
+
+log_stop(Command, State) ->
+    lager:notice("Fullsync ~s at partition ~p (after ~p secs)",
+        [command_verb(Command), State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.partition_start)]).
+
+command_verb(cancel_fullsync) ->
+    "cancelled";
+command_verb(pause_fullsync) ->
+    "paused".

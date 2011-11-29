@@ -8,6 +8,8 @@
 
 %% API
 -export([start_link/1, set_socket/2, send/2]).
+-export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
+        resume_fullsync/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -33,14 +35,36 @@ start_link(SiteName) ->
 set_socket(Pid, Socket) ->
     gen_server:call(Pid, {set_socket, Socket}).
 
+start_fullsync(Pid) ->
+    gen_server:call(Pid, start_fullsync).
+
+cancel_fullsync(Pid) ->
+    gen_server:call(Pid, cancel_fullsync).
+
+pause_fullsync(Pid) ->
+    gen_server:call(Pid, pause_fullsync).
+
+resume_fullsync(Pid) ->
+    gen_server:call(Pid, resume_fullsync).
+
 init([SiteName]) ->
     %% we need to wait for set_socket to happen
     {ok, #state{sitename=SiteName}}.
 
+handle_call(start_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, start_fullsync),
+    {reply, ok, State};
+handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, cancel_fullsync),
+    {reply, ok, State};
+handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, pause_fullsync),
+    {reply, ok, State};
+handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, resume_fullsync),
+    {reply, ok, State};
 handle_call({set_socket, Socket}, _From, State) ->
     ok = riak_repl_util:configure_socket(Socket),
-    lager:notice("socket options ~p", [inet:getopts(Socket, [sndbuf,
-                    recbuf])]),
     self() ! send_peerinfo,
     Timeout = erlang:send_after(60000, self(), election_timeout),
     {reply, ok, State#state{socket=Socket, election_timeout=Timeout}}.

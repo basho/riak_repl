@@ -10,6 +10,7 @@
 
 %% API
 -export([start_link/1,
+         stop/1,
          make_merkle/3,
          make_keylist/3,
          merkle_to_keylist/3,
@@ -49,6 +50,9 @@
 
 start_link(OwnerFsm) ->
     gen_server2:start_link(?MODULE, [OwnerFsm], []).
+
+stop(Pid) ->
+    gen_server2:call(Pid, stop, infinity).
 
 %% Make a couch_btree of key/object hashes.
 %%
@@ -92,6 +96,18 @@ init([OwnerFsm]) ->
     process_flag(trap_exit, true),
     {ok, #state{owner_fsm = OwnerFsm}}.
 
+handle_call(stop, _From, State) ->
+    case State#state.folder_pid of
+        undefined ->
+            ok;
+        Pid ->
+            unlink(Pid),
+            exit(Pid, kill)
+    end,
+    file:close(State#state.kl_fp),
+    couch_merkle:close(State#state.merkle_pid),
+    file:delete(State#state.filename),
+    {stop, normal, ok, State};
 handle_call({make_merkle, Partition, FileName}, From, State) ->
     %% Return to caller immediately - under heavy load exceeded the 5s
     %% default timeout.  Do not wish to block the repl server for
@@ -368,7 +384,11 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
     receive
         {Ref, diff_resume} ->
             %lager:notice("resuming diff stream"),
-            diff_keys(R, L, DiffState#diff_state{replies=Count})
+            diff_keys(R, L, DiffState#diff_state{replies=Count});
+        {'$gen_call', From, stop} ->
+            gen_server2:reply(From, ok),
+            lager:notice("stop request while diffing"),
+            DiffState
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
     %% Remote and local keys/hashes match

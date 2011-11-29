@@ -45,7 +45,8 @@ init([SiteName, Socket, WorkDir]) ->
     {ok, wait_for_fullsync,
         #state{sitename=SiteName,socket=Socket,work_dir=WorkDir}}.
 
-wait_for_fullsync(start_fullsync, State) ->
+wait_for_fullsync(Command, State)
+        when Command == start_fullsync; Command == resume_fullsync ->
     case State#state.partitions of
         [] ->
             case app_helper:get_env(riak_repl, {progress,
@@ -60,19 +61,37 @@ wait_for_fullsync(start_fullsync, State) ->
                     Partitions = Progress
             end;
         _ ->
-            Partitions = State#state.partitions % resuming from pause
+            Partitions = [State#state.partition | State#state.partitions] % resuming from pause
     end,
     Remaining = length(Partitions),
     lager:notice("Full-sync with site ~p starting; ~p partitions.",
                           [State#state.sitename, Remaining]),
     {next_state, request_partition, State#state{partitions=Partitions}, 0}.
 
+request_partition(Command, #state{kl_pid=Pid, sitename=SiteName} = State)
+        when Command == pause_fullsync; Command == cancel_fullsync ->
+    case Pid of
+        undefined ->
+            ok;
+        _ ->
+            riak_repl_fullsync_helper:stop(Pid)
+    end,
+    file:delete(State#state.kl_fn),
+    NewState = case Command of
+        cancel_fullsync ->
+            application:unset_env(riak_repl, {progress, SiteName}),
+            State#state{partitions=[], partition=undefined};
+        _ ->
+            State
+    end,
+    log_stop(Command, State),
+    {next_state, wait_for_fullsync, NewState};
 request_partition(timeout, #state{partitions=[], sitename=SiteName} = State) ->
     application:unset_env(riak_repl, {progress, SiteName}),
     lager:notice("Fullsync with site ~p completed (in ~p secs)",
         [State#state.sitename,
             riak_repl_util:elapsed_secs(State#state.partition_start)]),
-    {next_state, wait_for_fullsync, State};
+    {next_state, wait_for_fullsync, State#state{partition=undefined}};
 request_partition(timeout, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
     lager:notice("Starting fullsync for ~p", [P]),
     application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
@@ -95,7 +114,8 @@ request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
         true ->
             {next_state, send_keylist, State#state{stage_start=now()}, 0};
         _ ->
-            {next_state, request_partition, State#state{our_kl_ready=true}}
+            {next_state, request_partition, State#state{our_kl_ready=true,
+                    kl_pid=undefined}}
     end;
 request_partition({kl_exchange, P}, #state{partition=P} = State) ->
     case State#state.our_kl_ready of
@@ -105,6 +125,19 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
     end.
 
+send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
+        when Command == cancel_fullsync; Command == pause_fullsync ->
+    file:close(FH),
+    file:delete(State#state.kl_fn),
+    NewState = case Command of
+        cancel_fullsync ->
+            application:unset_env(riak_repl, {progress, SiteName}),
+            State#state{partitions=[], partition=undefined};
+        _ ->
+            State
+    end,
+    log_stop(Command, State),
+    {next_state, wait_for_fullsync, NewState};
 send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
     FH = case FH0 of
         undefined ->
@@ -130,6 +163,17 @@ send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
                     stage_start=now()}}
     end.
 
+wait_ack(Command, #state{sitename=SiteName} = State)
+        when Command == cancel_fullsync; Command == pause_fullsync ->
+    NewState = case Command of
+        cancel_fullsync ->
+            application:unset_env(riak_repl, {progress, SiteName}),
+            State#state{partitions=[], partition=undefined};
+        _ ->
+            State
+    end,
+    log_stop(Command, State),
+    {next_state, wait_for_fullsync, NewState};
 wait_ack({diff_ack, Partition}, #state{partition=Partition, socket=Socket} =
     State) ->
     %lager:notice("got diff ack ~p", [Partition]),
@@ -162,3 +206,13 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %% internal funtions
+
+log_stop(Command, State) ->
+    lager:notice("Fullsync ~s at partition ~p (after ~p secs)",
+        [command_verb(Command), State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.partition_start)]).
+
+command_verb(cancel_fullsync) ->
+    "cancelled";
+command_verb(pause_fullsync) ->
+    "paused".
