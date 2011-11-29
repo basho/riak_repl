@@ -149,13 +149,16 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
         true ->
-            {ok, FP} = file:open(Filename, [read, write, binary, raw, delayed_write]),
+            {ok, FP} = file:open(Filename, [read, write, binary, delayed_write]),
             Self = self(),
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
                              Folder = fun(K, V, MPid) -> 
-                                              gen_server2:cast(MPid, {kl, K, hash_object(V)}),
+                                              %gen_server2:cast(MPid, {kl, K, hash_object(V)}),
+                                              H = hash_object(V),
+                                              Bin = term_to_binary({pack_key(K), H}),
+                                              file:write(FP, <<(size(Bin)):32, Bin/binary>>),
                                               MPid
                                       end,
                              riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
@@ -279,6 +282,11 @@ handle_cast(kl_finish, State) ->
     {noreply, State};
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
+    %% we want the GC to stop running, so set a giant heap size
+    lager:info("Sorting keylist ~p", [Filename]),
+    erlang:process_flag(min_heap_size, 1000000),
+    %erlang:process_flag(fullsweep_after, 20),
+    %io:format("~p", [erlang:process_info(self())]),
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     lager:info("Sorted ~s in ~.2f seconds",
                           [Filename, ElapsedUsec / 1000000]),
