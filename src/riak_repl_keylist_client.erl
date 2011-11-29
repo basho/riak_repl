@@ -88,9 +88,8 @@ request_partition(Command, #state{kl_pid=Pid, sitename=SiteName} = State)
     {next_state, wait_for_fullsync, NewState};
 request_partition(timeout, #state{partitions=[], sitename=SiteName} = State) ->
     application:unset_env(riak_repl, {progress, SiteName}),
-    lager:notice("Fullsync with site ~p completed (in ~p secs)",
-        [State#state.sitename,
-            riak_repl_util:elapsed_secs(State#state.partition_start)]),
+    lager:notice("Fullsync with site ~p completed", [State#state.sitename]),
+    riak_repl_tcp_client:send(State#state.socket, fullsync_complete),
     {next_state, wait_for_fullsync, State#state{partition=undefined}};
 request_partition(timeout, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
     lager:notice("Starting fullsync for ~p", [P]),
@@ -183,6 +182,9 @@ wait_ack(diff_done, State) ->
     lager:notice("Differences exchanged for ~p (done in ~p secs)",
         [State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
+    lager:notice("Fullsync for partition ~p complete (done in ~p secs)",
+        [State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.partition_start)]),
     {next_state, request_partition, State, 0}.
 
 

@@ -54,6 +54,10 @@ wait_for_partition(Command, State)
     %% protocol, so we'll just send it on to the client.
     riak_repl_tcp_server:send(State#state.socket, Command),
     {next_state, wait_for_partition, State};
+wait_for_partition(fullsync_complete, State) ->
+    lager:notice("Fullsync with site ~p completed", [State#state.sitename]),
+    riak_repl_stats:server_fullsyncs(),
+    {next_state, wait_for_partition, State};
 wait_for_partition({partition, Partition}, State) ->
     lager:notice("Doing fullsync for ~p", [Partition]),
     {next_state, build_keylist, State#state{partition=Partition,
