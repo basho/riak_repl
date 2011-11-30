@@ -66,16 +66,12 @@ wait_for_fullsync(Command, State)
     Remaining = length(Partitions),
     lager:notice("Full-sync with site ~p starting; ~p partitions.",
                           [State#state.sitename, Remaining]),
-    {next_state, request_partition, State#state{partitions=Partitions}, 0}.
+    gen_fsm:send_event(self(), continue),
+    {next_state, request_partition, State#state{partitions=Partitions}}.
 
 request_partition(Command, #state{kl_pid=Pid, sitename=SiteName} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
-    case Pid of
-        undefined ->
-            ok;
-        _ ->
-            riak_repl_fullsync_helper:stop(Pid)
-    end,
+    catch(riak_repl_fullsync_helper:stop(Pid)),
     file:delete(State#state.kl_fn),
     NewState = case Command of
         cancel_fullsync ->
@@ -86,12 +82,12 @@ request_partition(Command, #state{kl_pid=Pid, sitename=SiteName} = State)
     end,
     log_stop(Command, State),
     {next_state, wait_for_fullsync, NewState};
-request_partition(timeout, #state{partitions=[], sitename=SiteName} = State) ->
+request_partition(continue, #state{partitions=[], sitename=SiteName} = State) ->
     application:unset_env(riak_repl, {progress, SiteName}),
     lager:notice("Fullsync with site ~p completed", [State#state.sitename]),
     riak_repl_tcp_client:send(State#state.socket, fullsync_complete),
     {next_state, wait_for_fullsync, State#state{partition=undefined}};
-request_partition(timeout, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
+request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
     lager:notice("Starting fullsync for ~p", [P]),
     application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
     riak_repl_tcp_client:send(Socket, {partition, P}),
@@ -111,7 +107,8 @@ request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     case State#state.their_kl_ready of
         true ->
-            {next_state, send_keylist, State#state{stage_start=now()}, 0};
+            gen_fsm:send_event(self(), continue),
+            {next_state, send_keylist, State#state{stage_start=now()}};
         _ ->
             {next_state, request_partition, State#state{our_kl_ready=true,
                     kl_pid=undefined}}
@@ -119,10 +116,25 @@ request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
 request_partition({kl_exchange, P}, #state{partition=P} = State) ->
     case State#state.our_kl_ready of
         true ->
-            {next_state, send_keylist, State#state{stage_start=now()}, 0};
+            gen_fsm:send_event(self(), continue),
+            {next_state, send_keylist, State#state{stage_start=now()}};
         _ ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
-    end.
+    end;
+request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref} = State) ->
+    lager:warning("Skipping partition ~p because of error ~p",
+        [State#state.partition, Reason]),
+    riak_repl_tcp_server:send(Socket, {skip_partition, State#state.partition}),
+    gen_fsm:send_event(self(), continue),
+    {next_state, request_partition, State};
+request_partition({skip_partition, Partition}, #state{partition=Partition,
+        kl_pid=Pid} = State) ->
+    lager:warning("Skipping partition ~p as requested by server",
+        [Partition]),
+    catch(riak_repl_fullsync_helper:stop(Pid)),
+    gen_fsm:send_event(self(), continue),
+    {next_state, request_partition, State}.
+
 
 send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
         when Command == cancel_fullsync; Command == pause_fullsync ->
@@ -137,7 +149,7 @@ send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
     end,
     log_stop(Command, State),
     {next_state, wait_for_fullsync, NewState};
-send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
+send_keylist(continue, #state{kl_fh=FH0,socket=Socket} = State) ->
     FH = case FH0 of
         undefined ->
             lager:notice("Sending keylist for ~p", [State#state.partition]),
@@ -149,7 +161,8 @@ send_keylist(timeout, #state{kl_fh=FH0,socket=Socket} = State) ->
     case file:read(FH, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
             riak_repl_tcp_client:send(Socket, {kl_hunk, Data}),
-            {next_state, send_keylist, State#state{kl_fh=FH}, 0};
+            gen_fsm:send_event(self(), continue),
+            {next_state, send_keylist, State#state{kl_fh=FH}};
         eof ->
             file:close(FH),
             riak_repl_tcp_client:send(Socket, kl_eof),
@@ -185,7 +198,8 @@ wait_ack(diff_done, State) ->
     lager:notice("Fullsync for partition ~p complete (done in ~p secs)",
         [State#state.partition,
             riak_repl_util:elapsed_secs(State#state.partition_start)]),
-    {next_state, request_partition, State, 0}.
+    gen_fsm:send_event(self(), continue),
+    {next_state, request_partition, State}.
 
 
 %% gen_fsm callbacks

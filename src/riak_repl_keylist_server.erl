@@ -60,8 +60,9 @@ wait_for_partition(fullsync_complete, State) ->
     {next_state, wait_for_partition, State};
 wait_for_partition({partition, Partition}, State) ->
     lager:notice("Doing fullsync for ~p", [Partition]),
+    gen_fsm:send_event(self(), continue),
     {next_state, build_keylist, State#state{partition=Partition,
-            partition_start=now()}, 0};
+            partition_start=now()}};
 wait_for_partition(Event, State) ->
     lager:info("ignoring event ~p", [Event]),
     {next_state, wait_for_partition, State}.
@@ -73,7 +74,7 @@ build_keylist(Command, #state{kl_pid=Pid} = State)
     riak_repl_tcp_server:send(State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
-build_keylist(timeout, #state{partition=Partition, work_dir=WorkDir} = State) ->
+build_keylist(continue, #state{partition=Partition, work_dir=WorkDir} = State) ->
     lager:notice("Building keylist for ~p", [Partition]),
     %% client wants keylist for this partition
     TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
@@ -85,12 +86,24 @@ build_keylist(timeout, #state{partition=Partition, work_dir=WorkDir} = State) ->
     {next_state, build_keylist, State#state{kl_pid=KeyListPid,
             kl_ref=KeyListRef, kl_fn=KeyListFn, stage_start=now(),
             their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
-build_keylist({Ref, keylist_built}, State=#state{kl_ref = Ref, socket=Socket,
+build_keylist({Ref, keylist_built}, State=#state{kl_ref=Ref, socket=Socket,
     partition=Partition}) ->
     lager:notice("Built keylist for ~p (built in ~p secs)", [Partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     riak_repl_tcp_server:send(Socket, {kl_exchange, Partition}),
-    {next_state, wait_keylist, State#state{stage_start=now()}}.
+    {next_state, wait_keylist, State#state{stage_start=now()}};
+build_keylist({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref} = State) ->
+    lager:warning("Skipping partition ~p because of error ~p",
+        [State#state.partition, Reason]),
+    riak_repl_tcp_server:send(Socket, {skip_partition, State#state.partition}),
+    {next_state, wait_for_partition, State};
+build_keylist({skip_partition, Partition}, #state{partition=Partition,
+        kl_pid=Pid} = State) ->
+    lager:warning("Skipping partition ~p as requested by client",
+        [Partition]),
+    catch(riak_repl_fullsync_helper:stop(Pid)),
+    {next_state, wait_for_partition, State}.
+
 
 wait_keylist(Command, #state{their_kl_fh=FH} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
@@ -135,7 +148,12 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
         State#state.kl_fn, State#state.their_kl_fn, 1000),
     {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
-            stage_start=now()}}.
+            stage_start=now()}};
+wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
+    lager:warning("Skipping partition ~p as requested by client",
+        [Partition]),
+    {next_state, wait_for_partition, State}.
+
 
 diff_keylist(Command, #state{diff_pid=Pid} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
@@ -183,12 +201,15 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
 %% gen_fsm callbacks
 
 handle_event(_Event, StateName, State) ->
+    lager:notice("ignoring ~p", [_Event]),
     {next_state, StateName, State}.
 
 handle_sync_event(_Event,_F,StateName,State) ->
+    lager:notice("ignoring ~p", [_Event]),
     {reply, ok, StateName, State}.
 
 handle_info(_I, StateName, State) ->
+    lager:notice("ignoring ~p", [_I]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, State) -> 

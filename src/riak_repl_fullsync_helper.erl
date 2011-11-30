@@ -283,10 +283,9 @@ handle_cast(kl_finish, State) ->
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     %% we want the GC to stop running, so set a giant heap size
+    %% this process is about to die, so this is OK
     lager:info("Sorting keylist ~p", [Filename]),
     erlang:process_flag(min_heap_size, 1000000),
-    %erlang:process_flag(fullsweep_after, 20),
-    %io:format("~p", [erlang:process_info(self())]),
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     lager:info("Sorted ~s in ~.2f seconds",
                           [Filename, ElapsedUsec / 1000000]),
