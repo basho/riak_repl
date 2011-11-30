@@ -147,7 +147,7 @@ repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
 
 repl_helper_send_realtime(Object, C) ->
     case application:get_env(riak_core, repl_helper) of
-        undefined -> ok;
+        undefined -> [];
         {ok, Mods} ->
             repl_helper_send_realtime(Mods, Object, C, [])
     end.

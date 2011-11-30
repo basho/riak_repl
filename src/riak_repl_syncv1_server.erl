@@ -111,7 +111,7 @@ merkle_send(timeout, State=#state{sitename=SiteName,
                                          partitions = T}).
 
 merkle_build(cancel_fullsync, State) ->
-    {merkle_build, do_cancel_fullsync(State)};
+    next_state(merkle_build, do_cancel_fullsync(State));
 merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref,
                                                partitions = cancelled}) ->
     %% Partition sync was cancelled before transferring any data
