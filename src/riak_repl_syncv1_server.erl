@@ -7,7 +7,8 @@
 -include_lib("kernel/include/file.hrl").
 
 %% API
--export([start_link/4]).
+-export([start_link/4, start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
+    resume_fullsync/1]).
 
 %% gen_fsm
 -export([init/1, 
@@ -48,6 +49,18 @@
 start_link(SiteName, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir, Client], []).
 
+start_fullsync(Pid) ->
+    gen_fsm:send_all_state_event(Pid, start_fullsync).
+
+cancel_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, cancel_fullsync).
+
+pause_fullsync(Pid) ->
+    gen_fsm:send_all_state_event(Pid, pause_fullsync).
+
+resume_fullsync(Pid) ->
+    gen_fsm:send_all_state_event(Pid, resume_fullsync).
+
 init([SiteName, Socket, WorkDir, Client]) ->
     State0 = #state{sitename=SiteName, socket=Socket,
         work_dir=WorkDir, client=Client},
@@ -63,6 +76,9 @@ init([SiteName, Socket, WorkDir, Client]) ->
     lager:notice("repl strategy started"),
     {ok, wait_for_fullsync, State}.
 
+wait_for_fullsync(cancel_fullsync, State) ->
+    next_state(wait_for_fullsync,
+        do_cancel_fullsync(State#state{paused=false}));
 wait_for_fullsync(start_fullsync, State) ->
     lager:notice("Full-sync with ~p starting.", [State#state.sitename]),
     next_state(merkle_send, do_start_fullsync(State)).
@@ -89,7 +105,7 @@ merkle_send(timeout, State=#state{paused=true}) ->
     %% if pause was on the last partition.
     lager:info("Full-sync with site ~p paused. ~p partitions pending.",
                           [State#state.sitename, length(State#state.partitions)]),
-    next_state(wait_for_fullsync, State);
+    {next_state, merkle_send, State};
 merkle_send(timeout, State=#state{sitename=SiteName,
                                   partitions=[Partition|T],
                                   work_dir=WorkDir}) ->
@@ -232,6 +248,38 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
 
 %% gen_fsm callbacks
 
+handle_event(start_fullsync, wait_for_fullsync, State) ->
+    gen_fsm:send_event(self(), start_fullsync),
+    next_state(wait_for_fullsync, State);
+handle_event(resume_fullsync, StateName, State) ->
+    NewState = State#state{paused = false},
+    case fullsync_partitions_pending(NewState) andalso StateName =:= connected of
+        true ->
+            %% If in connected stated an there are pending partitions, drop back
+            %% into merkle_send to resume the sync
+            lager:info("Full-sync with site ~p resumed.  "
+                                  "~p partitions.",
+                                  [State#state.sitename,
+                                   length(State#state.partitions)]),
+            next_state(merkle_send, NewState);
+        _ ->
+            %% Otherwise there could have been a pause/resume while other work
+            %% was being completed (e.g. during merkle_build).  Stay in the same
+            %% state and the FSM will get to the right place.
+            lager:info("Full-sync with site ~p resumed.",
+                                  [State#state.sitename]),
+            next_state(StateName, NewState)
+    end;
+handle_event(pause_fullsync, StateName, State) ->
+    case State#state.partition of
+        undefined ->
+            lager:info("Full-sync with site ~p paused.",
+                                  [State#state.sitename]);
+        _ ->
+            lager:info("Full-sync with site ~p pausing after next partition.",
+                                  [State#state.sitename])
+    end,
+    next_state(StateName, State#state{paused = true});
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 

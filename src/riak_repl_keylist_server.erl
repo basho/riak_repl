@@ -4,7 +4,12 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/4]).
+-export([start_link/4,
+        start_fullsync/1,
+        cancel_fullsync/1,
+        pause_fullsync/1,
+        resume_fullsync/1
+    ]).
 
 %% gen_fsm
 -export([init/1, 
@@ -41,6 +46,19 @@
 
 start_link(SiteName, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir, Client], []).
+
+start_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, start_fullsync).
+
+cancel_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, cancel_fullsync).
+
+pause_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, pause_fullsync).
+
+resume_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, resume_fullsync).
+
 
 init([SiteName, Socket, WorkDir, Client]) ->
     State = #state{sitename=SiteName, socket=Socket,

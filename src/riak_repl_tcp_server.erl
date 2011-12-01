@@ -26,6 +26,7 @@
         my_pi :: #peer_info{},
         their_pi :: #peer_info{},
         fullsync_worker :: pid() | undefined,
+        fullsync_strategy :: atom(),
         election_timeout :: undefined | reference() % reference for the election timeout
     }).
 
@@ -51,17 +52,21 @@ init([SiteName]) ->
     %% we need to wait for set_socket to happen
     {ok, #state{sitename=SiteName}}.
 
-handle_call(start_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, start_fullsync),
+handle_call(start_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:start_fullsync(FSW),
     {reply, ok, State};
-handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, cancel_fullsync),
+handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:cancel_fullsync(FSW),
     {reply, ok, State};
-handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, pause_fullsync),
+handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:pause_fullsync(FSW),
     {reply, ok, State};
-handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, resume_fullsync),
+handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:resume_fullsync(FSW),
     {reply, ok, State};
 handle_call({set_socket, Socket}, _From, State) ->
     ok = riak_repl_util:configure_socket(Socket),
@@ -146,12 +151,14 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                                                     ?REPL_DEFAULT_MAX_PENDING),
                     State1 = State#state{q = bounded_queue:new(QSize),
                                          fullsync_worker = FullsyncWorker,
+                                         fullsync_strategy = StratMod,
                                          max_pending = MaxPending,
                                          pending = 0};
                 false ->
-                    State1 = State#state{fullsync_worker = FullsyncWorker}
+                    State1 = State#state{fullsync_worker = FullsyncWorker,
+                                         fullsync_strategy = StratMod}
             end,
-                
+
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
                     gen_fsm:send_event(FullsyncWorker,
