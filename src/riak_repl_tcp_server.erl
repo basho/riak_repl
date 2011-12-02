@@ -161,13 +161,11 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
 
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
-                    gen_fsm:send_event(FullsyncWorker,
-                        start_fullsync),
+                    FullsyncWorker ! start_fullsync,
                     lager:notice("Full-sync on connect"),
                     {noreply, State1};
                 false ->
-                    %% TODO
-                    %schedule_fullsync(State1),
+                    riak_repl_util:schedule_fullsync(FullsyncWorker),
                     {noreply, State1}
             end;
         false ->

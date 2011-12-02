@@ -22,6 +22,7 @@
          repl_helper_send/2,
          repl_helper_send_realtime/2,
          schedule_fullsync/0,
+         schedule_fullsync/1,
          elapsed_secs/1]).
 
 make_peer_info() ->
@@ -285,12 +286,15 @@ configure_socket(Socket) ->
 
 %% send a start_fullsync to the calling process when it is time for fullsync
 schedule_fullsync() ->
+    schedule_fullsync(self()).
+
+schedule_fullsync(Pid) ->
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
             ok;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
-            erlang:send_after(FullsyncIval, self(), start_fullsync)
+            erlang:send_after(FullsyncIval, Pid, start_fullsync)
     end.
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.

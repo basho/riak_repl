@@ -48,7 +48,7 @@ start_link(SiteName, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir, Client], []).
 
 start_fullsync(Pid) ->
-    gen_fsm:send_event(Pid, start_fullsync).
+    Pid ! start_fullsync.
 
 cancel_fullsync(Pid) ->
     gen_fsm:send_event(Pid, cancel_fullsync).
@@ -75,6 +75,7 @@ wait_for_partition(Command, State)
 wait_for_partition(fullsync_complete, State) ->
     lager:notice("Fullsync with site ~p completed", [State#state.sitename]),
     riak_repl_stats:server_fullsyncs(),
+    riak_repl_util:schedule_fullsync(),
     {next_state, wait_for_partition, State};
 wait_for_partition({partition, Partition}, State) ->
     lager:notice("Doing fullsync for ~p", [Partition]),
@@ -226,6 +227,9 @@ handle_sync_event(_Event,_F,StateName,State) ->
     lager:notice("ignoring ~p", [_Event]),
     {reply, ok, StateName, State}.
 
+handle_info(start_fullsync, wait_for_partition, State) ->
+    gen_fsm:send_event(self(), start_fullsync),
+    {next_state, wait_for_partition, State};
 handle_info(_I, StateName, State) ->
     lager:notice("ignoring ~p", [_I]),
     {next_state, StateName, State}.

@@ -35,7 +35,8 @@
         our_kl_ready,
         their_kl_ready,
         stage_start,
-        partition_start
+        partition_start,
+        skipping=false
     }).
 
 start_link(SiteName, Socket, WorkDir) ->
@@ -99,7 +100,7 @@ request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=So
                                                                  KeyListFn),
     {next_state, request_partition, State#state{kl_fn=KeyListFn,
             our_kl_ready=false, their_kl_ready=false,
-            partition_start=now(), stage_start=now(),
+            partition_start=now(), stage_start=now(), skipping=false,
             kl_pid=KeyListPid, kl_ref=KeyListRef, partition=P, partitions=T}};
 request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
     lager:notice("Built keylist for ~p, (built in ~p secs)",
@@ -121,20 +122,36 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
         _ ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
     end;
-request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref} = State) ->
+request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref,
+        skipping=Skip} = State) ->
     lager:warning("Skipping partition ~p because of error ~p",
         [State#state.partition, Reason]),
-    riak_repl_tcp_server:send(Socket, {skip_partition, State#state.partition}),
-    gen_fsm:send_event(self(), continue),
-    {next_state, request_partition, State};
+    case Skip of
+        false ->
+            riak_repl_tcp_server:send(Socket, {skip_partition, State#state.partition}),
+            gen_fsm:send_event(self(), continue);
+        _ ->
+            %% we've already decided to skip this partition, so do nothing
+            ok
+    end,
+    {next_state, request_partition, State#state{skipping=true}};
 request_partition({skip_partition, Partition}, #state{partition=Partition,
         kl_pid=Pid} = State) ->
     lager:warning("Skipping partition ~p as requested by server",
         [Partition]),
     catch(riak_repl_fullsync_helper:stop(Pid)),
-    gen_fsm:send_event(self(), continue),
+    case State#state.skipping of
+        false ->
+            gen_fsm:send_event(self(), continue);
+        _ ->
+            %% we've already decided to skip this partition, so do nothing
+            ok
+    end,
+    {next_state, request_partition, State#state{skipping=true}};
+request_partition({skip_partition, Partition}, State) ->
+    lager:warning("Asked to skip partition ~p, but current partition is ~p",
+        [Partition, State#state.partition]),
     {next_state, request_partition, State}.
-
 
 send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
         when Command == cancel_fullsync; Command == pause_fullsync ->

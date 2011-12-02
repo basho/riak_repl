@@ -50,7 +50,7 @@ start_link(SiteName, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir, Client], []).
 
 start_fullsync(Pid) ->
-    gen_fsm:send_all_state_event(Pid, start_fullsync).
+    Pid ! start_fullsync.
 
 cancel_fullsync(Pid) ->
     gen_fsm:send_event(Pid, cancel_fullsync).
@@ -248,9 +248,6 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
 
 %% gen_fsm callbacks
 
-handle_event(start_fullsync, wait_for_fullsync, State) ->
-    gen_fsm:send_event(self(), start_fullsync),
-    next_state(wait_for_fullsync, State);
 handle_event(resume_fullsync, StateName, State) ->
     NewState = State#state{paused = false},
     case fullsync_partitions_pending(NewState) andalso StateName =:= connected of
@@ -286,6 +283,9 @@ handle_event(_Event, StateName, State) ->
 handle_sync_event(_Event,_F,StateName,State) ->
     reply(ok, StateName, State).
 
+handle_info(start_fullsync, wait_for_fullsync, State) ->
+    gen_fsm:send_event(self(), start_fullsync),
+    next_state(wait_for_fullsync, State);
 handle_info(_I, StateName, State) ->
     {next_state, StateName, State}.
 
