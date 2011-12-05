@@ -23,7 +23,9 @@
          repl_helper_send_realtime/2,
          schedule_fullsync/0,
          schedule_fullsync/1,
-         elapsed_secs/1]).
+         elapsed_secs/1,
+         shuffle_partitions/2
+     ]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -318,6 +320,12 @@ schedule_fullsync(Pid) ->
 elapsed_secs(Then) ->
     CentiSecs = timer:now_diff(now(), Then) div 10000,
     CentiSecs / 100.0.
+
+shuffle_partitions(Partitions, Seed) ->
+    lager:info("Shuffling partition list using seed ~p", [Seed]),
+    random:seed(Seed),
+    [Partition || {Partition, _} <-
+        lists:keysort(2, [{Key, random:uniform()} || Key <- Partitions])].
 
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix
