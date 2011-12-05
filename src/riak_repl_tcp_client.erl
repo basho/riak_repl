@@ -42,7 +42,7 @@ init([SiteName]) ->
             lager:notice("repl to site ~p", [Site]),
             {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_put_worker},
                     {worker_args, []},
-                    %% TODO at least the overflow should be configurable
+                    %% TODO the overflow should be configurable
                     {size, 0}, {max_overflow, 100},
                     {checkout_blocks, true}]),
             Listeners = Site#repl_site.addrs,
@@ -83,7 +83,6 @@ handle_cast(_Event, State) ->
 
 handle_info({tcp_closed, Socket}, #state{socket = Socket} = State) ->
     lager:info("Connection to site ~p closed", [State#state.sitename]),
-    %cleanup_and_stop(State);
     {stop, normal, State};
 handle_info({tcp_closed, _Socket}, State) ->
     %% Ignore old sockets - e.g. after a redirect
@@ -91,7 +90,6 @@ handle_info({tcp_closed, _Socket}, State) ->
 handle_info({tcp_error, Socket, Reason}, #state{socket = Socket} = State) ->
     lager:error("Connection to site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
-    %cleanup_and_stop(State);
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     Msg = binary_to_term(Data),
@@ -178,12 +176,13 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                     handle_peerinfo(State, TheirPeerInfo, Capability);
                 {peerinfo, TheirPeerInfo, Capability} ->
                     handle_peerinfo(State, TheirPeerInfo, Capability);
-                _ ->
-                    lager:error("Expected peer_info, but got something else."),
+                Other ->
+                    lager:error("Expected peer_info, but got something else: ~p.",
+                        [Other]),
                     {stop, normal, State}
             end
-    after 1000 ->
-            lager:error("No peer_info received from server."),
+    after 5000 ->
+            lager:error("Timed out waiting for peer info."),
             {stop, normal, State}
     end.
 
@@ -220,8 +219,6 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
         false ->
             lager:error("Replication - invalid peer_info ~p",
                 [TheirPeerInfo]),
-            %% TODO
-            %cleanup_and_stop(State)
             {stop, normal, State}
     end.
 

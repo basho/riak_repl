@@ -165,7 +165,6 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                     lager:notice("Full-sync on connect"),
                     {noreply, State1};
                 false ->
-                    riak_repl_util:schedule_fullsync(FullsyncWorker),
                     {noreply, State1}
             end;
         false ->

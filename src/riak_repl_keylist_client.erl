@@ -155,6 +155,7 @@ request_partition({skip_partition, Partition}, State) ->
 
 send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
         when Command == cancel_fullsync; Command == pause_fullsync ->
+    % stop sending the keylist and delete the file
     file:close(FH),
     file:delete(State#state.kl_fn),
     NewState = case Command of

@@ -386,8 +386,8 @@ itr_next(Size, File, Tag) ->
     end.
 
 diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
-    %lager:notice("ran out of replies, waiting for unpause ~p", [Count]),
     gen_fsm:send_event(FSM, {Ref, diff_paused}),
+    %% wait for a message telling us to stop, or to continue.
     receive
         {'$gen_call', From, stop} ->
             gen_server2:reply(From, ok),

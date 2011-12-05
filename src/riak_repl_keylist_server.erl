@@ -83,7 +83,7 @@ wait_for_partition({partition, Partition}, State) ->
     {next_state, build_keylist, State#state{partition=Partition,
             partition_start=now()}};
 wait_for_partition(Event, State) ->
-    lager:info("ignoring event ~p", [Event]),
+    lager:debug("Ignoring event ~p", [Event]),
     {next_state, wait_for_partition, State}.
 
 build_keylist(Command, #state{kl_pid=Pid} = State)
@@ -151,7 +151,7 @@ wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
 wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
     case FH of
         undefined ->
-            %% client has a blank vnode
+            %% client has a blank vnode, write a blank file
             file:write_file(State#state.their_kl_fn, <<>>),
             ok;
         _ ->
@@ -184,7 +184,8 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
         socket=Socket, diff_ref=Ref} = State) ->
     case Client:get(B, K) of
         {ok, RObj} ->
-            %% TODO don't have the vclock, so we just blast the key
+            %% we don't actually have the vclock to compare, so just send the
+            %% key and let the other side sort things out.
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
                     skipped;
@@ -200,11 +201,9 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
         diff_ref=Ref} = State) ->
-    %lager:notice("reqursting diff_ack from client"),
     riak_repl_tcp_server:send(Socket, {diff_ack, Partition}),
     {next_state, diff_keylist, State};
 diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
-    %lager:notice("client has processed all diffs up to this point"),
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
@@ -220,18 +219,18 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
 %% gen_fsm callbacks
 
 handle_event(_Event, StateName, State) ->
-    lager:notice("ignoring ~p", [_Event]),
+    lager:debug("Ignoring ~p", [_Event]),
     {next_state, StateName, State}.
 
 handle_sync_event(_Event,_F,StateName,State) ->
-    lager:notice("ignoring ~p", [_Event]),
+    lager:debug("Ignoring ~p", [_Event]),
     {reply, ok, StateName, State}.
 
 handle_info(start_fullsync, wait_for_partition, State) ->
     gen_fsm:send_event(self(), start_fullsync),
     {next_state, wait_for_partition, State};
 handle_info(_I, StateName, State) ->
-    lager:notice("ignoring ~p", [_I]),
+    lager:notice("Ignoring ~p", [_I]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, State) -> 
