@@ -213,6 +213,7 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                     {noreply, State1}
             end;
         false ->
+            lager:error("Invalid peer info, ring sizes do not match."),
             {stop, normal, State}
     end;
 handle_msg({q_ack, N}, #state{pending=Pending} = State) ->

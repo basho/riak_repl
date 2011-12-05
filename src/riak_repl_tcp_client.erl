@@ -239,12 +239,12 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                 Other ->
                     lager:error("Expected peer_info, but got something else: ~p.",
                         [Other]),
-                    {stop, normal, State}
+                    {stop, normal, missing_peer_info, State}
             end
     after 60000 ->
             %% the server will wait for 60 seconds for gen_leader to stabilize
             lager:error("Timed out waiting for peer info."),
-            {stop, normal, State}
+            {stop, normal, missing_peer_info, State}
     end.
 
 handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo, Capability) ->
@@ -279,9 +279,10 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
                     fullsync_worker=FullsyncWorker,
                     fullsync_strategy=StratMod}};
         false ->
-            lager:error("Replication - invalid peer_info ~p",
-                [TheirPeerInfo]),
-            {stop, normal, State}
+            lager:error("Invalid peer info for site ~p, "
+                "ring sizes do not match.", [SiteName]),
+            riak_repl_client_sup:stop_site(SiteName),
+            {stop, normal, invalid_peerinfo, State}
     end.
 
 update_site_ips(TheirReplConfig, SiteName) ->

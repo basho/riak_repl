@@ -47,9 +47,9 @@ capability_from_vsn(#peer_info{repl_version = ReplVsnStr}) ->
             []
     end.
 
-get_partitions(_Ring) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    lists:sort([P || {P, _} <- riak_core_ring:all_owners(Ring)]).
+get_partitions(Ring) ->
+    lists:sort([P || {P, _} <-
+            riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
     B = riak_object:bucket(Object),
