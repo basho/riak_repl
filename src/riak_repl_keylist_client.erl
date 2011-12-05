@@ -182,6 +182,7 @@ send_keylist(continue, #state{kl_fh=FH0,socket=Socket} = State) ->
             {next_state, send_keylist, State#state{kl_fh=FH}};
         eof ->
             file:close(FH),
+            file:delete(State#state.kl_fn),
             riak_repl_tcp_client:send(Socket, kl_eof),
             lager:notice("Sent keylist for ~p (sent in ~p secs)",
                 [State#state.partition,

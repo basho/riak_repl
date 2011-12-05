@@ -389,13 +389,13 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
     %lager:notice("ran out of replies, waiting for unpause ~p", [Count]),
     gen_fsm:send_event(FSM, {Ref, diff_paused}),
     receive
-        {Ref, diff_resume} ->
-            %lager:notice("resuming diff stream"),
-            diff_keys(R, L, DiffState#diff_state{replies=Count});
         {'$gen_call', From, stop} ->
             gen_server2:reply(From, ok),
             lager:notice("stop request while diffing"),
-            DiffState
+            DiffState;
+        {Ref, diff_resume} ->
+            %lager:notice("resuming diff stream"),
+            diff_keys(R, L, DiffState#diff_state{replies=Count})
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
     %% Remote and local keys/hashes match
