@@ -232,12 +232,21 @@ keylist_filename(WorkDir, Partition, Type) ->
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
-%% Returns true if the IP address given is a valid host IP address            
+%% Returns true if the IP address given is a valid host IP address
 valid_host_ip(IP) ->     
-    {ok, IFs} = inet:getif(),
+    {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
     ValidIPs = [ValidIP || {ValidIP, _, _} <- IFs],
-    lists:member(NormIP, ValidIPs).
+    lists:foldl(
+        fun({IF, Attrs}, Match) ->
+                case lists:member({addr, NormIP}, Attrs) of
+                    true ->
+                        true;
+                    _ ->
+                        Match
+                end
+        end, false, IFs).
+
 
 %% Convert IP address the tuple form
 normalize_ip(IP) when is_list(IP) ->
