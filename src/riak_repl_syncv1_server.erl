@@ -268,7 +268,7 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
 
 %% gen_fsm callbacks
 
-handle_event(resume_fullsync, StateName, State) ->
+handle_event(resume_fullsync, StateName, #state{paused=true} = State) ->
     NewState = State#state{paused = false},
     case fullsync_partitions_pending(NewState) andalso StateName =:= connected of
         true ->
@@ -392,7 +392,7 @@ do_cancel_fullsync(State) when is_list(State#state.partitions) ->
     lager:info("Full-sync with site ~p cancelled; "
                           "~p partitions remaining.",
                           [State#state.sitename, Remaining]),
-    State#state{partitions = cancelled};
+    State#state{partitions = cancelled, paused=false};
 do_cancel_fullsync(State) ->  % already cancelled
     lager:info("Full-sync with site ~p already cancelled.",
                           [State#state.sitename]),
