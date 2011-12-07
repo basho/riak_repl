@@ -139,6 +139,19 @@ merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(status, _From, StateName, State) ->
+    Desc =
+        [{site, State#state.sitename}] ++
+        case State#state.merkle_pt of
+            undefined ->
+                [];
+            Partition ->
+                [
+                    {fullsync, Partition}
+                ]
+        end ++
+        [{state, StateName}],
+    {reply, Desc, StateName, State};
 handle_sync_event(_Event,_F,StateName,State) ->
     {reply, ok, StateName, State}.
 

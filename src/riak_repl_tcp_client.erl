@@ -7,7 +7,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, async_connect/3, send/2]).
+-export([start_link/1, status/1, status/2, async_connect/3, send/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -26,11 +26,20 @@
         count,
         work_dir,
         fullsync_worker,
+        fullsync_strategy,
         pool_pid
     }).
 
+
+
 start_link(SiteName) ->
     gen_server:start_link(?MODULE, [SiteName], []).
+
+status(Pid) ->
+    status(Pid, infinity).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
 
 init([SiteName]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -75,6 +84,22 @@ handle_call({connect_failed, Reason}, _From, State) ->
             Reason]),
     NewState = do_async_connect(State),
     {reply, ok, NewState};
+handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
+    Res = gen_fsm:sync_send_all_state_event(FSW, status),
+    Desc =
+        [
+            {site, State#state.sitename},
+            {strategy, State#state.fullsync_strategy}
+        ] ++
+        case State#state.listener of
+            undefined ->
+                [{waiting_to_retry, State#state.listeners}];
+            {connected, IPAddr, Port} ->
+                [{connected, IPAddr, Port}];
+            {Pid, IPAddr, Port} ->
+                [{connecting, Pid, IPAddr, Port}]
+        end,
+    {reply, {status, Desc ++ Res}, State};
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
 
@@ -215,7 +240,8 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             inet:setopts(Socket, [{active, once}]),
             riak_repl_stats:client_connects(),
             {reply, ok, State1#state{work_dir = WorkDir,
-                    fullsync_worker=FullsyncWorker}};
+                    fullsync_worker=FullsyncWorker,
+                    fullsync_strategy=StratMod}};
         false ->
             lager:error("Replication - invalid peer_info ~p",
                 [TheirPeerInfo]),

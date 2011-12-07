@@ -226,6 +226,22 @@ wait_ack(diff_done, State) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(status, _From, StateName, State) ->
+    Res = [{state, StateName}] ++
+    case State#state.partitions of
+        [] ->
+            [];
+        Partitions ->
+            [
+                {fullsync, length(Partitions), left},
+                {partition, State#state.partition},
+                {partition_start,
+                    riak_repl_util:elapsed_secs(State#state.partition_start)},
+                {stage_start,
+                    riak_repl_util:elapsed_secs(State#state.stage_start)}
+            ]
+    end,
+    {reply, Res, StateName, State};
 handle_sync_event(_Event,_F,StateName,State) ->
     {reply, ok, StateName, State}.
 

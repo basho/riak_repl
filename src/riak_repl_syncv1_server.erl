@@ -280,6 +280,32 @@ handle_event(pause_fullsync, StateName, State) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(status, _From, StateName, State) ->
+    Desc = 
+        [{site, State#state.sitename}] ++
+        case State#state.partitions of
+            [] ->
+                [];
+            cancelled ->
+                [cancelled];
+            Partitions ->
+                Left = length(Partitions),
+                [
+                    {fullsync, Left, left},
+                    {partition_start,
+                        riak_repl_util:elapsed_secs(State#state.partition_start)},
+                    {stage_start,
+                        riak_repl_util:elapsed_secs(State#state.stage_start)}
+                ]
+        end ++
+        case State#state.paused of
+            true ->
+                [paused];
+            false ->
+                []
+        end ++
+        [{state, StateName}],
+    reply(Desc, StateName, State);
 handle_sync_event(_Event,_F,StateName,State) ->
     reply(ok, StateName, State).
 

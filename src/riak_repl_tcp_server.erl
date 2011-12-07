@@ -7,7 +7,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, set_socket/2, send/2]).
+-export([start_link/1, set_socket/2, send/2, status/1, status/2]).
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
         resume_fullsync/1]).
 
@@ -48,6 +48,12 @@ pause_fullsync(Pid) ->
 resume_fullsync(Pid) ->
     gen_server:call(Pid, resume_fullsync).
 
+status(Pid) ->
+    status(Pid, infinity).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
+
 init([SiteName]) ->
     %% we need to wait for set_socket to happen
     {ok, #state{sitename=SiteName}}.
@@ -68,6 +74,22 @@ handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
     Mod:resume_fullsync(FSW),
     {reply, ok, State};
+handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
+    Res = gen_fsm:sync_send_all_state_event(FSW, status),
+    Desc = 
+        [
+            {site, State#state.sitename},
+            {strategy, State#state.fullsync_strategy}
+        ] ++
+        case State#state.q of
+            undefined ->
+                [{bounded_queue, disabled}];
+            _ ->
+                [{dropped_count, bounded_queue:dropped_count(Q)},
+                    {queue_length, bounded_queue:len(Q)},
+                    {queue_byte_size, bounded_queue:byte_size(Q)}]
+        end,
+    {reply, {status, Desc ++ Res}, State};
 handle_call({set_socket, Socket}, _From, State) ->
     ok = riak_repl_util:configure_socket(Socket),
     self() ! send_peerinfo,

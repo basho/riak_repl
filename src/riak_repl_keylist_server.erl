@@ -222,6 +222,21 @@ handle_event(_Event, StateName, State) ->
     lager:debug("Ignoring ~p", [_Event]),
     {next_state, StateName, State}.
 
+handle_sync_event(status, _From, StateName, State) ->
+    Res = [{state, StateName}] ++
+    case StateName of
+        wait_for_partition ->
+            [];
+        _ ->
+            [
+                {fullsync, State#state.partition},
+                {partition_start,
+                    riak_repl_util:elapsed_secs(State#state.partition_start)},
+                {stage_start,
+                    riak_repl_util:elapsed_secs(State#state.stage_start)}
+            ]
+    end,
+    {reply, Res, StateName, State};
 handle_sync_event(_Event,_F,StateName,State) ->
     lager:debug("Ignoring ~p", [_Event]),
     {reply, ok, StateName, State}.
