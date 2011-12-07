@@ -1,5 +1,10 @@
-
+%% Riak EnterpriseDS
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl_keylist_client).
+
+%% @doc This is the server-side component of the new fullsync strategy
+%% introduced in riak 1.1. See the repl_keylist_server module for more
+%% information on the protocol and the improvements.
 
 -behaviour(gen_fsm).
 

@@ -1,5 +1,32 @@
-
+%% Riak EnterpriseDS
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl_keylist_server).
+
+%% @doc This is the server-side component of the new fullsync strategy
+%% introduced in riak 1.1. It is an improvement over the previous strategy in
+%% several ways:
+%%
+%% * Client and server build keylist in parallel
+%% * No useless merkle tree is built
+%% * Differences are calculated and transmitted in batches, not all in one
+%%   message
+%% * Backpressure is introduced in the exchange of differences
+%% * Pausing/cancelling the diff is immediate
+%%
+%% In addition, the client does the requesting of partition data, which makes
+%% this more of a pull model as compared to the legacy strategy, which was more
+%% push orientated. The new protocol is outlined below.
+%%
+%% When the server receives a message to begin a fullsync, it relays it to the
+%% client. The client builds the partition list and instructs the server to
+%% build the keylist for the first partition, while also starting off its own
+%% keylist build locally. When *both* builds are complete, the client sends
+%% the keylist to the server. The server does the diff and then sends *any*
+%% differing keys to the client, using the realtime repl protocol. This is a
+%% departure from the legacy protocol in which vector clocks were available
+%% for comparison. However, worst case is we try to write stale keys, which
+%% will be ignored by the put_fsm. Once all the diffs are sent (and a final
+% ack is received). The client moves onto the next partition, if any.
 
 -behaviour(gen_fsm).
 
@@ -164,6 +191,7 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     lager:notice("Calculating differences for ~p", [State#state.partition]),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+    %% generate differences in batches of 1000, to add some backpressure
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
         State#state.kl_fn, State#state.their_kl_fn, 1000),
     {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
@@ -201,9 +229,12 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
         diff_ref=Ref} = State) ->
+    %% we've sent all the diffs in this batch, wait for the client to be ready
+    %% for more
     riak_repl_tcp_server:send(Socket, {diff_ack, Partition}),
     {next_state, diff_keylist, State};
 diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
+    %% client has processed last batch of differences, generate some more
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->

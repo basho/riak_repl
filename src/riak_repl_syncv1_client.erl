@@ -3,6 +3,10 @@
 -module(riak_repl_syncv1_client).
 -behaviour(gen_fsm).
 
+%% @doc This is the client-side module for the riak 1.0 and earlier legacy
+%% replication strategy. See the repl_syncv1_server module for an explanation
+%% of the protocol.
+
 -include("riak_repl.hrl").
 -include_lib("kernel/include/file.hrl").
 

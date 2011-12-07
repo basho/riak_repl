@@ -3,6 +3,26 @@
 -module(riak_repl_syncv1_server).
 -behaviour(gen_fsm).
 
+%% @doc This is the legacy fullsync behaviour from riak 1.0 and previous. It
+%% is not recommended for use when 1.1 or greater is available on both sides
+%% of the replication site.
+%%
+%% This strategy first builds an on-disk merkle tree for the first partition
+%% in the list  which it sends to the client. It then sends the file over the
+%% wire to the client. When the client receives this file, it immediately
+%% converts it to a keylist (because the merkle tree is not actually reliable,
+%% but kept for backwards compatability). Then, the client builds its own
+%% keylist for this partition. Once the client has both keylists, it diffs
+%% them, and sends the *entire* list of differences in one message back to the
+%% server. The difference list includes the vclock on the client side. The
+%% server then traverses this difference list, checking the vclock of the key
+%% with the one it has locally. If the server's vclock is not an ancestor of
+%% the vclock received from the client, it sends the new object over the wire
+%% using the same protocol as the realtime replication. Once the list of
+%% differences are exhausted, it proceeds onto the next partition, until no
+%% more remain, at which point the fullsync is complete, and the connection
+%% waits for the next scheduled fullsync to occur.
+
 -include("riak_repl.hrl").
 -include_lib("kernel/include/file.hrl").
 

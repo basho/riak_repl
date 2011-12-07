@@ -1,6 +1,23 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+
 -module(riak_repl_tcp_server).
+
+%% @doc This module is responsible for the server-side TCP communication
+%% during replication. A seperate instance of this module is started for every
+%% replication connection that is established. A handshake with the client is
+%% then exchanged and, using that information, certain protocol extensions are
+%% enabled and the fullsync strategy is negotiated.
+%%
+%% This module handles the realtime part of the replication itself, but all
+%% the details of the fullsync replication are delegated to the negotiated
+%% fullsync worker, which implements its own protocol. Any unrecognized
+%% messages received over the TCP connection are sent to the fullsync process.
+%%
+%% Realtime replication is quite simple. Using a postcommit hook, writes to
+%% the cluster are sent to the replication leader, which will then formward
+%% the update out to any connected replication sites. An optional protocol
+%% extension is to use a bounded queue to throttle the stream of updates.
 
 -include("riak_repl.hrl").
 
