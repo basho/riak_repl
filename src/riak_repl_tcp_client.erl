@@ -94,11 +94,14 @@ handle_call({connect_failed, Reason}, _From, State) ->
     NewState = do_async_connect(State),
     {reply, ok, NewState};
 handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
-    Res = gen_fsm:sync_send_all_state_event(FSW, status),
+    Res = gen_fsm:sync_send_all_state_event(FSW, status, infinity),
     Desc =
         [
             {site, State#state.sitename},
-            {strategy, State#state.fullsync_strategy}
+            {strategy, State#state.fullsync_strategy},
+            {put_pool_size,
+                length(gen_fsm:sync_send_all_state_event(State#state.pool_pid,
+                    get_all_workers, infinity))}
         ] ++
         case State#state.listener of
             undefined ->

@@ -65,10 +65,15 @@ do_repl_put(Object) ->
                     ?REPL_FSM_TIMEOUT,
                     self(), Opts]),
 
+            %% block waiting for response
+            wait_for_response(ReqId),
+
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
                     lager:debug("Incoming deleted obj ~p/~p", [B, K]),
-                    reap(ReqId, B, K);
+                    reap(ReqId, B, K),
+                    %% block waiting for response
+                    wait_for_response(ReqId);
                 false ->
                     lager:debug("Incoming obj ~p/~p", [B, K])
             end;
@@ -80,6 +85,15 @@ reap(ReqId, B, K) ->
     riak_kv_get_fsm_sup:start_get_fsm(node(),
                                       [ReqId, B, K, 1, ?REPL_FSM_TIMEOUT,
                                        self()]).
+
+wait_for_response(ReqId) ->
+    receive
+        {ReqId, _} ->
+            ok
+    after 60000 ->
+            lager:warning("Timed out after 1 minute putting replicated object"),
+            ok
+    end.
 
 repl_helper_recv(Object) ->
     case application:get_env(riak_core, repl_helper) of
