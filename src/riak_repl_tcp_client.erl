@@ -223,6 +223,19 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                     handle_peerinfo(State, TheirPeerInfo, Capability);
                 {peerinfo, TheirPeerInfo, Capability} ->
                     handle_peerinfo(State, TheirPeerInfo, Capability);
+                {redirect, IPAddr, Port} ->
+                    case lists:member({IPAddr, Port}, State#state.listeners) of
+                        false ->
+                            lager:notice("Redirected IP ~p not in listeners ~p",
+                                [{IPAddr, Port}, State#state.listeners]);
+                        _ ->
+                            ok
+                    end,
+                    riak_repl_stats:client_redirect(),
+                    catch gen_tcp:close(Socket),
+                    self() ! try_connect,
+                    {reply, ok, State#state{pending=[{IPAddr, Port} |
+                                State#state.pending]}};
                 Other ->
                     lager:error("Expected peer_info, but got something else: ~p.",
                         [Other]),
