@@ -148,7 +148,7 @@ leader_stats() ->
     LeaderNode = riak_repl_leader:leader_node(),
     LocalStats = 
         try
-            LocalProcInfo = erlang:process_info(whereis(riak_repl_leader),
+            LocalProcInfo = erlang:process_info(whereis(riak_repl_leader_gs),
                                                 [message_queue_len, heap_size]),
             [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
         catch _:_ ->
@@ -156,7 +156,8 @@ leader_stats() ->
         end,
     RemoteStats =
         try
-            LeaderPid = rpc:call(LeaderNode, erlang, whereis, [riak_repl_leader]),
+            LeaderPid = rpc:call(LeaderNode, erlang, whereis,
+                [riak_repl_leader_gs]),
             LeaderStats = rpc:call(LeaderNode, erlang, process_info,
                                    [LeaderPid, [message_queue_len,
                                                 total_heap_size,
