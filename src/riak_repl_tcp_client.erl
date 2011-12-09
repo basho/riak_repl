@@ -134,7 +134,17 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     inet:setopts(Socket, [{active, once}]),
     case Msg of
         {diff_obj, RObj} ->
+            %% realtime diff object, or a fullsync diff object from legacy
+            %% repl. Because you can't tell the difference this can screw up
+            %% the acking, but there's not really a way to fix it, other than
+            %% not using legacy.
             {noreply, do_repl_put(RObj, State)};
+        {fs_diff_obj, RObj} ->
+            %% fullsync diff objects
+            Pool = State#state.pool_pid,
+            Worker = worker_checkout(Pool),
+            ok = riak_repl_put_worker:do_put(Worker, RObj, Pool),
+            {noreply, State};
         _ ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}

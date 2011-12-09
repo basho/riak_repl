@@ -37,6 +37,8 @@
         kl_fh,
         kl_pid,
         kl_ref,
+        kl_ack_freq,
+        kl_counter,
         our_kl_ready,
         their_kl_ready,
         stage_start,
@@ -48,8 +50,11 @@ start_link(SiteName, Socket, WorkDir) ->
     gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir], []).
 
 init([SiteName, Socket, WorkDir]) ->
+    AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
+        ?REPL_DEFAULT_ACK_FREQUENCY),
     {ok, wait_for_fullsync,
-        #state{sitename=SiteName,socket=Socket,work_dir=WorkDir}}.
+        #state{sitename=SiteName,socket=Socket,work_dir=WorkDir,
+            kl_ack_freq=AckFreq}}.
 
 wait_for_fullsync(Command, State)
         when Command == start_fullsync; Command == resume_fullsync ->
@@ -114,7 +119,8 @@ request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
     case State#state.their_kl_ready of
         true ->
             gen_fsm:send_event(self(), continue),
-            {next_state, send_keylist, State#state{stage_start=now()}};
+            {next_state, send_keylist, State#state{stage_start=now(),
+                    kl_counter=State#state.kl_ack_freq}};
         _ ->
             {next_state, request_partition, State#state{our_kl_ready=true,
                     kl_pid=undefined}}
@@ -123,7 +129,8 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
     case State#state.our_kl_ready of
         true ->
             gen_fsm:send_event(self(), continue),
-            {next_state, send_keylist, State#state{stage_start=now()}};
+            {next_state, send_keylist, State#state{stage_start=now(),
+                    kl_counter=State#state.kl_ack_freq}};
         _ ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
     end;
@@ -172,7 +179,11 @@ send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
     end,
     log_stop(Command, State),
     {next_state, wait_for_fullsync, NewState};
-send_keylist(continue, #state{kl_fh=FH0,socket=Socket} = State) ->
+send_keylist(kl_ack, State) ->
+    gen_fsm:send_event(self(), continue),
+    {next_state, send_keylist,
+        State#state{kl_counter=State#state.kl_ack_freq}};
+send_keylist(continue, #state{kl_fh=FH0,socket=Socket,kl_counter=Count} = State) ->
     FH = case FH0 of
         undefined ->
             lager:notice("Sending keylist for ~p", [State#state.partition]),
@@ -184,8 +195,14 @@ send_keylist(continue, #state{kl_fh=FH0,socket=Socket} = State) ->
     case file:read(FH, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
             riak_repl_tcp_client:send(Socket, {kl_hunk, Data}),
-            gen_fsm:send_event(self(), continue),
-            {next_state, send_keylist, State#state{kl_fh=FH}};
+            case Count =< 0 of
+                true ->
+                    riak_repl_tcp_client:send(Socket, kl_wait);
+                _ ->
+                    gen_fsm:send_event(self(), continue)
+            end,
+            {next_state, send_keylist, State#state{kl_fh=FH,
+                    kl_counter=Count-1}};
         eof ->
             file:close(FH),
             file:delete(State#state.kl_fn),

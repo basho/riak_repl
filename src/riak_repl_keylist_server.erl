@@ -164,6 +164,10 @@ wait_keylist(Command, #state{their_kl_fh=FH} = State)
     riak_repl_tcp_server:send(State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
+wait_keylist(kl_wait, State) ->
+    %% ack the keylist chunks we've received so far
+    riak_repl_tcp_server:send(State#state.socket, kl_ack),
+    {next_state, wait_keylist, State};
 wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     FH = case FH0 of
         undefined ->
@@ -218,8 +222,8 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Socket, {diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Socket, {diff_obj, RObj})
+                    [riak_repl_tcp_server:send(Socket, {fs_diff_obj, O}) || O <- Objects],
+                    riak_repl_tcp_server:send(Socket, {fs_diff_obj, RObj})
             end;
         {error, notfound} ->
             ok;
