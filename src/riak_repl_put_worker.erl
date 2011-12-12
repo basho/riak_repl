@@ -13,7 +13,7 @@ start_link(_Args) ->
     gen_server:start_link(?MODULE, [], []).
 
 do_put(Pid, Obj, Pool) ->
-    gen_server:call(Pid, {put, Obj, Pool}).
+    gen_server:call(Pid, {put, Obj, Pool}, infinity).
 
 init([]) ->
     {ok, #state{}}.

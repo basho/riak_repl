@@ -70,29 +70,6 @@ init([SiteName]) ->
             {ok, do_async_connect(State)}
     end.
 
-handle_call({connected, Socket}, _From, #state{listener={_, IPAddr, Port}} = State) ->
-    lager:notice("Connected to replication site ~p at ~p:~p",
-        [State#state.sitename, IPAddr, Port]),
-    ok = riak_repl_util:configure_socket(Socket),
-    gen_tcp:send(Socket, State#state.sitename),
-    Props = riak_repl_fsm_common:common_init(Socket),
-    NewState = State#state{
-        listener = {connected, IPAddr, Port},
-        socket=Socket, 
-        client=proplists:get_value(client, Props),
-        my_pi=proplists:get_value(my_pi, Props),
-        partitions=proplists:get_value(partitions, Props)},
-    send(Socket, {peerinfo, NewState#state.my_pi,
-            [bounded_queue, {fullsync_strategies,
-                    app_helper:get_env(riak_repl, fullsync_strategies,
-                        [?LEGACY_STRATEGY])}]}),
-    inet:setopts(Socket, [{active, once}]),
-    recv_peerinfo(NewState);
-handle_call({connect_failed, Reason}, _From, State) ->
-    lager:debug("Failed to connect to site ~p: ~p", [State#state.sitename,
-            Reason]),
-    NewState = do_async_connect(State),
-    {reply, ok, NewState};
 handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
     Res = gen_fsm:sync_send_all_state_event(FSW, status, infinity),
     Desc =
@@ -118,6 +95,29 @@ handle_call(_Event, _From, State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 
+handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
+    lager:notice("Connected to replication site ~p at ~p:~p",
+        [State#state.sitename, IPAddr, Port]),
+    ok = riak_repl_util:configure_socket(Socket),
+    gen_tcp:send(Socket, State#state.sitename),
+    Props = riak_repl_fsm_common:common_init(Socket),
+    NewState = State#state{
+        listener = {connected, IPAddr, Port},
+        socket=Socket, 
+        client=proplists:get_value(client, Props),
+        my_pi=proplists:get_value(my_pi, Props),
+        partitions=proplists:get_value(partitions, Props)},
+    send(Socket, {peerinfo, NewState#state.my_pi,
+            [bounded_queue, {fullsync_strategies,
+                    app_helper:get_env(riak_repl, fullsync_strategies,
+                        [?LEGACY_STRATEGY])}]}),
+    inet:setopts(Socket, [{active, once}]),
+    recv_peerinfo(NewState);
+handle_info({connect_failed, Reason}, State) ->
+    lager:debug("Failed to connect to site ~p: ~p", [State#state.sitename,
+            Reason]),
+    NewState = do_async_connect(State),
+    {noreply, NewState};
 handle_info({tcp_closed, Socket}, #state{socket = Socket} = State) ->
     lager:info("Connection to site ~p closed", [State#state.sitename]),
     {stop, normal, State};
@@ -186,10 +186,10 @@ async_connect(Parent, IPAddr, Port) ->
                                         {nodelay, true}], Timeout) of
         {ok, Socket} ->
             ok = gen_tcp:controlling_process(Socket, Parent),
-            gen_server:call(Parent, {connected, Socket});
+            Parent ! {connected, Socket};
         {error, Reason} ->
             %% Send Reason so it shows in traces even if nothing is done with it
-            gen_server:call(Parent, {connect_failed, Reason})
+            Parent ! {connect_failed, Reason}
     end.
 
 send(Socket, Data) when is_binary(Data) -> 
@@ -234,7 +234,7 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                     riak_repl_stats:client_redirect(),
                     catch gen_tcp:close(Socket),
                     self() ! try_connect,
-                    {reply, ok, State#state{pending=[{IPAddr, Port} |
+                    {noreply, State#state{pending=[{IPAddr, Port} |
                                 State#state.pending]}};
                 Other ->
                     lager:error("Expected peer_info, but got something else: ~p.",
@@ -274,7 +274,7 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
             inet:setopts(Socket, [{active, once}]),
             riak_repl_stats:client_connects(),
-            {reply, ok, State1#state{work_dir = WorkDir,
+            {noreply, State1#state{work_dir = WorkDir,
                     fullsync_worker=FullsyncWorker,
                     fullsync_strategy=StratMod}};
         false ->
