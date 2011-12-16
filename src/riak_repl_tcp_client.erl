@@ -241,7 +241,8 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                         [Other]),
                     {stop, normal, State}
             end
-    after 5000 ->
+    after 60000 ->
+            %% the server will wait for 60 seconds for gen_leader to stabilize
             lager:error("Timed out waiting for peer info."),
             {stop, normal, State}
     end.

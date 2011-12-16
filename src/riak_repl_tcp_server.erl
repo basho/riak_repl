@@ -155,6 +155,8 @@ handle_info(send_peerinfo, State) ->
 handle_info(election_timeout, #state{election_timeout=Timer} = State) when is_reference(Timer) ->
     lager:error("Timed out waiting for a leader to be elected"),
     {stop, normal, State};
+handle_info(election_wait, State) ->
+    send_peerinfo(State);
 handle_info(_Event, State) ->
     {noreply, State}.
 
