@@ -236,9 +236,8 @@ keylist_filename(WorkDir, Partition, Type) ->
 valid_host_ip(IP) ->     
     {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
-    ValidIPs = [ValidIP || {ValidIP, _, _} <- IFs],
     lists:foldl(
-        fun({IF, Attrs}, Match) ->
+        fun({_IF, Attrs}, Match) ->
                 case lists:member({addr, NormIP}, Attrs) of
                     true ->
                         true;
@@ -246,7 +245,6 @@ valid_host_ip(IP) ->
                         Match
                 end
         end, false, IFs).
-
 
 %% Convert IP address the tuple form
 normalize_ip(IP) when is_list(IP) ->
