@@ -76,6 +76,7 @@ handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
         [
             {site, State#state.sitename},
             {strategy, State#state.fullsync_strategy},
+            {fullsync_worker, State#state.fullsync_worker},
             {put_pool_size,
                 length(gen_fsm:sync_send_all_state_event(State#state.pool_pid,
                     get_all_workers, infinity))}
