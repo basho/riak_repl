@@ -225,20 +225,25 @@ send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
             erlang:send_after(5000, self(), election_wait),
             {noreply, State};
         OurNode ->
-            erlang:cancel_timer(State#state.election_timeout),
-            %% this switches the socket into active mode
-            Props = riak_repl_fsm_common:common_init(Socket),
-            PI = proplists:get_value(my_pi, Props),
-            send(Socket, {peerinfo, PI,
-                [bounded_queue, {fullsync_strategies,
-                        app_helper:get_env(riak_repl, fullsync_strategies,
-                            [?LEGACY_STRATEGY])}]}),
-            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
-            riak_repl_leader:add_receiver_pid(self()),
-            {noreply, State#state{work_dir = WorkDir,
-                    client=proplists:get_value(client, Props),
-                    election_timeout=undefined,
-                    my_pi=PI}};
+            case riak_repl_leader:add_receiver_pid(self()) of
+                ok ->
+                    erlang:cancel_timer(State#state.election_timeout),
+                    %% this switches the socket into active mode
+                    Props = riak_repl_fsm_common:common_init(Socket),
+                    PI = proplists:get_value(my_pi, Props),
+                    send(Socket, {peerinfo, PI,
+                            [bounded_queue, {fullsync_strategies,
+                                    app_helper:get_env(riak_repl, fullsync_strategies,
+                                        [?LEGACY_STRATEGY])}]}),
+                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
+                    {noreply, State#state{work_dir = WorkDir,
+                            client=proplists:get_value(client, Props),
+                            election_timeout=undefined,
+                            my_pi=PI}};
+                {error, _Reason} ->
+                    %% leader has changed, try again
+                    send_peerinfo(State)
+            end;
         OtherNode -> 
             OtherListener = listener_for_node(OtherNode),
             {Ip, Port} = OtherListener#repl_listener.listen_addr,
