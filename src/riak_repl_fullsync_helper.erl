@@ -112,7 +112,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
     %% default timeout.  Do not wish to block the repl server for
     %% that long in any case.
     Ref = make_ref(),
-    gen_server:reply(From, {ok, Ref}),
+    gen_server2:reply(From, {ok, Ref}),
 
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
@@ -142,7 +142,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
     end;
 handle_call({make_keylist, Partition, Filename}, From, State) ->
     Ref = make_ref(),
-    gen_server:reply(From, {ok, Ref}),
+    gen_server2:reply(From, {ok, Ref}),
 
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
@@ -167,7 +167,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                    folder_pid = FolderPid,
                                    filename = Filename,
                                    kl_fp = FP},
-            {reply, {ok, Ref}, NewState};
+            {noreply, NewState};
         false ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
@@ -272,7 +272,7 @@ handle_cast(merkle_finish, State) ->
 handle_cast(kl_finish, State) ->
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
-    gen_server:cast(self(), kl_sort),
+    gen_server2:cast(self(), kl_sort),
     {noreply, State};
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
