@@ -2,7 +2,7 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 
 %%
-%% Fullsync helper process - offloads key/hash generation and comparion
+%% Fullsync helper process - offloads key/hash generation and comparison
 %% from the main TCP server/client processes.
 %%
 -module(riak_repl_fullsync_helper).
@@ -405,7 +405,7 @@ diff_keys(eof, _, DiffState) ->
     %% deleted ops
     DiffState.
 
-%% Called when the hashes differ with the packed packed bkey
+%% Called when the hashes differ with the packed bkey
 diff_hash(PBKey, DiffState) ->
     UpdDiffHash = DiffState#diff_state.diff_hash + 1,
     BKey = unpack_key(PBKey),

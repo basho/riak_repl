@@ -15,7 +15,7 @@
 %% messages received over the TCP connection are sent to the fullsync process.
 %%
 %% Realtime replication is quite simple. Using a postcommit hook, writes to
-%% the cluster are sent to the replication leader, which will then formward
+%% the cluster are sent to the replication leader, which will then forward
 %% the update out to any connected replication sites. An optional protocol
 %% extension is to use a bounded queue to throttle the stream of updates.
 

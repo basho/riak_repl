@@ -15,7 +15,7 @@
 %%
 %% In addition, the client does the requesting of partition data, which makes
 %% this more of a pull model as compared to the legacy strategy, which was more
-%% push orientated. The new protocol is outlined below.
+%% push oriented. The new protocol is outlined below.
 %%
 %% When the server receives a message to begin a fullsync, it relays it to the
 %% client. The client builds the partition list and instructs the server to
