@@ -66,14 +66,14 @@ do_repl_put(Object) ->
                     self(), Opts]),
 
             %% block waiting for response
-            wait_for_response(ReqId),
+            wait_for_response(ReqId, "put"),
 
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
                     lager:debug("Incoming deleted obj ~p/~p", [B, K]),
                     reap(ReqId, B, K),
                     %% block waiting for response
-                    wait_for_response(ReqId);
+                    wait_for_response(ReqId, "reap");
                 false ->
                     lager:debug("Incoming obj ~p/~p", [B, K])
             end;
@@ -86,12 +86,15 @@ reap(ReqId, B, K) ->
                                       [ReqId, B, K, 1, ?REPL_FSM_TIMEOUT,
                                        self()]).
 
-wait_for_response(ReqId) ->
+wait_for_response(ReqId, Verb) ->
     receive
+        {ReqId, {error, Reason}} ->
+            lager:debug("Failed to ~s replicated object: ~p", [Verb, Reason]);
         {ReqId, _} ->
             ok
     after 60000 ->
-            lager:warning("Timed out after 1 minute putting replicated object"),
+            lager:warning("Timed out after 1 minute doing ~s on replicated object",
+            [Verb]),
             ok
     end.
 
