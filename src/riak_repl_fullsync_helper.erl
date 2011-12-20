@@ -16,7 +16,6 @@
          merkle_to_keylist/3,
          diff/4,
          diff_stream/5,
-         itr_fresh/2,
          itr_new/2]).
 
 %% gen_server callbacks
@@ -155,7 +154,6 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
                              Folder = fun(K, V, MPid) -> 
-                                              %gen_server2:cast(MPid, {kl, K, hash_object(V)}),
                                               H = hash_object(V),
                                               Bin = term_to_binary({pack_key(K), H}),
                                               file:write(FP, <<(size(Bin)):32, Bin/binary>>),
@@ -271,10 +269,6 @@ handle_cast(merkle_finish, State) ->
     _Mref = erlang:monitor(process, State#state.merkle_pid),
     couch_merkle:close(State#state.merkle_pid),
     {noreply, State};
-handle_cast({kl, K, H}, State) ->
-    Bin = term_to_binary({pack_key(K), H}),
-    file:write(State#state.kl_fp, <<(size(Bin)):32, Bin/binary>>),
-    {noreply, State};
 handle_cast(kl_finish, State) ->
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
@@ -354,18 +348,10 @@ open_couchdb(Filename) ->
     {ok, Fd, Btree}.
 
 itr_new(File, Tag) ->
-    case itr_fresh(File, Tag) of
-        eof ->
-            eof;
-        Fun ->
-            Fun()
-    end.
-
-itr_fresh(File, Tag) ->
     erlang:put(Tag, 0),
     case file:read(File, 4) of
         {ok, <<Size:32/unsigned>>} ->
-            fun() -> itr_next(Size, File, Tag) end;
+            itr_next(Size, File, Tag);
         _ ->
             file:close(File),
             eof
