@@ -43,31 +43,38 @@
        ).
 
 -type(bounded_queue() :: #bq{}).
+-type(bounded_queue_element() :: [binary(), ...] | binary()).
 
-%% @spec new(MaxSize::non_neg_integer()) -> bounded_queue()
 %% @doc  Create a new queue with maximum size in bytes of MaxSize.
 -spec new(non_neg_integer()) -> bounded_queue().
 new(MaxSize) when is_integer(MaxSize) -> #bq{m=MaxSize, s=0, q=queue:new()}.
 
-%% @spec in(bounded_queue(), binary()) -> bounded_queue()
 %% @doc  Add an item to the queue.  
--spec in(bounded_queue(), binary()) -> bounded_queue().
+-spec in(bounded_queue(), bounded_queue_element()) -> bounded_queue().
 in(BQ=#bq{m=Max, q=Q, d=D}, Item) when is_binary(Item) ->
-    ItemSize = size(Item),
+    ItemSize = element_size(Item),
     case ItemSize > Max of
         true ->
             BQ#bq{q=queue:from_list([Item]),s=ItemSize,d=queue:len(Q)+D};
         false ->
             make_fit(BQ, Item, ItemSize)
+    end;
+in(BQ=#bq{m=Max, q=Q, d=D}, [H|_T] = Items) when is_binary(H) ->
+    ItemSize = element_size(Items),
+    case ItemSize > Max of
+        true ->
+            BQ#bq{q=queue:from_list([Items]),s=ItemSize,d=queue:len(Q)+D};
+        false ->
+            make_fit(BQ, Items, ItemSize)
     end.
 
-%% @spec out(bounded_queue()) -> {'value',binary()|'empty', bounded_queue()}
 %% @doc  Remove an item from the queue.
--spec out(bounded_queue()) -> {{'value',binary()}|'empty', bounded_queue()}.
+-spec out(bounded_queue()) -> {{'value',bounded_queue_element()}|'empty', bounded_queue()}.
 out(BQ=#bq{q=Q,s=Size}) ->
     case queue:out(Q) of
         {empty, _} -> {empty, BQ};
-        {{value, Item}, NewQ} -> {{value, Item}, BQ#bq{s=Size-size(Item),q=NewQ}}
+        {{value, Item}, NewQ} ->
+            {{value, Item}, BQ#bq{s=Size-element_size(Item),q=NewQ}}
     end.
 
 %% @spec byte_size(bounded_queue()) -> non_neg_integer()
@@ -91,6 +98,14 @@ make_fit(BQ=#bq{s=Size,m=Max,d=D}, Item, ItemSize) when (ItemSize+Size>Max) ->
     make_fit(NewQ#bq{d=D+1}, Item, ItemSize);
 make_fit(BQ=#bq{q=Q, s=Size}, Item, ItemSize) ->
     BQ#bq{q=queue:in(Item, Q), s=Size+ItemSize}.
+
+element_size([H|_T] = Element) when is_binary(H) ->
+    lists:foldl(fun(E, Acc) ->
+                Acc + erlang:byte_size(E)
+        end, 0, Element);
+element_size(Element) when is_binary(Element) ->
+    erlang:byte_size(Element).
+
 
    
 %% ===================================================================
@@ -142,5 +157,21 @@ largeitem_test() ->
     1 = bounded_queue:len(Q1),
     0 = bounded_queue:dropped_count(Q1),
     Q1.
+
+list_of_items_test() ->
+    Q0 = initialization_test(),
+    Q1 = in(Q0, [<<1:64/integer>>, <<2:64/integer>>]),
+    1 = bounded_queue:len(Q1),
+    16 = bounded_queue:byte_size(Q1),
+    Q2 = in(Q1, [<<3:64/integer>>, <<4:64/integer>>]),
+    1 = bounded_queue:dropped_count(Q2),
+    {{value, [<<3:64/integer>>, <<4:64/integer>>]}, Q3} = out(Q2),
+    Q4 = in(Q3, [<<5:64/integer>>, <<6:64/integer>>, <<7:64/integer>>]),
+    24 = bounded_queue:byte_size(Q4),
+    1 = bounded_queue:len(Q4),
+    Q5 = in(Q4, <<8:64/integer>>),
+    8 = bounded_queue:byte_size(Q5),
+    1 = bounded_queue:len(Q5),
+    Q5.
 
 -endif.

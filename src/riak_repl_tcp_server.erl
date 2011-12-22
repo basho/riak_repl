@@ -128,11 +128,15 @@ handle_info({repl, RObj}, State) when State#state.q == undefined ->
     end;
 handle_info({repl, RObj}, State) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
+        [] ->
+            %% no additional objects to queue
+            drain(enqueue(term_to_binary({diff_obj, RObj}), State));
         Objects when is_list(Objects) ->
-            %% enqueue all the objects the hook asked us to send
-            NewState = lists:foldl(fun(O, S) ->
-                        enqueue(term_to_binary({diff_obj, O}), S)
-                end, State, [RObj|Objects]),
+            %% enqueue all the objects the hook asked us to send as a list.
+            %% They're enqueued together so that they can't be dumped from the
+            %% queue piecemeal if it overflows
+            NewState = enqueue([term_to_binary({diff_obj, O}) ||
+                    O <- Objects ++ [RObj]], State),
             drain(NewState);
         cancel ->
             {noreply, State}
@@ -279,6 +283,13 @@ drain(State) ->
 enqueue(Msg, State=#state{q=Q}) ->
     State#state{q=bounded_queue:in(Q,Msg)}.
 
+send_diffobj(Msgs, State0) when is_list(Msgs) ->
+    %% send all the messages in the list
+    %% we correctly increment pending, so we should get enough q_acks
+    %% to restore pending to be less than max_pending when we're done.
+    lists:foldl(fun(Msg, State) ->
+                send_diffobj(Msg, State)
+        end, State0, Msgs);
 send_diffobj(Msg,State=#state{socket=Socket,pending=Pending}) ->
     send(Socket,Msg),
     State#state{pending=Pending+1}.
