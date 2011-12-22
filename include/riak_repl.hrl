@@ -11,8 +11,10 @@
 -define(REPL_DEFAULT_QUEUE_SIZE, 104857600).
 -define(REPL_DEFAULT_MAX_PENDING, 5).
 -define(REPL_DEFAULT_ACK_FREQUENCY, 5).
--define(FSM_SOCKOPTS, [{active, once}, {packet, 4}]).
+-define(FSM_SOCKOPTS, [{active, once}, {packet, 4}, {send_timeout, 5000},
+        {send_timeout_close, true}]).
 -define(REPL_VERSION, 3).
+-define(LEGACY_STRATEGY, syncv1).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
