@@ -1,100 +1,266 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl_tcp_server).
--author('Andy Gross <andy@basho.com').
--include("riak_repl.hrl").
--include_lib("kernel/include/file.hrl").
--behaviour(gen_fsm).
--export([start_link/1,
-         set_socket/2,
-         start_fullsync/1,
-         cancel_fullsync/1,
-         pause_fullsync/1,
-         resume_fullsync/1,
-         status/1, status/2]).
--export([init/1, 
-         handle_event/3,
-         handle_sync_event/4, 
-         handle_info/3, 
-         terminate/3, 
-         code_change/4]).
--export([send_peerinfo/2,
-         wait_peerinfo/2,
-         merkle_send/2,
-         merkle_build/2,
-         merkle_xfer/2,
-         merkle_wait_ack/2,
-         merkle_diff/2,
-         connected/2]).
--type now() :: {integer(),integer(),integer()}.
--record(state, 
-        {
-          socket :: repl_socket(),       %% peer socket
-          sitename :: repl_sitename(),   %% repl site identifier
-          client :: tuple(),      %% local riak client
-          my_pi :: #peer_info{},  %% peer info record 
-          merkle_fp :: term(),    %% current merkle filedesc
-          work_dir :: string(),   %% working directory for this repl session
-          partitions=[] :: cancelled|list(),%% list of local partitions
-          helper_pid :: undefined|pid(),            % riak_repl_fullsync_helper
-                                                    % building merkle tree
-          merkle_ref :: undefined|reference(),      % reference from
-                                                    % riak_repl_fullsync_helper
-          merkle_fn :: string(),                    % Filename for merkle tree
-          merkle_fd,                                % Merkle file handle
-          partition :: undefined|non_neg_integer(), % partition being syncd
-          partition_start :: undefined|now(),       % start time for partition
-          stage_start :: undefined|now(),           % start time for stage
-          fullsync_ival :: undefined|disabled|non_neg_integer(),
-          paused=false :: true|false,               % true if paused
-          diff_vclocks=[],
-          diff_recv,                                % differences receives from client
-          diff_sent,                                % differences sent
-          diff_errs,                                % errors retrieving different keys
-          q :: undefined | bounded_queue:bounded_queue(),
-          pending :: undefined | non_neg_integer(),
-          max_pending :: undefined | pos_integer(),
-          election_timeout :: undefined | reference() % reference for the election timeout
-         }
-       ).
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 
-start_link(SiteName) -> 
-    gen_fsm:start_link(?MODULE, [SiteName], []).
+-module(riak_repl_tcp_server).
+
+%% @doc This module is responsible for the server-side TCP communication
+%% during replication. A seperate instance of this module is started for every
+%% replication connection that is established. A handshake with the client is
+%% then exchanged and, using that information, certain protocol extensions are
+%% enabled and the fullsync strategy is negotiated.
+%%
+%% This module handles the realtime part of the replication itself, but all
+%% the details of the fullsync replication are delegated to the negotiated
+%% fullsync worker, which implements its own protocol. Any unrecognized
+%% messages received over the TCP connection are sent to the fullsync process.
+%%
+%% Realtime replication is quite simple. Using a postcommit hook, writes to
+%% the cluster are sent to the replication leader, which will then forward
+%% the update out to any connected replication sites. An optional protocol
+%% extension is to use a bounded queue to throttle the stream of updates.
+
+-include("riak_repl.hrl").
+
+-behaviour(gen_server).
+
+%% API
+-export([start_link/1, set_socket/2, send/2, status/1, status/2]).
+-export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
+        resume_fullsync/1]).
+
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
+
+-record(state, {
+        sitename :: repl_sitename(),
+        socket :: repl_socket(),
+        client :: tuple(),
+        q :: undefined | bounded_queue:bounded_queue(),
+        max_pending :: undefined | pos_integer(),
+        work_dir :: string(),   %% working directory for this repl session
+        pending :: undefined | non_neg_integer(),
+        my_pi :: #peer_info{},
+        their_pi :: #peer_info{},
+        fullsync_worker :: pid() | undefined,
+        fullsync_strategy :: atom(),
+        election_timeout :: undefined | reference() % reference for the election timeout
+    }).
+
+start_link(SiteName) ->
+    gen_server:start_link(?MODULE, [SiteName], []).
+
+set_socket(Pid, Socket) ->
+    gen_server:call(Pid, {set_socket, Socket}).
 
 start_fullsync(Pid) ->
-    %% TODO: Make fullsync message tie into event system for consistency
-    Pid ! fullsync.
+    gen_server:call(Pid, start_fullsync).
 
 cancel_fullsync(Pid) ->
-    gen_fsm:send_event(Pid, cancel_fullsync).
-    
+    gen_server:call(Pid, cancel_fullsync).
+
 pause_fullsync(Pid) ->
-    gen_fsm:send_all_state_event(Pid, pause_fullsync).
+    gen_server:call(Pid, pause_fullsync).
 
 resume_fullsync(Pid) ->
-    gen_fsm:send_all_state_event(Pid, resume_fullsync).
+    gen_server:call(Pid, resume_fullsync).
 
 status(Pid) ->
     status(Pid, infinity).
 
 status(Pid, Timeout) ->
-    gen_fsm:sync_send_all_state_event(Pid, status, Timeout).
-
-set_socket(Pid, Socket) ->
-    gen_fsm:sync_send_all_state_event(Pid, {set_socket, Socket}).
+    gen_server:call(Pid, status, Timeout).
 
 init([SiteName]) ->
-    State0 = #state{sitename=SiteName},
-    %% check if there's a previously incomplete fullsync
-    State = case application:get_env({progress, SiteName}) of
-        {ok, Partitions} when is_list(Partitions) ->
-            lager:notice("Resuming incomplete fullsync for ~p, ~p partitions remain",
-                [SiteName, length(Partitions)]),
-            State0#state{partitions=Partitions};
-        _ ->
-            State0
-    end,
-    {ok, send_peerinfo, State}.
+    %% we need to wait for set_socket to happen
+    {ok, #state{sitename=SiteName}}.
+
+handle_call(start_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:start_fullsync(FSW),
+    {reply, ok, State};
+handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:cancel_fullsync(FSW),
+    {reply, ok, State};
+handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:pause_fullsync(FSW),
+    {reply, ok, State};
+handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod} = State) ->
+    Mod:resume_fullsync(FSW),
+    {reply, ok, State};
+handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
+    Res = gen_fsm:sync_send_all_state_event(FSW, status, infinity),
+    Desc = 
+        [
+            {site, State#state.sitename},
+            {strategy, State#state.fullsync_strategy}
+        ] ++
+        case State#state.q of
+            undefined ->
+                [{bounded_queue, disabled}];
+            _ ->
+                [{dropped_count, bounded_queue:dropped_count(Q)},
+                    {queue_length, bounded_queue:len(Q)},
+                    {queue_byte_size, bounded_queue:byte_size(Q)}]
+        end,
+    {reply, {status, Desc ++ Res}, State};
+handle_call({set_socket, Socket}, _From, State) ->
+    ok = riak_repl_util:configure_socket(Socket),
+    self() ! send_peerinfo,
+    Timeout = erlang:send_after(60000, self(), election_timeout),
+    {reply, ok, State#state{socket=Socket, election_timeout=Timeout}}.
+
+handle_cast(_Event, State) ->
+    {noreply, State}.
+
+handle_info({repl, RObj}, State) when State#state.q == undefined ->
+    case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
+        Objects when is_list(Objects) ->
+            [send(State#state.socket, term_to_binary({diff_obj, O})) || O <-
+                Objects],
+            send(State#state.socket, term_to_binary({diff_obj, RObj})),
+            {noreply, State};
+        cancel ->
+            {noreply, State}
+    end;
+handle_info({repl, RObj}, State) ->
+    case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
+        [] ->
+            %% no additional objects to queue
+            drain(enqueue(term_to_binary({diff_obj, RObj}), State));
+        Objects when is_list(Objects) ->
+            %% enqueue all the objects the hook asked us to send as a list.
+            %% They're enqueued together so that they can't be dumped from the
+            %% queue piecemeal if it overflows
+            NewState = enqueue([term_to_binary({diff_obj, O}) ||
+                    O <- Objects ++ [RObj]], State),
+            drain(NewState);
+        cancel ->
+            {noreply, State}
+    end;
+handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
+    lager:info("Connection for site ~p closed", [State#state.sitename]),
+    {stop, normal, State};
+handle_info({tcp_error, _Socket, Reason}, State) ->
+    lager:error("Connection for site ~p closed unexpectedly: ~p",
+        [State#state.sitename, Reason]),
+    {stop, normal, State};
+handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
+    Msg = binary_to_term(Data),
+    Reply = handle_msg(Msg, State),
+    inet:setopts(Socket, [{active, once}]),
+    riak_repl_stats:server_bytes_recv(size(Data)),
+    Reply;
+handle_info(send_peerinfo, State) ->
+    send_peerinfo(State);
+handle_info(election_timeout, #state{election_timeout=Timer} = State) when is_reference(Timer) ->
+    lager:error("Timed out waiting for a leader to be elected"),
+    {stop, normal, State};
+handle_info(election_wait, State) ->
+    send_peerinfo(State);
+handle_info(_Event, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+%% internal functions
+
+handle_msg({peerinfo, PI}, State) ->
+    Capability = riak_repl_util:capability_from_vsn(PI),
+    handle_msg({peerinfo, PI, Capability}, State);
+handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
+    case riak_repl_util:validate_peer_info(TheirPI, MyPI) of
+        true ->
+            ClientStrats = proplists:get_value(fullsync_strategies, Capability,
+                [?LEGACY_STRATEGY]),
+            ServerStrats = app_helper:get_env(riak_repl, fullsync_strategies,
+                [?LEGACY_STRATEGY]),
+            Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
+            StratMod = riak_repl_util:strategy_module(Strategy, server),
+            lager:notice("Using fullsync strategy ~p.", [StratMod]),
+            {ok, FullsyncWorker} = StratMod:start_link(State#state.sitename,
+                State#state.socket, State#state.work_dir, State#state.client),
+            %% Set up bounded queue if remote supports it
+            case proplists:get_bool(bounded_queue, Capability) of
+                true ->
+                    QSize = app_helper:get_env(riak_repl,queue_size,
+                                               ?REPL_DEFAULT_QUEUE_SIZE),
+                    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
+                                                    ?REPL_DEFAULT_MAX_PENDING),
+                    State1 = State#state{q = bounded_queue:new(QSize),
+                                         fullsync_worker = FullsyncWorker,
+                                         fullsync_strategy = StratMod,
+                                         max_pending = MaxPending,
+                                         pending = 0};
+                false ->
+                    State1 = State#state{fullsync_worker = FullsyncWorker,
+                                         fullsync_strategy = StratMod}
+            end,
+
+            case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
+                true ->
+                    FullsyncWorker ! start_fullsync,
+                    lager:notice("Full-sync on connect"),
+                    {noreply, State1};
+                false ->
+                    {noreply, State1}
+            end;
+        false ->
+            {stop, normal, State}
+    end;
+handle_msg({q_ack, N}, #state{pending=Pending} = State) ->
+    drain(State#state{pending=Pending-N});
+handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
+    gen_fsm:send_event(FSW, Msg),
+    {noreply, State}.
+
+send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
+    OurNode = node(),
+    case riak_repl_leader:leader_node()  of
+        undefined -> % leader not elected yet
+            %% check again in 5 seconds
+            erlang:send_after(5000, self(), election_wait),
+            {noreply, State};
+        OurNode ->
+            case riak_repl_leader:add_receiver_pid(self()) of
+                ok ->
+                    erlang:cancel_timer(State#state.election_timeout),
+                    %% this switches the socket into active mode
+                    Props = riak_repl_fsm_common:common_init(Socket),
+                    PI = proplists:get_value(my_pi, Props),
+                    send(Socket, {peerinfo, PI,
+                            [bounded_queue, {fullsync_strategies,
+                                    app_helper:get_env(riak_repl, fullsync_strategies,
+                                        [?LEGACY_STRATEGY])}]}),
+                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
+                    {noreply, State#state{work_dir = WorkDir,
+                            client=proplists:get_value(client, Props),
+                            election_timeout=undefined,
+                            my_pi=PI}};
+                {error, _Reason} ->
+                    %% leader has changed, try again
+                    send_peerinfo(State)
+            end;
+        OtherNode -> 
+            OtherListener = listener_for_node(OtherNode),
+            {Ip, Port} = OtherListener#repl_listener.listen_addr,
+            send(Socket, {redirect, Ip, Port}),
+            {stop, normal, State}
+    end.
+
+send(Sock, Data) when is_binary(Data) ->
+    R = gen_tcp:send(Sock,Data),
+    riak_repl_stats:server_bytes_sent(size(Data)),
+    R;
+send(Sock, Data) ->
+    send(Sock, term_to_binary(Data)).
 
 listener_for_node(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -104,502 +270,27 @@ listener_for_node(Node) ->
                           L#repl_listener.nodename =:= Node],
     hd(NodeListeners).
 
-send_peerinfo(timeout, #state{socket=Socket, sitename=SiteName} = State) ->
-    OurNode = node(),
-    case riak_repl_leader:leader_node()  of
-        undefined -> % leader not elected yet
-            %% check again in 5 seconds
-            erlang:send_after(5000, self(), election_wait),
-            {next_state, send_peerinfo, State};
-        OurNode ->
-            erlang:cancel_timer(State#state.election_timeout),
-            %% this switches the socket into active mode
-            Props = riak_repl_fsm_common:common_init(Socket),
-            PI = proplists:get_value(my_pi, Props),
-            send(Socket, {peerinfo, PI}),
-            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
-            riak_repl_leader:add_receiver_pid(self()),
-            {next_state, wait_peerinfo, State#state{work_dir = WorkDir,
-                    client=proplists:get_value(client, Props),
-                    election_timeout=undefined,
-                    my_pi=PI}};
-        OtherNode -> 
-            OtherListener = listener_for_node(OtherNode),
-            {Ip, Port} = OtherListener#repl_listener.listen_addr,
-            send(Socket, {redirect, Ip, Port}),
-            {stop, normal, State}
-    end.
-
-wait_peerinfo({peerinfo, TheirPeerInfo}, State) ->
-    %% Forward compatibility with post-0.14.0 - will allow protocol negotiation
-    %% rather than setting capabilities based on version
-    Capability = riak_repl_util:capability_from_vsn(TheirPeerInfo),
-    wait_peerinfo({peerinfo, TheirPeerInfo, Capability}, State);
-wait_peerinfo({peerinfo, TheirPeerInfo, Capability},
-              State=#state{my_pi=MyPeerInfo}) when is_list(Capability) ->
-    case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
-        true ->
-            %% Set up bounded queue if remote supports it
-            case proplists:get_bool(bounded_queue, Capability) of
-                true ->
-                    QSize = app_helper:get_env(riak_repl,queue_size,
-                                               ?REPL_DEFAULT_QUEUE_SIZE),
-                    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
-                                                    ?REPL_DEFAULT_MAX_PENDING),
-                    State1 = State#state{q = bounded_queue:new(QSize),
-                                         max_pending = MaxPending,
-                                         pending = 0};
-                false ->
-                    State1 = State
-            end,
-                
-            case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
-                true ->
-                    next_state(merkle_send, do_start_fullsync(State1));
-                false ->
-                    schedule_fullsync(State1),
-                    next_state(connected, State1)
-            end;
-        false ->
-            {stop, normal, State}
+drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
+    case bounded_queue:out(Q) of
+        {{value, Msg}, NewQ} ->
+            drain(send_diffobj(Msg, State#state{q=NewQ}));
+        {empty, NewQ} ->
+            {noreply, State#state{q=NewQ}}
     end;
-wait_peerinfo(cancel_fullsync, State) ->
-    {next_state, wait_peerinfo, State}.
-
-merkle_send(cancel_fullsync, State) ->
-    next_state(merkle_send, do_cancel_fullsync(State));
-merkle_send(timeout, State=#state{partitions=[], sitename=SiteName}) ->
-    lager:info("Full-sync with site ~p completed.", [SiteName]),
-    %% no longer need to track progress.
-    application:unset_env(riak_repl, {progress, SiteName}),
-    schedule_fullsync(State),
-    riak_repl_stats:server_fullsyncs(),
-    next_state(connected, State);
-merkle_send(timeout, State=#state{partitions=cancelled}) ->
-    lager:info("Full-sync with site ~p cancelled.",
-                          [State#state.sitename]),
-    schedule_fullsync(State),
-    next_state(connected, State#state{partition_start = undefined,
-                                      stage_start = undefined});
-merkle_send(timeout, State=#state{paused=true}) ->
-    %% If pause requested while previous partition was fullsyncing
-    %% and there are partitions left, drop into connected state.
-    %% Check after partitions=[] clause to make sure a fullsync completes
-    %% if pause was on the last partition.
-    lager:info("Full-sync with site ~p paused. ~p partitions pending.",
-                          [State#state.sitename, length(State#state.partitions)]),
-    next_state(connected, State);
-merkle_send(timeout, State=#state{sitename=SiteName,
-                                  partitions=[Partition|T],
-                                  work_dir=WorkDir}) ->
-    %% update the stored progress, in case the fullsync aborts
-    application:set_env(riak_repl, {progress, SiteName}, [Partition|T]),
-    FileName = riak_repl_util:merkle_filename(WorkDir, Partition, ours),
-    file:delete(FileName), % make sure we get a clean copy
-    lager:info("Full-sync with site ~p; hashing partition ~p data",
-                          [SiteName, Partition]),
-    Now = now(),
-    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    {ok, Ref} = riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName),
-    next_state(merkle_build, State#state{helper_pid = Pid, 
-                                         merkle_ref = Ref,
-                                         merkle_fn = FileName,
-                                         partition = Partition,
-                                         partition_start = Now,
-                                         stage_start = Now,
-                                         partitions = T}).
-
-merkle_build(cancel_fullsync, State) ->
-    next_state(merkle_build, do_cancel_fullsync(State));
-merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref,
-                                               partitions = cancelled}) ->
-    %% Partition sync was cancelled before transferring any data
-    %% to the client, go back to the idle state.
-    next_state(merkle_send, State#state{helper_pid = undefined,
-                                        merkle_ref = undefined});
-merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
-    MerkleFile = State#state.merkle_fn,
-    {ok, FileInfo} = file:read_file_info(MerkleFile),
-    FileSize = FileInfo#file_info.size,
-    {ok, MerkleFd} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
-    file:delete(MerkleFile), % will not be removed until file handle closed
-    lager:info("Full-sync with site ~p; sending partition"
-                          " ~p data (built in ~p secs)",
-                          [State#state.sitename, State#state.partition,
-                           elapsed_secs(State#state.stage_start)]),
-    Now = now(),
-    send(State#state.socket, {merkle, FileSize, State#state.partition}),
-    next_state(merkle_xfer, State#state{helper_pid = undefined,
-                                        merkle_ref = undefined,
-                                        stage_start = Now,
-                                        merkle_fd = MerkleFd});
-merkle_build({Ref, {error, Reason}}, State) when Ref =:= State#state.merkle_ref ->
-    lager:info("Full-sync with site ~p; partition ~p skipped: ~p",
-                          [ State#state.sitename, State#state.partition, Reason]),
-    next_state(merkle_send, State#state{helper_pid = undefined,
-                                        merkle_ref = undefined,
-                                        partition = undefined}).
-
-merkle_xfer(cancel_fullsync, State) ->
-    %% Even on cancel, keep sending the file.  The client reads until it has
-    %% enough bytes, so stopping sending would leave it in
-    %% riak_repl_tcp_client:merkle_recv.
-    next_state(merkle_xfer,  do_cancel_fullsync(State));
-merkle_xfer(timeout, State) ->
-    MerkleFd = State#state.merkle_fd,
-    case file:read(MerkleFd, ?MERKLE_CHUNKSZ) of
-        {ok, Data} ->
-            send(State#state.socket, {merk_chunk, Data}),
-            next_state(merkle_xfer, State);
-        eof ->
-            file:close(MerkleFd),
-            lager:info("Full-sync with site ~p; awaiting partition"
-                                  " ~p diffs (sent in ~p secs)",
-                                  [State#state.sitename, State#state.partition,
-                                   elapsed_secs(State#state.stage_start)]),
-            Now = now(),
-            next_state(merkle_wait_ack, State#state{merkle_fd = undefined,
-                                                    stage_start = Now})
-    end.
-
-merkle_wait_ack(cancel_fullsync, State) ->
-    next_state(merkle_wait_ack,  do_cancel_fullsync(State));
-merkle_wait_ack({ack,Partition,DiffVClocks}, 
-                State=#state{partition=Partition}) ->
-    next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks,
-                                        stage_start = now(),
-                                        diff_sent = 0,
-                                        diff_recv = 0,
-                                        diff_errs = 0}).
-
-merkle_diff(cancel_fullsync, State) ->
-    next_state(merkle_diff, do_cancel_fullsync(State));
-merkle_diff(timeout, #state{partitions=cancelled}=State) ->
-    %% abandon the diff if the fullsync has been cancelled
-    send(State#state.socket, {partition_complete, State#state.partition}),
-    next_state(merkle_send, State#state{partition = undefined,
-                                        diff_vclocks = [],
-                                        diff_sent = undefined,
-                                        diff_recv = undefined,
-                                        diff_errs = undefined,
-                                        stage_start = undefined});
-merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
-    send(State#state.socket, {partition_complete, State#state.partition}),
-    DiffsSent = State#state.diff_sent,
-    DiffsRecv = State#state.diff_recv,
-    case DiffsRecv of
-        N when is_integer(N), N > 0 ->
-            Pct = 100 * DiffsSent div DiffsRecv;
-        0 ->
-            Pct = 0
-    end,
-    lager:info("Full-sync with site ~p; partition ~p complete (~p secs).\n"
-                          "Updated ~p/~p (~p%) keys. ~p errors.",
-                          [State#state.sitename, State#state.partition,
-                           elapsed_secs(State#state.partition_start),
-                           DiffsSent, DiffsRecv, Pct, State#state.diff_errs]),
-    next_state(merkle_send, State#state{partition = undefined,
-                                        partition_start = undefined,
-                                        diff_sent = undefined,
-                                        diff_recv = undefined,
-                                        diff_errs = undefined,
-                                        stage_start = undefined});
-merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
-    Client = State#state.client,
-    Recv = State#state.diff_recv,
-    Sent = State#state.diff_sent,
-    Errs  = State#state.diff_errs,
-    case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
-        {ok, RObj} ->
-            case maybe_send(RObj, ClientVC, State#state.socket) of
-                skipped ->
-                    next_state(merkle_diff, State#state{diff_vclocks = Rest,
-                                                        diff_recv = Recv + 1});
-                _ ->
-                    next_state(merkle_diff, State#state{diff_vclocks = Rest,
-                                                        diff_recv = Recv + 1,
-                                                        diff_sent = Sent + 1})
-            end;
-        {error, notfound} ->
-            next_state(merkle_diff, State#state{diff_vclocks = Rest,
-                                                diff_recv = Recv + 1});
-        _ ->
-            next_state(merkle_diff, State#state{diff_vclocks = Rest,
-                                                diff_recv = Recv + 1,
-                                                diff_errs = Errs + 1})
-    end.
-
-connected(_E, State) -> next_state(connected, State).
-
-handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
-    lager:info("Connection for site ~p closed", [State#state.sitename]),
-    {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, _StateName, State) ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
-        [State#state.sitename, Reason]),
-    {stop, normal, State};
-handle_info({tcp, Socket, Data}, StateName, State=#state{socket=Socket,
-                                                         pending=Pending}) ->
-    Msg = binary_to_term(Data),
-    Reply = case Msg of
-        {q_ack, N} -> drain(StateName, State#state{pending=Pending-N});
-        _ -> ?MODULE:StateName(Msg, State)
-    end,
-    inet:setopts(Socket, [{active, once}]),            
-    riak_repl_stats:server_bytes_recv(size(Data)),
-    Reply;
-handle_info({repl, RObj}, StateName, State) when State#state.q == undefined ->
-    send(State#state.socket, term_to_binary({diff_obj, RObj})),
-    next_state(StateName, State);
-handle_info({repl, RObj}, StateName, State) ->
-    drain(StateName, enqueue(term_to_binary({diff_obj, RObj}), State));
-handle_info(fullsync, connected, State) ->
-    next_state(merkle_send, do_start_fullsync(State));
-handle_info(election_timeout, _StateName,
-            #state{election_timeout=Timer} =State) when is_reference(Timer) ->
-    lager:error("Timed out waiting for a leader to be elected"),
-    {stop, normal, State};
-handle_info(election_wait, send_peerinfo, State) ->
-    ?MODULE:send_peerinfo(timeout, State);
-%% no-ops
-handle_info(_I, StateName, State) -> next_state(StateName, State).
-terminate(_Reason, _StateName, State) -> 
-    %% Clean up the working directory on crash/exit
-    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
-    os:cmd(Cmd).
-
-code_change(_OldVsn, StateName, State, _Extra) -> {ok, StateName, State}.
-
-handle_event(resume_fullsync, StateName, State) ->
-    NewState = State#state{paused = false},
-    case fullsync_partitions_pending(NewState) andalso StateName =:= connected of
-        true ->
-            %% If in connected stated an there are pending partitions, drop back
-            %% into merkle_send to resume the sync
-            lager:info("Full-sync with site ~p resumed.  "
-                                  "~p partitions.",
-                                  [State#state.sitename,
-                                   length(State#state.partitions)]),
-            next_state(merkle_send, NewState);
-        _ ->
-            %% Otherwise there could have been a pause/resume while other work
-            %% was being completed (e.g. during merkle_build).  Stay in the same
-            %% state and the FSM will get to the right place.
-            lager:info("Full-sync with site ~p resumed.",
-                                  [State#state.sitename]),
-            next_state(StateName, NewState)
-    end;
-handle_event(pause_fullsync, StateName, State) ->
-    case State#state.partition of
-        undefined ->
-            lager:info("Full-sync with site ~p paused.",
-                                  [State#state.sitename]);
-        _ ->
-            lager:info("Full-sync with site ~p pausing after next partition.",
-                                  [State#state.sitename])
-    end,
-    next_state(StateName, State#state{paused = true}).
-
-handle_sync_event({set_socket,Socket},_F, _StateName, State) -> 
-    case application:get_env(riak_repl, fullsync_interval) of
-        {ok, disabled} ->
-            FullsyncIval = disabled;
-        {ok, FullsyncIvalMins} ->
-            FullsyncIval = timer:minutes(FullsyncIvalMins)
-    end,
-    NewState = State#state{
-      socket=Socket,
-      fullsync_ival=FullsyncIval,
-      election_timeout=erlang:send_after(60000, self(), election_timeout)},
-    reply(ok, send_peerinfo, NewState);
-handle_sync_event(status,_F,StateName,State=#state{q=Q}) ->
-    Desc = 
-        [{site, State#state.sitename}] ++
-        case State#state.partitions of
-            [] ->
-                [];
-            cancelled ->
-                [cancelled];
-            Partitions ->
-                Left = length(Partitions),
-                [{fullsync, Left, left}]
-        end ++
-        case State#state.paused of
-            true ->
-                [paused];
-            false ->
-                []
-        end ++
-        [{state, StateName}],
-    case Q of
-        undefined ->
-            Desc1 = Desc ++ [{bounded_queue, disabled}];
-        _ ->
-            Desc1 = Desc ++ 
-                [{dropped_count, bounded_queue:dropped_count(Q)},
-                 {queue_length, bounded_queue:len(Q)},
-                 {queue_byte_size, bounded_queue:byte_size(Q)}]
-    end,
-    reply({status, Desc1}, StateName, State).
-
-maybe_send(RObj, ClientVC, Socket) ->
-    ServerVC = riak_object:vclock(RObj),
-    case vclock:descends(ClientVC, ServerVC) of
-        true ->
-            skipped;
-        false ->
-            check_and_send(Socket, {diff_obj, RObj})
-    end.
-
-check_and_send(Sock, {diff_obj, O}=Data) ->
-    B = riak_object:bucket(O),
-    K = riak_object:key(O),
-    PO = is_proxy_object(B),
-    {ok, C} = riak:local_client(),
-    SHI = is_search_hook_installed(C, B),
-
-    case SHI of
-        true ->
-            send_search(PO, O, B, K, C, Sock);
-        false ->
-            case PO of
-                true -> lager:debug("Outgoing proxy obj ~p/~p", [B, K]);
-                false -> lager:debug("Outgoing KV obj ~p/~p", [B, K])
-            end,
-            send(Sock, term_to_binary(Data))
-    end.
-
-send_search(true, PO, IdxB, K, C, Sock) ->
-    lager:debug("Outgoing idexed KV obj ~p/~p", [IdxB, K]),
-    <<"_rsid_",B/binary>> = IdxB,
-    case C:get(B, K) of
-        {ok, KVO} ->
-            send(Sock, term_to_binary({diff_obj, PO})),
-            send(Sock, term_to_binary({diff_obj, KVO}));
-        Other ->
-            lager:info("Couldn't find expected KV obj ~p/~p ~p", [B, K, Other]),
-            send(Sock, term_to_binary({diff_obj, PO}))
-    end;
-
-send_search(false, KVO, B, K, C, Sock) ->
-    lager:debug("Outgoing idexed KV obj ~p/~p", [B, K]),
-    IdxB = <<"_rsid_",B/binary>>,
-    case C:get(IdxB, K) of
-        {ok, PO} ->
-            send(Sock, term_to_binary({diff_obj, PO})),
-            send(Sock, term_to_binary({diff_obj, KVO}));
-        Other ->
-            lager:info("Couldn't find expected proxy obj ~p/~p ~p",
-                       [IdxB, K, Other]),
-            send(Sock, term_to_binary({diff_obj, KVO}))
-    end.
-
-is_proxy_object(B) ->
-    case binary:matches(B, <<"_rsid_">>) of
-        [] -> false;
-        _ -> true
-    end.
-
-is_search_hook_installed(C, B) ->
-    P = proplists:get_value(precommit, C:get_bucket(B)),
-    case P of
-        [] -> false;
-        _ ->
-            case lists:any(fun search_pre_hook/1, P) of
-                true -> true;
-                false -> false
-            end
-    end.
-
-search_pre_hook({struct, [{<<"mod">>, <<"riak_search_kv_hook">>},_]}) -> true;
-search_pre_hook(_) -> false.
-
-send(Sock, Data) when is_binary(Data) ->
-    R = gen_tcp:send(Sock,Data),
-    riak_repl_stats:server_bytes_sent(size(Data)),
-    R;
-send(Sock, Data) ->
-    send(Sock, term_to_binary(Data)).
-
-schedule_fullsync(State) ->
-    case State#state.fullsync_ival of
-        disabled ->
-            ok;
-        Interval ->
-            erlang:send_after(Interval, self(), fullsync)
-    end.
+drain(State) ->
+    {noreply, State}.
 
 enqueue(Msg, State=#state{q=Q}) ->
     State#state{q=bounded_queue:in(Q,Msg)}.
 
+send_diffobj(Msgs, State0) when is_list(Msgs) ->
+    %% send all the messages in the list
+    %% we correctly increment pending, so we should get enough q_acks
+    %% to restore pending to be less than max_pending when we're done.
+    lists:foldl(fun(Msg, State) ->
+                send_diffobj(Msg, State)
+        end, State0, Msgs);
 send_diffobj(Msg,State=#state{socket=Socket,pending=Pending}) ->
     send(Socket,Msg),
     State#state{pending=Pending+1}.
 
-drain(StateName,State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
-    case bounded_queue:out(Q) of
-        {{value, Msg}, NewQ} ->
-            drain(StateName, send_diffobj(Msg, State#state{q=NewQ}));
-        {empty, NewQ} ->
-            next_state(StateName, State#state{q=NewQ})
-    end;
-drain(StateName,State) ->
-    next_state(StateName,State).
-    
-do_start_fullsync(State) ->
-    case fullsync_partitions_pending(State) of
-        true ->
-            Partitions = State#state.partitions; % resuming from pause
-        false ->
-            %% last sync completed or was cancelled
-            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            Partitions = riak_repl_util:get_partitions(Ring)
-    end,
-    Remaining = length(Partitions),
-    lager:info("Full-sync with site ~p starting; ~p partitions.",
-                          [State#state.sitename, Remaining]),
-    State#state{partitions=Partitions}.
-
-do_cancel_fullsync(State) when is_list(State#state.partitions) ->
-    %% clear the tracked progress since we're cancelling
-    application:unset_env(riak_repl, {progress, State#state.sitename}),
-    Remaining = length(State#state.partitions),
-    lager:info("Full-sync with site ~p cancelled; "
-                          "~p partitions remaining.",
-                          [State#state.sitename, Remaining]),
-    State#state{partitions = cancelled};
-do_cancel_fullsync(State) ->  % already cancelled
-    lager:info("Full-sync with site ~p already cancelled.",
-                          [State#state.sitename]),
-    State.
-
-%% Returns true if there are any fullsync partitions pending
-fullsync_partitions_pending(State) ->
-    case State#state.partitions of
-        Ps when is_list(Ps), length(Ps) > 0 ->
-            true;
-        _ ->
-            false
-    end.
-                 
-
-%% Work out the elapsed time in seconds, rounded to centiseconds.
-elapsed_secs(Then) ->
-    CentiSecs = timer:now_diff(now(), Then) div 10000,
-    CentiSecs / 100.0.
-%% Make sure merkle_send and merkle_diff get sent timeout messages
-%% to process their queued work
-next_state(StateName, State) when StateName =:= merkle_send;
-                                  StateName =:= merkle_xfer;
-                                  StateName =:= merkle_diff ->
-    {next_state, StateName, State, 0};
-next_state(StateName, State) ->
-    {next_state, StateName, State}.
-
-reply(Reply, StateName, State) when StateName =:= merkle_send;
-                                    StateName =:= merkle_xfer;
-                                    StateName =:= merkle_diff;
-                                    StateName =:= send_peerinfo ->
-    {reply, Reply, StateName, State, 0};
-reply(Reply, StateName, State) ->
-    {reply, Reply, StateName, State}.

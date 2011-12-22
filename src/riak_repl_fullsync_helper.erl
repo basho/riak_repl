@@ -2,7 +2,7 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 
 %%
-%% Fullsync helper process - offloads key/hash generation and comparion
+%% Fullsync helper process - offloads key/hash generation and comparison
 %% from the main TCP server/client processes.
 %%
 -module(riak_repl_fullsync_helper).
@@ -10,10 +10,13 @@
 
 %% API
 -export([start_link/1,
+         stop/1,
          make_merkle/3,
          make_keylist/3,
          merkle_to_keylist/3,
-         diff/4]).
+         diff/4,
+         diff_stream/5,
+         itr_new/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -34,6 +37,8 @@
 -record(diff_state, {fsm,
                      ref,
                      preflist,
+                     count = 0,
+                     replies = 0,
                      diff_hash = 0,
                      missing = 0,
                      errors = []}).
@@ -44,6 +49,9 @@
 
 start_link(OwnerFsm) ->
     gen_server2:start_link(?MODULE, [OwnerFsm], []).
+
+stop(Pid) ->
+    gen_server2:call(Pid, stop, infinity).
 
 %% Make a couch_btree of key/object hashes.
 %%
@@ -74,7 +82,10 @@ merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
 diff(Pid, Partition, TheirFn, OurFn) ->
-    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn}).
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, -1}).
+
+diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, Count}).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -84,12 +95,24 @@ init([OwnerFsm]) ->
     process_flag(trap_exit, true),
     {ok, #state{owner_fsm = OwnerFsm}}.
 
+handle_call(stop, _From, State) ->
+    case State#state.folder_pid of
+        undefined ->
+            ok;
+        Pid ->
+            unlink(Pid),
+            exit(Pid, kill)
+    end,
+    file:close(State#state.kl_fp),
+    couch_merkle:close(State#state.merkle_pid),
+    file:delete(State#state.filename),
+    {stop, normal, ok, State};
 handle_call({make_merkle, Partition, FileName}, From, State) ->
     %% Return to caller immediately - under heavy load exceeded the 5s
     %% default timeout.  Do not wish to block the repl server for
     %% that long in any case.
     Ref = make_ref(),
-    gen_server:reply(From, {ok, Ref}),
+    gen_server2:reply(From, {ok, Ref}),
 
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
@@ -119,19 +142,21 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
     end;
 handle_call({make_keylist, Partition, Filename}, From, State) ->
     Ref = make_ref(),
-    gen_server:reply(From, {ok, Ref}),
+    gen_server2:reply(From, {ok, Ref}),
 
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
         true ->
-            {ok, FP} = file:open(Filename, [read, write, binary, raw, delayed_write]),
+            {ok, FP} = file:open(Filename, [read, write, binary, delayed_write]),
             Self = self(),
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
                              Folder = fun(K, V, MPid) -> 
-                                              gen_server2:cast(MPid, {kl, K, hash_object(V)}),
+                                              H = hash_object(V),
+                                              Bin = term_to_binary({pack_key(K), H}),
+                                              file:write(FP, <<(size(Bin)):32, Bin/binary>>),
                                               MPid
                                       end,
                              riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
@@ -142,7 +167,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                    folder_pid = FolderPid,
                                    filename = Filename,
                                    kl_fp = FP},
-            {reply, {ok, Ref}, NewState};
+            {noreply, NewState};
         false ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
@@ -176,7 +201,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     end,
     gen_fsm:send_event(State#state.owner_fsm, {Ref, Msg}),
     {stop, normal, State};
-handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
+handle_call({diff, Partition, RemoteFilename, LocalFilename, Count}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
     %% read files this process will crash and the caller
     %% will discover the problem.
@@ -195,6 +220,8 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename}, From, State) ->
                 DiffState = diff_keys(itr_new(RemoteFile, remote_reads),
                                       itr_new(LocalFile, local_reads),
                                       #diff_state{fsm = State#state.owner_fsm,
+                                                  count=Count,
+                                                  replies=Count,
                                                   ref = Ref,
                                                   preflist = {Partition, OwnerNode}}),
                 lager:info("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
@@ -242,17 +269,17 @@ handle_cast(merkle_finish, State) ->
     _Mref = erlang:monitor(process, State#state.merkle_pid),
     couch_merkle:close(State#state.merkle_pid),
     {noreply, State};
-handle_cast({kl, K, H}, State) ->
-    Bin = term_to_binary({pack_key(K), H}),
-    file:write(State#state.kl_fp, <<(size(Bin)):32, Bin/binary>>),
-    {noreply, State};
 handle_cast(kl_finish, State) ->
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
-    gen_server:cast(self(), kl_sort),
+    gen_server2:cast(self(), kl_sort),
     {noreply, State};
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
+    %% we want the GC to stop running, so set a giant heap size
+    %% this process is about to die, so this is OK
+    lager:info("Sorting keylist ~p", [Filename]),
+    erlang:process_flag(min_heap_size, 1000000),
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     lager:info("Sorted ~s in ~.2f seconds",
                           [Filename, ElapsedUsec / 1000000]),
@@ -344,6 +371,18 @@ itr_next(Size, File, Tag) ->
             eof
     end.
 
+diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
+    gen_fsm:send_event(FSM, {Ref, diff_paused}),
+    %% wait for a message telling us to stop, or to continue.
+    receive
+        {'$gen_call', From, stop} ->
+            gen_server2:reply(From, ok),
+            lager:notice("stop request while diffing"),
+            DiffState;
+        {Ref, diff_resume} ->
+            %lager:notice("resuming diff stream"),
+            diff_keys(R, L, DiffState#diff_state{replies=Count})
+    end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
     %% Remote and local keys/hashes match
     diff_keys(RNext(), LNext(), DiffState);
@@ -366,7 +405,7 @@ diff_keys(eof, _, DiffState) ->
     %% deleted ops
     DiffState.
 
-%% Called when the hashes differ with the packed packed bkey
+%% Called when the hashes differ with the packed bkey
 diff_hash(PBKey, DiffState) ->
     UpdDiffHash = DiffState#diff_state.diff_hash + 1,
     BKey = unpack_key(PBKey),
@@ -376,7 +415,8 @@ diff_hash(PBKey, DiffState) ->
             Fsm = DiffState#diff_state.fsm,
             Ref = DiffState#diff_state.ref,
             gen_fsm:send_event(Fsm, {Ref, {merkle_diff, BkeyVclock}}),
-            DiffState#diff_state{diff_hash = UpdDiffHash};
+            DiffState#diff_state{diff_hash = UpdDiffHash,
+                replies=DiffState#diff_state.replies - 1};
         Reason ->
             UpdErrors = orddict:update_counter(Reason, 1, DiffState#diff_state.errors),
             DiffState#diff_state{errors = UpdErrors}
@@ -389,5 +429,6 @@ missing_key(PBKey, DiffState) ->
     Ref = DiffState#diff_state.ref,
     gen_fsm:send_event(Fsm, {Ref, {merkle_diff, {BKey, vclock:fresh()}}}),
     UpdMissing = DiffState#diff_state.missing + 1,
-    DiffState#diff_state{missing = UpdMissing}.
+    DiffState#diff_state{missing = UpdMissing,
+        replies=DiffState#diff_state.replies - 1}.
 

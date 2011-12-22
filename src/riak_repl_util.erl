@@ -15,7 +15,15 @@
          merkle_filename/3,
          keylist_filename/3,
          valid_host_ip/1,
-         format_socketaddrs/1]).
+         format_socketaddrs/1,
+         choose_strategy/2,
+         strategy_module/2,
+         configure_socket/1,
+         repl_helper_send/2,
+         repl_helper_send_realtime/2,
+         schedule_fullsync/0,
+         schedule_fullsync/1,
+         elapsed_secs/1]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -44,54 +52,147 @@ get_partitions(_Ring) ->
     lists:sort([P || {P, _} <- riak_core_ring:all_owners(Ring)]).
 
 do_repl_put(Object) ->
-    ReqId = erlang:phash2(erlang:now()),
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    Opts = [asis, disable_hooks, {update_last_modified, false}],
+    case repl_helper_recv(Object) of
+        ok ->
+            ReqId = erlang:phash2(erlang:now()),
+            B = riak_object:bucket(Object),
+            K = riak_object:key(Object),
+            Opts = [asis, disable_hooks, {update_last_modified, false}],
 
-    case B of
-        <<"_rsid_", Idx/binary>> ->
-            {ok, C} = riak:local_client(),
-            SC = riak_search_client:new(C),
+            riak_kv_put_fsm_sup:start_put_fsm(node(), [ReqId, Object, 1, 1,
+                    ?REPL_FSM_TIMEOUT,
+                    self(), Opts]),
+
+            %% block waiting for response
+            wait_for_response(ReqId, "put"),
+
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
-                    lager:debug("Incoming deleted proxy obj ~p/~p", [B, K]),
-                    riak_indexed_doc:remove_entries(C, SC, Idx, K),
-                    riak_kv_put_fsm_sup:start_put_fsm(node(),
-                                                      [ReqId, Object, 1, 1,
-                                                       ?REPL_FSM_TIMEOUT,
-                                                       self(), Opts]),
-                    reap(ReqId, B, K);
+                    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
+                    reap(ReqId, B, K),
+                    %% block waiting for response
+                    wait_for_response(ReqId, "reap");
                 false ->
-                    lager:debug("Incoming proxy obj ~p/~p", [B, K]),
-                    IdxDoc = riak_object:get_value(Object),
-                    riak_indexed_doc:remove_entries(C, SC, Idx, K),
-                    Postings = riak_indexed_doc:postings(IdxDoc),
-                    SC:index_terms(Postings),
-                    riak_kv_put_fsm_sup:start_put_fsm(node(),
-                                                      [ReqId, Object, 1, 1,
-                                                       ?REPL_FSM_TIMEOUT, self(),
-                                                       Opts])
+                    lager:debug("Incoming obj ~p/~p", [B, K])
             end;
-        _ ->
-            riak_kv_put_fsm_sup:start_put_fsm(node(),
-                                              [ReqId, Object, 1, 1,
-                                               ?REPL_FSM_TIMEOUT, self(),
-                                               Opts]),
-            case riak_kv_util:is_x_deleted(Object) of
-                true ->
-                    lager:debug("Incoming deleted KV obj ~p/~p", [B, K]),
-                    reap(ReqId, B, K);
-                false ->
-                    lager:debug("Incoming KV obj ~p/~p", [B, K]),
-                    ok
-            end
+        cancel ->
+            lager:debug("Skipping repl received object ~p/~p", [B, K])
     end.
 
 reap(ReqId, B, K) ->
     riak_kv_get_fsm_sup:start_get_fsm(node(),
                                       [ReqId, B, K, 1, ?REPL_FSM_TIMEOUT,
                                        self()]).
+
+wait_for_response(ReqId, Verb) ->
+    receive
+        {ReqId, {error, Reason}} ->
+            lager:debug("Failed to ~s replicated object: ~p", [Verb, Reason]);
+        {ReqId, _} ->
+            ok
+    after 60000 ->
+            lager:warning("Timed out after 1 minute doing ~s on replicated object",
+            [Verb]),
+            ok
+    end.
+
+repl_helper_recv(Object) ->
+    case application:get_env(riak_core, repl_helper) of
+        undefined -> ok;
+        {ok, Mods} ->
+            repl_helper_recv(Mods, Object)
+    end.
+
+repl_helper_recv([], _O) ->
+    ok;
+repl_helper_recv([{App, Mod}|T], Object) ->
+    try Mod:recv(Object) of
+        ok ->
+            repl_helper_recv(T, Object);
+        cancel ->
+            cancel;
+        Other ->
+            lager:error("Unexpected result running repl recv helper "
+                "~p from application ~p : ~p",
+                [Mod, App, Other]),
+            repl_helper_recv(T, Object)
+    catch
+        What:Why ->
+            lager:error("Crash while running repl recv helper "
+                "~p from application ~p : ~p:~p",
+                [Mod, App, What, Why]),
+            repl_helper_recv(T, Object)
+    end.
+
+repl_helper_send(Object, C) ->
+    B = riak_object:bucket(Object),
+    case proplists:get_value(repl, C:get_bucket(B)) of
+        true ->
+            case application:get_env(riak_core, repl_helper) of
+                undefined -> [];
+                {ok, Mods} ->
+                    repl_helper_send(Mods, Object, C, [])
+            end;
+        _ ->
+            lager:debug("Repl disabled for bucket ~p", [B]),
+            cancel
+    end.
+
+repl_helper_send([], _O, _C, Acc) ->
+    Acc;
+repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
+    try Mod:send(Object, C) of
+        Objects when is_list(Objects) ->
+            repl_helper_send(T, Object, C, Objects ++ Acc);
+        ok ->
+            repl_helper_send(T, Object, C, Acc);
+        cancel ->
+            cancel;
+         Other ->
+            lager:error("Unexpected result running repl send helper "
+                "~p from application ~p : ~p",
+                [Mod, App, Other]),
+            repl_helper_send(T, Object, C, Acc)
+    catch
+        What:Why ->
+            lager:error("Crash while running repl send helper "
+                "~p from application ~p : ~p:~p",
+                [Mod, App, What, Why]),
+            repl_helper_send(T, Object, C, Acc)
+    end.
+
+repl_helper_send_realtime(Object, C) ->
+    case application:get_env(riak_core, repl_helper) of
+        undefined -> [];
+        {ok, Mods} ->
+            repl_helper_send_realtime(Mods, Object, C, [])
+    end.
+
+repl_helper_send_realtime([], _O, _C, Acc) ->
+    Acc;
+repl_helper_send_realtime([{App, Mod}|T], Object, C, Acc) ->
+    try Mod:send_realtime(Object, C) of
+        Objects when is_list(Objects) ->
+            repl_helper_send_realtime(T, Object, C, Objects ++ Acc);
+        ok ->
+            repl_helper_send_realtime(T, Object, C, Acc);
+        cancel ->
+            cancel;
+         Other ->
+            lager:error("Unexpected result running repl realtime send helper "
+                "~p from application ~p : ~p",
+                [Mod, App, Other]),
+            repl_helper_send_realtime(T, Object, C, Acc)
+    catch
+        What:Why ->
+            lager:error("Crash while running repl realtime send helper "
+                "~p from application ~p : ~p:~p",
+                [Mod, App, What, Why]),
+            repl_helper_send_realtime(T, Object, C, Acc)
+    end.
+
 
 site_root_dir(Site) ->
     {ok, DataRootDir} = application:get_env(riak_repl, data_root),
@@ -149,6 +250,74 @@ format_socketaddrs(Socket) ->
                                                 LocalPort,
                                                 inet_parse:ntoa(RemoteIP),
                                                 RemotePort])).
+
+choose_strategy(ServerStrats, ClientStrats) ->
+    %% find the first common strategy in both lists
+    CalcPref = fun(E, Acc) ->
+            Index = length(Acc) + 1,
+            Preference = math:pow(2, Index),
+            [{E, Preference}|Acc]
+    end,
+    LocalPref = lists:foldl(CalcPref, [], ServerStrats),
+    RemotePref = lists:foldl(CalcPref, [], ClientStrats),
+    %% sum the common strategy preferences together
+    TotalPref = [{S, Pref1+Pref2} || {S, Pref1} <- LocalPref, {RS, Pref2} <- RemotePref, S == RS],
+    case TotalPref of
+        [] ->
+            %% no common strategies, force legacy
+            ?LEGACY_STRATEGY;
+        _ ->
+            %% sort and return the first one
+            element(1, hd(lists:keysort(2, TotalPref)))
+    end.
+
+strategy_module(Strategy, server) ->
+    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
+                "_server"]));
+strategy_module(Strategy, client) ->
+    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
+                "_client"])).
+
+%% set some common socket options, based on appenv
+configure_socket(Socket) ->
+    RB = case app_helper:get_env(riak_repl, recbuf) of
+        RecBuf when is_integer(RecBuf), RecBuf > 0 ->
+            [{recbuf, RecBuf}];
+        _ ->
+            []
+    end,
+    SB = case app_helper:get_env(riak_repl, sndbuf) of
+        SndBuf when is_integer(SndBuf), SndBuf > 0 ->
+            [{sndbuf, SndBuf}];
+        _ ->
+            []
+    end,
+
+    SockOpts = RB ++ SB,
+    case SockOpts of
+        [] ->
+            ok;
+        _ ->
+            inet:setopts(Socket, SockOpts)
+    end.
+
+%% send a start_fullsync to the calling process when it is time for fullsync
+schedule_fullsync() ->
+    schedule_fullsync(self()).
+
+schedule_fullsync(Pid) ->
+    case application:get_env(riak_repl, fullsync_interval) of
+        {ok, disabled} ->
+            ok;
+        {ok, FullsyncIvalMins} ->
+            FullsyncIval = timer:minutes(FullsyncIvalMins),
+            erlang:send_after(FullsyncIval, Pid, start_fullsync)
+    end.
+
+%% Work out the elapsed time in seconds, rounded to centiseconds.
+elapsed_secs(Then) ->
+    CentiSecs = timer:now_diff(now(), Then) div 10000,
+    CentiSecs / 100.0.
 
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix
