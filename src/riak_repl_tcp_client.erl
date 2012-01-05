@@ -142,7 +142,7 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
         {fs_diff_obj, RObj} ->
             %% fullsync diff objects
             Pool = State#state.pool_pid,
-            Worker = worker_checkout(Pool),
+            Worker = poolboy:checkout(Pool, true, infinity),
             ok = riak_repl_put_worker:do_put(Worker, RObj, Pool),
             {noreply, State};
         _ ->
@@ -200,15 +200,15 @@ send(Socket, Data) ->
     send(Socket, term_to_binary(Data)).
 
 do_repl_put(Obj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
-    Worker = worker_checkout(Pool),
+    Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
     State;
 do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-1)) ->
-    Worker = worker_checkout(Pool),
+    Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
 do_repl_put(Obj, State=#state{socket=S, ack_freq=F, pool_pid=Pool}) ->
-    Worker = worker_checkout(Pool),
+    Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
     send(S, {q_ack, F}),
     State#state{count=0}.
@@ -302,9 +302,3 @@ update_site_ips(TheirReplConfig, SiteName) ->
         end,
     {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
     ok.
-
-%% workaround for lack of infinitely blocking checkouts in the old version of
-%% poolboy we are using
-worker_checkout(Pool) ->
-    gen_fsm:sync_send_event(Pool, checkout, infinity).
-
