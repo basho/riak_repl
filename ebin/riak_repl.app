@@ -31,7 +31,7 @@
                   'riak_repl_keylist_server',
                   'riak_repl_tcp_client',
                   'riak_repl_tcp_server',
-                  'riak_repl_put_worker',
+                  'riak_repl_fullsync_worker',
                   'riak_repl_util']},
   {applications, [kernel, 
                   stdlib, 

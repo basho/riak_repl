@@ -58,11 +58,10 @@ init([SiteName]) ->
             {stop, {site_not_in_ring, SiteName}};
         Site ->
             lager:notice("repl to site ~p", [Site]),
-            {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_put_worker},
+            {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
                     {worker_args, []},
                     %% TODO the overflow should be configurable
-                    {size, 0}, {max_overflow, 100},
-                    {checkout_blocks, true}]),
+                    {size, 0}, {max_overflow, 100}]),
             Listeners = Site#repl_site.addrs,
             State = #state{sitename=SiteName,
                 listeners=Listeners,
@@ -143,7 +142,7 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
             %% fullsync diff objects
             Pool = State#state.pool_pid,
             Worker = poolboy:checkout(Pool, true, infinity),
-            ok = riak_repl_put_worker:do_put(Worker, RObj, Pool),
+            ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
             {noreply, State};
         _ ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
@@ -201,15 +200,15 @@ send(Socket, Data) ->
 
 do_repl_put(Obj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
+    ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     State;
 do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-1)) ->
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
+    ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
 do_repl_put(Obj, State=#state{socket=S, ack_freq=F, pool_pid=Pool}) ->
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_put_worker:do_put(Worker, Obj, Pool),
+    ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     send(S, {q_ack, F}),
     State#state{count=0}.
 
