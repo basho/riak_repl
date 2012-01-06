@@ -77,13 +77,13 @@ connection_made(Socket, Pid, State) ->
     {ok, State}.
 
 connection_error({Reason, Backtrace}, SiteName, State) ->
-    io:format("~p:error accepting connection from site:~p:~p",
-              [?MODULE, SiteName, {Reason, Backtrace}]),
+    lager:error("Error accepting connection from site: ~p:~p",
+              [SiteName, {Reason, Backtrace}]),
     riak_repl_stats:server_connect_errors(),
     {ok, State};
 connection_error(Reason, SiteName, State) ->
-    io:format("~p:error accepting connection from site:~p:~p",
-              [?MODULE, SiteName, Reason]),
+    lager:error("Error accepting connection from site: ~p:~p",
+              [SiteName, Reason]),
     riak_repl_stats:server_connect_errors(),
     {ok, State}.
 

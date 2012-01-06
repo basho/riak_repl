@@ -65,7 +65,16 @@ wait_for_fullsync(Command, State)
                 [] ->
                     %% last sync completed or was cancelled
                     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-                    Partitions = riak_repl_util:get_partitions(Ring);
+                    Partitions0 = riak_repl_util:get_partitions(Ring),
+                    Partitions = case app_helper:get_env(riak_repl, shuffle_ring, true) of
+                        true ->
+                            %% randomly shuffle the partitions so that if we
+                            %% restart, we have a good chance of not re-doing
+                            %% partitions we already synced
+                            riak_repl_util:shuffle_partitions(Partitions0, now());
+                        _ ->
+                            Partitions0
+                    end;
                 Progress ->
                     lager:notice("Resuming failed fullsync at ~p",
                         [hd(Progress)]),
