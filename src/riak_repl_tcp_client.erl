@@ -57,11 +57,12 @@ init([SiteName]) ->
             %% Do not start
             {stop, {site_not_in_ring, SiteName}};
         Site ->
-            lager:notice("repl to site ~p", [Site]),
+            lager:notice("Starting replication with site ~p", [Site]),
+            MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
+            MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
             {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
                     {worker_args, []},
-                    %% TODO the overflow should be configurable
-                    {size, 0}, {max_overflow, 100}]),
+                    {size, MinPool}, {max_overflow, MaxPool}]),
             Listeners = Site#repl_site.addrs,
             State = #state{sitename=SiteName,
                 listeners=Listeners,

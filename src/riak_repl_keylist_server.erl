@@ -89,10 +89,11 @@ resume_fullsync(Pid) ->
 
 
 init([SiteName, Socket, WorkDir, Client]) ->
+    MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
+    MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
             {worker_args, []},
-            %% TODO the overflow should be configurable
-            {size, 0}, {max_overflow, 100}]),
+            {size, MinPool}, {max_overflow, MaxPool}]),
     State = #state{sitename=SiteName, socket=Socket,
         work_dir=WorkDir, client=Client, pool=Pid},
     riak_repl_util:schedule_fullsync(),
@@ -260,7 +261,7 @@ handle_sync_event(status, _From, StateName, State) ->
                     riak_repl_util:elapsed_secs(State#state.partition_start)},
                 {stage_start,
                     riak_repl_util:elapsed_secs(State#state.stage_start)},
-                {put_pool_size,
+                {get_pool_size,
                     length(gen_fsm:sync_send_all_state_event(State#state.pool,
                             get_all_workers, infinity))}
             ]
