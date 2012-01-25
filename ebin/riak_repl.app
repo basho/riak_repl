@@ -31,7 +31,7 @@
                   'riak_repl_keylist_server',
                   'riak_repl_tcp_client',
                   'riak_repl_tcp_server',
-                  'riak_repl_put_worker',
+                  'riak_repl_fullsync_worker',
                   'riak_repl_util']},
   {applications, [kernel, 
                   stdlib, 
@@ -61,6 +61,10 @@
                   {server_max_pending, 5},
                   {client_ack_frequency, 5},
                   {queue_size, 104857600},
-                  {fullsync_strategies, [keylist, syncv1]}
+                  {fullsync_strategies, [keylist, syncv1]},
+                  {min_get_workers, 5},
+                  {max_get_workers, 100},
+                  {min_put_workers, 5},
+                  {max_put_workers, 100}
                  ]}
 ]}.
