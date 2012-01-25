@@ -96,7 +96,8 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
     Desc = 
         [
             {site, State#state.sitename},
-            {strategy, State#state.fullsync_strategy}
+            {strategy, State#state.fullsync_strategy},
+            {fullsync_worker, State#state.fullsync_worker}
         ] ++
         case State#state.q of
             undefined ->
@@ -213,6 +214,7 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                     {noreply, State1}
             end;
         false ->
+            lager:error("Invalid peer info, ring sizes do not match."),
             {stop, normal, State}
     end;
 handle_msg({q_ack, N}, #state{pending=Pending} = State) ->
