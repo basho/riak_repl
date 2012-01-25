@@ -67,7 +67,8 @@
         diff_pid,
         diff_ref,
         stage_start,
-        partition_start
+        partition_start,
+        pool
     }).
 
 
@@ -88,8 +89,13 @@ resume_fullsync(Pid) ->
 
 
 init([SiteName, Socket, WorkDir, Client]) ->
+    MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
+    MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
+    {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
+            {worker_args, []},
+            {size, MinPool}, {max_overflow, MaxPool}]),
     State = #state{sitename=SiteName, socket=Socket,
-        work_dir=WorkDir, client=Client},
+        work_dir=WorkDir, client=Client, pool=Pid},
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
@@ -212,24 +218,10 @@ diff_keylist(Command, #state{diff_pid=Pid} = State)
     riak_repl_tcp_server:send(State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
-diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{client=Client,
-        socket=Socket, diff_ref=Ref} = State) ->
-    case Client:get(B, K) of
-        {ok, RObj} ->
-            %% we don't actually have the vclock to compare, so just send the
-            %% key and let the other side sort things out.
-            case riak_repl_util:repl_helper_send(RObj, Client) of
-                cancel ->
-                    skipped;
-                Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Socket, {fs_diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Socket, {fs_diff_obj, RObj})
-            end;
-        {error, notfound} ->
-            ok;
-        _ ->
-            ok
-    end,
+diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
+        socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
+    Worker = poolboy:checkout(Pool, true, infinity),
+    ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool),
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
         diff_ref=Ref} = State) ->
@@ -268,7 +260,10 @@ handle_sync_event(status, _From, StateName, State) ->
                 {partition_start,
                     riak_repl_util:elapsed_secs(State#state.partition_start)},
                 {stage_start,
-                    riak_repl_util:elapsed_secs(State#state.stage_start)}
+                    riak_repl_util:elapsed_secs(State#state.stage_start)},
+                {get_pool_size,
+                    length(gen_fsm:sync_send_all_state_event(State#state.pool,
+                            get_all_workers, infinity))}
             ]
     end,
     {reply, Res, StateName, State};
