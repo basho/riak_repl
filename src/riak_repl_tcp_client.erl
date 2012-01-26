@@ -58,15 +58,10 @@ init([SiteName]) ->
             {stop, {site_not_in_ring, SiteName}};
         Site ->
             lager:notice("Starting replication with site ~p", [Site]),
-            MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
-            MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
-            {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
-                    {worker_args, []},
-                    {size, MinPool}, {max_overflow, MaxPool}]),
             Listeners = Site#repl_site.addrs,
             State = #state{sitename=SiteName,
                 listeners=Listeners,
-                pending=Listeners, pool_pid=Pid},
+                pending=Listeners},
             {ok, do_async_connect(State)}
     end.
 
@@ -160,7 +155,12 @@ handle_info(_Event, State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW}) ->
-    gen_fsm:sync_send_all_state_event(Pool, stop),
+    case is_pid(Pool) of
+        true ->
+            gen_fsm:sync_send_all_state_event(Pool, stop);
+        false ->
+            ok
+    end,
     case is_pid(FSW) of
         true ->
             gen_fsm:sync_send_all_state_event(FSW, stop);
@@ -250,12 +250,12 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                 Other ->
                     lager:error("Expected peer_info, but got something else: ~p.",
                         [Other]),
-                    {stop, normal, missing_peer_info, State}
+                    {stop, normal, State}
             end
     after 60000 ->
             %% the server will wait for 60 seconds for gen_leader to stabilize
             lager:error("Timed out waiting for peer info."),
-            {stop, normal, missing_peer_info, State}
+            {stop, normal, State}
     end.
 
 handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo, Capability) ->
@@ -286,14 +286,20 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
             inet:setopts(Socket, [{active, once}]),
             riak_repl_stats:client_connects(),
+            MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
+            MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
+            {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
+                    {worker_args, []},
+                    {size, MinPool}, {max_overflow, MaxPool}]),
             {noreply, State1#state{work_dir = WorkDir,
                     fullsync_worker=FullsyncWorker,
-                    fullsync_strategy=StratMod}};
+                    fullsync_strategy=StratMod,
+                    pool_pid=Pid}};
         false ->
             lager:error("Invalid peer info for site ~p, "
                 "ring sizes do not match.", [SiteName]),
             riak_repl_client_sup:stop_site(SiteName),
-            {stop, normal, invalid_peerinfo, State}
+            {stop, normal, State}
     end.
 
 update_site_ips(TheirReplConfig, SiteName) ->
