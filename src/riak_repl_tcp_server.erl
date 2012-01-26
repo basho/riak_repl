@@ -168,7 +168,13 @@ handle_info(election_wait, State) ->
 handle_info(_Event, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{fullsync_worker=FSW}) ->
+    case is_pid(FSW) of
+        true ->
+            gen_fsm:sync_send_all_state_event(FSW, stop);
+        _ ->
+            ok
+    end,
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

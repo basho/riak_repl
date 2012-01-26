@@ -159,7 +159,14 @@ handle_info(try_connect, State) ->
 handle_info(_Event, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW}) ->
+    gen_fsm:sync_send_all_state_event(Pool, stop),
+    case is_pid(FSW) of
+        true ->
+            gen_fsm:sync_send_all_state_event(FSW, stop);
+        false ->
+            ok
+    end,
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
