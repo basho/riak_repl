@@ -274,7 +274,7 @@ handle_sync_event(status, _From, StateName, State) ->
     end,
     {reply, Res, StateName, State};
 handle_sync_event(stop,_F,_StateName,State) ->
-    {stop, normal, State};
+    {stop, ok, normal, State};
 handle_sync_event(_Event,_F,StateName,State) ->
     {reply, ok, StateName, State}.
 

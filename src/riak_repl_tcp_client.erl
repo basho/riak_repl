@@ -157,7 +157,7 @@ handle_info(_Event, State) ->
 terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW}) ->
     case is_pid(Pool) of
         true ->
-            gen_fsm:sync_send_all_state_event(Pool, stop);
+            poolboy:stop(Pool);
         false ->
             ok
     end,

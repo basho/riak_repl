@@ -267,8 +267,8 @@ handle_sync_event(status, _From, StateName, State) ->
             ]
     end,
     {reply, Res, StateName, State};
-handle_sync_event(stop,_F,StateName,State) ->
-    {stop, normal, State};
+handle_sync_event(stop,_F,_StateName,State) ->
+    {stop, ok, normal, State};
 handle_sync_event(_Event,_F,StateName,State) ->
     lager:debug("Ignoring ~p", [_Event]),
     {reply, ok, StateName, State}.
@@ -284,7 +284,7 @@ terminate(_Reason, _StateName, State) ->
     %% Clean up the working directory on crash/exit
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
     os:cmd(Cmd),
-    gen_fsm:sync_send_all_state_event(State#state.pool, stop).
+    poolboy:stop(State#state.pool).
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
