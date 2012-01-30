@@ -87,20 +87,19 @@ init([SiteName, Socket, WorkDir, Client]) ->
     riak_repl_util:schedule_fullsync(),
     State = case application:get_env({progress, SiteName}) of
         {ok, Partitions} when is_list(Partitions) ->
-            lager:notice("Resuming incomplete fullsync for ~p, ~p partitions remain",
+            lager:info("Resuming incomplete fullsync for ~p, ~p partitions remain",
                 [SiteName, length(Partitions)]),
             State0#state{partitions=Partitions};
         _ ->
             State0
     end,
-    lager:notice("repl strategy started"),
     {ok, wait_for_fullsync, State}.
 
 wait_for_fullsync(cancel_fullsync, State) ->
     next_state(wait_for_fullsync,
         do_cancel_fullsync(State#state{paused=false}));
 wait_for_fullsync(start_fullsync, State) ->
-    lager:notice("Full-sync with ~p starting.", [State#state.sitename]),
+    lager:info("Full-sync with ~p starting.", [State#state.sitename]),
     next_state(merkle_send, do_start_fullsync(State)).
 
 merkle_send(cancel_fullsync, State) ->

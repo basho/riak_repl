@@ -41,6 +41,7 @@
                      replies = 0,
                      diff_hash = 0,
                      missing = 0,
+                     need_vclocks = true,
                      errors = []}).
 
 %% ===================================================================
@@ -82,10 +83,10 @@ merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
 diff(Pid, Partition, TheirFn, OurFn) ->
-    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, -1}).
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true}).
 
 diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
-    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, Count}).
+    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false}).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -201,52 +202,56 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     end,
     gen_fsm:send_event(State#state.owner_fsm, {Ref, Msg}),
     {stop, normal, State};
-handle_call({diff, Partition, RemoteFilename, LocalFilename, Count}, From, State) ->
+handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
     %% read files this process will crash and the caller
     %% will discover the problem.
     Ref = make_ref(),
     gen_server2:reply(From, {ok, Ref}),
-
-    {ok, RemoteFile} = file:open(RemoteFilename,
-                                 [read, binary, raw, read_ahead]),
-    {ok, LocalFile} = file:open(LocalFilename,
-                                [read, binary, raw, read_ahead]),
     try
-        {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-        OwnerNode = riak_core_ring:index_owner(Ring, Partition),
-        case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
-            true ->
-                DiffState = diff_keys(itr_new(RemoteFile, remote_reads),
-                                      itr_new(LocalFile, local_reads),
-                                      #diff_state{fsm = State#state.owner_fsm,
-                                                  count=Count,
-                                                  replies=Count,
-                                                  ref = Ref,
-                                                  preflist = {Partition, OwnerNode}}),
-                lager:info("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
-                                      [Partition, 
-                                       erlang:get(remote_reads),
-                                       erlang:get(local_reads),
-                                       DiffState#diff_state.missing,
-                                       DiffState#diff_state.diff_hash]),
-                case DiffState#diff_state.errors of
-                    [] ->
-                        ok;
-                    Errors ->
-                        lager:error("Partition ~p: Read Errors.",
-                                              [Partition, Errors])
-                end,
-                gen_fsm:send_event(State#state.owner_fsm, {Ref, diff_done});
-            false ->
-                gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
+        {ok, RemoteFile} = file:open(RemoteFilename,
+            [read, binary, raw, read_ahead]),
+        {ok, LocalFile} = file:open(LocalFilename,
+            [read, binary, raw, read_ahead]),
+        try
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            OwnerNode = riak_core_ring:index_owner(Ring, Partition),
+            case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
+                true ->
+                    DiffState = diff_keys(itr_new(RemoteFile, remote_reads),
+                                        itr_new(LocalFile, local_reads),
+                                        #diff_state{fsm = State#state.owner_fsm,
+                                                    count=Count,
+                                                    replies=Count,
+                                                    ref = Ref,
+                                                    need_vclocks = NeedVClocks,
+                                                    preflist = {Partition, OwnerNode}}),
+                    lager:info("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
+                                        [Partition, 
+                                        erlang:get(remote_reads),
+                                        erlang:get(local_reads),
+                                        DiffState#diff_state.missing,
+                                        DiffState#diff_state.diff_hash]),
+                    case DiffState#diff_state.errors of
+                        [] ->
+                            ok;
+                        Errors ->
+                            lager:error("Partition ~p: Read Errors.",
+                                                [Partition, Errors])
+                    end,
+                    gen_fsm:send_event(State#state.owner_fsm, {Ref, diff_done});
+                false ->
+                    gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
+            end
+        after
+            file:close(RemoteFile),
+            file:close(LocalFile)
         end
     after
-        file:close(RemoteFile),
-        file:close(LocalFile),
         file:delete(RemoteFilename),
         file:delete(LocalFilename)
     end,
+
     {stop, normal, State}.
     
 handle_cast({merkle, K, H}, State) ->
@@ -374,13 +379,14 @@ itr_next(Size, File, Tag) ->
 diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
     gen_fsm:send_event(FSM, {Ref, diff_paused}),
     %% wait for a message telling us to stop, or to continue.
+    %% TODO do this more correctly when there's more time.
     receive
         {'$gen_call', From, stop} ->
             gen_server2:reply(From, ok),
-            lager:notice("stop request while diffing"),
+            lager:info("stop request while diffing"),
             DiffState;
         {Ref, diff_resume} ->
-            %lager:notice("resuming diff stream"),
+            %lager:info("resuming diff stream"),
             diff_keys(R, L, DiffState#diff_state{replies=Count})
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
@@ -406,6 +412,11 @@ diff_keys(eof, _, DiffState) ->
     DiffState.
 
 %% Called when the hashes differ with the packed bkey
+diff_hash(PBKey, DiffState = #diff_state{need_vclocks=false, fsm=FSM, ref=Ref}) ->
+    BKey = unpack_key(PBKey),
+    gen_fsm:send_event(FSM, {Ref, {merkle_diff, {BKey, undefined}}}),
+    DiffState#diff_state{diff_hash = DiffState#diff_state.diff_hash + 1,
+        replies=DiffState#diff_state.replies - 1};
 diff_hash(PBKey, DiffState) ->
     UpdDiffHash = DiffState#diff_state.diff_hash + 1,
     BKey = unpack_key(PBKey),

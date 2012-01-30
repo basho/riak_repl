@@ -57,7 +57,9 @@ init([SiteName]) ->
             %% Do not start
             {stop, {site_not_in_ring, SiteName}};
         Site ->
-            lager:notice("Starting replication with site ~p", [Site]),
+            lager:info("Starting replication site ~p to ~p",
+                [Site#repl_site.name, [Host++":"++integer_to_list(Port) ||
+                        {Host, Port} <- Site#repl_site.addrs]]),
             Listeners = Site#repl_site.addrs,
             State = #state{sitename=SiteName,
                 listeners=Listeners,
@@ -95,7 +97,7 @@ handle_cast(_Event, State) ->
     {noreply, State}.
 
 handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
-    lager:notice("Connected to replication site ~p at ~p:~p",
+    lager:info("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
     ok = riak_repl_util:configure_socket(Socket),
     gen_tcp:send(Socket, State#state.sitename),
@@ -128,9 +130,9 @@ handle_info({tcp_error, Socket, Reason}, #state{socket = Socket} = State) ->
         [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
+    inet:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
-    inet:setopts(Socket, [{active, once}]),
     case Msg of
         {diff_obj, RObj} ->
             %% realtime diff object, or a fullsync diff object from legacy
@@ -154,7 +156,7 @@ handle_info(try_connect, State) ->
 handle_info(_Event, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW}) ->
+terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW, work_dir=WorkDir}) ->
     case is_pid(Pool) of
         true ->
             poolboy:stop(Pool);
@@ -167,7 +169,9 @@ terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW}) ->
         false ->
             ok
     end,
-    ok.
+    %% Clean up the working directory on crash/exit
+    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
+    os:cmd(Cmd).
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -192,7 +196,8 @@ do_async_connect(#state{pending=[{IPAddr, Port}|T]} = State) ->
 async_connect(Parent, IPAddr, Port) ->
     Timeout = app_helper:get_env(riak_repl, client_connect_timeout, 15000),
     case gen_tcp:connect(IPAddr, Port, [binary, 
-                                        {packet, 4}, 
+                                        {packet, 4},
+                                        {active, false},
                                         {keepalive, true},
                                         {nodelay, true}], Timeout) of
         {ok, Socket} ->
@@ -237,7 +242,7 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                 {redirect, IPAddr, Port} ->
                     case lists:member({IPAddr, Port}, State#state.listeners) of
                         false ->
-                            lager:notice("Redirected IP ~p not in listeners ~p",
+                            lager:info("Redirected IP ~p not in listeners ~p",
                                 [{IPAddr, Port}, State#state.listeners]);
                         _ ->
                             ok
@@ -248,13 +253,14 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                     {noreply, State#state{pending=[{IPAddr, Port} |
                                 State#state.pending]}};
                 Other ->
-                    lager:error("Expected peer_info, but got something else: ~p.",
-                        [Other]),
+                    lager:error("Expected peer_info from ~p, but got something else: ~p.",
+                        [State#state.sitename, Other]),
                     {stop, normal, State}
             end
     after 60000 ->
             %% the server will wait for 60 seconds for gen_leader to stabilize
-            lager:error("Timed out waiting for peer info."),
+            lager:error("Timed out waiting for peer info from ~p.",
+                [State#state.sitename]),
             {stop, normal, State}
     end.
 
@@ -268,7 +274,8 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
                 [?LEGACY_STRATEGY]),
             Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
             StratMod = riak_repl_util:strategy_module(Strategy, client),
-            lager:notice("Using fullsync strategy ~p.", [StratMod]),
+            lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
+                    State#state.sitename]),
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
             {ok, FullsyncWorker} = StratMod:start_link(SiteName, Socket,
                 WorkDir),
@@ -302,21 +309,35 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             {stop, normal, State}
     end.
 
+%% TODO figure out exactly what the point of this code is.
+%% I *think* the idea is to prevent a screwy repl setup from connecting to
+%% itself?
 update_site_ips(TheirReplConfig, SiteName) ->
     {ok, OurRing} = riak_core_ring_manager:get_my_ring(),
+
     MyListeners = dict:fetch(listeners, riak_repl_ring:get_repl_config(OurRing)),
     MyIPAddrs = sets:from_list([R#repl_listener.listen_addr || R <- MyListeners]),
+
     TheirListeners = dict:fetch(listeners, TheirReplConfig),
     TheirIPAddrs = sets:from_list([R#repl_listener.listen_addr || R <- TheirListeners]),
+
     ToRemove = sets:subtract(MyIPAddrs, TheirIPAddrs),
     ToAdd = sets:subtract(TheirIPAddrs, MyIPAddrs),
-    OurRing1 = lists:foldl(fun(E,A) -> riak_repl_ring:del_site_addr(A, SiteName, E) end,
-                           OurRing, sets:to_list(ToRemove)),
-    OurRing2 = lists:foldl(fun(E,A) -> riak_repl_ring:add_site_addr(A, SiteName, E) end,
-                           OurRing1, sets:to_list(ToAdd)),
-    MyNewRC = riak_repl_ring:get_repl_config(OurRing2),
-    F = fun(InRing, ReplConfig) ->
-                {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
-        end,
-    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
-    ok.
+
+    case sets:size(ToRemove) + sets:size(ToAdd) of
+        0 ->
+            %% nothing needs to be changed, so don't transform the ring for no reason
+            ok;
+        _ ->
+            OurRing1 = lists:foldl(fun(E,A) -> riak_repl_ring:del_site_addr(A, SiteName, E) end,
+                OurRing, sets:to_list(ToRemove)),
+            OurRing2 = lists:foldl(fun(E,A) -> riak_repl_ring:add_site_addr(A, SiteName, E) end,
+                OurRing1, sets:to_list(ToAdd)),
+
+            MyNewRC = riak_repl_ring:get_repl_config(OurRing2),
+            F = fun(InRing, ReplConfig) ->
+                    {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
+            end,
+            {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
+            ok
+    end.

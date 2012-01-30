@@ -153,9 +153,9 @@ handle_info({tcp_error, _Socket, Reason}, State) ->
         [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
+    inet:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     Reply = handle_msg(Msg, State),
-    inet:setopts(Socket, [{active, once}]),
     riak_repl_stats:server_bytes_recv(size(Data)),
     Reply;
 handle_info(send_peerinfo, State) ->
@@ -168,14 +168,16 @@ handle_info(election_wait, State) ->
 handle_info(_Event, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{fullsync_worker=FSW}) ->
+terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
     case is_pid(FSW) of
         true ->
             gen_fsm:sync_send_all_state_event(FSW, stop);
         _ ->
             ok
     end,
-    ok.
+    %% clean up work dir
+    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
+    os:cmd(Cmd).
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -194,7 +196,7 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                 [?LEGACY_STRATEGY]),
             Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
             StratMod = riak_repl_util:strategy_module(Strategy, server),
-            lager:notice("Using fullsync strategy ~p.", [StratMod]),
+            lager:info("Using fullsync strategy ~p.", [StratMod]),
             {ok, FullsyncWorker} = StratMod:start_link(State#state.sitename,
                 State#state.socket, State#state.work_dir, State#state.client),
             %% Set up bounded queue if remote supports it
@@ -217,7 +219,7 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
                     FullsyncWorker ! start_fullsync,
-                    lager:notice("Full-sync on connect"),
+                    lager:info("Full-sync on connect"),
                     {noreply, State1};
                 false ->
                     {noreply, State1}
