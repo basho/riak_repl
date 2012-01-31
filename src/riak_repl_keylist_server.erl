@@ -268,7 +268,7 @@ handle_sync_event(status, _From, StateName, State) ->
     end,
     {reply, Res, StateName, State};
 handle_sync_event(stop,_F,_StateName,State) ->
-    {stop, ok, normal, State};
+    {stop, normal, ok, State};
 handle_sync_event(_Event,_F,StateName,State) ->
     lager:debug("Ignoring ~p", [_Event]),
     {reply, ok, StateName, State}.
