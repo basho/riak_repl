@@ -92,7 +92,10 @@ handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
     Mod:resume_fullsync(FSW),
     {reply, ok, State};
 handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
-    Res = gen_fsm:sync_send_all_state_event(FSW, status, infinity),
+    Res = case is_pid(FSW) of
+        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
+        false -> []
+    end,
     Desc = 
         [
             {site, State#state.sitename},
@@ -165,7 +168,13 @@ handle_info(election_wait, State) ->
 handle_info(_Event, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{fullsync_worker=FSW}) ->
+    case is_pid(FSW) of
+        true ->
+            gen_fsm:sync_send_all_state_event(FSW, stop);
+        _ ->
+            ok
+    end,
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
