@@ -260,6 +260,20 @@ format_socketaddrs(Socket) ->
                                                 inet_parse:ntoa(RemoteIP),
                                                 RemotePort])).
 
+%% Choose the common strategy closest to the start of both side's list of
+%% preferences. We can't use a straight list comprehension here because for
+%% the inputs [a, b, c] and [c, b, a] we want the output to be 'b'. If a LC
+%% like `[CS || CS <- ClientStrats, SS <- ServerStrats, CS == SS]' was used,
+%% you'd get 'a' or 'c', depending on which list was first.
+%%
+%% Instead, we assign a 'weight' to each strategy, which is calculated as two
+%% to the power of the index in the list, so you get something like this:
+%% `[{a,2}, {b,4}, {c,8}]' and `[{c,2}, {b,4}, {a, 8}]'. When we run them
+%% through the list comprehension we get: `[{a,10},{b,8},{c,10}]'. The entry
+%% with the *lowest* weight is the one that is the common element closest to
+%% the beginning in both lists, and thus the one we want. A power of two is
+%% used so that there is always one clear winner, simple index weighting will
+%% often give the same score to several entries.
 choose_strategy(ServerStrats, ClientStrats) ->
     %% find the first common strategy in both lists
     CalcPref = fun(E, Acc) ->

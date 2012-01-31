@@ -58,7 +58,7 @@ handle_call(config, _From, State) ->
 handle_call(_Req, _From, State) -> {reply, ok, State}.
 
 handle_cast(stop, State) ->
-    lager:notice("Replication listener for ~s:~p shutting down",
+    lager:info("Replication listener for ~s:~p shutting down",
         [State#state.ipaddr, State#state.portnum]),
     {stop, normal, State}.
 
@@ -71,18 +71,21 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 %% helper functions
 
 connection_made(Socket, Pid, State) ->
+    lager:debug("Replication client connected"),
     gen_tcp:controlling_process(Socket, Pid),
     riak_repl_tcp_server:set_socket(Pid, Socket),
     riak_repl_stats:server_connects(),
     {ok, State}.
 
 connection_error({Reason, Backtrace}, SiteName, State) ->
-    lager:error("Error accepting connection from site: ~p:~p",
+    %% use debug severity to prevent DOS issues
+    lager:debug("Error accepting connection from site: ~p:~p",
               [SiteName, {Reason, Backtrace}]),
     riak_repl_stats:server_connect_errors(),
     {ok, State};
 connection_error(Reason, SiteName, State) ->
-    lager:error("Error accepting connection from site: ~p:~p",
+    %% use debug severity to prevent DOS issues
+    lager:debug("Error accepting connection from site: ~p:~p",
               [SiteName, Reason]),
     riak_repl_stats:server_connect_errors(),
     {ok, State}.
