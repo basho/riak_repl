@@ -40,12 +40,12 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -define(DBG(Fmt,Args),ok).
-%% -define(DBG(Fmt,Args),io:format(user, Fmt, Args)).
+%%-define(DBG(Fmt,Args),io:format(user, Fmt, Args)).
 
 qc_test_() ->
     %% try and clean the repl controller before cover ever runs
-    code:purge(riak_repl_controller), 
-    code:delete(riak_repl_controller),
+    %code:purge(riak_repl_controller), 
+    %code:delete(riak_repl_controller),
     ?DBG("Cover modules:\n~p\n", [cover:modules()]),
     Prop = ?QC_OUT(eqc:numtests(40, prop_main())),
     case testcase() of
@@ -231,7 +231,7 @@ start_repl(ReplNode) ->
     pong = net_adm:ping(Node),
     %{ok, _StartedNodes} = cover:start([Node]),
     dbg:n(Node),
-    ?DBG("Cover nodes: ~p\n", [_StartedNodes]),
+    %?DBG("Cover nodes: ~p\n", [_StartedNodes]),
     ?DBG("Started slave ~p\n", [Node]),
     rpc:call(Node, ?MODULE, setup_slave, [ReplNode#replnode.candidates,
                                           ReplNode#replnode.workers]).
@@ -345,7 +345,7 @@ lookup_leaders(Nodes, LeaderByNode) ->
     lists:foldl(F, [], Nodes).
 
 maybe_start_net_kernel() ->
-    case net_kernel:start([?MODULE]) of
+    case net_kernel:start([?MODULE, shortnames]) of
         {ok, _} ->
             ?DBG("Net kernel started as ~p\n", [node()]);
         {error, {already_started, _}} ->
@@ -531,7 +531,7 @@ stop_slave(Node) ->
 %% ====================================================================
 
 setup_slave(Candidates, Workers) ->
-    mock_repl_controller(),
+    %mock_repl_controller(),
     start_leader(Candidates, Workers).
    
 mock_repl_controller() ->
@@ -555,6 +555,18 @@ start_leader(Candidates, Workers) ->
     %% cannot just call rpc:call(Node, riak_repl_leader, start_link, []) as it 
     %% would link to the rex process created for the call.  This creates the
     %% process and unlinks before returning.
+    {ok, REPid} = riak_core_ring_events:start_link(),
+    ?DBG("Started ring_events at ~p~n", [REPid]),
+    unlink(REPid),
+    {ok, RMPid} = riak_core_ring_manager:start_link(test),
+    ?DBG("Started ring_manager at ~p~n", [RMPid]),
+    unlink(RMPid),
+    {ok, CSPid} = riak_repl_client_sup:start_link(),
+    ?DBG("Started repl client_sup at ~p~n", [CSPid]),
+    unlink(CSPid),
+    {ok, SSPid} = riak_repl_server_sup:start_link(),
+    ?DBG("Started repl client_sup at ~p~n", [SSPid]),
+    unlink(SSPid),
     {ok, Pid} = riak_repl_leader:start_link(), 
     unlink(Pid),
 
