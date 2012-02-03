@@ -76,10 +76,12 @@ handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
         [
             {site, State#state.sitename},
             {strategy, State#state.fullsync_strategy},
-            {fullsync_worker, State#state.fullsync_worker},
+            {fullsync_worker, State#state.fullsync_worker}
+        ] ++
+        [
             {put_pool_size,
                 length(gen_fsm:sync_send_all_state_event(State#state.pool_pid,
-                    get_all_workers, infinity))}
+                    get_all_workers, infinity))} || is_pid(State#state.pool_pid)
         ] ++
         case State#state.listener of
             undefined ->
