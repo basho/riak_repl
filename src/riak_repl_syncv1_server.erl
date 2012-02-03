@@ -54,7 +54,7 @@
         helper_pid,
         partition,
         partition_start,
-        partitions,
+        partitions = [],
         paused = false,
         merkle_ref,
         merkle_fn,
