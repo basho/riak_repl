@@ -228,7 +228,8 @@ diff_keylist(Command, #state{diff_pid=Pid} = State)
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
         socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool),
+    ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool,
+        State#state.partition),
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
         diff_ref=Ref} = State) ->
