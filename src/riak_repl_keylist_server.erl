@@ -68,7 +68,8 @@
         diff_ref,
         stage_start,
         partition_start,
-        pool
+        pool,
+        vnode_gets = true
     }).
 
 
@@ -91,11 +92,12 @@ resume_fullsync(Pid) ->
 init([SiteName, Socket, WorkDir, Client]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
+    VnodeGets = app_helper:get_env(riak_repl, vnode_gets, true),
     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
             {worker_args, []},
             {size, MinPool}, {max_overflow, MaxPool}]),
     State = #state{sitename=SiteName, socket=Socket,
-        work_dir=WorkDir, client=Client, pool=Pid},
+        work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets},
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
@@ -228,8 +230,15 @@ diff_keylist(Command, #state{diff_pid=Pid} = State)
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
         socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool,
-        State#state.partition),
+    case State#state.vnode_gets of
+        true ->
+            %% do a direct get against the vnode, not a regular riak client
+            %% get().
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool,
+                State#state.partition);
+        _ ->
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool)
+    end,
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
         diff_ref=Ref} = State) ->
