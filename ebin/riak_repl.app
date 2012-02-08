@@ -67,6 +67,10 @@
                   {min_put_workers, 5},
                   {max_put_workers, 100},
                   %% whether to issue gets directly against the vnode
-                  {vnode_gets, true}
+                  {vnode_gets, true},
+                  %% How many fullsync diff objects to send before needing an
+                  %% ACK from the client. Setting this too high will clog your
+                  %% TCP buffers.
+                  {diff_batch_size, 100}
                  ]}
 ]}.

@@ -69,7 +69,8 @@
         stage_start,
         partition_start,
         pool,
-        vnode_gets = true
+        vnode_gets = true,
+        diff_batch_size
     }).
 
 
@@ -93,11 +94,13 @@ init([SiteName, Socket, WorkDir, Client]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
     VnodeGets = app_helper:get_env(riak_repl, vnode_gets, true),
+    DiffBatchSize = app_helper:get_env(riak_repl, diff_batch_size, 100),
     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
             {worker_args, []},
             {size, MinPool}, {max_overflow, MaxPool}]),
     State = #state{sitename=SiteName, socket=Socket,
-        work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets},
+        work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets,
+        diff_batch_size=DiffBatchSize},
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
@@ -212,7 +215,8 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
     %% generate differences in batches of 1000, to add some backpressure
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
-        State#state.kl_fn, State#state.their_kl_fn, 1000),
+        State#state.kl_fn, State#state.their_kl_fn,
+        State#state.diff_batch_size),
     {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
             stage_start=now()}};
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
