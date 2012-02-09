@@ -23,7 +23,7 @@
          terminate/2, code_change/3]).
 
 %% HOFs
--export([merkle_fold/3]).
+-export([merkle_fold/3, keylist_fold/3]).
 
 -include("riak_repl.hrl").
 -include("couch_db.hrl").
@@ -152,21 +152,8 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
-                             Folder = fun(K, V, {MPid, Count}) ->
-                                              H = hash_object(V),
-                                              Bin = term_to_binary({pack_key(K), H}),
-                                              gen_server2:cast(MPid, {keylist, Bin}),
-                                              case Count of
-                                                  100 ->
-                                                      ok = gen_server2:call(MPid,
-                                                          keylist_ack),
-                                                      {MPid, 0};
-                                                  _ ->
-                                                      {MPid, Count+1}
-                                              end
-                                      end,
-                             riak_kv_vnode:fold({Partition,OwnerNode}, Folder,
-                                 {Self, 0}),
+                             riak_kv_vnode:fold({Partition,OwnerNode},
+                                 fun ?MODULE:keylist_fold/3, {Self, 0}),
                              gen_server2:cast(Self, kl_finish)
                      end,
             FolderPid = spawn_link(Worker),
@@ -468,3 +455,18 @@ missing_key(PBKey, DiffState) ->
 merkle_fold(K, V, Pid) ->
     gen_server2:cast(Pid, {merkle, K, hash_object(V)}),
     Pid.
+
+%% @private
+%%
+%% @doc Visting function for building keylists. Similar to merkle_fold.
+keylist_fold(K, V, {MPid, Count}) ->
+    H = hash_object(V),
+    Bin = term_to_binary({pack_key(K), H}),
+    gen_server2:cast(MPid, {keylist, Bin}),
+    case Count of
+        100 ->
+            ok = gen_server2:call(MPid, keylist_ack, infinity),
+            {MPid, 0};
+        _ ->
+            {MPid, Count+1}
+    end.
