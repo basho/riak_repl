@@ -147,7 +147,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
         true ->
-            {ok, FP} = file:open(Filename, [read, write, binary, delayed_write]),
+            {ok, FP} = file:open(Filename, [raw, write, binary, delayed_write]),
             Self = self(),
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
@@ -158,7 +158,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                               gen_server2:cast(MPid, {keylist, Bin}),
                                               case Count of
                                                   100 ->
-                                                      ok = gen_server:call(MPid,
+                                                      ok = gen_server2:call(MPid,
                                                           keylist_ack),
                                                       {MPid, 0};
                                                   _ ->
@@ -274,7 +274,7 @@ handle_cast({merkle, K, H}, State) ->
             {noreply, State#state{buf = NewBuf, size = NewSize}}
     end;
 handle_cast({keylist, Row}, State) ->
-    file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
+    ok = file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
     {noreply, State};
 handle_cast(merkle_finish, State) ->
     couch_merkle:update_many(State#state.merkle_pid, State#state.buf),
