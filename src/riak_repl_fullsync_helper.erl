@@ -22,6 +22,9 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+%% HOFs
+-export([merkle_fold/3]).
+
 -include("riak_repl.hrl").
 -include("couch_db.hrl").
 
@@ -122,13 +125,8 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
             {ok, DMerkle} = couch_merkle:open(FileName),
             Self = self(),
             Worker = fun() ->
-                             %% Spend as little time on the vnode as possible,
-                             %% accept there could be a potentially huge message queue
-                             Folder = fun(K, V, MPid) -> 
-                                              gen_server2:cast(MPid, {merkle, K, hash_object(V)}),
-                                              MPid
-                                      end,
-                             riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
+                             riak_kv_vnode:fold({Partition,OwnerNode},
+                                                fun ?MODULE:merkle_fold/3, Self),
                              gen_server2:cast(Self, merkle_finish)
                      end,
             FolderPid = spawn_link(Worker),
@@ -443,3 +441,17 @@ missing_key(PBKey, DiffState) ->
     DiffState#diff_state{missing = UpdMissing,
         replies=DiffState#diff_state.replies - 1}.
 
+%% @private
+%%
+%% @doc Visting function for building merkle tree.  This function was
+%% purposefully created because if you use a lambda then things will
+%% go wrong when the MD5 of this module changes. I.e. if the lambda is
+%% shipped to another node with a different version of
+%% riak_repl_fullsync_helper, even if the code inside the lambda is
+%% the same, then a badfun error will occur since the MD5s of the
+%% modules are not the same.
+%%
+%% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
+merkle_fold(K, V, Pid) ->
+    gen_server2:cast(Pid, {merkle, K, hash_object(V)}),
+    Pid.
