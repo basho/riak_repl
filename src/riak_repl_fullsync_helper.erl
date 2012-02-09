@@ -23,7 +23,7 @@
          terminate/2, code_change/3]).
 
 %% HOFs
--export([merkle_fold/3]).
+-export([merkle_fold/3, keylist_fold/3]).
 
 -include("riak_repl.hrl").
 -include("couch_db.hrl").
@@ -147,18 +147,13 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
         true ->
-            {ok, FP} = file:open(Filename, [read, write, binary, delayed_write]),
+            {ok, FP} = file:open(Filename, [raw, write, binary, delayed_write]),
             Self = self(),
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
-                             Folder = fun(K, V, MPid) -> 
-                                              H = hash_object(V),
-                                              Bin = term_to_binary({pack_key(K), H}),
-                                              file:write(FP, <<(size(Bin)):32, Bin/binary>>),
-                                              MPid
-                                      end,
-                             riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
+                             riak_kv_vnode:fold({Partition,OwnerNode},
+                                 fun ?MODULE:keylist_fold/3, {Self, 0}),
                              gen_server2:cast(Self, kl_finish)
                      end,
             FolderPid = spawn_link(Worker),
@@ -171,6 +166,8 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
+handle_call(keylist_ack, _From, State) ->
+    {reply, ok, State};
 handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
     %% write to files this process will crash and the caller
@@ -263,6 +260,9 @@ handle_cast({merkle, K, H}, State) ->
         false ->
             {noreply, State#state{buf = NewBuf, size = NewSize}}
     end;
+handle_cast({keylist, Row}, State) ->
+    ok = file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
+    {noreply, State};
 handle_cast(merkle_finish, State) ->
     couch_merkle:update_many(State#state.merkle_pid, State#state.buf),
     %% Close couch - beware, the close call is a cast so the process
@@ -455,3 +455,18 @@ missing_key(PBKey, DiffState) ->
 merkle_fold(K, V, Pid) ->
     gen_server2:cast(Pid, {merkle, K, hash_object(V)}),
     Pid.
+
+%% @private
+%%
+%% @doc Visting function for building keylists. Similar to merkle_fold.
+keylist_fold(K, V, {MPid, Count}) ->
+    H = hash_object(V),
+    Bin = term_to_binary({pack_key(K), H}),
+    gen_server2:cast(MPid, {keylist, Bin}),
+    case Count of
+        100 ->
+            ok = gen_server2:call(MPid, keylist_ack, infinity),
+            {MPid, 0};
+        _ ->
+            {MPid, Count+1}
+    end.
