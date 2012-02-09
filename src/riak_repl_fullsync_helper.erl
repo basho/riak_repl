@@ -152,13 +152,21 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
-                             Folder = fun(K, V, MPid) -> 
+                             Folder = fun(K, V, {MPid, Count}) ->
                                               H = hash_object(V),
                                               Bin = term_to_binary({pack_key(K), H}),
-                                              file:write(FP, <<(size(Bin)):32, Bin/binary>>),
-                                              MPid
+                                              gen_server2:cast(MPid, {keylist, Bin}),
+                                              case Count of
+                                                  100 ->
+                                                      ok = gen_server:call(MPid,
+                                                          keylist_ack),
+                                                      {MPid, 0};
+                                                  _ ->
+                                                      {MPid, Count+1}
+                                              end
                                       end,
-                             riak_kv_vnode:fold({Partition,OwnerNode}, Folder, Self),
+                             riak_kv_vnode:fold({Partition,OwnerNode}, Folder,
+                                 {Self, 0}),
                              gen_server2:cast(Self, kl_finish)
                      end,
             FolderPid = spawn_link(Worker),
@@ -171,6 +179,8 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
+handle_call(keylist_ack, _From, State) ->
+    {reply, ok, State};
 handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
     %% write to files this process will crash and the caller
@@ -263,6 +273,9 @@ handle_cast({merkle, K, H}, State) ->
         false ->
             {noreply, State#state{buf = NewBuf, size = NewSize}}
     end;
+handle_cast({keylist, Row}, State) ->
+    file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
+    {noreply, State};
 handle_cast(merkle_finish, State) ->
     couch_merkle:update_many(State#state.merkle_pid, State#state.buf),
     %% Close couch - beware, the close call is a cast so the process
