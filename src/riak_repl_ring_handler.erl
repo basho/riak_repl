@@ -29,16 +29,20 @@ handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
     {ok, State};
 handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     %% Ring has changed.
-    FinalRing = init_repl_config(OldRing, NewRing),
-    update_leader(FinalRing),
-    riak_repl_listener_sup:ensure_listeners(FinalRing),
-    case riak_repl_leader:is_leader() of
-        true ->
-            riak_repl_client_sup:ensure_sites(FinalRing);
-        _ ->
-            ok
-    end,
-    {ok, State#state{ring=FinalRing}};
+    case init_repl_config(OldRing, NewRing) of
+        {true, FinalRing} ->
+            update_leader(FinalRing),
+            riak_repl_listener_sup:ensure_listeners(FinalRing),
+            case catch(riak_repl_leader:is_leader()) of
+                true ->
+                    riak_repl_client_sup:ensure_sites(FinalRing);
+                _ ->
+                    ok
+            end,
+            {ok, State#state{ring=FinalRing}};
+        {false, FinalRing} ->
+            {ok, State#state{ring=FinalRing}}
+    end;
 handle_event(_Event, State) ->
     {ok, State}.
 
@@ -75,11 +79,15 @@ init_repl_config(OldRing, NewRing) ->
     NewRC = riak_repl_ring:get_repl_config(NewRing),
     case {OldRC, NewRC} of
         {undefined, undefined} ->
-            update_ring(riak_repl_ring:initial_config());
+            {false, update_ring(riak_repl_ring:initial_config())};
         {_, undefined} ->
-            update_ring(OldRC);
+            {false, update_ring(OldRC)};
+        {RC, RC} ->
+            %% ring changed, but repl config is the same
+            {false, NewRing};
         _ ->
-            NewRing
+            %% repl config actually changed
+            {true, NewRing}
     end.
 
 
