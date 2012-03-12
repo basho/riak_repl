@@ -36,7 +36,8 @@
         work_dir,
         fullsync_worker,
         fullsync_strategy,
-        pool_pid
+        pool_pid,
+        keepalive_time
     }).
 
 
@@ -111,7 +112,7 @@ handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
         my_pi=proplists:get_value(my_pi, Props),
         partitions=proplists:get_value(partitions, Props)},
     send(Socket, {peerinfo, NewState#state.my_pi,
-            [bounded_queue, {fullsync_strategies,
+            [bounded_queue, keepalive, {fullsync_strategies,
                     app_helper:get_env(riak_repl, fullsync_strategies,
                         [?LEGACY_STRATEGY])}]}),
     inet:setopts(Socket, [{active, once}]),
@@ -135,26 +136,47 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     inet:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
-    case Msg of
+    NewState = case Msg of
         {diff_obj, RObj} ->
             %% realtime diff object, or a fullsync diff object from legacy
             %% repl. Because you can't tell the difference this can screw up
             %% the acking, but there's not really a way to fix it, other than
             %% not using legacy.
-            {noreply, do_repl_put(RObj, State)};
+            do_repl_put(RObj, State);
         {fs_diff_obj, RObj} ->
             %% fullsync diff objects
             Pool = State#state.pool_pid,
             Worker = poolboy:checkout(Pool, true, infinity),
             ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
-            {noreply, State};
+            State;
+        keepalive ->
+            send(Socket, keepalive_ack),
+            State;
+        keepalive_ack ->
+            %% noop
+            State;
         _ ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
-            {noreply, State}
+            State
+    end,
+    case NewState#state.keepalive_time of
+        Time when is_integer(Time) ->
+            {noreply, NewState, Time};
+        _ ->
+            {noreply, NewState}
     end;
 handle_info(try_connect, State) ->
     NewState = do_async_connect(State),
     {noreply, NewState};
+handle_info(timeout, State) ->
+    case State#state.keepalive_time of
+        Time when is_integer(Time) ->
+            %% keepalive timeout fired
+            send(State#state.socket, keepalive),
+            {noreply, State, Time};
+        _ ->
+            {noreply, State}
+    end;
 handle_info(_Event, State) ->
     {noreply, State}.
 
@@ -291,6 +313,12 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
                 false ->
                     State1 = State
             end,
+            case proplists:get_bool(keepalive, Capability) of
+                true ->
+                    KeepaliveTime = ?KEEPALIVE_TIME;
+                _ ->
+                    KeepaliveTime = undefined
+            end,
             TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
             update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
             inet:setopts(Socket, [{active, once}]),
@@ -303,6 +331,7 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             {noreply, State1#state{work_dir = WorkDir,
                     fullsync_worker=FullsyncWorker,
                     fullsync_strategy=StratMod,
+                    keepalive_time=KeepaliveTime,
                     pool_pid=Pid}};
         false ->
             lager:error("Invalid peer info for site ~p, "
