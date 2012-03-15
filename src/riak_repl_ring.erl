@@ -47,16 +47,19 @@ set_repl_config(Ring, RC) ->
 add_site(Ring, Site=#repl_site{name=Name}) ->
     RC = get_repl_config(Ring),
     Sites = dict:fetch(sites, RC),
-    case lists:keysearch(Name, 2, Sites) of
+    NewSites = case lists:keysearch(Name, 2, Sites) of
         false ->
-            NewSites = [Site|Sites],
-            riak_core_ring:update_meta(
-              ?MODULE,
-              dict:store(sites, NewSites, RC),
-              Ring);
-        {value, _} ->
-            Ring
-    end.
+            [Site|Sites];
+        {value, OldSite} ->
+            NewSite = OldSite#repl_site{addrs=lists:usort(
+                    OldSite#repl_site.addrs ++
+                    Site#repl_site.addrs)},
+            [NewSite|lists:delete(OldSite, Sites)]
+    end,
+    riak_core_ring:update_meta(
+        ?MODULE,
+        dict:store(sites, NewSites, RC),
+        Ring).
 
 -spec(del_site/2 :: (ring(), repl_sitename()) -> ring()).
 %% @doc Delete a replication site from the Ring.
