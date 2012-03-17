@@ -5,7 +5,8 @@
 -behaviour(supervisor).
 -include("riak_repl.hrl").
 -export([start_link/0, init/1, stop/1]).
--export([start_site/1, stop_site/1, running_site_procs/0, ensure_sites/1]).
+-export([start_site/1, stop_site/1, running_site_procs/0,
+        running_site_procs_rpc/0, ensure_sites/1]).
 
 start_site(SiteName) ->
     lager:info("Starting replication site ~p", [SiteName]),
@@ -19,6 +20,10 @@ stop_site(SiteName) ->
 
 running_site_procs() ->
     [{SiteName, Pid} || {SiteName, Pid, _, _} <- supervisor:which_children(?MODULE)].
+
+%% return the node along with the running sites for accounting
+running_site_procs_rpc() ->
+    {node(), catch(running_site_procs())}.
 
 ensure_sites(Ring) ->
     ReplConfig = 
