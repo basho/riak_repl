@@ -44,7 +44,8 @@
         their_pi :: #peer_info{},
         fullsync_worker :: pid() | undefined,
         fullsync_strategy :: atom(),
-        election_timeout :: undefined | reference() % reference for the election timeout
+        election_timeout :: undefined | reference(), % reference for the election timeout
+        keepalive_time :: undefined | integer()
     }).
 
 start_link(SiteName) ->
@@ -157,7 +158,18 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     Msg = binary_to_term(Data),
     Reply = handle_msg(Msg, State),
     riak_repl_stats:server_bytes_recv(size(Data)),
-    Reply;
+    case Reply of
+        {noreply, NewState} ->
+            case NewState#state.keepalive_time of
+                Time when is_integer(Time) ->
+                    %% set the keepalive timeout
+                    {noreply, NewState, Time};
+                _ ->
+                    Reply
+            end;
+        _ ->
+            Reply
+    end;
 handle_info(send_peerinfo, State) ->
     send_peerinfo(State);
 handle_info(election_timeout, #state{election_timeout=Timer} = State) when is_reference(Timer) ->
@@ -165,6 +177,15 @@ handle_info(election_timeout, #state{election_timeout=Timer} = State) when is_re
     {stop, normal, State};
 handle_info(election_wait, State) ->
     send_peerinfo(State);
+handle_info(timeout, State) ->
+    case State#state.keepalive_time of
+        Time when is_integer(Time) ->
+            %% keepalive timeout fired
+            send(State#state.socket, keepalive),
+            {noreply, State, Time};
+        _ ->
+            {noreply, State}
+    end;
 handle_info(_Event, State) ->
     {noreply, State}.
 
@@ -216,13 +237,20 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
                                          fullsync_strategy = StratMod}
             end,
 
+            case proplists:get_bool(keepalive, Capability) of
+                true ->
+                    KeepaliveTime = ?KEEPALIVE_TIME;
+                _ ->
+                    KeepaliveTime = undefined
+            end,
+
             case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                 true ->
                     FullsyncWorker ! start_fullsync,
                     lager:info("Full-sync on connect"),
-                    {noreply, State1};
+                    {noreply, State1#state{keepalive_time=KeepaliveTime}};
                 false ->
-                    {noreply, State1}
+                    {noreply, State1#state{keepalive_time=KeepaliveTime}}
             end;
         false ->
             lager:error("Invalid peer info, ring sizes do not match."),
@@ -230,6 +258,12 @@ handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
     end;
 handle_msg({q_ack, N}, #state{pending=Pending} = State) ->
     drain(State#state{pending=Pending-N});
+handle_msg(keepalive, State) ->
+    send(State#state.socket, keepalive_ack),
+    {noreply, State};
+handle_msg(keepalive_ack, State) ->
+    %% noop
+    {noreply, State};
 handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
     gen_fsm:send_event(FSW, Msg),
     {noreply, State}.
@@ -249,7 +283,7 @@ send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
                     Props = riak_repl_fsm_common:common_init(Socket),
                     PI = proplists:get_value(my_pi, Props),
                     send(Socket, {peerinfo, PI,
-                            [bounded_queue, {fullsync_strategies,
+                            [bounded_queue, keepalive, {fullsync_strategies,
                                     app_helper:get_env(riak_repl, fullsync_strategies,
                                         [?LEGACY_STRATEGY])}]}),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
