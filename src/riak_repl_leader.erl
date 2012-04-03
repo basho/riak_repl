@@ -112,7 +112,14 @@ init([]) ->
     Fn=fun(Services) ->
             case lists:member(riak_kv, Services) of
                 true ->
-                    ensure_sites();
+                    %% repl isn't started yet, give it 5 seconds to do so.
+                    %% This is particularly important for new candidate nodes
+                    %% (ie. new nodes that have no listeners configured)
+                    %% because no election changes are triggered.
+                    spawn(fun() ->
+                                timer:sleep(5000),
+                                ensure_sites()
+                        end);
                 _ ->
                     ok
             end
