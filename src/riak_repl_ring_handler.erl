@@ -35,7 +35,6 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     case riak_repl_leader:is_leader() of
         true ->
             riak_repl_leader:ensure_sites();
-            %riak_repl_client_sup:ensure_sites(FinalRing);
         _ ->
             ok
     end,
