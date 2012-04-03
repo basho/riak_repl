@@ -99,6 +99,7 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
     end,
     Desc = 
         [
+            {node, node()},
             {site, State#state.sitename},
             {strategy, State#state.fullsync_strategy},
             {fullsync_worker, State#state.fullsync_worker}
