@@ -26,7 +26,7 @@ install_hook() ->
 fixup(_Bucket, BucketProps) ->
     CleanPostcommit = strip_postcommit(BucketProps),
     case proplists:get_value(repl, BucketProps) of
-        true ->
+        Val when Val==true; Val==realtime; Val==both ->
             UpdPostcommit = CleanPostcommit ++ [?REPL_HOOK],
 
             {ok, lists:keystore(postcommit, 1, BucketProps, 
