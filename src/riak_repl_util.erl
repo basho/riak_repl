@@ -130,7 +130,8 @@ repl_helper_recv([{App, Mod}|T], Object) ->
 
 repl_helper_send(Object, C) ->
     B = riak_object:bucket(Object),
-    case proplists:get_value(repl, C:get_bucket(B)) of
+    case proplists:get_value(repl, C:get_bucket(B)) orelse
+        proplists:get_value(repl_fullsync, C:get_bucket(B)) of
         true ->
             case application:get_env(riak_core, repl_helper) of
                 undefined -> [];
