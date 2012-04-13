@@ -119,13 +119,13 @@ update_leader(Ring) ->
                 {false, false} ->
                     Candidates=[],
                     Workers=[]
-            end,       
-            case Listeners of 
+            end,
+            case Listeners of
                 [] ->
                     ok; % No need to install hook if nobody is listening
                 _ ->
                     riak_repl:install_hook()
-            end,            
+            end,
             riak_repl_leader:set_candidates(Candidates, Workers)
     end.
 

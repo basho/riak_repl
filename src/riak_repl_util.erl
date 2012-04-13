@@ -2,8 +2,10 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl_util).
 -author('Andy Gross <andy@basho.com>').
+-include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("riak_repl.hrl").
 -export([make_peer_info/0,
+         make_fake_peer_info/0,
          validate_peer_info/2,
          capability_from_vsn/1,
          get_partitions/1,
@@ -15,10 +17,12 @@
          merkle_filename/3,
          keylist_filename/3,
          valid_host_ip/1,
-         format_socketaddrs/1,
+         format_socketaddrs/2,
+         maybe_use_ssl/0,
+         upgrade_client_to_ssl/1,
          choose_strategy/2,
          strategy_module/2,
-         configure_socket/1,
+         configure_socket/2,
          repl_helper_send/2,
          repl_helper_send_realtime/2,
          schedule_fullsync/0,
@@ -33,6 +37,13 @@ make_peer_info() ->
     {ok, RiakVSN} = application:get_key(riak_kv, vsn),
     {ok, ReplVSN} = application:get_key(riak_repl, vsn),
     #peer_info{riak_version=RiakVSN, repl_version=ReplVSN, ring=SafeRing}.
+
+%% Makes some plausible, but wrong, peer info. Used to get to SSL negotiation
+%% without leaking sensitive information.
+make_fake_peer_info() ->
+    FakeRing = riak_repl_ring:ensure_config(riak_core_ring:fresh(1, node())),
+    SafeRing = riak_core_ring:downgrade(1, FakeRing),
+    #peer_info{riak_version="0.0.0", repl_version="0.0.0", ring=SafeRing}.
 
 validate_peer_info(T=#peer_info{}, M=#peer_info{}) ->
     TheirPartitions = get_partitions(T#peer_info.ring),
@@ -252,13 +263,132 @@ normalize_ip(IP) when is_list(IP) ->
 normalize_ip(IP) when is_tuple(IP) ->
     {ok, IP}.
 
-format_socketaddrs(Socket) ->
-    {ok, {LocalIP, LocalPort}} = inet:sockname(Socket),
-    {ok, {RemoteIP, RemotePort}} = inet:peername(Socket),
+format_socketaddrs(Socket, Transport) ->
+    {ok, {LocalIP, LocalPort}} = Transport:sockname(Socket),
+    {ok, {RemoteIP, RemotePort}} = Transport:peername(Socket),
     lists:flatten(io_lib:format("~s:~p-~s:~p", [inet_parse:ntoa(LocalIP),
                                                 LocalPort,
                                                 inet_parse:ntoa(RemoteIP),
                                                 RemotePort])).
+
+maybe_use_ssl() ->
+    SSLOpts = [
+        {certfile, app_helper:get_env(riak_repl, certfile, undefined)},
+        {keyfile, app_helper:get_env(riak_repl, keyfile, undefined)},
+        {cacerts, load_certs(app_helper:get_env(riak_repl, cacertdir, undefined))},
+        {depth, app_helper:get_env(riak_repl, ssl_depth, 1)},
+        {verify_fun, {fun verify_ssl/3, []}},
+        {verify, verify_peer},
+        {fail_if_no_peer_cert, true},
+        {secure_renegotiate, true} %% both sides are erlang, so we can force this
+    ],
+    lager:debug("Loaded ~p CA certificates", [length(proplists:get_value(cacerts,
+                    SSLOpts))]),
+    case lists:keyfind(undefined, 2, SSLOpts) of
+        false ->
+            SSLOpts;
+        _ ->
+            %% not all the SSL options are configured, use TCP
+            false
+    end.
+
+upgrade_client_to_ssl(Socket) ->
+    case maybe_use_ssl() of
+        false ->
+            {error, no_ssl_config};
+        Config ->
+            ssl:connect(Socket, Config)
+    end.
+
+load_certs(undefined) ->
+    undefined;
+load_certs(CertDir) ->
+    {ok, Certs} = file:list_dir(CertDir),
+    load_certs(lists:map(fun(Cert) -> filename:join(CertDir, Cert) end, Certs), []).
+
+load_certs([], Acc) ->
+    Acc;
+load_certs([Cert|Certs], Acc) ->
+    case filelib:is_dir(Cert) of
+        true ->
+            load_certs(Certs, Acc);
+        _ ->
+            lager:debug("loading certificate ~p", [Cert]),
+            {ok, Bin} = file:read_file(Cert),
+            case filename:extension(Cert) of
+                ".der" ->
+                    %% no decoding necessary
+                    load_certs(Certs, [Bin|Acc]);
+                _ ->
+                    %% assume PEM otherwise
+                    Contents = public_key:pem_decode(Bin),
+                    load_certs(Certs,
+                        [DER || {Type, DER, Cipher} <- Contents, Type == 'Certificate', Cipher == 'not_encrypted'] ++ Acc)
+            end
+    end.
+
+%% Custom SSL verification function for checking common names against the
+%% whitelist.
+verify_ssl(_, {bad_cert, _} = Reason, _) ->
+    {fail, Reason};
+verify_ssl(_, {extension, _}, UserState) ->
+    {unknown, UserState};
+verify_ssl(_, valid, UserState) ->
+    %% this is the check for the CA cert
+    {valid, UserState};
+verify_ssl(Cert, valid_peer, UserState) ->
+    %% You'd think there'd be an easier way than this giant mess, but I
+    %% couldn't find one.
+    {rdnSequence, Subject} = Cert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subject,
+    [Att] = [Attribute#'AttributeTypeAndValue'.value || [Attribute] <- Subject,
+        Attribute#'AttributeTypeAndValue'.type == ?'id-at-commonName'],
+    CommonName = case Att of
+        {printableString, Str} -> Str;
+        {utf8string, Bin} -> binary_to_list(Bin)
+    end,
+
+    case validate_common_name(CommonName,
+            app_helper:get_env(riak_repl, common_name_acl, "*")) of
+        {true, Filter} ->
+            lager:info("SSL connection from ~s granted by ACL ~s", [CommonName,
+                    Filter]),
+            {valid, UserState};
+        false ->
+            lager:error("SSL connection from ~s denied, no matching ACL",
+                [CommonName]),
+            {fail, no_acl}
+    end.
+
+%% Validate common name matches one of the configured filters. Filters can
+%% have at most one '*' wildcard in the leftmost component of the hostname.
+validate_common_name(_, []) ->
+    false;
+validate_common_name(_, "*") ->
+    {true, "*"};
+validate_common_name(CN, [Filter|Filters]) ->
+    T1 = string:tokens(string:to_lower(CN), "."),
+    T2 = string:tokens(string:to_lower(Filter), "."),
+    case length(T1) == length(T2) of
+        false ->
+            validate_common_name(CN, Filters);
+        _ ->
+            case hd(T2) of
+                "*" ->
+                    case tl(T1) == tl(T2) of
+                        true ->
+                            {true, Filter};
+                        _ ->
+                            validate_common_name(CN, Filters)
+                    end;
+                _ ->
+                    case T1 == T2 of
+                        true ->
+                            {true, Filter};
+                        _ ->
+                            validate_common_name(CN, Filters)
+                    end
+            end
+    end.
 
 %% Choose the common strategy closest to the start of both side's list of
 %% preferences. We can't use a straight list comprehension here because for
@@ -302,7 +432,7 @@ strategy_module(Strategy, client) ->
                 "_client"])).
 
 %% set some common socket options, based on appenv
-configure_socket(Socket) ->
+configure_socket(Transport, Socket) ->
     RB = case app_helper:get_env(riak_repl, recbuf) of
         RecBuf when is_integer(RecBuf), RecBuf > 0 ->
             [{recbuf, RecBuf}];
@@ -321,7 +451,7 @@ configure_socket(Socket) ->
         [] ->
             ok;
         _ ->
-            inet:setopts(Socket, SockOpts)
+            Transport:setopts(Socket, SockOpts)
     end.
 
 %% send a start_fullsync to the calling process when it is time for fullsync
