@@ -204,7 +204,18 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %% ====================================================================
 
-do_async_connect(#state{pending=[], listeners=Listeners} = State) ->
+do_async_connect(#state{pending=[], sitename=SiteName} = State) ->
+    %% re-read the listener config in case it has had IPs added
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Listeners = case riak_repl_ring:get_site(Ring, SiteName) of
+        undefined ->
+            %% this should never happen, if it does the site is probably
+            %% slated for death anyway...
+            State#state.listeners;
+        Site ->
+            Site#repl_site.addrs
+    end,
+
     %% Start the retry timer
     RetryTimeout = app_helper:get_env(riak_repl, client_retry_timeout, 30000),
     lager:debug("Failed to connect to any listener for site ~p, retrying in ~p"
