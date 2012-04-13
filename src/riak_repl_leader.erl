@@ -283,4 +283,4 @@ leader_change(true, false) ->
     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
     [riak_repl_client_sup:stop_site(SiteName) || 
         {SiteName, _Pid} <- RunningSiteProcs],
-    riak_repl_listener:close_all_connections().
+    riak_repl_listener_sup:close_all_connections().

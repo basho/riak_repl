@@ -31,7 +31,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/4,
+-export([start_link/5,
         start_fullsync/1,
         cancel_fullsync/1,
         pause_fullsync/1,
@@ -55,6 +55,7 @@
 -record(state, {
         sitename,
         socket,
+        transport,
         work_dir,
         client,
         kl_pid,
@@ -74,8 +75,8 @@
     }).
 
 
-start_link(SiteName, Socket, WorkDir, Client) ->
-    gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir, Client], []).
+start_link(SiteName, Transport, Socket, WorkDir, Client) ->
+    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
 
 start_fullsync(Pid) ->
     Pid ! start_fullsync.
@@ -90,7 +91,7 @@ resume_fullsync(Pid) ->
     gen_fsm:send_event(Pid, resume_fullsync).
 
 
-init([SiteName, Socket, WorkDir, Client]) ->
+init([SiteName, Transport, Socket, WorkDir, Client]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
     VnodeGets = app_helper:get_env(riak_repl, vnode_gets, true),
@@ -98,7 +99,7 @@ init([SiteName, Socket, WorkDir, Client]) ->
     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
             {worker_args, []},
             {size, MinPool}, {max_overflow, MaxPool}]),
-    State = #state{sitename=SiteName, socket=Socket,
+    State = #state{sitename=SiteName, socket=Socket, transport=Transport,
         work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets,
         diff_batch_size=DiffBatchSize},
     riak_repl_util:schedule_fullsync(),
@@ -108,7 +109,7 @@ wait_for_partition(Command, State)
         when Command == start_fullsync; Command == resume_fullsync ->
     %% annoyingly the server is the one that triggers the fullsync in the old
     %% protocol, so we'll just send it on to the client.
-    riak_repl_tcp_server:send(State#state.socket, Command),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     {next_state, wait_for_partition, State};
 wait_for_partition(fullsync_complete, State) ->
     lager:info("Full-sync with site ~p completed", [State#state.sitename]),
@@ -130,7 +131,7 @@ build_keylist(Command, #state{kl_pid=Pid} = State)
         when Command == cancel_fullsync; Command == pause_fullsync ->
     %% kill the worker
     riak_repl_fullsync_helper:stop(Pid),
-    riak_repl_tcp_server:send(State#state.socket, Command),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     file:delete(State#state.kl_fn),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
@@ -148,16 +149,17 @@ build_keylist(continue, #state{partition=Partition, work_dir=WorkDir} = State) -
             kl_ref=KeyListRef, kl_fn=KeyListFn, stage_start=now(),
             their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
 build_keylist({Ref, keylist_built}, State=#state{kl_ref=Ref, socket=Socket,
-    partition=Partition}) ->
+    transport=Transport, partition=Partition}) ->
     lager:info("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
         [State#state.sitename, Partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    riak_repl_tcp_server:send(Socket, {kl_exchange, Partition}),
+    riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
     {next_state, wait_keylist, State#state{stage_start=now()}};
-build_keylist({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref} = State) ->
+build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
+        socket=Socket, kl_ref=Ref} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
         [State#state.partition, Reason]),
-    riak_repl_tcp_server:send(Socket, {skip_partition, State#state.partition}),
+    riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
     {next_state, wait_for_partition, State};
 build_keylist({skip_partition, Partition}, #state{partition=Partition,
         kl_pid=Pid} = State) ->
@@ -178,12 +180,12 @@ wait_keylist(Command, #state{their_kl_fh=FH} = State)
             file:delete(State#state.their_kl_fn),
             file:delete(State#state.kl_fn)
     end,
-    riak_repl_tcp_server:send(State#state.socket, Command),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 wait_keylist(kl_wait, State) ->
     %% ack the keylist chunks we've received so far
-    riak_repl_tcp_server:send(State#state.socket, kl_ack),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, kl_ack),
     {next_state, wait_keylist, State};
 wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     FH = case FH0 of
@@ -228,27 +230,27 @@ wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) -
 diff_keylist(Command, #state{diff_pid=Pid} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
     riak_repl_fullsync_helper:stop(Pid),
-    riak_repl_tcp_server:send(State#state.socket, Command),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
-        socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
+        transport=Transport, socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
     Worker = poolboy:checkout(Pool, true, infinity),
     case State#state.vnode_gets of
         true ->
             %% do a direct get against the vnode, not a regular riak client
             %% get().
-            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool,
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
                 State#state.partition);
         _ ->
-            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Socket, Pool)
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool)
     end,
     {next_state, diff_keylist, State};
-diff_keylist({Ref, diff_paused}, #state{socket=Socket, partition=Partition,
-        diff_ref=Ref} = State) ->
+diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
+        partition=Partition, diff_ref=Ref} = State) ->
     %% we've sent all the diffs in this batch, wait for the client to be ready
     %% for more
-    riak_repl_tcp_server:send(Socket, {diff_ack, Partition}),
+    riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     {next_state, diff_keylist, State};
 diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
     %% client has processed last batch of differences, generate some more
@@ -261,7 +263,7 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
     lager:info("Full-sync with site ~p; fullsync for ~p complete (completed in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.partition_start)]),
-    riak_repl_tcp_server:send(State#state.socket, diff_done),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     {next_state, wait_for_partition, State}.
 
 %% gen_fsm callbacks
