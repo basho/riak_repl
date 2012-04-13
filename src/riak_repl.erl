@@ -16,10 +16,6 @@ stop() ->
     application:stop(riak_repl).
 
 install_hook() ->
-    {ok, DefaultBucketProps} = application:get_env(riak_core, 
-                                                   default_bucket_props),
-    application:set_env(riak_core, default_bucket_props, 
-                        proplists:delete(repl, DefaultBucketProps)),
     riak_core_bucket:append_bucket_defaults([{repl, true}]),
     ok.
 
