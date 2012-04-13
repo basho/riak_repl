@@ -14,6 +14,8 @@
 -module(riak_repl_leader).
 -behaviour(gen_server).
 
+-include("riak_repl.hrl").
+
 %% API
 -export([start_link/0,
          set_candidates/2,
@@ -22,7 +24,9 @@
          postcommit/1,
          add_receiver_pid/1]).
 -export([set_leader/3]).
+-export([ensure_sites/0]).
 -export([helper_pid/0]).
+-export([balance/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -32,7 +36,16 @@
 %% portion has been broken out into riak_repl_leader_helper. 
 %% During rolling upgrades old gen_leader messages from pre-0.14
 %% would be sent to the gen_server
--define(SERVER, riak_repl_leader_gs). 
+-define(SERVER, riak_repl_leader_gs).
+
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-export([prop_balance/0]).
+-endif.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -record(state, {helper_pid,  % pid of riak_repl_leader_helper
                 i_am_leader=false :: boolean(), % true if the leader
@@ -70,6 +83,9 @@ postcommit(Object) ->
 add_receiver_pid(Pid) when is_pid(Pid) ->
     gen_server:call(?SERVER, {add_receiver_pid, Pid}).
 
+ensure_sites() ->
+    gen_server:cast(?SERVER, ensure_sites).
+
 %%%===================================================================
 %%% Callback for riak_repl_leader_helper
 %%%===================================================================
@@ -93,6 +109,22 @@ helper_pid() ->
 init([]) ->
     process_flag(trap_exit, true),
     erlang:send_after(0, self(), update_leader),
+    Fn=fun(Services) ->
+            case lists:member(riak_kv, Services) of
+                true ->
+                    %% repl isn't started yet, give it 5 seconds to do so.
+                    %% This is particularly important for new candidate nodes
+                    %% (ie. new nodes that have no listeners configured)
+                    %% because no election changes are triggered.
+                    spawn(fun() ->
+                                timer:sleep(5000),
+                                ensure_sites()
+                        end);
+                _ ->
+                    ok
+            end
+    end,
+    riak_core_node_watcher_events:add_sup_callback(Fn),
     {ok, #state{}}.
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
@@ -149,6 +181,11 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
 handle_cast({repl, _Msg}, State) ->
     %% No leader currently defined - cannot do anything
     riak_repl_stats:objects_dropped_no_leader(),
+    {noreply, State};
+handle_cast(ensure_sites, State) ->
+    %% use the leader refresh to trigger a set_leader which will call
+    %% ensure_sites
+    riak_repl_leader_helper:refresh_leader(State#state.helper_pid),
     {noreply, State}.
 
 handle_info(update_leader, State) ->
@@ -196,6 +233,9 @@ become_leader(Leader, State) ->
     case State#state.leader_node of
         Leader ->
             NewState = State,
+            %% we can get here if a non-leader node goes down
+            %% so we want to make sure any missing clients are started
+            ensure_sites(Leader),
             lager:info("Re-elected as replication leader");
         _ ->
             riak_repl_stats:elections_elected(),
@@ -203,6 +243,7 @@ become_leader(Leader, State) ->
             leader_change(State#state.i_am_leader, true),
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
+            ensure_sites(Leader),
             lager:info("Elected as replication leader")
     end,
     NewState.
@@ -275,12 +316,271 @@ leader_change(A, A) ->
     %% nothing changed
     ok;
 leader_change(false, true) ->
-    %% we've become the leader
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    riak_repl_client_sup:ensure_sites(Ring);
-leader_change(true, false) ->
-    %% we've lost the leadership
+    %% we've become the leader, stop any local clients
     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
     [riak_repl_client_sup:stop_site(SiteName) || 
-        {SiteName, _Pid} <- RunningSiteProcs],
+        {SiteName, _Pid} <- RunningSiteProcs];
+leader_change(true, false) ->
+    %% we've lost the leadership, close any local listeners
     riak_repl_listener:close_all_connections().
+
+%% here be dragons
+ensure_sites(Leader) ->
+    AliveNodes0 = riak_core_node_watcher:nodes(riak_kv) -- [Leader],
+    lager:notice("leader ~p, alive ~p", [Leader, AliveNodes0]),
+    case AliveNodes0 of
+        [] ->
+            %% only node there is
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            riak_repl_client_sup:ensure_sites(Ring);
+        _ ->
+            {Results, DeadNodes} = rpc:multicall(AliveNodes0, riak_repl_client_sup,
+                running_site_procs_rpc, []),
+            case DeadNodes of
+                [] ->
+                    ok;
+                _ ->
+                    lager:warning("Some nodes failed to respond to replication"
+                        "client querying ~p", [DeadNodes])
+            end,
+
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            ReplConfig = 
+            case riak_repl_ring:get_repl_config(Ring) of
+                undefined ->
+                    riak_repl_ring:initial_config();
+                RC -> RC
+            end,
+
+            {BadNodes, CurrentConfig} =
+            lists:foldl(fun({Node, {'EXIT', _}}, {N, C}) ->
+                        {[Node|N], C};
+                    ({Node, Sites}, {N, C}) ->
+                        {N, [{Node, Sites}|C]}
+                end, {[], []}, Results),
+
+            AliveNodes = AliveNodes0 -- BadNodes,
+
+            case AliveNodes of
+                [] ->
+                    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                    riak_repl_client_sup:ensure_sites(Ring);
+                _ ->
+                    %% stop any local clients on the leader
+                    RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+                    [riak_repl_client_sup:stop_site(SiteName) || 
+                        {SiteName, _Pid} <- RunningSiteProcs],
+                    ConfiguredSites = [Site#repl_site.name ||
+                        Site <- dict:fetch(sites, ReplConfig)],
+                    {ToStop, ToStart} = balance_clients(CurrentConfig,
+                        ConfiguredSites),
+                    [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
+                        || {Node, Site} <- ToStop],
+                    [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
+                        || {Node, Site} <- ToStart]
+            end
+    end.
+
+balance(Site, {TS, [{Node, Sites}|Nodes], O, ClientsPerNode}) ->
+    case length(Sites) of
+        ClientsPerNode when O > 0 ->
+            {[{Node, Site}|TS], Nodes, O - 1, ClientsPerNode};
+        Count when Count < ClientsPerNode ->
+            case Count + 1 of
+                ClientsPerNode when O =< 0 ->
+                    {[{Node, Site}|TS], Nodes, O, ClientsPerNode};
+                _ ->
+                    {[{Node, Site}|TS], [{Node, [Site|Sites]}|Nodes], O,
+                        ClientsPerNode}
+            end;
+        _ ->
+            %% this node is already full, try again with the next one
+            balance(Site, {TS, Nodes, O, ClientsPerNode})
+    end.
+
+clients_per_node(ConfiguredSites, CurrentConfig) ->
+    case length(ConfiguredSites) > length(CurrentConfig) of
+        _ when ConfiguredSites == [] ->
+            {0, 0};
+        true ->
+            {length(ConfiguredSites) div length(CurrentConfig),
+                length(ConfiguredSites) rem length(CurrentConfig)};
+        false ->
+            {0, length(ConfiguredSites)}
+    end.
+
+%% Effectively, this function maps M configured replication clients to N
+%% nodes, where N > 1 and M >= 0. As nodes are added or removed from the
+%% cluster clients will be shuffled around to try to balance the load on any
+%% individual node.
+balance_clients(CurrentConfig, ConfiguredSites) ->
+    %% currentconfig is a list of {node, [site]} tuples and configuredsites is
+    %% merely a list of sites that should be running
+
+    %% how many clients should be running per node, and how many need to be
+    %% running one extra.
+    {ClientsPerNode, OverFlow} = clients_per_node(ConfiguredSites, CurrentConfig),
+
+    %% figure out what sites need to be stopped because they're no longer
+    %% configured or are duplicates
+    {ToStop, CurrentConfig1, SeenSites, RemOver} = lists:foldl(fun({Node, Sites}, {S0, R0, D0,
+                Over}) ->
+                %% figure out what needs to be stopped to satisfy the
+                %% configuration
+                {Stop, Remaining, Seen} = lists:foldl(fun({Site, _Pid}, {S, R, D}) ->
+                            case lists:member(Site, ConfiguredSites) of
+                                true ->
+                                    case lists:member(Site, D) of
+                                        true ->
+                                            %% site is a duplicate
+                                            {[{Node, Site}|S], R, D};
+                                        false ->
+                                            %% site is ok
+                                            {S, [Site|R], [Site|D]}
+                                    end;
+                                false ->
+                                    %% site isn't configured anymore
+                                    {[{Node, Site}|S], R, D}
+                            end
+                    end, {[], [], D0}, Sites),
+                case length(Remaining) of
+                    X when X =< ClientsPerNode ->
+                        %% not overflowing
+                        {Stop ++ S0, [{Node, Remaining}|R0], Seen, Over};
+                    X when X == (ClientsPerNode + 1) andalso Over > 0 ->
+                        %% permitted overflow
+                        {Stop ++ S0, [{Node, Remaining}|R0], Seen, Over - 1};
+                    _ ->
+                        %% too many clients on this node
+                        {ToPrune, NewOver} =
+                        case Over of
+                            Y when Y > 0 ->
+                                {lists:sublist(Remaining, length(Remaining) -
+                                        ClientsPerNode - 1), Over - 1};
+                            _ ->
+                                {lists:sublist(Remaining, length(Remaining) -
+                                        ClientsPerNode), 0}
+                        end,
+                        PrunedSites = [{Node, Site} || Site <- ToPrune],
+                        {Stop ++ S0 ++ PrunedSites,
+                            [{Node, (Remaining -- ToPrune)} | R0],
+                            Seen -- ToPrune, NewOver}
+                end
+        end, {[], [], [], OverFlow}, CurrentConfig),
+    NotStarted = lists:filter(fun(Site) ->
+                not lists:member(Site, SeenSites)
+        end, ConfiguredSites),
+
+    {ToStart, _, _, _} = lists:foldl(fun ?MODULE:balance/2,
+        {[], CurrentConfig1, RemOver, ClientsPerNode},
+        NotStarted),
+    {ToStop, ToStart}.
+
+-ifdef(TEST).
+
+balance_clients_test() ->
+    ?assertEqual({[], [{node1, site1}]}, balance_clients([{node1, []}], [site1])),
+    ?assertEqual({[{node1, site3}, {node1, site2}], []}, balance_clients([{node1, [{site1, self()}, {site2,
+                            self()}, {site3, self()}]}], [site1])),
+    ?assertEqual({[{node2, site1}, {node1, site3}, {node1, site2}], []}, balance_clients([{node1, [{site1, self()}, {site2,
+                            self()}, {site3, self()}]}, {node2, [{site1,
+                            self()}]}], [site1])),
+    ?assertEqual({[{node1, site3}], [{node2, site3}]}, balance_clients([{node1, [{site1, self()}, {site2,
+                            self()}, {site3, self()}]}, {node2, []}], [site1, site2, site3])),
+    ?assertEqual({[{node1, site3}], [{node2, site3}]}, balance_clients([{node2, []}, {node1, [{site1, self()}, {site2,
+                            self()}, {site3, self()}]}], [site1, site2, site3])),
+    ok.
+
+-ifdef(EQC).
+
+node_gen() ->
+    elements([node1, node2, node3, node4, node5, node6]).
+
+site() ->
+    elements([site1, site2, site3, site4, site5, site6, site7, site8, site9,
+            site10]).
+
+site_pid() ->
+    {site(), self()}.
+
+site_config() ->
+    {node_gen(), ?LET(Sites, list(site_pid()), lists:usort(Sites))}.
+
+configured_sites() ->
+    ?LET(CC, list(site()), lists:usort(CC)).
+
+unique_config(Config) ->
+    {_, Result} = lists:foldl(fun({Node, Sites}, {Seen, Output}) ->
+                case lists:member(Node, Seen) of
+                    true ->
+                        {Seen, Output};
+                    _ ->
+                        {[Node|Seen], [{Node, Sites}|Output]}
+                end
+        end, {[], []}, Config),
+    Result.
+
+current_config() ->
+    ?LET(Config, ?SUCHTHAT(C, list(site_config()), length(C) > 0), unique_config(Config)).
+
+prop_balance() ->
+    ?FORALL({CurrentConfig, ConfiguredSites}, {current_config(),
+            configured_sites()},
+        begin
+                {ToStop, ToStart} = balance_clients(CurrentConfig, ConfiguredSites),
+                FinalConfig = lists:foldl(fun({Node, SiteToStart}, Result) ->
+                            {Node, Sites} = lists:keyfind(Node, 1, Result),
+                            lists:keyreplace(Node, 1, Result,
+                                {Node, [{SiteToStart, self()}|Sites]})
+                    end, lists:foldl(fun({Node, SiteToStop}, Result) ->
+                                {Node, Sites} = lists:keyfind(Node, 1, Result),
+                                lists:keyreplace(Node, 1, Result,
+                                    {Node, lists:keydelete(SiteToStop, 1, Sites)})
+                        end, CurrentConfig, ToStop), ToStart),
+
+                {ClientsPerNode, OverFlow} = clients_per_node(ConfiguredSites, CurrentConfig),
+
+                ?WHENFAIL(
+                    ?debugFmt("CurrentConfig ~p, ConfiguredSites ~p,"
+                        "ToStart ~p ToStop ~p, ClientsPerNode ~p, Overflow ~p,"
+                        "FinalConfig ~p~n",
+                        [CurrentConfig, ConfiguredSites, ToStart, ToStop,
+                            ClientsPerNode, OverFlow, FinalConfig]),
+
+                    %% check that we are only starting sites that are supposed
+                    %% to start
+                    lists:all(fun({Node, Site}) ->
+                                lists:member(Site, ConfiguredSites)
+                        end, ToStart) andalso
+                    %% check that we've balanced the # of sites across the
+                    %% nodes
+                    case lists:foldl(fun({Node, Sites}, {Valid, Over}) ->
+                                    ClientsPlusOne = ClientsPerNode + 1,
+                                    case length(Sites) of
+                                        ClientsPerNode ->
+                                            {true andalso Valid, Over};
+                                        ClientsPlusOne when Over > 0 ->
+                                            {true andalso Valid, Over - 1};
+                                        _ ->
+                                            {false, Over}
+                                    end
+                            end, {true, OverFlow}, FinalConfig) of
+                        {true, 0} ->
+                            %% all the nodes have the right number of clients,
+                            %% and the overflow is completely consumed
+                            true;
+                        _ ->
+                            false
+                    end andalso
+                    %% TODO make sure we don't churn unnecessarily
+                    true
+                )
+        end).
+
+%% eunit wrapper
+eqc_test() ->
+    ?assert(eqc:quickcheck(eqc:testing_time(4, prop_balance()))).
+
+-endif.
+
+-endif.
