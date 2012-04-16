@@ -282,8 +282,6 @@ maybe_use_ssl() ->
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
-    lager:debug("Loaded ~p CA certificates", [length(proplists:get_value(cacerts,
-                    SSLOpts))]),
     case lists:keyfind(undefined, 2, SSLOpts) of
         false ->
             SSLOpts;
