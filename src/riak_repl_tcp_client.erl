@@ -113,10 +113,14 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
         my_pi=proplists:get_value(my_pi, Props)},
     case riak_repl_util:maybe_use_ssl() of
         false ->
+            {ok, {TheirIP, _}} = Transport:peername(Socket),
             send(Transport, Socket, {peerinfo, NewState#state.my_pi,
-                    [bounded_queue, keepalive, {fullsync_strategies,
+                    [bounded_queue, keepalive,
+                        {fullsync_strategies,
                             app_helper:get_env(riak_repl, fullsync_strategies,
-                                [?LEGACY_STRATEGY])}]});
+                                [?LEGACY_STRATEGY])},
+                        {listener_ip, TheirIP}
+                    ]});
         _ ->
             %% Send a fake peerinfo that will cause a connection failure if
             %% we don't renegotiate SSL. This avoids leaking the ring and
@@ -370,7 +374,20 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket} = 
                     KeepaliveTime = undefined
             end,
             TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
-            update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
+            {ok, {PeerIP, _}} = Transport:peername(Socket),
+            case proplists:get_value(ip, Capability) of
+                PeerIP ->
+                    %% IPs match, no NAT
+                    update_site_ips(riak_repl_ring:get_repl_config(TheirRing),
+                        SiteName);
+                undefined ->
+                    %% legacy connection, don't import IPs to be safe
+                    ok;
+                OtherIP ->
+                    %% NAT detected, definitely don't import site IPs
+                    lager:warning("NAT detected: ~p -> ~p", [PeerIP,
+                            OtherIP])
+            end,
             Transport:setopts(Socket, [{active, once}]),
             riak_repl_stats:client_connects(),
             MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
@@ -390,9 +407,8 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket} = 
             {stop, normal, State}
     end.
 
-%% TODO figure out exactly what the point of this code is.
-%% I *think* the idea is to prevent a screwy repl setup from connecting to
-%% itself?
+%% I think this code deals with importing additional listener IPs from the
+%% other cluster
 update_site_ips(TheirReplConfig, SiteName) ->
     {ok, OurRing} = riak_core_ring_manager:get_my_ring(),
 
