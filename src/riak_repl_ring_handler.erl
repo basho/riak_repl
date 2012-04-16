@@ -137,4 +137,4 @@ has_listeners(ReplConfig) ->
 
 listener_nodes(ReplConfig) ->
     Listeners = dict:fetch(listeners, ReplConfig),
-    [L#repl_listener.nodename || L <- Listeners].
+    lists:usort([L#repl_listener.nodename || L <- Listeners]).
