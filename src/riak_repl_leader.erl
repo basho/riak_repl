@@ -153,13 +153,8 @@ handle_cast({repl, _Msg}, State) ->
 
 handle_info(update_leader, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_repl_ring:get_repl_config(Ring) of
-        undefined ->
-            {noreply, State};
-        _ ->
-            riak_repl_ring_handler:update_leader(Ring),
-            {noreply, State}
-    end;
+    riak_repl_ring_handler:update_leader(Ring),
+    {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             #state{leader_mref=Mref}=State) ->
     case State#state.helper_pid of
