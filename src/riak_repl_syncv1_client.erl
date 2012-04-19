@@ -11,7 +11,7 @@
 -include_lib("kernel/include/file.hrl").
 
 %% API
--export([start_link/3]).
+-export([start_link/4]).
 
 %% gen_fsm
 -export([init/1, 
@@ -30,6 +30,7 @@
         sitename,
         work_dir,
         socket,
+        transport,
         merkle_fn,
         merkle_pt,
         merkle_fp,
@@ -45,12 +46,13 @@
         diff_pid
     }).
 
-start_link(SiteName, Socket, WorkDir) ->
-    gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir], []).
+start_link(SiteName, Transport, Socket, WorkDir) ->
+    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir], []).
 
-init([SiteName, Socket, WorkDir]) ->
+init([SiteName, Transport, Socket, WorkDir]) ->
     {ok, merkle_exchange,
-        #state{sitename=SiteName,socket=Socket,work_dir=WorkDir}}.
+        #state{sitename=SiteName,transport=Transport,
+            socket=Socket,work_dir=WorkDir}}.
 
 merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     %% Kick off the merkle build in parallel with receiving the remote
@@ -122,7 +124,8 @@ merkle_diff({Ref, {merkle_diff, BkeyVclock}}, State=#state{our_kl_ref = Ref}) ->
     {next_state, merkle_diff,
      State#state{bkey_vclocks = [BkeyVclock | State#state.bkey_vclocks]}};
 merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
-    riak_repl_tcp_client:send(State#state.socket, {ack, State#state.merkle_pt, []}),
+    riak_repl_tcp_client:send(State#state.transport, State#state.socket,
+        {ack, State#state.merkle_pt, []}),
     lager:error("Full-sync with site ~p; vclock lookup for "
                            "partition ~p failed: ~p. Skipping partition.",
                            [State#state.sitename, State#state.merkle_pt,
@@ -132,7 +135,7 @@ merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
                                    diff_pid = undefined,
                                    our_kl_ref = Ref})};
 merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
-    riak_repl_tcp_client:send(State#state.socket,
+    riak_repl_tcp_client:send(State#state.transport, State#state.socket,
          {ack, State#state.merkle_pt, State#state.bkey_vclocks}),
     {next_state, merkle_exchange, 
      cleanup_partition(State#state{bkey_vclocks=[],
@@ -183,7 +186,8 @@ merkle_recv_next(#state{our_kl_ref = undefined,
         true ->
             %% Something has gone wrong, just ack the server
             %% as the protocol currently has no way to report errors
-            riak_repl_tcp_client:send(State#state.socket, {ack, State#state.merkle_pt, []}),
+            riak_repl_tcp_client:send(State#state.transport,
+                State#state.socket, {ack, State#state.merkle_pt, []}),
             {next_state, merkle_exchange, cleanup_partition(State)};
         false ->
             {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),

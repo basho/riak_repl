@@ -119,13 +119,13 @@ update_leader(Ring) ->
                 {false, false} ->
                     Candidates=[],
                     Workers=[]
-            end,       
-            case Listeners of 
+            end,
+            case Listeners of
                 [] ->
                     ok; % No need to install hook if nobody is listening
                 _ ->
                     riak_repl:install_hook()
-            end,            
+            end,
             riak_repl_leader:set_candidates(Candidates, Workers)
     end.
 
@@ -137,4 +137,4 @@ has_listeners(ReplConfig) ->
 
 listener_nodes(ReplConfig) ->
     Listeners = dict:fetch(listeners, ReplConfig),
-    [L#repl_listener.nodename || L <- Listeners].
+    lists:usort([L#repl_listener.nodename || L <- Listeners]).
