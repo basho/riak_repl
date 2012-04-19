@@ -342,7 +342,7 @@ verify_ssl(Cert, valid_peer, UserState) ->
         Attribute#'AttributeTypeAndValue'.type == ?'id-at-commonName'],
     CommonName = case Att of
         {printableString, Str} -> Str;
-        {utf8string, Bin} -> binary_to_list(Bin)
+        {utf8String, Bin} -> binary_to_list(Bin)
     end,
 
     case validate_common_name(CommonName,
