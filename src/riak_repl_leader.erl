@@ -425,16 +425,13 @@ clients_per_node(CSLen, CCLen) ->
         true -> {0, CSLen}
     end.
 
--spec sites_to_stop(non_neg_integer(), repl_sitenames()) ->
-                           fun(({node(), repl_np_pairs()},
-                                {[{node(), repl_np_pair()}],
-                                 [{node(), non_neg_integer()}],
-                                 repl_sitenames(),
-                                 non_neg_integer()}) ->
-                                      {[{node(), repl_np_pair()}],
-                                       [repl_node_sites()],
-                                       repl_sitenames(),
-                                       non_neg_integer()}).
+-type sts_acc() :: {Stop::repl_ns_pairs(),
+                    Remaining::[{node(), repl_sitenames()}],
+                    Seen::repl_sitenames(),
+                    Over::non_neg_integer()}.
+-type sts_fold() :: fun(({node(), repl_np_pairs()}, sts_acc()) -> sts_acc()).
+
+-spec sites_to_stop(non_neg_integer(), repl_sitenames()) -> sts_fold().
 sites_to_stop(ClientsPerNode, ConfiguredSites) ->
     fun({Node, Sites}, {Stop0, Remain0, Seen0, Over}) ->
             %% figure out what needs to be stopped to satisfy the
@@ -478,10 +475,10 @@ sites_to_stop(ClientsPerNode, ConfiguredSites) ->
 %%      track of `ConfiguredSites' that have been seen on any of the
 %%      nodes.  That way, if the given `Site' has already been seen on
 %%      one node it can be added to `Stop' for this node `Node'.
--spec satisfy_config(node(), repl_sitenames()) ->
-                            {Stop::repl_ns_pairs(),
-                             Remain::repl_sitenames(),
-                             Seen::repl_sitenames()}.
+-type sc_acc() :: {Stop::repl_ns_pairs(), Remain::repl_sitenames(), Seen::repl_sitenames()}.
+-type sc_fold() :: fun((repl_np_pair(), sc_acc()) -> sc_acc()).
+
+-spec satisfy_config(node(), repl_sitenames()) -> sc_fold().
 satisfy_config(Node, ConfiguredSites) ->
     fun({Site, _Pid}, {Stop, Remain, Seen}) ->
             case lists:member(Site, ConfiguredSites) of
