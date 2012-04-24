@@ -27,6 +27,7 @@
 -export([ensure_sites/0]).
 -export([helper_pid/0]).
 -export([balance/2]).
+-export([balance_clients/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -398,75 +399,113 @@ balance(Site, {TS, [{Node, Sites}|Nodes], O, ClientsPerNode}) ->
             balance(Site, {TS, Nodes, O, ClientsPerNode})
     end.
 
-clients_per_node(ConfiguredSites, CurrentConfig) ->
-    case length(ConfiguredSites) > length(CurrentConfig) of
-        _ when ConfiguredSites == [] ->
-            {0, 0};
-        true ->
-            {length(ConfiguredSites) div length(CurrentConfig),
-                length(ConfiguredSites) rem length(CurrentConfig)};
-        false ->
-            {0, length(ConfiguredSites)}
+
+-spec clients_per_node(non_neg_integer(), non_neg_integer()) ->
+                              {non_neg_integer(), non_neg_integer()}.
+clients_per_node(0, _) ->
+    {0, 0};
+clients_per_node(CSLen, CCLen) ->
+    if CSLen > CCLen -> {CSLen div CCLen, CSLen rem CCLen};
+        true -> {0, CSLen}
+    end.
+
+-spec sites_to_stop(non_neg_integer(), repl_sitenames()) ->
+                           fun(({node(), repl_np_pairs()},
+                                {[{node(), repl_np_pair()}],
+                                 [{node(), non_neg_integer()}],
+                                 repl_sitenames(),
+                                 non_neg_integer()}) ->
+                                      {[{node(), repl_np_pair()}],
+                                       [repl_node_sites()],
+                                       repl_sitenames(),
+                                       non_neg_integer()}).
+sites_to_stop(ClientsPerNode, ConfiguredSites) ->
+    fun({Node, Sites}, {Stop0, Remain0, Seen0, Over}) ->
+            %% figure out what needs to be stopped to satisfy the
+            %% configuration
+            SC = satisfy_config(Node, ConfiguredSites),
+            {Stop, Remaining, Seen} = lists:foldl(SC, {[], [], Seen0}, Sites),
+
+            %% Length of remaining sites for the node `Node'
+            RemainingLen = length(Remaining),
+            if RemainingLen =< ClientsPerNode ->
+                    %% not overflowing
+                    {Stop ++ Stop0, [{Node, Remaining}|Remain0], Seen, Over};
+               RemainingLen == (ClientsPerNode + 1) andalso Over > 0 ->
+                    %% over by 1 and overflow is permitted
+                    {Stop ++ Stop0, [{Node, Remaining}|Remain0], Seen, Over-1};
+               true ->
+                    %% too many clients on this node
+                    %% ToPrune::Site, NewOver::integer()
+                    %% Take sites to remove from the front of `Remaining'
+                    {ToPrune, NewOver} =
+                        if Over > 0 ->
+                                {lists:sublist(Remaining,
+                                               length(Remaining) - ClientsPerNode - 1),
+                                 Over - 1};
+                           true ->
+                                {lists:sublist(Remaining,
+                                               length(Remaining) - ClientsPerNode),
+                                 0}
+                        end,
+                    PrunedSites = [{Node, Site} || Site <- ToPrune],
+                    {Stop ++ Stop0 ++ PrunedSites,
+                     [{Node, (Remaining -- ToPrune)} | Remain0],
+                     Seen -- ToPrune, NewOver}
+            end
+    end.
+
+%% @doc Given the desired configuration `ConfiguredSites' return a
+%%      function to fold over the sites that are currently up.  For
+%%      each active site `Site' decide if it should be stopped
+%%      (`Stop') or remain up (`Remain').  The `Seen' variable keeps
+%%      track of `ConfiguredSites' that have been seen on any of the
+%%      nodes.  That way, if the given `Site' has already been seen on
+%%      one node it can be added to `Stop' for this node `Node'.
+-spec satisfy_config(node(), repl_sitenames()) ->
+                            {Stop::repl_ns_pairs(),
+                             Remain::repl_sitenames(),
+                             Seen::repl_sitenames()}.
+satisfy_config(Node, ConfiguredSites) ->
+    fun({Site, _Pid}, {Stop, Remain, Seen}) ->
+            case lists:member(Site, ConfiguredSites) of
+                true ->
+                    case lists:member(Site, Seen) of
+                        true ->
+                            %% site is a duplicate
+                            {[{Node, Site}|Stop], Remain, Seen};
+                        false ->
+                            %% site is ok
+                            {Stop, [Site|Remain], [Site|Seen]}
+                    end;
+                false ->
+                    %% site isn't configured anymore
+                    {[{Node, Site}|Stop], Remain, Seen}
+            end
     end.
 
 %% Effectively, this function maps M configured replication clients to N
 %% nodes, where N > 1 and M >= 0. As nodes are added or removed from the
 %% cluster clients will be shuffled around to try to balance the load on any
 %% individual node.
+-spec balance_clients([repl_node_sites()], repl_sitenames()) ->
+                             {ToStop::[{node(), repl_sitename()}],
+                              ToStart::any()}.
 balance_clients(CurrentConfig, ConfiguredSites) ->
     %% currentconfig is a list of {node, [site]} tuples and configuredsites is
     %% merely a list of sites that should be running
 
     %% how many clients should be running per node, and how many need to be
     %% running one extra.
-    {ClientsPerNode, OverFlow} = clients_per_node(ConfiguredSites, CurrentConfig),
+    {ClientsPerNode, OverFlow} = clients_per_node(length(ConfiguredSites),
+                                                  length(CurrentConfig)),
 
     %% figure out what sites need to be stopped because they're no longer
     %% configured or are duplicates
-    {ToStop, CurrentConfig1, SeenSites, RemOver} = lists:foldl(fun({Node, Sites}, {S0, R0, D0,
-                Over}) ->
-                %% figure out what needs to be stopped to satisfy the
-                %% configuration
-                {Stop, Remaining, Seen} = lists:foldl(fun({Site, _Pid}, {S, R, D}) ->
-                            case lists:member(Site, ConfiguredSites) of
-                                true ->
-                                    case lists:member(Site, D) of
-                                        true ->
-                                            %% site is a duplicate
-                                            {[{Node, Site}|S], R, D};
-                                        false ->
-                                            %% site is ok
-                                            {S, [Site|R], [Site|D]}
-                                    end;
-                                false ->
-                                    %% site isn't configured anymore
-                                    {[{Node, Site}|S], R, D}
-                            end
-                    end, {[], [], D0}, Sites),
-                case length(Remaining) of
-                    X when X =< ClientsPerNode ->
-                        %% not overflowing
-                        {Stop ++ S0, [{Node, Remaining}|R0], Seen, Over};
-                    X when X == (ClientsPerNode + 1) andalso Over > 0 ->
-                        %% permitted overflow
-                        {Stop ++ S0, [{Node, Remaining}|R0], Seen, Over - 1};
-                    _ ->
-                        %% too many clients on this node
-                        {ToPrune, NewOver} =
-                        case Over of
-                            Y when Y > 0 ->
-                                {lists:sublist(Remaining, length(Remaining) -
-                                        ClientsPerNode - 1), Over - 1};
-                            _ ->
-                                {lists:sublist(Remaining, length(Remaining) -
-                                        ClientsPerNode), 0}
-                        end,
-                        PrunedSites = [{Node, Site} || Site <- ToPrune],
-                        {Stop ++ S0 ++ PrunedSites,
-                            [{Node, (Remaining -- ToPrune)} | R0],
-                            Seen -- ToPrune, NewOver}
-                end
-        end, {[], [], [], OverFlow}, CurrentConfig),
+    SitesToStop = sites_to_stop(ClientsPerNode, ConfiguredSites),
+    {ToStop, CurrentConfig1, SeenSites, RemOver} =
+        lists:foldl(SitesToStop, {[], [], [], OverFlow}, CurrentConfig),
+
     NotStarted = lists:filter(fun(Site) ->
                 not lists:member(Site, SeenSites)
         end, ConfiguredSites),
@@ -538,7 +577,9 @@ prop_balance() ->
                                     {Node, lists:keydelete(SiteToStop, 1, Sites)})
                         end, CurrentConfig, ToStop), ToStart),
 
-                {ClientsPerNode, OverFlow} = clients_per_node(ConfiguredSites, CurrentConfig),
+            {ClientsPerNode, OverFlow} =
+                clients_per_node(length(ConfiguredSites),
+                                 length(CurrentConfig)),
 
                 ?WHENFAIL(
                     ?debugFmt("CurrentConfig ~p, ConfiguredSites ~p,"
