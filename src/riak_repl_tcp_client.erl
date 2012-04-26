@@ -318,26 +318,16 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
-                    %% we want to trap exits now
-                    process_flag(trap_exit, true),
-                    Pid = proc_lib:spawn_link(fun() ->
-                                put(inverted, true),
-                                gen_server:enter_loop(riak_repl_tcp_server,
-                                    [],
-                                    riak_repl_tcp_server:make_state(SiteName,
-                                        Socket, State#state.my_pi,
-                                        State#state.work_dir,
-                                        State#state.client))
-                        end),
-                    gen_tcp:controlling_process(Socket, Pid),
-                    %% send the peer info again
-                    Pid ! {tcp, Socket, term_to_binary({peerinfo,
+                    self() ! {tcp, Socket, term_to_binary({peerinfo,
                                 TheirPeerInfo, Capability})},
-                    %% block until the server exits, then exit ourselves
-                    receive
-                        {'EXIT', Pid, _} ->
-                            {stop, normal, State}
-                    end;
+                    put(inverted, true),
+                    gen_server:enter_loop(riak_repl_tcp_server,
+                        [],
+                        riak_repl_tcp_server:make_state(SiteName,
+                            Socket, State#state.my_pi,
+                            State#state.work_dir,
+                            State#state.client)),
+                    {stop, normal, State};
                 _ ->
 
                     ServerStrats = proplists:get_value(fullsync_strategies, Capability,
