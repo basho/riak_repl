@@ -232,30 +232,17 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket, my_pi=MyPI} = State, Th
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
-                    %% we want to trap exits now
-                    process_flag(trap_exit, true),
-                    Pid = proc_lib:spawn_link(fun() ->
-                                put(inverted, true),
-                                NewState = riak_repl_tcp_client:make_state(SiteName,
-                                    Socket, State#state.my_pi,
-                                    State#state.work_dir,
-                                    State#state.client),
-                                %io:format("entering tcp_client loop with
-                                    %state ~p -- ~p~n", [NewState,
-                                    %tuple_size(NewState)]),
-                                gen_server:enter_loop(riak_repl_tcp_client,
-                                    [], NewState)
-
-                        end),
-                    gen_tcp:controlling_process(Socket, Pid),
-                    %% send the peer info again
-                    Pid ! {tcp, Socket, term_to_binary({peerinfo,
+                    self() ! {tcp, Socket, term_to_binary({peerinfo,
                                 TheirPI, Capability})},
-                    %% block until the server exits, then exit ourselves
-                    receive
-                        {'EXIT', Pid, _} ->
-                            {stop, normal, State}
-                    end;
+                    put(inverted, true),
+                    NewState = riak_repl_tcp_client:make_state(SiteName,
+                        Socket, State#state.my_pi,
+                        State#state.work_dir,
+                        State#state.client),
+                    gen_server:enter_loop(riak_repl_tcp_client,
+                        [], NewState),
+
+                    {stop, normal, State};
                 _ ->
 
                     ClientStrats = proplists:get_value(fullsync_strategies, Capability,
