@@ -73,6 +73,18 @@ init([SiteName]) ->
             {ok, do_async_connect(State)}
     end.
 
+handle_call(start_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, start_fullsync),
+    {reply, ok, State};
+handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, cancel_fullsync),
+    {reply, ok, State};
+handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, pause_fullsync),
+    {reply, ok, State};
+handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, resume_fullsync),
+    {reply, ok, State};
 handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
     Res = case is_pid(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);

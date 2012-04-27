@@ -294,7 +294,7 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket, my_pi=MyPI} = State, Th
             {stop, normal, State}
     end.
 
-send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
+send_peerinfo(#state{socket=Socket} = State) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
         undefined -> % leader not elected yet
