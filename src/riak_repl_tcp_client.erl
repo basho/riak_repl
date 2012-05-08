@@ -330,7 +330,6 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
-                    riak_repl:install_hook(),
                     case riak_repl_leader:add_receiver_pid(self()) of
                         ok ->
                             lager:notice("added as receiver pid"),
