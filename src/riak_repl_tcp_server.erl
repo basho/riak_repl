@@ -232,6 +232,7 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket, my_pi=MyPI} = State, Th
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
+                    riak_repl_leader:rm_receiver_pid(self()),
                     self() ! {tcp, Socket, term_to_binary({peerinfo,
                                 TheirPI, Capability})},
                     put(inverted, true),
