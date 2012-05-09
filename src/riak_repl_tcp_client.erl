@@ -16,7 +16,8 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, status/1, status/2, async_connect/3, send/2]).
+-export([start_link/1, status/1, status/2, async_connect/3, send/2,
+        handle_peerinfo/3, make_state/5]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -40,7 +41,11 @@
         keepalive_time
     }).
 
-
+make_state(SiteName, Socket, MyPI, WorkDir, Client) ->
+    {ok, {IP, Port}} = inet:sockname(Socket),
+    #state{sitename=SiteName, socket=Socket, my_pi=MyPI, work_dir=WorkDir,
+        client=Client, listeners=[], pending=[], listener={connected, IP,
+            Port}}.
 
 start_link(SiteName) ->
     gen_server:start_link(?MODULE, [SiteName], []).
@@ -67,6 +72,21 @@ init([SiteName]) ->
                 pending=Listeners},
             {ok, do_async_connect(State)}
     end.
+
+%% these fullsync control messages are for 'inverse' mode only, and only work
+%% with the keylist strategy.
+handle_call(start_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, start_fullsync),
+    {reply, ok, State};
+handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, cancel_fullsync),
+    {reply, ok, State};
+handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, pause_fullsync),
+    {reply, ok, State};
+handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
+    gen_fsm:send_event(FSW, resume_fullsync),
+    {reply, ok, State};
 
 handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
     Res = case is_pid(FSW) of
@@ -136,34 +156,41 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     inet:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
-    NewState = case Msg of
+    Reply = case Msg of
         {diff_obj, RObj} ->
             %% realtime diff object, or a fullsync diff object from legacy
             %% repl. Because you can't tell the difference this can screw up
             %% the acking, but there's not really a way to fix it, other than
             %% not using legacy.
-            do_repl_put(RObj, State);
+            {noreply, do_repl_put(RObj, State)};
         {fs_diff_obj, RObj} ->
             %% fullsync diff objects
             Pool = State#state.pool_pid,
             Worker = poolboy:checkout(Pool, true, infinity),
             ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
-            State;
+            {noreply, State};
         keepalive ->
             send(Socket, keepalive_ack),
-            State;
+            {noreply, State};
         keepalive_ack ->
             %% noop
-            State;
+            {noreply, State};
+        {peerinfo, TheirPI, Capability} ->
+            handle_peerinfo(State, TheirPI, Capability);
         _ ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
-            State
+            {noreply, State}
     end,
-    case NewState#state.keepalive_time of
+    case State#state.keepalive_time of
         Time when is_integer(Time) ->
-            {noreply, NewState, Time};
+            case Reply of 
+                {noreply, NewState} ->
+                    {noreply, NewState, Time};
+                _ ->
+                    Reply
+            end;
         _ ->
-            {noreply, NewState}
+            Reply
     end;
 handle_info(try_connect, State) ->
     NewState = do_async_connect(State),
@@ -303,47 +330,70 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
     MyPeerInfo = State#state.my_pi,
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
-            ServerStrats = proplists:get_value(fullsync_strategies, Capability,
-                [?LEGACY_STRATEGY]),
-            ClientStrats = app_helper:get_env(riak_repl, fullsync_strategies,
-                [?LEGACY_STRATEGY]),
-            Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
-            StratMod = riak_repl_util:strategy_module(Strategy, client),
-            lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
-                    State#state.sitename]),
-            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
-            {ok, FullsyncWorker} = StratMod:start_link(SiteName, Socket,
-                WorkDir),
-            %% Set up for bounded queue if remote server supports it
-            case proplists:get_bool(bounded_queue, Capability) of
+            case app_helper:get_env(riak_repl, inverse_connection) == true
+                andalso get(inverted) /= true of
                 true ->
-                    AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
-                        ?REPL_DEFAULT_ACK_FREQUENCY),
-                    State1 = State#state{count=0, 
-                        ack_freq=AckFreq};
-                false ->
-                    State1 = State
-            end,
-            case proplists:get_bool(keepalive, Capability) of
-                true ->
-                    KeepaliveTime = ?KEEPALIVE_TIME;
+                    case riak_repl_leader:add_receiver_pid(self()) of
+                        ok ->
+                            lager:notice("added as receiver pid"),
+                            self() ! {tcp, Socket, term_to_binary({peerinfo,
+                                        TheirPeerInfo, Capability})},
+                            put(inverted, true),
+                            gen_server:enter_loop(riak_repl_tcp_server,
+                                [],
+                                riak_repl_tcp_server:make_state(SiteName,
+                                    Socket, State#state.my_pi,
+                                    State#state.work_dir,
+                                    State#state.client)),
+                            {stop, normal, State};
+                        {error, _Reason} ->
+                            %% election has not completed.. apparently
+                            {stop, normal, State}
+                    end;
                 _ ->
-                    KeepaliveTime = undefined
-            end,
-            TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
-            update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
-            inet:setopts(Socket, [{active, once}]),
-            riak_repl_stats:client_connects(),
-            MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
-            MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
-            {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
-                    {worker_args, []},
-                    {size, MinPool}, {max_overflow, MaxPool}]),
-            {noreply, State1#state{work_dir = WorkDir,
-                    fullsync_worker=FullsyncWorker,
-                    fullsync_strategy=StratMod,
-                    keepalive_time=KeepaliveTime,
-                    pool_pid=Pid}};
+
+                    ServerStrats = proplists:get_value(fullsync_strategies, Capability,
+                        [?LEGACY_STRATEGY]),
+                    ClientStrats = app_helper:get_env(riak_repl, fullsync_strategies,
+                        [?LEGACY_STRATEGY]),
+                    Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
+                    StratMod = riak_repl_util:strategy_module(Strategy, client),
+                    lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
+                            State#state.sitename]),
+                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
+                    {ok, FullsyncWorker} = StratMod:start_link(SiteName, Socket,
+                        WorkDir),
+                    %% Set up for bounded queue if remote server supports it
+                    case proplists:get_bool(bounded_queue, Capability) of
+                        true ->
+                            AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
+                                ?REPL_DEFAULT_ACK_FREQUENCY),
+                            State1 = State#state{count=0, 
+                                ack_freq=AckFreq};
+                        false ->
+                            State1 = State
+                    end,
+                    case proplists:get_bool(keepalive, Capability) of
+                        true ->
+                            KeepaliveTime = ?KEEPALIVE_TIME;
+                        _ ->
+                            KeepaliveTime = undefined
+                    end,
+                    TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
+                    update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
+                    inet:setopts(Socket, [{active, once}]),
+                    riak_repl_stats:client_connects(),
+                    MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
+                    MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
+                    {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
+                            {worker_args, []},
+                            {size, MinPool}, {max_overflow, MaxPool}]),
+                    {noreply, State1#state{work_dir = WorkDir,
+                            fullsync_worker=FullsyncWorker,
+                            fullsync_strategy=StratMod,
+                            keepalive_time=KeepaliveTime,
+                            pool_pid=Pid}}
+            end;
         false ->
             lager:error("Invalid peer info for site ~p, "
                 "ring sizes do not match.", [SiteName]),
