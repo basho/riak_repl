@@ -20,7 +20,8 @@
          leader_node/0,
          is_leader/0,
          postcommit/1,
-         add_receiver_pid/1]).
+         add_receiver_pid/1,
+         rm_receiver_pid/1]).
 -export([set_leader/3]).
 -export([helper_pid/0]).
 
@@ -70,6 +71,9 @@ postcommit(Object) ->
 add_receiver_pid(Pid) when is_pid(Pid) ->
     gen_server:call(?SERVER, {add_receiver_pid, Pid}).
 
+rm_receiver_pid(Pid) when is_pid(Pid) ->
+    gen_server:call(?SERVER, {rm_receiver_pid, Pid}).
+
 %%%===================================================================
 %%% Callback for riak_repl_leader_helper
 %%%===================================================================
@@ -100,6 +104,18 @@ handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader 
     UpdReceivers = orddict:store(Mref, Pid, State#state.receivers),
     {reply, ok, State#state{receivers = UpdReceivers}};
 handle_call({add_receiver_pid, _Pid}, _From, State) ->
+    {reply, {error, not_leader}, State};
+
+handle_call({rm_receiver_pid, Pid}, _From, State = #state{receivers=R0}) when State#state.i_am_leader =:= true ->
+    Receivers = case lists:keyfind(Pid, 2, R0) of
+        {MRef, Pid} ->
+            erlang:demonitor(MRef),
+            orddict:erase(MRef, R0);
+        false ->
+            R0
+    end,
+    {reply, ok, State#state{receivers = Receivers}};
+handle_call({rm_receiver_pid, _Pid}, _From, State) ->
     {reply, {error, not_leader}, State};
 
 handle_call(leader_node, _From, State) ->

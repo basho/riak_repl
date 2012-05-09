@@ -26,7 +26,7 @@
 %% API
 -export([start_link/1, set_socket/2, send/2, status/1, status/2]).
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
-        resume_fullsync/1]).
+        resume_fullsync/1, handle_peerinfo/3, make_state/5]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -47,6 +47,10 @@
         election_timeout :: undefined | reference(), % reference for the election timeout
         keepalive_time :: undefined | integer()
     }).
+
+make_state(Sitename, Socket, MyPI, WorkDir, Client) ->
+    #state{sitename=Sitename, socket=Socket, my_pi=MyPI, work_dir=WorkDir,
+        client=Client}.
 
 start_link(SiteName) ->
     gen_server:start_link(?MODULE, [SiteName], []).
@@ -208,54 +212,8 @@ code_change(_OldVsn, State, _Extra) ->
 handle_msg({peerinfo, PI}, State) ->
     Capability = riak_repl_util:capability_from_vsn(PI),
     handle_msg({peerinfo, PI, Capability}, State);
-handle_msg({peerinfo, TheirPI, Capability}, #state{my_pi=MyPI} = State) ->
-    case riak_repl_util:validate_peer_info(TheirPI, MyPI) of
-        true ->
-            ClientStrats = proplists:get_value(fullsync_strategies, Capability,
-                [?LEGACY_STRATEGY]),
-            ServerStrats = app_helper:get_env(riak_repl, fullsync_strategies,
-                [?LEGACY_STRATEGY]),
-            Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
-            StratMod = riak_repl_util:strategy_module(Strategy, server),
-            lager:info("Using fullsync strategy ~p.", [StratMod]),
-            {ok, FullsyncWorker} = StratMod:start_link(State#state.sitename,
-                State#state.socket, State#state.work_dir, State#state.client),
-            %% Set up bounded queue if remote supports it
-            case proplists:get_bool(bounded_queue, Capability) of
-                true ->
-                    QSize = app_helper:get_env(riak_repl,queue_size,
-                                               ?REPL_DEFAULT_QUEUE_SIZE),
-                    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
-                                                    ?REPL_DEFAULT_MAX_PENDING),
-                    State1 = State#state{q = bounded_queue:new(QSize),
-                                         fullsync_worker = FullsyncWorker,
-                                         fullsync_strategy = StratMod,
-                                         max_pending = MaxPending,
-                                         pending = 0};
-                false ->
-                    State1 = State#state{fullsync_worker = FullsyncWorker,
-                                         fullsync_strategy = StratMod}
-            end,
-
-            case proplists:get_bool(keepalive, Capability) of
-                true ->
-                    KeepaliveTime = ?KEEPALIVE_TIME;
-                _ ->
-                    KeepaliveTime = undefined
-            end,
-
-            case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
-                true ->
-                    FullsyncWorker ! start_fullsync,
-                    lager:info("Full-sync on connect"),
-                    {noreply, State1#state{keepalive_time=KeepaliveTime}};
-                false ->
-                    {noreply, State1#state{keepalive_time=KeepaliveTime}}
-            end;
-        false ->
-            lager:error("Invalid peer info, ring sizes do not match."),
-            {stop, normal, State}
-    end;
+handle_msg({peerinfo, TheirPI, Capability}, State) ->
+    handle_peerinfo(State, TheirPI, Capability);
 handle_msg({q_ack, N}, #state{pending=Pending} = State) ->
     drain(State#state{pending=Pending-N});
 handle_msg(keepalive, State) ->
@@ -268,7 +226,76 @@ handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
     gen_fsm:send_event(FSW, Msg),
     {noreply, State}.
 
-send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
+handle_peerinfo(#state{sitename=SiteName, socket=Socket, my_pi=MyPI} = State, TheirPI, Capability) ->
+    case riak_repl_util:validate_peer_info(TheirPI, MyPI) of
+        true ->
+            case app_helper:get_env(riak_repl, inverse_connection) == true
+                andalso get(inverted) /= true of
+                true ->
+                    riak_repl_leader:rm_receiver_pid(self()),
+                    self() ! {tcp, Socket, term_to_binary({peerinfo,
+                                TheirPI, Capability})},
+                    put(inverted, true),
+                    NewState = riak_repl_tcp_client:make_state(SiteName,
+                        Socket, State#state.my_pi,
+                        State#state.work_dir,
+                        State#state.client),
+                    gen_server:enter_loop(riak_repl_tcp_client,
+                        [], NewState),
+
+                    {stop, normal, State};
+                _ ->
+
+                    ClientStrats = proplists:get_value(fullsync_strategies, Capability,
+                        [?LEGACY_STRATEGY]),
+                    ServerStrats = app_helper:get_env(riak_repl, fullsync_strategies,
+                        [?LEGACY_STRATEGY]),
+                    Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
+                    StratMod = riak_repl_util:strategy_module(Strategy, server),
+                    lager:info("Using fullsync strategy ~p.", [StratMod]),
+                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
+                    {ok, FullsyncWorker} = StratMod:start_link(SiteName,
+                        Socket, WorkDir, State#state.client),
+                    %% Set up bounded queue if remote supports it
+                    case proplists:get_bool(bounded_queue, Capability) of
+                        true ->
+                            QSize = app_helper:get_env(riak_repl,queue_size,
+                                ?REPL_DEFAULT_QUEUE_SIZE),
+                            MaxPending = app_helper:get_env(riak_repl,server_max_pending,
+                                ?REPL_DEFAULT_MAX_PENDING),
+                            State1 = State#state{q = bounded_queue:new(QSize),
+                                fullsync_worker = FullsyncWorker,
+                                fullsync_strategy = StratMod,
+                                max_pending = MaxPending,
+                                work_dir = WorkDir,
+                                pending = 0};
+                        false ->
+                            State1 = State#state{fullsync_worker = FullsyncWorker,
+                                fullsync_strategy = StratMod}
+                    end,
+
+                    case proplists:get_bool(keepalive, Capability) of
+                        true ->
+                            KeepaliveTime = ?KEEPALIVE_TIME;
+                        _ ->
+                            KeepaliveTime = undefined
+                    end,
+
+                    case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
+                        true ->
+                            FullsyncWorker ! start_fullsync,
+                            lager:info("Full-sync on connect"),
+                            {noreply, State1#state{keepalive_time=KeepaliveTime}};
+                        false ->
+                            {noreply, State1#state{keepalive_time=KeepaliveTime}}
+                    end
+            end;
+        false ->
+            lager:error("Invalid peer info, ring sizes do not match."),
+            {stop, normal, State}
+    end.
+
+send_peerinfo(#state{socket=Socket} = State) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
         undefined -> % leader not elected yet
@@ -286,8 +313,7 @@ send_peerinfo(#state{socket=Socket, sitename=SiteName} = State) ->
                             [bounded_queue, keepalive, {fullsync_strategies,
                                     app_helper:get_env(riak_repl, fullsync_strategies,
                                         [?LEGACY_STRATEGY])}]}),
-                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
-                    {noreply, State#state{work_dir = WorkDir,
+                    {noreply, State#state{
                             client=proplists:get_value(client, Props),
                             election_timeout=undefined,
                             my_pi=PI}};
