@@ -3,12 +3,20 @@
 -module(riak_repl_console).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
--export([add_listener/1, del_listener/1]).
+-export([add_listener/1, del_listener/1, add_nat_listener/1]).
 -export([add_site/1, del_site/1]).
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
          pause_fullsync/1, resume_fullsync/1]).
 
+
 add_listener([NodeName, IP, Port]) ->
+    {Status, Msg, _} = add_listener_internal([NodeName, IP, Port]),
+    case Status of
+        ok -> ok;
+        error -> io:format(Msg)
+    end.
+
+add_listener_internal([NodeName, IP, Port]) ->
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
     case lists:member(Listener#repl_listener.nodename, riak_core_ring:all_members(Ring)) of
@@ -17,23 +25,48 @@ add_listener([NodeName, IP, Port]) ->
                                 riak_repl_util, valid_host_ip, [IP]) of
                 true ->
                     NewRing = riak_repl_ring:add_listener(Ring, Listener),
-                    ok = maybe_set_ring(Ring, NewRing);
+                    ok = maybe_set_ring(Ring, NewRing),
+                    {ok,false,NewRing};
                 false ->
-                    io:format("~p is not a valid IP address for ~p\n",
-                              [IP, Listener#repl_listener.nodename]);
+                    Msg = io_lib:format("~p is not a valid IP address for ~p\n", 
+                        [IP, Listener#repl_listener.nodename]),
+                    {error,Msg,Ring};
                 Error ->
-                    io:format("Node ~p must be available to add listener: ~p\n",
-                              [Listener#repl_listener.nodename, Error])
+                    Msg = io_lib:format("Node ~p must be available to add listener: ~p\n",
+                        [Listener#repl_listener.nodename, Error]),
+                    {error,Msg,Ring}
             end;
         false ->
-            io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
+            Msg = io_lib:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename]),
+            {error,Msg,Ring}
+    end.
+
+add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
+    {Status, Msg, Ring} = add_listener_internal([NodeName, IP, Port]),
+    case Status of
+        ok ->
+            case inet_parse:address(PublicIP) of
+                {ok,_} ->
+                    NatListener = make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort),
+                    NewRing = riak_repl_ring:add_nat_listener(Ring, NatListener),
+                    ok = maybe_set_ring(Ring, NewRing);
+                {error,IPParseError} ->
+                    io:format("Invalid NAT IP address: ~p~n", [IPParseError]);
+                {_,_} ->
+                    io:format("Error adding NAT Listener: ~s~n",[Msg])
+            end;
+        error ->
+            io:format("Error adding nat address: ~s~n", [Msg]),
+            Status
     end.
 
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
+    
     Listener = make_listener(NodeName, IP, Port),
     NewRing = riak_repl_ring:del_listener(Ring, Listener),
     ok = maybe_set_ring(Ring, NewRing).
+
 
 add_site([IP, Port, SiteName]) ->
     Ring = get_ring(),
@@ -94,6 +127,12 @@ make_listener(NodeName, IP, Port) ->
     #repl_listener{nodename=list_to_atom(NodeName),
                    listen_addr={IP, list_to_integer(Port)}}.
 
+make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort) ->
+    #nat_listener{nodename=list_to_atom(NodeName),
+                listen_addr={IP, list_to_integer(Port)},
+                nat_addr={PublicIP, list_to_integer(PublicPort)}}.
+
+
 make_site(SiteName, IP, Port) ->
     #repl_site{name=SiteName, addrs=[{IP, list_to_integer(Port)}]}.
 
@@ -128,6 +167,12 @@ get_config() ->
                     [];
                 {ok, Listeners} ->
                     lists:flatten([format_listener(L) || L <- Listeners])
+            end ++ 
+            case dict:find(natlisteners, Repl) of
+                error ->
+                    [];
+                {ok, NatListeners} ->
+                    lists:flatten([format_nat_listener(L) || L <- NatListeners])
             end
     end.
 
@@ -143,6 +188,11 @@ format_ip({Addr,Port}) ->
 format_listener(L) ->
     [{"listener_" ++ atom_to_list(L#repl_listener.nodename),
       format_ip(L#repl_listener.listen_addr)}].
+
+format_nat_listener(L) ->
+    [{"natlistener_" ++ atom_to_list(L#nat_listener.nodename),
+      format_ip(L#nat_listener.listen_addr) ++ "->" ++ 
+      format_ip(L#nat_listener.nat_addr)}].
 
 leader_stats() ->
     LeaderNode = riak_repl_leader:leader_node(),
