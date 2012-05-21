@@ -3,7 +3,7 @@
 -module(riak_repl_console).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
--export([add_listener/1, del_listener/1]).
+-export([add_listener/1, del_listener/1, add_nat_listener/1]).
 -export([add_site/1, del_site/1]).
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
          pause_fullsync/1, resume_fullsync/1]).
