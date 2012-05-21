@@ -31,8 +31,7 @@ add_listener([NodeName, IP, Port]) ->
 
 add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
     Ring = get_ring(),
-    StdListener = add_listener([NodeName, IP, Port]),
-    case StdListener of 
+    case add_listener([NodeName, IP, Port]) of 
         ok -> 
             case inet_parse:address(PublicIP) of
                 {ok,_} -> 
@@ -46,8 +45,6 @@ add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
         Error ->
             io:format("Error adding nat address: \n")
     end.
-    
-
     
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
