@@ -135,6 +135,23 @@ add_listener(Ring,Listener) ->
             Ring
     end.
 
+-spec(add_nat_listener/2 :: (ring(), #nat_listener{}) -> ring()).
+%% @doc Add a replication NAT listener host/port to the Ring.
+add_nat_listener(Ring,NatListener) ->
+    RC = get_repl_config(Ring),
+    NatListeners = dict:fetch(natlisteners, RC),
+    case lists:member(NatListener, NatListeners) of
+        false ->
+            NewListeners = [NatListener|NatListeners],
+            riak_core_ring:update_meta(
+              ?MODULE,
+              dict:store(natlisteners, NewListeners, RC),
+              Ring);
+        true ->
+            Ring
+    end.
+
+
 -spec(del_listener/2 :: (ring(), #repl_listener{}) -> ring()).
 %% @doc Delete a replication listener from the Ring.
 del_listener(Ring,Listener) -> 

@@ -30,10 +30,25 @@ add_listener([NodeName, IP, Port]) ->
     end.
 
 add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
-    Listener = add_listener([NodeName, IP, Port]),
-    NatListener = make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort),
-    NatListener.
+    Ring = get_ring(),
+    StdListener = add_listener([NodeName, IP, Port]),
+    case StdListener of 
+        ok -> 
+            case inet_parse:address(PublicIP) of
+                {ok,_} -> 
+                    NatListener = make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort),
+                    NewRing = riak_repl_ring:add_nat_listener(Ring, NatListener),
+                    ok = maybe_set_ring(Ring, NewRing);
+                {error,_} -> 
+                    io:format("Invalid NAT IP address: ~p\n",
+                              [PublicIP])    
+            end;
+        Error ->
+            io:format("Error adding nat address: \n")
+    end.
+    
 
+    
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
