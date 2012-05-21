@@ -29,6 +29,11 @@ add_listener([NodeName, IP, Port]) ->
             io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
     end.
 
+add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
+    Listener = add_listener([NodeName, IP, Port]),
+    NatListener = make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort),
+    NatListener.
+
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
@@ -93,6 +98,12 @@ format_counter_stats([{K,V}|T]) ->
 make_listener(NodeName, IP, Port) ->
     #repl_listener{nodename=list_to_atom(NodeName),
                    listen_addr={IP, list_to_integer(Port)}}.
+
+make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort) ->
+    #nat_listener{nodename=list_to_atom(NodeName),
+                listen_addr={IP, list_to_integer(Port)},
+                nat_addr={PublicIP, list_to_integer(PublicPort)}}.
+
 
 make_site(SiteName, IP, Port) ->
     #repl_site{name=SiteName, addrs=[{IP, list_to_integer(Port)}]}.
