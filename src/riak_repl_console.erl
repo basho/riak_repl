@@ -20,10 +20,12 @@ add_listener([NodeName, IP, Port]) ->
                     ok = maybe_set_ring(Ring, NewRing);
                 false ->
                     io:format("~p is not a valid IP address for ~p\n",
-                              [IP, Listener#repl_listener.nodename]);
+                              [IP, Listener#repl_listener.nodename]),
+                    false;
                 Error ->
                     io:format("Node ~p must be available to add listener: ~p\n",
-                              [Listener#repl_listener.nodename, Error])
+                              [Listener#repl_listener.nodename, Error]),
+                    Error
             end;
         false ->
             io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
@@ -40,17 +42,20 @@ add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
                     ok = maybe_set_ring(Ring, NewRing);
                 {error,_} -> 
                     io:format("Invalid NAT IP address: ~p\n",
-                              [PublicIP])    
+                              [PublicIP])   
             end;
         Error ->
-            io:format("Error adding nat address: \n")
+            io:format("Error adding nat address: ~p\n",[Error]),
+            Error
     end.
     
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
+    
     Listener = make_listener(NodeName, IP, Port),
     NewRing = riak_repl_ring:del_listener(Ring, Listener),
     ok = maybe_set_ring(Ring, NewRing).
+
 
 add_site([IP, Port, SiteName]) ->
     Ring = get_ring(),
