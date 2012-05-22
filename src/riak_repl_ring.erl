@@ -3,7 +3,7 @@
 -module(riak_repl_ring).
 -author('Andy Gross <andy@andygross.org>').
 -include("riak_repl.hrl").
-
+ 
 -export([ensure_config/1,
          initial_config/0,
          get_repl_config/1,
@@ -14,6 +14,7 @@
          get_site/2,
          del_site/2,
          add_listener/2,
+         add_nat_listener/2,
          get_listener/2,
          del_listener/2]).
 
@@ -135,20 +136,52 @@ add_listener(Ring,Listener) ->
             Ring
     end.
 
+-spec(add_nat_listener/2 :: (ring(), #nat_listener{}) -> ring()).
+%% @doc Add a replication NAT listener host/port to the Ring.
+add_nat_listener(Ring,NatListener) ->
+    RC = get_repl_config(Ring),
+    NatListeners = dict:fetch(natlisteners, RC),
+    case lists:member(NatListener, NatListeners) of
+        false ->
+            NewListeners = [NatListener|NatListeners],
+            riak_core_ring:update_meta(
+              ?MODULE,
+              dict:store(natlisteners, NewListeners, RC),
+              Ring);
+        true ->
+            Ring
+    end.
+
+
 -spec(del_listener/2 :: (ring(), #repl_listener{}) -> ring()).
 %% @doc Delete a replication listener from the Ring.
-del_listener(Ring,Listener) -> 
+del_listener(Ring,Listener) ->
     RC  = get_repl_config(Ring),
     Listeners = dict:fetch(listeners, RC),
     case lists:member(Listener, Listeners) of
         false ->
             Ring;
         true ->
+            NatListeners = dict:fetch(natlisteners, RC),
+            NatsToRemove = [NatListener || NatListener <- NatListeners,
+                            (NatListener#nat_listener.listen_addr == Listener#repl_listener.listen_addr
+                                orelse NatListener#nat_listener.nat_addr == Listener#repl_listener.listen_addr),
+                                NatListener#nat_listener.nodename == Listener#repl_listener.nodename],
+            NatRing = case NatsToRemove of
+                [NatListener|_] ->
+                    NewNatListeners = lists:delete(NatListener, NatListeners),
+                    riak_core_ring:update_meta(
+                      ?MODULE,
+                      dict:store(natlisteners, NewNatListeners, RC),
+                      Ring);        
+                [] ->
+                    Ring
+            end,
             NewListeners = lists:delete(Listener, Listeners),
             riak_core_ring:update_meta(
               ?MODULE,
               dict:store(listeners, NewListeners, RC),
-              Ring)
+              NatRing)
     end.
 
 -spec(get_listener/2 :: (ring(), repl_addr()) -> #repl_listener{}|undefined).
@@ -160,6 +193,7 @@ get_listener(Ring,{_IP,_Port}=ListenAddr) ->
         false -> undefined;
         {value,Listener} -> Listener
     end.
+
 
 initial_config() ->
     dict:from_list(

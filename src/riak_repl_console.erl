@@ -3,7 +3,7 @@
 -module(riak_repl_console).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
--export([add_listener/1, del_listener/1]).
+-export([add_listener/1, del_listener/1, add_nat_listener/1]).
 -export([add_site/1, del_site/1]).
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
          pause_fullsync/1, resume_fullsync/1]).
@@ -20,20 +20,42 @@ add_listener([NodeName, IP, Port]) ->
                     ok = maybe_set_ring(Ring, NewRing);
                 false ->
                     io:format("~p is not a valid IP address for ~p\n",
-                              [IP, Listener#repl_listener.nodename]);
+                              [IP, Listener#repl_listener.nodename]),
+                    false;
                 Error ->
                     io:format("Node ~p must be available to add listener: ~p\n",
-                              [Listener#repl_listener.nodename, Error])
+                              [Listener#repl_listener.nodename, Error]),
+                    Error
             end;
         false ->
             io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename])
     end.
 
+add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
+    Ring = get_ring(),
+    case add_listener([NodeName, IP, Port]) of 
+        ok -> 
+            case inet_parse:address(PublicIP) of
+                {ok,_} -> 
+                    NatListener = make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort),
+                    NewRing = riak_repl_ring:add_nat_listener(Ring, NatListener),
+                    ok = maybe_set_ring(Ring, NewRing);
+                {error,_} -> 
+                    io:format("Invalid NAT IP address: ~p\n",
+                              [PublicIP])   
+            end;
+        Error ->
+            io:format("Error adding nat address: ~p\n",[Error]),
+            Error
+    end.
+    
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
+    
     Listener = make_listener(NodeName, IP, Port),
     NewRing = riak_repl_ring:del_listener(Ring, Listener),
     ok = maybe_set_ring(Ring, NewRing).
+
 
 add_site([IP, Port, SiteName]) ->
     Ring = get_ring(),
@@ -93,6 +115,12 @@ format_counter_stats([{K,V}|T]) ->
 make_listener(NodeName, IP, Port) ->
     #repl_listener{nodename=list_to_atom(NodeName),
                    listen_addr={IP, list_to_integer(Port)}}.
+
+make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort) ->
+    #nat_listener{nodename=list_to_atom(NodeName),
+                listen_addr={IP, list_to_integer(Port)},
+                nat_addr={PublicIP, list_to_integer(PublicPort)}}.
+
 
 make_site(SiteName, IP, Port) ->
     #repl_site{name=SiteName, addrs=[{IP, list_to_integer(Port)}]}.
