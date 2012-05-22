@@ -401,33 +401,77 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
             {stop, normal, State}
     end.
 
+%% Given a "remote" server's replication configuration and our own ring configuration,
+%% update the list of IP addresses for the remote server. This function will ensure
+%% that we don't add our own lisenter IP addresses to that list, even if we are setup
+%% as a bi-directional connection. If no changes are required, a simple token is returned
+%% so that the caller can avoid ring changes when not required.
+%%
+%% returns:
+%%   none                         - there are no changes to the site ip addresses
+%% | {some, NewConfiguration}     - changes occured and are updated in the NewConfiguration
+%% side effects:
+%%   nothing
+%%
+rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName) ->
+    %% IP address that the client listen on (in case client is also a server for
+    %% some other client site, which could be the RemoteSiteName's address(es) if
+    %% the repl configs are such that we're bi-directional).
+    MyListeners = dict:fetch(listeners, riak_repl_ring:get_repl_config(OurRing)),
+    MyListenIPAddrs = sets:from_list([R#repl_listener.listen_addr || R <- MyListeners]),
+    
+    %% IP addresses that the remote server listens on. This client connects to these.
+    TheirListeners = dict:fetch(listeners, TheirReplConfig),
+    TheirListenIPAddrs = sets:from_list([R#repl_listener.listen_addr || R <- TheirListeners]),
+
+    %% Remove our own IP addresses from the list that we'll connect to.
+    %% I have no idea why we subtract their listen IP addrs. If, somehow, their listen
+    %% IP addres were the same as ours, then we would NOT remove ourself from the connect-to
+    %% list and we'd try and sync to ourself. Bad. But it seems that the ports would be
+    %% different, I would hope. I think the usual case here will be that the ToRemove set
+    %% contains our own listener IP addrs.
+    ToRemove = sets:subtract(MyListenIPAddrs, TheirListenIPAddrs),
+
+    %% If there are IP addresses that the remote server listens on, that are not our
+    %% listener IP addresses, then add them to the set we'll connect to. Again, this
+    %% keeps us from trying to connect to ourself. This still seems that the usual
+    %% result would always be just their listen IP addrs since the ports would not
+    %% match (and certainly so if the IP address didn't match).
+    ToAdd = sets:subtract(TheirListenIPAddrs, MyListenIPAddrs),
+
+    %% THEORY: it feels to me like the above logic that computes the ToRemove
+    %% set is wrong. It seems that we should be looking at our connect-to set instead
+    %% and removing ourself from that set. Something like this...
+    RemoteSite = riak_repl_ring:get_site(OurRing, RemoteSiteName),
+    MyConnectToIPAddrs = sets:from_list(RemoteSite#repl_site.addrs),
+    _ToRemove = sets:subtract(MyConnectToIPAddrs, MyListenIPAddrs),
+
+    case sets:size(ToRemove) + sets:size(ToAdd) of
+        0 ->
+            %% no changes to the configuration are needed
+            none;
+        _ ->
+            OurRing1 = lists:foldl(fun(E,A) -> riak_repl_ring:del_site_addr(A, RemoteSiteName, E) end,
+				   OurRing, sets:to_list(ToRemove)),
+            OurRing2 = lists:foldl(fun(E,A) -> riak_repl_ring:add_site_addr(A, RemoteSiteName, E) end,
+				   OurRing1, sets:to_list(ToAdd)),
+            MyNewRC = riak_repl_ring:get_repl_config(OurRing2),
+	    {some, MyNewRC}
+    end.
+
 %% TODO figure out exactly what the point of this code is.
 %% I *think* the idea is to prevent a screwy repl setup from connecting to
 %% itself?
 update_site_ips(TheirReplConfig, SiteName) ->
     {ok, OurRing} = riak_core_ring_manager:get_my_ring(),
-
-    MyListeners = dict:fetch(listeners, riak_repl_ring:get_repl_config(OurRing)),
-    MyIPAddrs = sets:from_list([R#repl_listener.listen_addr || R <- MyListeners]),
-
-    TheirListeners = dict:fetch(listeners, TheirReplConfig),
-    TheirIPAddrs = sets:from_list([R#repl_listener.listen_addr || R <- TheirListeners]),
-
-    ToRemove = sets:subtract(MyIPAddrs, TheirIPAddrs),
-    ToAdd = sets:subtract(TheirIPAddrs, MyIPAddrs),
-
-    case sets:size(ToRemove) + sets:size(ToAdd) of
-        0 ->
-            %% nothing needs to be changed, so don't transform the ring for no reason
-            ok;
-        _ ->
-            OurRing1 = lists:foldl(fun(E,A) -> riak_repl_ring:del_site_addr(A, SiteName, E) end,
-                OurRing, sets:to_list(ToRemove)),
-            OurRing2 = lists:foldl(fun(E,A) -> riak_repl_ring:add_site_addr(A, SiteName, E) end,
-                OurRing1, sets:to_list(ToAdd)),
-
-            MyNewRC = riak_repl_ring:get_repl_config(OurRing2),
-            F = fun(InRing, ReplConfig) ->
+    NeededConfigChanges = rewrite_config_site_ips_pure(TheirReplConfig, OurRing, SiteName),
+    case NeededConfigChanges of
+	none ->
+            %% don't transform the ring for no reason
+	    ok;
+	{some, MyNewRC} ->
+	    %% apply changes to the ring now
+	    F = fun(InRing, ReplConfig) ->
                     {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
             end,
             {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
