@@ -286,6 +286,7 @@ handle_cast(kl_sort, State) ->
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     lager:info("Sorted ~s in ~.2f seconds",
                           [Filename, ElapsedUsec / 1000000]),
+    timer:sleep(100),
     gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built}),
     {stop, normal, State}.
 

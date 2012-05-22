@@ -199,7 +199,7 @@ send_keylist(continue, #state{kl_fh=FH0,socket=Socket,kl_counter=Count} = State)
         undefined ->
             lager:info("Full-sync for ~p; sending keylist for ~p",
                 [State#state.sitename, State#state.partition]),
-            {ok, F} = file:open(State#state.kl_fn, [read, binary, raw, read_ahead]),
+            {ok, F} = file:open(State#state.kl_fn, [read, binary, raw]),
             F;
         _ ->
             FH0
@@ -215,6 +215,29 @@ send_keylist(continue, #state{kl_fh=FH0,socket=Socket,kl_counter=Count} = State)
             end,
             {next_state, send_keylist, State#state{kl_fh=FH,
                     kl_counter=Count-1}};
+        {error, einval} ->
+            Pos = file:position(FH, cur),
+            lager:warning("got einval reading from keylist at position ~p",
+                [element(2, Pos)]),
+            timer:sleep(100),
+            case file:read(FH, ?MERKLE_CHUNKSZ) of
+                {ok, _} ->
+                    lager:info("retried read succeeded"),
+                    {ok, P} = Pos,
+                    file:position(FH, P), %% reset the position so we can read again
+                    gen_fsm:send_event(self(), continue),
+                    {next_state, send_keylist, State};
+                eof ->
+                    lager:info("retried read hit EOF"),
+                    gen_fsm:send_event(self(), continue),
+                    %% just go around the loop again
+                    {next_state, send_keylist, State};
+                Other ->
+                    lager:warning("retried read got ~p", [Other]),
+                    lager:warning("file info ~p",
+                        [file:read_file_info(State#state.kl_fn)]),
+                    {stop, {error, einval}, State}
+            end;
         eof ->
             file:close(FH),
             file:delete(State#state.kl_fn),
