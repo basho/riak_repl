@@ -53,7 +53,7 @@ status(quiet) ->
 
 status2(Verbose) ->
     Config = get_config(),
-    Stats1 = lists:sort(ets:tab2list(riak_repl_stats)),
+    Stats1 = lists:sort(riak_repl_stats:get_stats()),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
