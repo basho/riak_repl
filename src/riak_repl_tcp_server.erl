@@ -322,8 +322,7 @@ send_peerinfo(#state{socket=Socket} = State) ->
                     send_peerinfo(State)
             end;
         OtherNode ->
-            OtherListener = listener_for_node(OtherNode),
-            {Ip, Port} = OtherListener#repl_listener.listen_addr,
+            {Ip, Port} = ip_and_port_for_node(OtherNode),
             send(Socket, {redirect, Ip, Port}),
             {stop, normal, State}
     end.
@@ -335,13 +334,21 @@ send(Sock, Data) when is_binary(Data) ->
 send(Sock, Data) ->
     send(Sock, term_to_binary(Data)).
 
-listener_for_node(Node) ->
+ip_and_port_for_node(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ReplConfig = riak_repl_ring:get_repl_config(Ring),
     Listeners = dict:fetch(listeners, ReplConfig),
+
     NodeListeners = [L || L <- Listeners,
                           L#repl_listener.nodename =:= Node],
-    hd(NodeListeners).
+    NatListeners = dict:fetch(natlisteners, ReplConfig),
+    NatNodeListeners = [N || N <- NatListeners,
+                             N#nat_listener.nodename =:= Node],
+    %% if there is a NAT listener for the other node, use it
+    case NatNodeListeners of
+        [] -> hd(NodeListeners);
+        [NatNodeListener|_] -> NatNodeListener
+    end.
 
 drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
     case bounded_queue:out(Q) of
