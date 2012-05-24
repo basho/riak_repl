@@ -3,7 +3,7 @@
 -module(riak_repl_ring).
 -author('Andy Gross <andy@andygross.org>').
 -include("riak_repl.hrl").
- 
+
 -export([ensure_config/1,
          initial_config/0,
          get_repl_config/1,
@@ -66,7 +66,7 @@ add_site(Ring, Site=#repl_site{name=Name}) ->
 
 -spec(del_site/2 :: (ring(), repl_sitename()) -> ring()).
 %% @doc Delete a replication site from the Ring.
-del_site(Ring, SiteName) -> 
+del_site(Ring, SiteName) ->
     RC  = get_repl_config(Ring),
     Sites = dict:fetch(sites, RC),
     case lists:keysearch(SiteName, 2, Sites) of
@@ -193,6 +193,16 @@ del_nat_listener(Ring,Listener) ->
               Ring)
     end.
 
+-spec(get_listener/2 :: (ring(), repl_addr()) -> #repl_listener{}|undefined).
+%% @doc Fetch a replication host/port listener record from the Ring.
+get_listener(Ring,{_IP,_Port}=ListenAddr) ->
+    RC = get_repl_config(Ring),
+    Listeners  = dict:fetch(listeners, RC),
+    case lists:keysearch(ListenAddr, 3, Listeners) of
+        false -> undefined;
+        {value,Listener} -> Listener
+    end.
+
 -spec(get_nat_listener/2 :: (ring(), #repl_listener{}) -> #nat_listener{}|undefined).
 %% @doc Fetch a replication nat host/port listener record from the Ring.
 get_nat_listener(Ring,Listener) ->
@@ -211,34 +221,24 @@ get_nat_listener(Ring,Listener) ->
         [] -> undefined
     end.
 
--spec(get_listener/2 :: (ring(), repl_addr()) -> #repl_listener{}|undefined).
-%% @doc Fetch a replication host/port listener record from the Ring.
-get_listener(Ring,{_IP,_Port}=ListenAddr) -> 
-    RC = get_repl_config(Ring),
-    Listeners  = dict:fetch(listeners, RC),
-    case lists:keysearch(ListenAddr, 3, Listeners) of
-        false -> undefined;
-        {value,Listener} -> Listener
-    end.
+%% -spec(get_nat_listener/3 :: (ring(), atom(), repl_addr()) -> #nat_listener{}|undefined).
+%% %% @doc Fetch a replication nat host/port listener record from the Ring.
+%% get_nat_listener(Ring,NodeName, {_IP,_Port}=ListenAddr) ->
+%%     RC = get_repl_config(Ring),
+%%     NatListeners  = dict:fetch(natlisteners, RC),
 
--spec(get_nat_listener/3 :: (ring(), atom(), repl_addr()) -> #nat_listener{}|undefined).
-%% @doc Fetch a replication nat host/port listener record from the Ring.
-get_nat_listener(Ring,NodeName, {_IP,_Port}=ListenAddr) -> 
-    RC = get_repl_config(Ring),
-    NatListeners  = dict:fetch(natlisteners, RC),
-
-    % search for a natlistener using only nodename, ip + port,
-    % since nat uses nodename+ip+port+natip+natport as a key
-    NatListenerMatches = [NatListener || NatListener <- NatListeners,
-                        (NatListener#nat_listener.listen_addr == ListenAddr
-                        orelse NatListener#nat_listener.nat_addr == ListenAddr),
-                        NatListener#nat_listener.nodename == NodeName],
-    % this will only return the first nat listener that matches
-    % the search criteria
-    case NatListenerMatches of
-        [NatListener|_] -> NatListener;
-        [] -> undefined
-    end.
+%%     % search for a natlistener using only nodename, ip + port,
+%%     % since nat uses nodename+ip+port+natip+natport as a key
+%%     NatListenerMatches = [NatListener || NatListener <- NatListeners,
+%%                         (NatListener#nat_listener.listen_addr == ListenAddr
+%%                         orelse NatListener#nat_listener.nat_addr == ListenAddr),
+%%                         NatListener#nat_listener.nodename == NodeName],
+%%     % this will only return the first nat listener that matches
+%%     % the search criteria
+%%     case NatListenerMatches of
+%%         [NatListener|_] -> NatListener;
+%%         [] -> undefined
+%%     end.
 
 initial_config() ->
     dict:from_list(
@@ -286,37 +286,46 @@ del_site_test() ->
     Ring0 = add_get_site_test(),
     Ring1 = del_site(Ring0, "test"),
     ?assertEqual(undefined, get_site(Ring1, "test")).
-    
+
 add_get_listener_test() ->
     Ring0 = ensure_config_test(),
-    Listener = #repl_listener{nodename='test@test', 
+    Listener = #repl_listener{nodename='test@test',
                               listen_addr={"127.0.0.1", 9010}},
     Ring1 = add_listener(Ring0, Listener),
     Listener = get_listener(Ring1, {"127.0.0.1", 9010}),
     Ring1.
-    
+
 del_listener_test() ->
     Ring0 = add_get_listener_test(),
-    Ring1 = del_listener(Ring0, #repl_listener{nodename='test@test', 
+    Ring1 = del_listener(Ring0, #repl_listener{nodename='test@test',
                                                listen_addr={"127.0.0.1", 9010}}),
     ?assertEqual(undefined, get_listener(Ring1, {"127.0.0.1", 9010})).
 
 add_get_natlistener_test() ->
     Ring0 = ensure_config_test(),
-    NatListener = #nat_listener{nodename='test@test', 
-                              listen_addr={"127.0.0.1", 9010},
-                              nat_addr={"10.11.12.13", 9011}
-                              },
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    NatListener = #nat_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort},
+                              nat_addr={NatAddr, NatPort}
+                               },
     Ring1 = add_nat_listener(Ring0, NatListener),
-    get_nat_listener(Ring1, 'test@test',{"127.0.0.1", 9010}),
-    Ring1.
-    
+    %% you can only get a nat_listener by using a repl_listener
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    ?assertNot(undefined == get_nat_listener(Ring1, Listener)).
+
 del_natlistener_test() ->
     Ring0 = add_get_listener_test(),
-    Ring1 = del_listener(Ring0, #nat_listener{nodename='test@test', 
-                                               listen_addr={"127.0.0.1", 9010},
-                                                nat_addr={"10.11.12.13", 9011}}),
-    ?assertEqual(undefined, get_nat_listener(Ring1, 'test@test',{"127.0.0.1", 9010})).
-
-
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    Ring1 = del_listener(Ring0, Listener),
+    ?assertEqual(undefined, get_nat_listener(Ring1, Listener)).
 -endif.

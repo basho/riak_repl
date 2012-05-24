@@ -101,7 +101,7 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
-    Desc = 
+    Desc =
         [
             {site, State#state.sitename},
             {strategy, State#state.fullsync_strategy},
@@ -321,7 +321,7 @@ send_peerinfo(#state{socket=Socket} = State) ->
                     %% leader has changed, try again
                     send_peerinfo(State)
             end;
-        OtherNode -> 
+        OtherNode ->
             OtherListener = listener_for_node(OtherNode),
             {Ip, Port} = OtherListener#repl_listener.listen_addr,
             send(Socket, {redirect, Ip, Port}),

@@ -26,19 +26,19 @@ add_listener_internal(Ring, [NodeName, IP, Port]) ->
                                 riak_repl_util, valid_host_ip, [IP]) of
                 true ->
                     NewRing = riak_repl_ring:add_listener(Ring, Listener),
-                    {ok,NewRing}; 
+                    {ok,NewRing};
                 false ->
                     io:format("~p is not a valid IP address for ~p\n",
                               [IP, Listener#repl_listener.nodename]),
-                    {error,Ring};
+                    {error,error};
                 Error ->
                     io:format("Node ~p must be available to add listener: ~p\n",
                               [Listener#repl_listener.nodename, Error]),
-                    {error,Ring}
+                    {error,error}
             end;
         false ->
             io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename]),
-            {error, Ring}
+            {error, error}
     end.
 
 add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
@@ -51,10 +51,10 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
                     {ok, NewRing2};
                 {error, IPParseError} ->
                     io:format("Invalid NAT IP address: ~p~n", [IPParseError]),
-                    {error, Ring};
+                    {error, error};
                 {_,Error} ->
                     io:format("Error adding NAT Listener: ~s~n",[Error]),
-                    {error, Ring}
+                    {error, error}
             end;
         {error,_} ->
             io:format("Error adding nat address. ~n"),
@@ -62,7 +62,7 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
     end.
 
 del_listener([NodeName, IP, Port]) ->
-    Ring = get_ring(),    
+    Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
     NewRing0 = riak_repl_ring:del_listener(Ring, Listener),
     NewRing = riak_repl_ring:del_nat_listener(NewRing0, Listener),
@@ -167,7 +167,7 @@ get_config() ->
                     [];
                 {ok, Listeners} ->
                     lists:flatten([format_listener(L) || L <- Listeners])
-            end ++ 
+            end ++
             case dict:find(natlisteners, Repl) of
                 error ->
                     [];
@@ -178,7 +178,7 @@ get_config() ->
 
 format_site(S) ->
     [{S#repl_site.name ++ "_ips", format_ips(S#repl_site.addrs)}].
-        
+
 format_ips(IPs) ->
     string:join([format_ip(IP) || IP <- IPs], ", ").
 
@@ -191,12 +191,12 @@ format_listener(L) ->
 
 format_nat_listener(L) ->
     [{"natlistener_" ++ atom_to_list(L#nat_listener.nodename),
-      format_ip(L#nat_listener.listen_addr) ++ "->" ++ 
+      format_ip(L#nat_listener.listen_addr) ++ "->" ++
       format_ip(L#nat_listener.nat_addr)}].
 
 leader_stats() ->
     LeaderNode = riak_repl_leader:leader_node(),
-    LocalStats = 
+    LocalStats =
         try
             LocalProcInfo = erlang:process_info(whereis(riak_repl_leader_gs),
                                                 [message_queue_len, heap_size]),
@@ -237,7 +237,7 @@ client_stats(Pid) ->
                     too_busy
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
-    
+
 
 server_stats(Pid) ->
     %% try and work out what state the TCP server is in.  In the middle
@@ -250,6 +250,6 @@ server_stats(Pid) ->
                     too_busy
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
-                        
+
 server_pids() ->
     [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined].
