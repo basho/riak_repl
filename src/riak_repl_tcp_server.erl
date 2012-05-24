@@ -338,7 +338,6 @@ ip_and_port_for_node(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ReplConfig = riak_repl_ring:get_repl_config(Ring),
     Listeners = dict:fetch(listeners, ReplConfig),
-
     NodeListeners = [L || L <- Listeners,
                           L#repl_listener.nodename =:= Node],
     NatListeners = dict:fetch(natlisteners, ReplConfig),

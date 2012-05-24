@@ -221,24 +221,6 @@ get_nat_listener(Ring,Listener) ->
         [] -> undefined
     end.
 
-%% -spec(get_nat_listener/3 :: (ring(), atom(), repl_addr()) -> #nat_listener{}|undefined).
-%% %% @doc Fetch a replication nat host/port listener record from the Ring.
-%% get_nat_listener(Ring,NodeName, {_IP,_Port}=ListenAddr) ->
-%%     RC = get_repl_config(Ring),
-%%     NatListeners  = dict:fetch(natlisteners, RC),
-
-%%     % search for a natlistener using only nodename, ip + port,
-%%     % since nat uses nodename+ip+port+natip+natport as a key
-%%     NatListenerMatches = [NatListener || NatListener <- NatListeners,
-%%                         (NatListener#nat_listener.listen_addr == ListenAddr
-%%                         orelse NatListener#nat_listener.nat_addr == ListenAddr),
-%%                         NatListener#nat_listener.nodename == NodeName],
-%%     % this will only return the first nat listener that matches
-%%     % the search criteria
-%%     case NatListenerMatches of
-%%         [NatListener|_] -> NatListener;
-%%         [] -> undefined
-%%     end.
 
 initial_config() ->
     dict:from_list(
