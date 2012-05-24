@@ -67,17 +67,6 @@ del_listener([NodeName, IP, Port]) ->
     NewRing = riak_repl_ring:del_listener(Ring, Listener),
     ok = maybe_set_ring(Ring, NewRing).
 
-
-
-    
-del_listener([NodeName, IP, Port]) ->
-    Ring = get_ring(),
-    
-    Listener = make_listener(NodeName, IP, Port),
-    NewRing = riak_repl_ring:del_listener(Ring, Listener),
-    ok = maybe_set_ring(Ring, NewRing).
-
-
 add_site([IP, Port, SiteName]) ->
     Ring = get_ring(),
     Site = make_site(SiteName, IP, Port),

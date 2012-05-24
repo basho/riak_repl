@@ -46,12 +46,6 @@
           listen_addr :: repl_addr() %% ip/port to bind/listen on
          }).
 
--record(nat_listener, {
-          nodename    :: atom(),      %% cluster-local node name
-          listen_addr :: repl_addr(), %% ip/port to bind/listen on
-          nat_addr :: repl_addr()     %% ip/port that nat bind/listens to
-         }).
-
 -record(repl_site, {
           name  :: repl_sitename(),   %% site name
           addrs=[] :: repl_addrlist(),%% list of ip/ports to connect to
