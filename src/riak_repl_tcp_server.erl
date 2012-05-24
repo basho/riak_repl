@@ -345,8 +345,11 @@ ip_and_port_for_node(Node) ->
                              N#nat_listener.nodename =:= Node],
     %% if there is a NAT listener for the other node, use it
     case NatNodeListeners of
-        [] -> hd(NodeListeners);
-        [NatNodeListener|_] -> NatNodeListener
+        [] -> 
+            L = hd(NodeListeners),
+            L#repl_listener.listen_addr;
+        [NatNodeListener|_] -> 
+            NatNodeListener#nat_listener.listen_addr
     end.
 
 drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
