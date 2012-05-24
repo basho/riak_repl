@@ -8,16 +8,17 @@
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
          pause_fullsync/1, resume_fullsync/1]).
 
-
-add_listener([NodeName, IP, Port]) ->
-    {Status, Msg, _} = add_listener_internal([NodeName, IP, Port]),
-    case Status of
-        ok -> ok;
-        error -> io:format(Msg)
-    end.
-
-add_listener_internal([NodeName, IP, Port]) ->
+add_listener(Params) ->
     Ring = get_ring(),
+    {ok, NewRing} = add_listener_internal(Ring,Params),
+    ok = maybe_set_ring(Ring, NewRing).
+
+add_nat_listener(Params) ->
+    Ring = get_ring(),
+    {ok, NewRing} = add_nat_listener_internal(Ring, Params),
+    ok = maybe_set_ring(Ring, NewRing).
+
+add_listener_internal(Ring, [NodeName, IP, Port]) ->
     Listener = make_listener(NodeName, IP, Port),
     case lists:member(Listener#repl_listener.nodename, riak_core_ring:all_members(Ring)) of
         true ->
@@ -25,40 +26,49 @@ add_listener_internal([NodeName, IP, Port]) ->
                                 riak_repl_util, valid_host_ip, [IP]) of
                 true ->
                     NewRing = riak_repl_ring:add_listener(Ring, Listener),
-                    ok = maybe_set_ring(Ring, NewRing),
-                    {ok,false,NewRing};
+                    {ok,NewRing}; 
                 false ->
-                    Msg = io_lib:format("~p is not a valid IP address for ~p\n", 
-                        [IP, Listener#repl_listener.nodename]),
-                    {error,Msg,Ring};
+                    io:format("~p is not a valid IP address for ~p\n",
+                              [IP, Listener#repl_listener.nodename]),
+                    {error,Ring};
                 Error ->
-                    Msg = io_lib:format("Node ~p must be available to add listener: ~p\n",
-                        [Listener#repl_listener.nodename, Error]),
-                    {error,Msg,Ring}
+                    io:format("Node ~p must be available to add listener: ~p\n",
+                              [Listener#repl_listener.nodename, Error]),
+                    {error,Ring}
             end;
         false ->
-            Msg = io_lib:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename]),
-            {error,Msg,Ring}
+            io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename]),
+            {error, Ring}
     end.
 
-add_nat_listener([NodeName, IP, Port, PublicIP, PublicPort]) ->
-    {Status, Msg, Ring} = add_listener_internal([NodeName, IP, Port]),
-    case Status of
-        ok ->
+add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
+    case add_listener_internal(Ring, [NodeName, IP, Port]) of
+        {ok,NewRing} ->
             case inet_parse:address(PublicIP) of
-                {ok,_} ->
+                {ok, _} ->
                     NatListener = make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort),
-                    NewRing = riak_repl_ring:add_nat_listener(Ring, NatListener),
-                    ok = maybe_set_ring(Ring, NewRing);
-                {error,IPParseError} ->
-                    io:format("Invalid NAT IP address: ~p~n", [IPParseError]);
-                {_,_} ->
-                    io:format("Error adding NAT Listener: ~s~n",[Msg])
+                    NewRing2 = riak_repl_ring:add_nat_listener(NewRing, NatListener),
+                    {ok, NewRing2};
+                {error, IPParseError} ->
+                    io:format("Invalid NAT IP address: ~p~n", [IPParseError]),
+                    {error, Ring};
+                {_,Error} ->
+                    io:format("Error adding NAT Listener: ~s~n",[Error]),
+                    {error, Ring}
             end;
-        error ->
-            io:format("Error adding nat address: ~s~n", [Msg]),
-            Status
+        {error,_} ->
+            io:format("Error adding nat address. ~n"),
+            {error, Ring}
     end.
+
+del_listener([NodeName, IP, Port]) ->
+    Ring = get_ring(),    
+    Listener = make_listener(NodeName, IP, Port),
+    NewRing = riak_repl_ring:del_listener(Ring, Listener),
+    ok = maybe_set_ring(Ring, NewRing).
+
+
+
     
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),

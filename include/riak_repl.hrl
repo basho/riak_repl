@@ -58,6 +58,11 @@
           last_sync=?NEVER_SYNCED :: tuple()  
          }).
 
+-record(nat_listener, {
+          nodename    :: atom(),      %% cluster-local node name
+          listen_addr :: repl_addr(), %% ip/port to bind/listen on
+          nat_addr :: repl_addr()     %% ip/port that nat bind/listens to
+         }).
 
 -define(REPL_HOOK, {struct, 
                     [{<<"mod">>, <<"riak_repl_leader">>},
