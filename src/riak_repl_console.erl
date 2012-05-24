@@ -58,7 +58,7 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
             end;
         {error,_} ->
             io:format("Error adding nat address. ~n"),
-            {error, Ring}
+            {error, error}
     end.
 
 del_listener([NodeName, IP, Port]) ->

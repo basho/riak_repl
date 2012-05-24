@@ -388,7 +388,7 @@ nat_redirect_test() ->
     ListenAddr = "127.0.0.1",
     ListenPort = 9010,
     NatAddr    = "10.11.12.13",
-    NatPort    = 9011,
+    NatPort    = 9011, %% port should be coming through as a string
     NatListener = #nat_listener{nodename=NodeName,
                                 listen_addr={ListenAddr, ListenPort},
                                 nat_addr={NatAddr, NatPort}
@@ -398,8 +398,7 @@ nat_redirect_test() ->
     Ring1 = riak_repl_ring:add_nat_listener(Ring0, NatListener),
     {Ip, Port} = ip_and_port_for_node(NodeName, Ring1),
     ?assertEqual("10.11.12.13", Ip),
-    ?assertEqual(9011, Port),
-    riak_repl_ring:del_listener(Ring1,Listener).
+    ?assertEqual(9011, Port).
 
 non_nat_redirect_test() ->
     Ring0 = riak_repl_ring:ensure_config_test(),
@@ -411,7 +410,6 @@ non_nat_redirect_test() ->
     Ring1 = riak_repl_ring:add_listener(Ring0, Listener),
     {Ip, Port} = ip_and_port_for_node(NodeName, Ring1),
     ?assertEqual("127.0.0.1", Ip),
-    ?assertEqual(9010, Port),
-    riak_repl_ring:del_listener(Ring1,Listener).
+    ?assertEqual(9010, Port).
 
 -endif.
