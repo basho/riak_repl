@@ -288,7 +288,6 @@ add_get_natlistener_test() ->
     NodeName   = "test@test",
     ListenAddr = "127.0.0.1",
     ListenPort = 9010,
-
     NatAddr    = "10.11.12.13",
     NatPort    = 9011,
     NatListener = #nat_listener{nodename=NodeName,
