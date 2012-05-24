@@ -64,7 +64,8 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
 del_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),    
     Listener = make_listener(NodeName, IP, Port),
-    NewRing = riak_repl_ring:del_listener(Ring, Listener),
+    NewRing0 = riak_repl_ring:del_listener(Ring, Listener),
+    NewRing = riak_repl_ring:del_nat_listener(NewRing0, Listener),
     ok = maybe_set_ring(Ring, NewRing).
 
 add_site([IP, Port, SiteName]) ->

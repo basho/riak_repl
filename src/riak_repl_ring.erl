@@ -17,6 +17,7 @@
          add_nat_listener/2,
          get_listener/2,
          del_listener/2,
+         del_nat_listener/2,
          get_nat_listener/2]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -170,16 +171,17 @@ del_listener(Ring,Listener) ->
     case lists:member(Listener, Listeners) of
         false -> Ring;
         true ->
-            NatRing = del_nat_listener(Ring,RC,Listener),
+            NatRing = del_nat_listener(Ring,Listener),
             NewListeners = lists:delete(Listener, Listeners),
             riak_core_ring:update_meta(
               ?MODULE,
               dict:store(listeners, NewListeners, get_repl_config(NatRing)), NatRing)
     end.
 
--spec(del_nat_listener/3 :: (ring(),dict(),#repl_listener{}) -> ring()).
+-spec(del_nat_listener/2 :: (ring(),#repl_listener{}) -> ring()).
 %% @doc Delete a nat_listener from the list of nat_listeners
-del_nat_listener(Ring,RC,Listener) ->
+del_nat_listener(Ring,Listener) ->
+    RC  = get_repl_config(Ring),
     case get_nat_listener(Ring, Listener) of
         undefined ->  Ring;
         NatListener ->
