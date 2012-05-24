@@ -24,6 +24,7 @@
 -type(repl_socket() :: port()).
 -type(repl_sitename() :: string()).
 -type(ring() :: tuple()).
+-type(repl_config() :: dict()|undefined).
 
 -record(peer_info, {
           riak_version :: string(), %% version number of the riak_kv app
