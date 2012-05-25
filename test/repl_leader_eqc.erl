@@ -154,6 +154,11 @@ precondition(_From, _To, S, {call, ?MODULE, add_receiver, [Node]}) ->
 precondition(_From, _To, _S, _Call) ->
     true.
 
+postcondition(_From, _To, _S, {call, ?MODULE, start_repl, [_]}, Res) ->
+    case Res of
+        ok -> true;
+        _ -> {start_repl, Res}
+    end;
 postcondition(_From, _To, S, {call, ?MODULE, ping, [Node]}, Res) ->
     ReplNode = get_replnode(Node, S),
     case ReplNode#replnode.running of 
@@ -233,8 +238,10 @@ start_repl(ReplNode) ->
     dbg:n(Node),
     %?DBG("Cover nodes: ~p\n", [_StartedNodes]),
     ?DBG("Started slave ~p\n", [Node]),
-    rpc:call(Node, ?MODULE, setup_slave, [ReplNode#replnode.candidates,
-                                          ReplNode#replnode.workers]).
+    R = rpc:call(Node, ?MODULE, setup_slave, [ReplNode#replnode.candidates,
+                                          ReplNode#replnode.workers]),
+    ?DBG("slave start returned ~p~n", [R]),
+    R.
 
 stop_repl(Node) ->
     ?DBG("Stopping cover on ~p\n", [Node]),
@@ -345,7 +352,7 @@ lookup_leaders(Nodes, LeaderByNode) ->
     lists:foldl(F, [], Nodes).
 
 maybe_start_net_kernel() ->
-    case net_kernel:start([?MODULE, shortnames]) of
+    case net_kernel:start(['repl_leader_eqc@127.0.0.1', longnames]) of
         {ok, _} ->
             ?DBG("Net kernel started as ~p\n", [node()]);
         {error, {already_started, _}} ->
@@ -359,10 +366,13 @@ good_path() ->
         D <- lists:filter(fun filelib:is_dir/1, code:get_path())].
 
 make_node(N) ->
-    list_to_atom("n" ++ integer_to_list(N) ++ "@" ++ net_adm:localhost()).
+    list_to_atom("n" ++ integer_to_list(N) ++ "@" ++ get_host(node())).
 
 get_name(Node) ->
     list_to_atom(hd(string:tokens(atom_to_list(Node), "@"))).
+
+get_host(_Node) ->
+    "127.0.0.1".
 
 shorten(Nodes) ->
     [get_name(N) || N <- Nodes].
@@ -459,6 +469,7 @@ helper_leader_node(N, S) ->
             HelperLN = rpc:call(N, riak_repl_leader_helper,
                                 leader_node, [Helper, 300000], 305000)
     end,
+    ?DBG("UpCandidatess ~p~n", [UpCandidates]),
     {HelperLN, UpCandidates}.
     
 %% ====================================================================
@@ -485,7 +496,9 @@ start_slave_driver() ->
 slave_driver_loop() ->
     receive
         {start, Name, ReplyTo} ->
-            {ok, Node} = slave:start_link(net_adm:localhost(), Name),
+            ?DBG("starting node ~p@~p from node ~p~n", [Name,
+                    get_host(node()), node()]),
+            {ok, Node} = slave:start_link(get_host(node()), Name),
             true = rpc:call(Node, code, set_path, [good_path()]),
             ReplyTo ! {ok, Node};
         {stop, Node, ReplyTo} ->
@@ -561,13 +574,21 @@ start_leader(Candidates, Workers) ->
     {ok, RMPid} = riak_core_ring_manager:start_link(test),
     ?DBG("Started ring_manager at ~p~n", [RMPid]),
     unlink(RMPid),
+    {ok, NWEPid} = riak_core_node_watcher_events:start_link(),
+    ?DBG("Started node_watcher_events at ~p~n", [NWEPid]),
+    unlink(NWEPid),
+    application:set_env(riak_core, gossip_interval, 5000),
+    {ok, NWPid} = riak_core_node_watcher:start_link(),
+    ?DBG("Started node_watcher at ~p~n", [NWPid]),
+    unlink(NWPid),
     {ok, CSPid} = riak_repl_client_sup:start_link(),
     ?DBG("Started repl client_sup at ~p~n", [CSPid]),
     unlink(CSPid),
     {ok, SSPid} = riak_repl_server_sup:start_link(),
-    ?DBG("Started repl client_sup at ~p~n", [SSPid]),
+    ?DBG("Started repl server_sup at ~p~n", [SSPid]),
     unlink(SSPid),
     {ok, Pid} = riak_repl_leader:start_link(), 
+    ?DBG("Started repl leader at ~p", [Pid]),
     unlink(Pid),
 
     %% set the candidates so that the repl helper is created
@@ -576,10 +597,12 @@ start_leader(Candidates, Workers) ->
     ?DBG("Started repl on ~p as ~p with candidates {~p, ~p}\n",
          [node(), Pid, Candidates, Workers]),
 
+    %riak_repl_leader:ensure_sites(),
+
     %% Check leader completes election
-    {ok, Helper} = wait_for_helper(node()),
-    _HelperLN = riak_repl_leader_helper:leader_node(Helper, 10000),
-    Pid.
+    %{ok, Helper} = wait_for_helper(node()),
+    %_HelperLN = riak_repl_leader_helper:leader_node(Helper, 10000),
+    ok.
 
 
 %% Creates a dummy process that waits for the message 'die'
