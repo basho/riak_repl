@@ -307,6 +307,7 @@ send_peerinfo(#state{socket=Socket} = State) ->
         OurNode ->
             case riak_repl_leader:add_receiver_pid(self()) of
                 ok ->
+                    {ok, {TheirIP, _}} = inet:peername(Socket),
                     erlang:cancel_timer(State#state.election_timeout),
                     %% this switches the socket into active mode
                     Props = riak_repl_fsm_common:common_init(Socket),
@@ -314,7 +315,7 @@ send_peerinfo(#state{socket=Socket} = State) ->
                     send(Socket, {peerinfo, PI,
                             [bounded_queue, keepalive, {fullsync_strategies,
                                     app_helper:get_env(riak_repl, fullsync_strategies,
-                                        [?LEGACY_STRATEGY])}]}),
+                                        [?LEGACY_STRATEGY])}, {connected_ip, TheirIP}]}),
                     {noreply, State#state{
                             client=proplists:get_value(client, Props),
                             election_timeout=undefined,
@@ -324,8 +325,13 @@ send_peerinfo(#state{socket=Socket} = State) ->
                     send_peerinfo(State)
             end;
         OtherNode ->
+            %% receive stuff off of wire
+            ConnectedIP = receive
+                {peerinfo, _, Capabilities} ->
+                    [Cap || Cap = {connected_ip,_} <- Capabilities]
+            end,
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            {Ip, Port} = ip_and_port_for_node(OtherNode, Ring),
+            {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, ConnectedIP),
             send(Socket, {redirect, Ip, Port}),
             {stop, normal, State}
     end.
@@ -337,21 +343,23 @@ send(Sock, Data) when is_binary(Data) ->
 send(Sock, Data) ->
     send(Sock, term_to_binary(Data)).
 
-ip_and_port_for_node(Node, Ring) ->
+ip_and_port_for_node(Node, Ring, ConnectedIp) ->
     ReplConfig = riak_repl_ring:get_repl_config(Ring),
     Listeners = dict:fetch(listeners, ReplConfig),
     NodeListeners = [L || L <- Listeners,
-                          L#repl_listener.nodename =:= Node],
+                          L#repl_listener.nodename == Node],
     NatListeners = dict:fetch(natlisteners, ReplConfig),
     NatNodeListeners = [N || N <- NatListeners,
-                             N#nat_listener.nodename =:= Node],
-    %% if there is a NAT listener for the other node, use it
-    case NatNodeListeners of
-        [] ->
+                             N#nat_listener.nodename == Node],
+    NatListenAddrs = [R#nat_listener.nat_addr || R <- NatListeners],
+    UseNats = lists:keymember(ConnectedIp, 1, NatListenAddrs),
+    case UseNats of
+        false ->
             L = hd(NodeListeners),
             L#repl_listener.listen_addr;
-        [NatNodeListener|_] ->
-            NatNodeListener#nat_listener.nat_addr
+        true ->
+            NL = hd(NatNodeListeners),
+            NL#nat_listener.nat_addr
     end.
 
 drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
@@ -388,15 +396,13 @@ nat_redirect_test() ->
     ListenAddr = "127.0.0.1",
     ListenPort = 9010,
     NatAddr    = "10.11.12.13",
-    NatPort    = 9011, %% port should be coming through as a string
+    NatPort    = 9011,
     NatListener = #nat_listener{nodename=NodeName,
                                 listen_addr={ListenAddr, ListenPort},
                                 nat_addr={NatAddr, NatPort}
                                },
-    Listener = #repl_listener{nodename=NodeName,
-                              listen_addr={ListenAddr, ListenPort}},
     Ring1 = riak_repl_ring:add_nat_listener(Ring0, NatListener),
-    {Ip, Port} = ip_and_port_for_node(NodeName, Ring1),
+    {Ip, Port} = ip_and_port_for_node(NodeName, Ring1, NatAddr),
     ?assertEqual("10.11.12.13", Ip),
     ?assertEqual(9011, Port).
 
@@ -408,8 +414,29 @@ non_nat_redirect_test() ->
     Listener = #repl_listener{nodename=NodeName,
                               listen_addr={ListenAddr, ListenPort}},
     Ring1 = riak_repl_ring:add_listener(Ring0, Listener),
-    {Ip, Port} = ip_and_port_for_node(NodeName, Ring1),
+    {Ip, Port} = ip_and_port_for_node(NodeName, Ring1, ListenAddr),
     ?assertEqual("127.0.0.1", Ip),
     ?assertEqual(9010, Port).
+
+x_test() ->
+    Ring0 = riak_repl_ring:ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    Ring1 = riak_repl_ring:add_nat_listener(Ring0, NatListener),
+    Ring2 = riak_repl_ring:add_listener(Ring1, Listener),
+    {Ip, Port} = ip_and_port_for_node(NodeName, Ring2, ListenAddr),
+    ?assertEqual("127.0.0.1", Ip),
+    ?assertEqual(9010, Port).
+
 
 -endif.
