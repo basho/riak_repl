@@ -512,7 +512,7 @@ update_site_ips(TheirReplConfig, SiteName) ->
 	none ->
             %% don't transform the ring for no reason
 	    ok;
-	{some, MyNewRing} ->
+	MyNewRing ->
 	    %% apply changes to the ring now
 	    F = fun(InRing, ReplConfig) ->
                     {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
