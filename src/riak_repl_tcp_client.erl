@@ -328,7 +328,8 @@ recv_peerinfo(#state{socket=Socket} = State) ->
             {stop, normal, State}
     end.
 
-handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo, Capability) ->
+handle_peerinfo(#state{sitename=SiteName, socket=Socket, listener={_, ConnIP, _Port}} = State,
+                       TheirPeerInfo, Capability) ->
     MyPeerInfo = State#state.my_pi,
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
@@ -382,7 +383,7 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
                             KeepaliveTime = undefined
                     end,
                     TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
-                    update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
+                    update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName, ConnIP),
                     inet:setopts(Socket, [{active, once}]),
                     riak_repl_stats:client_connects(),
                     MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
@@ -404,15 +405,20 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
     end.
 
 %% @doc get public IP addrs from NAT, otherwise local IP listeners
-get_public_listener_addrs(ReplConfig) ->
+%% ConnectedIP represents the IP addr of our connection to RemoteSite,
+%% so if the ConnectedIP address is in the list of NAT'd listeners,
+%% then use the NAT addresses. Otherwise, use local addresses. If
+%% there are no NAT addresses, then use the local ones.
+get_public_listener_addrs(ReplConfig, ConnectedIP) ->
     NatListeners = dict:fetch(natlisteners, ReplConfig),
     NatListenAddrs = [R#nat_listener.nat_addr || R <- NatListeners],
-    case NatListenAddrs of
-        [] ->
+    UseNats = lists:keymember(ConnectedIP, 1, NatListenAddrs),
+    case UseNats of
+        false ->
             %% no NAT listeners, use the "private" listeners as public
             Listeners = dict:fetch(listeners, ReplConfig),
             [R#repl_listener.listen_addr || R <- Listeners];
-        _ ->
+        true ->
             NatListenAddrs
     end.
 
@@ -425,7 +431,7 @@ get_all_listener_addrs(ReplConfig) ->
     NatListenAddrs = [R#nat_listener.listen_addr || R <- NatListeners],
     ListenAddrs++NatAddrs++NatListenAddrs.
 
--spec(rewrite_config_site_ips_pure/3 :: (repl_config(),ring(),repl_sitename())
+-spec(rewrite_config_site_ips_pure/4 :: (repl_config(),ring(),repl_sitename(),ip_addr_str())
                                         -> none|ring()).
 %% @doc Update replication configuration with corrected set of IP addrs for a RemoteSite.
 %%
@@ -437,7 +443,7 @@ get_all_listener_addrs(ReplConfig) ->
 %% NAT-aware (for Network Address Translations where the cluster has different public
 %% and private IP addresses across firewalls or routers). Also removes stale IP addrs.
 %%
-rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName) ->
+rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, ConnectedIP) ->
     %% IP addresses that this client listens on (in case client is also a server for
     %% some other client site, which could be the RemoteSiteName's address(es) if
     %% the repl configs are such that we're bi-directional).
@@ -446,7 +452,7 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName) ->
     lager:debug("MyListenAddrs = ~p~n", [MyListenAddrs]),
 
     %% IP addresses that the remote server listens on.
-    TheirListenAddrs = get_public_listener_addrs(TheirReplConfig),
+    TheirListenAddrs = get_public_listener_addrs(TheirReplConfig, ConnectedIP),
     lager:debug("TheirListenAddrs = ~p~n", [TheirListenAddrs]),
 
     %% IP address that this client wants to connect to for RemoteSiteName
@@ -499,15 +505,16 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName) ->
             OurNewRing
     end.
 
--spec(update_site_ips/2 :: (repl_config(),repl_sitename()) -> ok).
+-spec(update_site_ips/3 :: (repl_config(),repl_sitename(),ip_addr_str()) -> ok).
 %% @doc update the ring configuration to include new remote IP site addresses for SiteName
 %%
 %% This also ensures that we remove our own IP addrs from the list, just in case they
 %% leaked into the remote site's list of listen IP addresses. Not likely, but game over
 %% if it happens.
-update_site_ips(TheirReplConfig, SiteName) ->
+update_site_ips(TheirReplConfig, SiteName, ConnectedIP) ->
     {ok, OurRing} = riak_core_ring_manager:get_my_ring(),
-    NeededConfigChanges = rewrite_config_site_ips_pure(TheirReplConfig, OurRing, SiteName),
+    NeededConfigChanges = rewrite_config_site_ips_pure(TheirReplConfig, OurRing,
+                                                       SiteName, ConnectedIP),
     case NeededConfigChanges of
 	none ->
             %% don't transform the ring for no reason
@@ -559,10 +566,39 @@ get_public_listener_addrs_test() ->
     Ring3 = riak_repl_ring:add_nat_listener(Ring2, NatListener3),
     Ring4 = riak_repl_ring:add_listener(Ring3, Listener),
     ReplConfig1 = riak_repl_ring:get_repl_config(Ring4),
-    [PubAddr3,PubAddr2,PubAddr1] = get_public_listener_addrs(ReplConfig1),
+    ConnectedIP = "10.11.12.12", %% existing connection is NAT'd
+    [PubAddr3,PubAddr2,PubAddr1] = get_public_listener_addrs(ReplConfig1, ConnectedIP),
     ?assertEqual(PubAddr1, {"10.11.12.12", 9012}),
     ?assertEqual(PubAddr2, {"10.11.12.13", 9013}),
     ?assertEqual(PubAddr3, {"10.11.12.14", 9014}),
+    Ring4.
+
+get_public_listener_addrs_not_nat_connection_test() ->
+    Ring0 = riak_repl_ring:ensure_config_test(),
+    NatListener1 = #nat_listener{nodename='test@test', 
+                                 listen_addr={"127.0.0.1", 9000},
+                                 nat_addr={"10.11.12.12", 9012}
+                                },
+    NatListener2 = #nat_listener{nodename='test@test', 
+                                 listen_addr={"127.0.0.2", 9000},
+                                 nat_addr={"10.11.12.13", 9013}
+                                },
+    NatListener3 = #nat_listener{nodename='test@test', 
+                                 listen_addr={"127.0.0.3", 9000},
+                                 nat_addr={"10.11.12.14", 9014}
+                                },
+    Listener = #repl_listener{nodename='test@test',
+                              listen_addr={"198.162.1.2", 9010}
+                             },
+    Ring1 = riak_repl_ring:add_nat_listener(Ring0, NatListener1),
+    Ring2 = riak_repl_ring:add_nat_listener(Ring1, NatListener2),
+    Ring3 = riak_repl_ring:add_nat_listener(Ring2, NatListener3),
+    Ring4 = riak_repl_ring:add_listener(Ring3, Listener),
+    ReplConfig1 = riak_repl_ring:get_repl_config(Ring4),
+    ConnectedIP = "198.162.1.3", %% existing connection is not NAT'd.
+    %% we should only listen on the local listener since we're on the same network
+    [LocalAddr] = get_public_listener_addrs(ReplConfig1, ConnectedIP),
+    ?assertEqual(LocalAddr, {"198.162.1.2", 9010}),
     Ring4.
 
 get_all_listen_addrs_test() ->
@@ -604,7 +640,8 @@ rewrite_config_site_ips_pure_test() ->
     MyRing2 = riak_repl_ring:add_nat_listener(MyRing1, MyNatListener),
     %% make sure we added my listeners correctly
     MyReplConfig = riak_repl_ring:get_repl_config(MyRing2),
-    [MyPubAddr] = get_public_listener_addrs(MyReplConfig),
+    ConnectedIP = "10.11.12.14",  %% we are connected via a NAT'd IP
+    [MyPubAddr] = get_public_listener_addrs(MyReplConfig, ConnectedIP),
     ?assertEqual(MyPubAddr, {"10.11.12.14", 9016}),
 
     [MyListenAddr,MyNatAddr,MyNatBinding] = get_all_listener_addrs(MyReplConfig),
@@ -613,7 +650,7 @@ rewrite_config_site_ips_pure_test() ->
     ?assertEqual(MyListenAddr, {"198.162.1.2", 9018}),
 
     %% Put an already known "active" addr in our Site list and make sure it stays there.
-    ActiveAddr = {"10.11.12.12", 9012},
+    ActiveAddr = {"10.11.12.12", 9012}, %% connected on existing NAT'd IP
     MyRingActive = riak_repl_ring:add_site_addr(MyRing2, RemoteSiteName, ActiveAddr),
     case riak_repl_ring:get_site(MyRingActive, RemoteSiteName) of
         undefined -> ?assertEqual("", "empty site list for MyRingActive!");
@@ -627,8 +664,8 @@ rewrite_config_site_ips_pure_test() ->
 
     %% Ok, finally, apply the remote replication update to our ring...
     TheirReplConfig = riak_repl_ring:get_repl_config(TheirRing),
-    MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRingCombo, RemoteSiteName),
-
+    MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRingCombo,
+                                             RemoteSiteName, ConnectedIP),
     %% changes need to be made
     ?assertNotEqual(none, MyNewRing),
     
@@ -684,8 +721,10 @@ rewrite_config_site_ips_pure_same_public_ip_test() ->
     MyRingCombo = riak_repl_ring:add_site_addr(MyRing, RemoteSiteName, StaleAddr),
 
     %% Ok, finally, apply the remote replication update to our ring...
+    ConnectedIP = "10.11.12.1", %% we are connected via a NAT'd address
     TheirReplConfig = riak_repl_ring:get_repl_config(TheirRing),
-    MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRingCombo, RemoteSiteName),
+    MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRingCombo,
+                                             RemoteSiteName, ConnectedIP),
     %% changes need to be made
     ?assertNotEqual(none, MyNewRing),
 
