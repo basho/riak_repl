@@ -127,16 +127,20 @@ handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
     ok = riak_repl_util:configure_socket(Socket),
     gen_tcp:send(Socket, State#state.sitename),
     Props = riak_repl_fsm_common:common_init(Socket),
+    {ok, {TheirIP, _}} = inet:peername(Socket),
     NewState = State#state{
         listener = {connected, IPAddr, Port},
-        socket=Socket, 
+        socket=Socket,
         client=proplists:get_value(client, Props),
         my_pi=proplists:get_value(my_pi, Props),
         partitions=proplists:get_value(partitions, Props)},
     send(Socket, {peerinfo, NewState#state.my_pi,
-            [bounded_queue, keepalive, {fullsync_strategies,
+                  [bounded_queue, keepalive,
+                   {fullsync_strategies,
                     app_helper:get_env(riak_repl, fullsync_strategies,
-                        [?LEGACY_STRATEGY])}]}),
+                                       [?LEGACY_STRATEGY])},
+                   {connected_ip, TheirIP}
+            ]}),
     inet:setopts(Socket, [{active, once}]),
     recv_peerinfo(NewState);
 handle_info({connect_failed, Reason}, State) ->

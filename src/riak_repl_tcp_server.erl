@@ -307,15 +307,14 @@ send_peerinfo(#state{socket=Socket} = State) ->
         OurNode ->
             case riak_repl_leader:add_receiver_pid(self()) of
                 ok ->
-                    {ok, {TheirIP, _}} = inet:peername(Socket),
                     erlang:cancel_timer(State#state.election_timeout),
                     %% this switches the socket into active mode
                     Props = riak_repl_fsm_common:common_init(Socket),
                     PI = proplists:get_value(my_pi, Props),
                     send(Socket, {peerinfo, PI,
-                            [bounded_queue, keepalive, {fullsync_strategies,
-                                    app_helper:get_env(riak_repl, fullsync_strategies,
-                                        [?LEGACY_STRATEGY])}, {connected_ip, TheirIP}]}),
+                            [bounded_queue, keepalive,
+                             {fullsync_strategies,app_helper:get_env(riak_repl, fullsync_strategies,[?LEGACY_STRATEGY])}
+                            ]}),
                     {noreply, State#state{
                             client=proplists:get_value(client, Props),
                             election_timeout=undefined,
@@ -326,15 +325,25 @@ send_peerinfo(#state{socket=Socket} = State) ->
             end;
         OtherNode ->
             %% receive stuff off of wire
-            ConnectedIP = receive
-                {peerinfo, _, Capabilities} ->
-                    [Cap || Cap = {connected_ip,_} <- Capabilities]
+            case gen_tcp:recv(Socket, 0) of
+                {ok, Data} ->
+                    case binary_to_term(Data) of
+                        {peerinfo, _, Capabilities} ->
+                            ConnectedIP = proplists:get_value(connected_ip,Capabilities),
+                            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                            {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, ConnectedIP),
+                            send(Socket, {redirect, Ip, Port});
+                        Other ->
+                            gen_tcp:close(Socket),
+                            lager:error("Received unknown peer data: ~p",[Other])
+                    end;
+                {error, closed} ->
+                    gen_tcp:close(Socket),
+                    lager:error("Peer info tcp error")
             end,
-            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, ConnectedIP),
-            send(Socket, {redirect, Ip, Port}),
             {stop, normal, State}
     end.
+
 
 send(Sock, Data) when is_binary(Data) ->
     R = gen_tcp:send(Sock,Data),
@@ -418,7 +427,7 @@ non_nat_redirect_test() ->
     ?assertEqual("127.0.0.1", Ip),
     ?assertEqual(9010, Port).
 
-x_test() ->
+skip_nap_test() ->
     Ring0 = riak_repl_ring:ensure_config_test(),
     NodeName   = "test@test",
     ListenAddr = "127.0.0.1",
@@ -437,6 +446,4 @@ x_test() ->
     {Ip, Port} = ip_and_port_for_node(NodeName, Ring2, ListenAddr),
     ?assertEqual("127.0.0.1", Ip),
     ?assertEqual(9010, Port).
-
-
 -endif.
