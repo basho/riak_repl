@@ -459,8 +459,8 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName) ->
     %% We want to remove both stale IPs (that are no longer valid) and
     %% our own (in case they leaked in, to avoid connecting to ourself).
     %% StateAddrs = (RemoteSiteAddrs - TheirListenAddrs), ignoring Ports
-    StaleAddrs = [ A || {IP, _Port}=A <- RemoteSiteAddrs,
-                        not lists:keymember(IP, 1, TheirListenAddrs)],
+    StaleAddrs = [ A || {_IP, _Port}=A <- RemoteSiteAddrs,
+                        not lists:member(A, TheirListenAddrs)],
     %% MyLeakedInAddrs = (RemoteSiteAddrs ^ MyListenAddrs), ignoring Ports
     MyLeakedInAddrs = [ A || {IP, _Port}=A <- RemoteSiteAddrs,
                              lists:keymember(IP, 1, MyListenAddrs)],
@@ -628,6 +628,9 @@ rewrite_config_site_ips_pure_test() ->
     %% Ok, finally, apply the remote replication update to our ring...
     TheirReplConfig = riak_repl_ring:get_repl_config(TheirRing),
     MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRingCombo, RemoteSiteName),
+
+    %% changes need to be made
+    ?assertNotEqual(none, MyNewRing),
     
     %% we should have added one of their listeners to our Sites to connect to (.13)
     %% but not the other, which collides with us (.14). And we had one that was already
@@ -675,12 +678,18 @@ rewrite_config_site_ips_pure_same_public_ip_test() ->
             addrs=[{"10.11.12.1", 9092}]}),
     %% we have no local listeners
 
+    %% Add a stale IP addr in our list of RemoteSite addrs and make sure it gets
+    %% removed without removing the new ones.
+    StaleAddr = {"10.11.12.1", 9089},
+    MyRingCombo = riak_repl_ring:add_site_addr(MyRing, RemoteSiteName, StaleAddr),
+
     %% Ok, finally, apply the remote replication update to our ring...
     TheirReplConfig = riak_repl_ring:get_repl_config(TheirRing),
-    MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRing, RemoteSiteName),
+    MyNewRing = rewrite_config_site_ips_pure(TheirReplConfig, MyRingCombo, RemoteSiteName),
     %% changes need to be made
     ?assertNotEqual(none, MyNewRing),
 
+    %% We should have added three new IP/Port entries and removed the stale entry.
     Site = riak_repl_ring:get_site(MyNewRing, RemoteSiteName),
     case Site of
         undefined ->
