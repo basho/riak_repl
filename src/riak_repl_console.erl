@@ -7,6 +7,7 @@
 -export([add_site/1, del_site/1]).
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
          pause_fullsync/1, resume_fullsync/1]).
+-export([client_stats_rpc/0, server_stats_rpc/0]).
 
 add_listener([NodeName, IP, Port]) ->
     Ring = get_ring(),
@@ -173,11 +174,22 @@ leader_stats() ->
     [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats.
 
 client_stats() ->
+    {Stats, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv), riak_repl_console, client_stats_rpc, []),
+    [{client_stats, lists:flatten(lists:filter(fun({badrpc, _}) ->
+                false;
+            (_) -> true
+        end, Stats))}].
+
+client_stats_rpc() ->
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
-    [{client_stats, [client_stats(P) || P <- Pids]}].
+    [client_stats(P) || P <- Pids].
 
 server_stats() ->
-    [{server_stats, [server_stats(P) || P <- server_pids()]}].
+    LeaderNode = riak_repl_leader:leader_node(),
+    [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])}].
+
+server_stats_rpc() ->
+    [server_stats(P) || P <- server_pids()].
 
 client_stats(Pid) ->
     State = try
@@ -187,7 +199,6 @@ client_stats(Pid) ->
                     too_busy
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
-    
 
 server_stats(Pid) ->
     %% try and work out what state the TCP server is in.  In the middle
@@ -200,6 +211,6 @@ server_stats(Pid) ->
                     too_busy
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
-                        
+
 server_pids() ->
     [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined].
