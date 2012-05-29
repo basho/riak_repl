@@ -343,13 +343,20 @@ leader_change(true, false) ->
     %% we've lost the leadership, close any local listeners
     riak_repl_listener:close_all_connections().
 
-%% here be dragons
+%% Inspect the cluster and determine if we can balance clients between
+%% non-leader nodes
 ensure_sites(Leader) ->
     AliveNodes0 = riak_core_node_watcher:nodes(riak_kv) -- [Leader],
-    lager:notice("leader ~p, alive ~p", [Leader, AliveNodes0]),
+    InverseConnections = app_helper:get_env(riak_repl, inverse_connection),
     case AliveNodes0 of
         [] ->
             %% only node there is
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            riak_repl_client_sup:ensure_sites(Ring);
+        _ when InverseConnections == true ->
+            %% inverse connections are incompatible with client balancing
+            lager:notice("Inverse connections enabled; clients will all be "
+                "run on the leader"),
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             riak_repl_client_sup:ensure_sites(Ring);
         _ ->
