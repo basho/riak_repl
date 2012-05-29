@@ -23,6 +23,12 @@
 -type(repl_addrlist() :: [repl_addr()]).
 -type(repl_socket() :: port()).
 -type(repl_sitename() :: string()).
+-type(repl_sitenames() :: [repl_sitename()]).
+-type(repl_ns_pair() :: {node(), repl_sitename()}).
+-type(repl_ns_pairs() :: [repl_ns_pair()]).
+-type(repl_np_pair() :: {repl_sitename(), pid()}).
+-type(repl_np_pairs() :: [repl_np_pair()]).
+-type(repl_node_sites() :: {node(), [{repl_sitename(), pid()}]}).
 -type(ring() :: tuple()).
 
 -record(peer_info, {
