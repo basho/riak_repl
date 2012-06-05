@@ -185,12 +185,12 @@ handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
             {packet, 4},
             {reuseaddr, true},
             {active, false}]),
-    case Transport:recv(Socket, 0, 60000) of
+    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
         {ok, SiteNameBin} ->
             SiteName = binary_to_list(SiteNameBin),
             ok = riak_repl_util:configure_socket(Transport, Socket),
             self() ! send_peerinfo,
-            Timeout = erlang:send_after(60000, self(), election_timeout),
+            Timeout = erlang:send_after(?ELECTION_TIMEOUT, self(), election_timeout),
             {noreply, State#state{sitename=SiteName, election_timeout=Timeout}};
         {error, Reason} ->
             riak_repl_stats:server_connect_errors(),

@@ -277,14 +277,28 @@ maybe_use_ssl() ->
         {keyfile, app_helper:get_env(riak_repl, keyfile, undefined)},
         {cacerts, load_certs(app_helper:get_env(riak_repl, cacertdir, undefined))},
         {depth, app_helper:get_env(riak_repl, ssl_depth, 1)},
-        {verify_fun, {fun verify_ssl/3, []}},
+        {verify_fun, {fun verify_ssl/3,
+                get_my_common_name(app_helper:get_env(riak_repl, certfile,
+                        undefined))}},
         {verify, verify_peer},
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
-    case lists:keyfind(undefined, 2, SSLOpts) of
-        false ->
+    Enabled = app_helper:get_env(riak_repl, ssl_enabled, false),
+    case Enabled andalso
+        lists:keyfind(undefined, 2, SSLOpts) == false andalso
+        filelib:is_regular(proplists:get_value(certfile, SSLOpts)) andalso
+        filelib:is_regular(proplists:get_value(keyfile, SSLOpts)) andalso
+        is_list(proplists:get_value(cacerts, SSLOpts)) andalso
+        length(proplists:get_value(cacerts, SSLOpts)) > 0 of
+        true ->
             SSLOpts;
+        _ when Enabled == true ->
+            lager:warning("SSL configuration is invalid. Please check that "
+                "the certfile and keyfile options in app.config are "
+                "set to valid files and the cacertdir option is set to a "
+                "directory containing CA certificates"),
+            false;
         _ ->
             %% not all the SSL options are configured, use TCP
             false
@@ -305,24 +319,27 @@ load_certs(CertDir) ->
     load_certs(lists:map(fun(Cert) -> filename:join(CertDir, Cert) end, Certs), []).
 
 load_certs([], Acc) ->
+    lager:debug("Successfully loaded ~p CA certificates", [length(Acc)]),
     Acc;
 load_certs([Cert|Certs], Acc) ->
     case filelib:is_dir(Cert) of
         true ->
             load_certs(Certs, Acc);
         _ ->
-            lager:debug("loading certificate ~p", [Cert]),
-            {ok, Bin} = file:read_file(Cert),
-            case filename:extension(Cert) of
-                ".der" ->
-                    %% no decoding necessary
-                    load_certs(Certs, [Bin|Acc]);
-                _ ->
-                    %% assume PEM otherwise
-                    Contents = public_key:pem_decode(Bin),
-                    load_certs(Certs,
-                        [DER || {Type, DER, Cipher} <- Contents, Type == 'Certificate', Cipher == 'not_encrypted'] ++ Acc)
-            end
+            lager:debug("Loading certificate ~p", [Cert]),
+            load_certs(Certs, load_cert(Cert) ++ Acc)
+    end.
+
+load_cert(Cert) ->
+    {ok, Bin} = file:read_file(Cert),
+    case filename:extension(Cert) of
+        ".der" ->
+            %% no decoding necessary
+            [Bin];
+        _ ->
+            %% assume PEM otherwise
+            Contents = public_key:pem_decode(Bin),
+            [DER || {Type, DER, Cipher} <- Contents, Type == 'Certificate', Cipher == 'not_encrypted']
     end.
 
 %% Custom SSL verification function for checking common names against the
@@ -334,27 +351,54 @@ verify_ssl(_, {extension, _}, UserState) ->
 verify_ssl(_, valid, UserState) ->
     %% this is the check for the CA cert
     {valid, UserState};
-verify_ssl(Cert, valid_peer, UserState) ->
+verify_ssl(_, valid_peer, undefined) ->
+    lager:error("Unable to determine local certificate's common name"),
+    {fail, bad_local_common_name};
+verify_ssl(Cert, valid_peer, MyCommonName) ->
+
+    CommonName = get_common_name(Cert),
+
+    case string:to_lower(CommonName) == string:to_lower(MyCommonName) of
+        true ->
+            lager:error("Peer certificate's common name matches local "
+                "certificate's common name"),
+            {fail, duplicate_common_name};
+        _ ->
+            case validate_common_name(CommonName,
+                    app_helper:get_env(riak_repl, peer_common_name_acl, "*")) of
+                {true, Filter} ->
+                    lager:info("SSL connection from ~s granted by ACL ~s",
+                        [CommonName, Filter]),
+                    {valid, MyCommonName};
+                false ->
+                    lager:error("SSL connection from ~s denied, no matching ACL",
+                        [CommonName]),
+                    {fail, no_acl}
+            end
+    end.
+
+%% read in the configured 'certfile' and extract the common name from it
+get_my_common_name(undefined) ->
+    undefined;
+get_my_common_name(CertFile) ->
+    case catch(load_cert(CertFile)) of
+        [CertBin|_] ->
+            OTPCert = public_key:pkix_decode_cert(CertBin, otp),
+            get_common_name(OTPCert);
+        _ ->
+            undefined
+    end.
+
+%% get the common name attribute out of an OTPCertificate record
+get_common_name(OTPCert) ->
     %% You'd think there'd be an easier way than this giant mess, but I
     %% couldn't find one.
-    {rdnSequence, Subject} = Cert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subject,
+    {rdnSequence, Subject} = OTPCert#'OTPCertificate'.tbsCertificate#'OTPTBSCertificate'.subject,
     [Att] = [Attribute#'AttributeTypeAndValue'.value || [Attribute] <- Subject,
         Attribute#'AttributeTypeAndValue'.type == ?'id-at-commonName'],
-    CommonName = case Att of
+    case Att of
         {printableString, Str} -> Str;
         {utf8String, Bin} -> binary_to_list(Bin)
-    end,
-
-    case validate_common_name(CommonName,
-            app_helper:get_env(riak_repl, common_name_acl, "*")) of
-        {true, Filter} ->
-            lager:info("SSL connection from ~s granted by ACL ~s", [CommonName,
-                    Filter]),
-            {valid, UserState};
-        false ->
-            lager:error("SSL connection from ~s denied, no matching ACL",
-                [CommonName]),
-            {fail, no_acl}
     end.
 
 %% Validate common name matches one of the configured filters. Filters can

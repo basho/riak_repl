@@ -10,7 +10,6 @@ start_listener(Listener = #repl_listener{listen_addr={IP, Port}}) ->
         true ->
             lager:info("Starting replication listener on ~s:~p",
                 [IP, Port]),
-            %supervisor:start_child(?MODULE, [IP, Port]);
             {ok, RawAddress} = inet_parse:address(IP),
             ranch:start_listener(Listener, 10, ranch_tcp,
                 [{ip, RawAddress}, {port, Port}], riak_repl_tcp_server, []);

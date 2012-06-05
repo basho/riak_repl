@@ -283,7 +283,7 @@ do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) 
 
 recv_peerinfo(#state{transport=T,socket=Socket} = State) ->
     Proto = T:name(),
-    case T:recv(Socket, 0, 60000) of
+    case T:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
         {ok, Data} ->
             Msg = binary_to_term(Data),
             NeedSSL = riak_repl_util:maybe_use_ssl(),
