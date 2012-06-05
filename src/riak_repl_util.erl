@@ -284,7 +284,7 @@ maybe_use_ssl() ->
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
-    Enabled = app_helper:get_env(riak_repl, ssl_enabled, false),
+    Enabled = app_helper:get_env(riak_repl, ssl_enabled, false) == true,
     case validate_ssl_config(Enabled, SSLOpts) of
         true ->
             SSLOpts;
