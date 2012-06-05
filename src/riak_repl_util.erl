@@ -285,24 +285,56 @@ maybe_use_ssl() ->
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
     Enabled = app_helper:get_env(riak_repl, ssl_enabled, false),
-    case Enabled andalso
-        lists:keyfind(undefined, 2, SSLOpts) == false andalso
-        filelib:is_regular(proplists:get_value(certfile, SSLOpts)) andalso
-        filelib:is_regular(proplists:get_value(keyfile, SSLOpts)) andalso
-        is_list(proplists:get_value(cacerts, SSLOpts)) andalso
-        length(proplists:get_value(cacerts, SSLOpts)) > 0 of
+    case validate_ssl_config(Enabled, SSLOpts) of
         true ->
             SSLOpts;
-        _ when Enabled == true ->
-            lager:warning("SSL configuration is invalid. Please check that "
-                "the certfile and keyfile options in app.config are "
-                "set to valid files and the cacertdir option is set to a "
-                "directory containing CA certificates"),
+        {error, Reason} ->
+            lager:error("Error, invalid SSL configuration: ~s", [Reason]),
             false;
-        _ ->
+        false ->
             %% not all the SSL options are configured, use TCP
             false
     end.
+
+validate_ssl_config(false, _) ->
+    %% ssl is disabled
+    false;
+validate_ssl_config(true, []) ->
+    %% all options validated
+    true;
+validate_ssl_config(true, [{certfile, CertFile}|Rest]) ->
+    case filelib:is_regular(CertFile) of
+        true ->
+            validate_ssl_config(true, Rest);
+        false ->
+            {error, lists:flatten(io_lib:format("Certificate ~p is not a file",
+                                                [CertFile]))}
+    end;
+validate_ssl_config(true, [{keyfile, KeyFile}|Rest]) ->
+    case filelib:is_regular(KeyFile) of
+        true ->
+            validate_ssl_config(true, Rest);
+        false ->
+            {error, lists:flatten(io_lib:format("Key ~p is not a file",
+                                                [KeyFile]))}
+    end;
+validate_ssl_config(true, [{cacerts, CACerts}|Rest]) ->
+    case CACerts of
+        undefined ->
+            {error, lists:flatten(
+                    io_lib:format("CA cert dir ~p is invalid",
+                                  [app_helper:get_env(riak_repl, cacertdir,
+                                                      undefined)]))};
+        [] ->
+            {error, lists:flatten(
+                    io_lib:format("Unable to load any CA certificates from ~p",
+                                  [app_helper:get_env(riak_repl, cacertdir,
+                                                      undefined)]))};
+        Certs when is_list(Certs) ->
+            validate_ssl_config(true, Rest)
+    end;
+validate_ssl_config(true, [_|Rest]) ->
+    validate_ssl_config(true, Rest).
 
 upgrade_client_to_ssl(Socket) ->
     case maybe_use_ssl() of
@@ -315,8 +347,13 @@ upgrade_client_to_ssl(Socket) ->
 load_certs(undefined) ->
     undefined;
 load_certs(CertDir) ->
-    {ok, Certs} = file:list_dir(CertDir),
-    load_certs(lists:map(fun(Cert) -> filename:join(CertDir, Cert) end, Certs), []).
+    case file:list_dir(CertDir) of
+        {ok, Certs} ->
+            load_certs(lists:map(fun(Cert) -> filename:join(CertDir, Cert)
+                    end, Certs), []);
+        {error, _} ->
+            undefined
+    end.
 
 load_certs([], Acc) ->
     lager:debug("Successfully loaded ~p CA certificates", [length(Acc)]),
