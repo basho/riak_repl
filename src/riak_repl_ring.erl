@@ -202,10 +202,13 @@ del_nat_listener(Ring,Listener) ->
 %% @doc Fetch a replication host/port listener record from the Ring.
 get_listener(Ring,{_IP,_Port}=ListenAddr) ->
     RC = get_repl_config(Ring),
-    Listeners  = dict:fetch(listeners, RC),
-    case lists:keysearch(ListenAddr, 3, Listeners) of
-        false -> undefined;
-        {value,Listener} -> Listener
+    case dict:find(listeners, RC) of
+        {ok, Listeners}  ->
+            case lists:keysearch(ListenAddr, 3, Listeners) of
+                false -> undefined;
+                {value,Listener} -> Listener
+            end;
+        error -> undefined
     end.
 
 -spec(get_nat_listener/2 :: (ring(), #repl_listener{}) -> #nat_listener{}|undefined).
@@ -319,6 +322,10 @@ del_natlistener_test() ->
     Listener = #repl_listener{nodename=NodeName,
                               listen_addr={ListenAddr, ListenPort}},
     Ring1 = del_nat_listener(Ring0, Listener),
+    %% functions in riak_repl_ring don't automatically add
+    %% both regular and nat listeners. So, a regular listener shouldn't appear
+    %% in this test
+    ?assertEqual(undefined, get_listener(Ring1, {ListenAddr, ListenPort})),
     ?assertEqual(undefined, get_nat_listener(Ring1, Listener)).
 
 %% delete the nat listener using the public ip address
@@ -330,5 +337,9 @@ del_natlistener_publicip_test() ->
     Listener = #repl_listener{nodename=NodeName,
                               listen_addr={ListenAddr, ListenPort}},
     Ring1 = del_nat_listener(Ring0, Listener),
+    %% functions in riak_repl_ring don't automatically add
+    %% both regular and nat listeners. So, a regular listener shouldn't appear
+    %% in this test
+    ?assertEqual(undefined, get_listener(Ring1, {ListenAddr, ListenPort})),
     ?assertEqual(undefined, get_nat_listener(Ring1, Listener)).
 -endif.
