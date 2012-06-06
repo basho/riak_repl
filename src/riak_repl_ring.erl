@@ -20,7 +20,9 @@
          del_nat_listener/2,
          get_nat_listener/2]).
 
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -spec(ensure_config/1 :: (ring()) -> ring()).
 %% @doc Ensure that Ring has replication config entry in the ring metadata dict.
@@ -145,22 +147,22 @@ add_nat_listener(Ring,NatListener) ->
     case dict:find(natlisteners,RC) of
         {ok, NatListeners} ->
             case lists:member(NatListener, NatListeners) of
-            false ->
-                NewListeners = [NatListener|NatListeners],
-                riak_core_ring:update_meta(
-                  ?MODULE,
-                  dict:store(natlisteners, NewListeners, RC),
-                  Ring);
-            true ->
-                Ring
+                false ->
+                    NewListeners = [NatListener|NatListeners],
+                    riak_core_ring:update_meta(
+                      ?MODULE,
+                      dict:store(natlisteners, NewListeners, RC),
+                      Ring);
+                true ->
+                    Ring
             end;
         error ->
             %% there are no natlisteners entries yet.
-                NewListeners = [NatListener],
-                riak_core_ring:update_meta(
-                  ?MODULE,
-                  dict:store(natlisteners, NewListeners, RC),
-                  Ring)
+            NewListeners = [NatListener],
+            riak_core_ring:update_meta(
+              ?MODULE,
+              dict:store(natlisteners, NewListeners, RC),
+              Ring)
     end.
 
 -spec(del_listener/2 :: (ring(), #repl_listener{}) -> ring()).
@@ -185,12 +187,15 @@ del_nat_listener(Ring,Listener) ->
     case get_nat_listener(Ring, Listener) of
         undefined ->  Ring;
         NatListener ->
-            NatListeners  = dict:fetch(natlisteners, RC),
-            NewNatListeners = lists:delete(NatListener, NatListeners),
-            riak_core_ring:update_meta(
-              ?MODULE,
-              dict:store(natlisteners, NewNatListeners, RC),
-              Ring)
+            case dict:find(natlisteners, RC) of
+                {ok, NatListeners} ->
+                    NewNatListeners = lists:delete(NatListener, NatListeners),
+                    riak_core_ring:update_meta(
+                      ?MODULE,
+                      dict:store(natlisteners, NewNatListeners, RC),
+                      Ring);
+                error -> io:format("Unknown listener~n")
+            end
     end.
 
 -spec(get_listener/2 :: (ring(), repl_addr()) -> #repl_listener{}|undefined).
@@ -207,20 +212,24 @@ get_listener(Ring,{_IP,_Port}=ListenAddr) ->
 %% @doc Fetch a replication nat host/port listener record from the Ring.
 get_nat_listener(Ring,Listener) ->
     RC = get_repl_config(Ring),
-    NatListeners  = dict:fetch(natlisteners, RC),
-    % search for a natlistener using only nodename, ip + port,
-    % since nat uses nodename+ip+port+natip+natport as a key
-    NatListenerMatches = [NatListener || NatListener <- NatListeners,
-                        (NatListener#nat_listener.listen_addr == Listener#repl_listener.listen_addr
-                        orelse NatListener#nat_listener.nat_addr == Listener#repl_listener.listen_addr),
-                        NatListener#nat_listener.nodename == Listener#repl_listener.nodename],
-    % this will only return the first nat listener that matches
-    % the search criteria
-    case NatListenerMatches of
-        [NatListener|_] -> NatListener;
-        [] -> undefined
+    case dict:find(natlisteners, RC) of
+        {ok, NatListeners} ->
+            %% search for a natlistener using only nodename, ip + port,
+            %% since nat uses nodename+ip+port+natip+natport as a key
+            NatListenerMatches =
+                [NatListener ||
+                    NatListener <- NatListeners,
+                    (NatListener#nat_listener.listen_addr == Listener#repl_listener.listen_addr
+                     orelse NatListener#nat_listener.nat_addr == Listener#repl_listener.listen_addr),
+                    NatListener#nat_listener.nodename == Listener#repl_listener.nodename],
+            %% this will only return the first nat listener that matches
+            %% the search criteria
+            case NatListenerMatches of
+                [NatListener|_] -> NatListener;
+                [] -> undefined
+            end;
+        error -> undefined
     end.
-
 
 initial_config() ->
     dict:from_list(
@@ -298,15 +307,28 @@ add_get_natlistener_test() ->
     %% you can only get a nat_listener by using a repl_listener
     Listener = #repl_listener{nodename=NodeName,
                               listen_addr={ListenAddr, ListenPort}},
-    ?assertNot(undefined == get_nat_listener(Ring1, Listener)).
+    ?assertNot(undefined == get_nat_listener(Ring1, Listener)),
+    Ring1.
 
+%% delete the nat listener using the internal ip address
 del_natlistener_test() ->
-    Ring0 = add_get_listener_test(),
+    Ring0 = add_get_natlistener_test(),
     NodeName   = "test@test",
     ListenAddr = "127.0.0.1",
     ListenPort = 9010,
     Listener = #repl_listener{nodename=NodeName,
                               listen_addr={ListenAddr, ListenPort}},
-    Ring1 = del_listener(Ring0, Listener),
+    Ring1 = del_nat_listener(Ring0, Listener),
+    ?assertEqual(undefined, get_nat_listener(Ring1, Listener)).
+
+%% delete the nat listener using the public ip address
+del_natlistener_publicip_test() ->
+    Ring0 = add_get_natlistener_test(),
+    NodeName   = "test@test",
+    ListenAddr = "10.11.12.13",
+    ListenPort = 9011,
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    Ring1 = del_nat_listener(Ring0, Listener),
     ?assertEqual(undefined, get_nat_listener(Ring1, Listener)).
 -endif.

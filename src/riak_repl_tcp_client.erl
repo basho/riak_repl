@@ -23,7 +23,9 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -record(state, {
         sitename,
@@ -60,7 +62,7 @@ status(Pid, Timeout) ->
 
 init([SiteName]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_repl_ring:get_site(Ring, SiteName) of 
+    case riak_repl_ring:get_site(Ring, SiteName) of
         undefined ->
             %% Do not start
             {stop, {site_not_in_ring, SiteName}};
@@ -127,7 +129,6 @@ handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
     ok = riak_repl_util:configure_socket(Socket),
     gen_tcp:send(Socket, State#state.sitename),
     Props = riak_repl_fsm_common:common_init(Socket),
-    {ok, {TheirIP, _}} = inet:peername(Socket),
     NewState = State#state{
         listener = {connected, IPAddr, Port},
         socket=Socket,
@@ -139,7 +140,7 @@ handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
                    {fullsync_strategies,
                     app_helper:get_env(riak_repl, fullsync_strategies,
                                        [?LEGACY_STRATEGY])},
-                   {connected_ip, TheirIP}
+                   {connected_ip, IPAddr}
             ]}),
     inet:setopts(Socket, [{active, once}]),
     recv_peerinfo(NewState);
@@ -189,7 +190,7 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
     end,
     case State#state.keepalive_time of
         Time when is_integer(Time) ->
-            case Reply of 
+            case Reply of
                 {noreply, NewState} ->
                     {noreply, NewState, Time};
                 _ ->
@@ -263,7 +264,7 @@ do_async_connect(#state{pending=[{IPAddr, Port}|T]} = State) ->
 %% Function spawned to do async connect
 async_connect(Parent, IPAddr, Port) ->
     Timeout = app_helper:get_env(riak_repl, client_connect_timeout, 15000),
-    case gen_tcp:connect(IPAddr, Port, [binary, 
+    case gen_tcp:connect(IPAddr, Port, [binary,
                                         {packet, 4},
                                         {active, false},
                                         {keepalive, true},
@@ -276,7 +277,7 @@ async_connect(Parent, IPAddr, Port) ->
             Parent ! {connect_failed, Reason}
     end.
 
-send(Socket, Data) when is_binary(Data) -> 
+send(Socket, Data) when is_binary(Data) ->
     R = gen_tcp:send(Socket, Data),
     riak_repl_stats:client_bytes_sent(size(Data)),
     R;
@@ -375,7 +376,7 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket, listener={_, ConnIP, _P
                         true ->
                             AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
                                 ?REPL_DEFAULT_ACK_FREQUENCY),
-                            State1 = State#state{count=0, 
+                            State1 = State#state{count=0,
                                 ack_freq=AckFreq};
                         false ->
                             State1 = State
@@ -441,7 +442,7 @@ get_all_listener_addrs(ReplConfig) ->
 %%
 %% Given a "remote" server's replication configuration and our own ring configuration,
 %% update the list of IP addresses for the remote server. This function will ensure
-%% that we don't add our own lisenter IP addresses to that list, even if we are setup
+%% that we don't add our own listener IP addresses to that list, even if we are setup
 %% as a bi-directional connection. If no changes are required, a simple token is returned
 %% so that the caller can avoid ring changes when not required. No side effects.
 %% NAT-aware (for Network Address Translations where the cluster has different public
@@ -520,14 +521,14 @@ update_site_ips(TheirReplConfig, SiteName, ConnectedIP) ->
     NeededConfigChanges = rewrite_config_site_ips_pure(TheirReplConfig, OurRing,
                                                        SiteName, ConnectedIP),
     case NeededConfigChanges of
-	none ->
+        none ->
             %% don't transform the ring for no reason
-	    ok;
-	MyNewRing ->
-	    %% apply changes to the ring now
-	    F = fun(InRing, ReplConfig) ->
-                    {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
-            end,
+            ok;
+        MyNewRing ->
+            %% apply changes to the ring now
+            F = fun(InRing, ReplConfig) ->
+                        {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
+                end,
             MyNewRC = riak_repl_ring:get_repl_config(MyNewRing),
             {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
             ok
@@ -550,15 +551,15 @@ ensure_config_test() ->
 
 get_public_listener_addrs_test() ->
     Ring0 = riak_repl_ring:ensure_config_test(),
-    NatListener1 = #nat_listener{nodename='test@test', 
+    NatListener1 = #nat_listener{nodename='test@test',
                                  listen_addr={"127.0.0.1", 9000},
                                  nat_addr={"10.11.12.12", 9012}
                                 },
-    NatListener2 = #nat_listener{nodename='test@test', 
+    NatListener2 = #nat_listener{nodename='test@test',
                                  listen_addr={"127.0.0.2", 9000},
                                  nat_addr={"10.11.12.13", 9013}
                                 },
-    NatListener3 = #nat_listener{nodename='test@test', 
+    NatListener3 = #nat_listener{nodename='test@test',
                                  listen_addr={"127.0.0.3", 9000},
                                  nat_addr={"10.11.12.14", 9014}
                                 },
@@ -579,15 +580,15 @@ get_public_listener_addrs_test() ->
 
 get_public_listener_addrs_not_nat_connection_test() ->
     Ring0 = riak_repl_ring:ensure_config_test(),
-    NatListener1 = #nat_listener{nodename='test@test', 
+    NatListener1 = #nat_listener{nodename='test@test',
                                  listen_addr={"127.0.0.1", 9000},
                                  nat_addr={"10.11.12.12", 9012}
                                 },
-    NatListener2 = #nat_listener{nodename='test@test', 
+    NatListener2 = #nat_listener{nodename='test@test',
                                  listen_addr={"127.0.0.2", 9000},
                                  nat_addr={"10.11.12.13", 9013}
                                 },
-    NatListener3 = #nat_listener{nodename='test@test', 
+    NatListener3 = #nat_listener{nodename='test@test',
                                  listen_addr={"127.0.0.3", 9000},
                                  nat_addr={"10.11.12.14", 9014}
                                 },
@@ -672,7 +673,7 @@ rewrite_config_site_ips_pure_test() ->
                                              RemoteSiteName, ConnectedIP),
     %% changes need to be made
     ?assertNotEqual(none, MyNewRing),
-    
+
     %% we should have added one of their listeners to our Sites to connect to (.13)
     %% but not the other, which collides with us (.14). And we had one that was already
     %% active (.12).

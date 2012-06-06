@@ -10,13 +10,19 @@
 
 add_listener(Params) ->
     Ring = get_ring(),
-    {ok, NewRing} = add_listener_internal(Ring,Params),
-    ok = maybe_set_ring(Ring, NewRing).
+    case add_listener_internal(Ring,Params) of
+        {ok, NewRing} ->
+            ok = maybe_set_ring(Ring, NewRing);
+        error -> error
+    end.
 
 add_nat_listener(Params) ->
     Ring = get_ring(),
-    {ok, NewRing} = add_nat_listener_internal(Ring, Params),
-    ok = maybe_set_ring(Ring, NewRing).
+    case add_nat_listener_internal(Ring, Params) of
+        {ok, NewRing} ->
+            ok = maybe_set_ring(Ring, NewRing);
+        error -> error
+    end.
 
 add_listener_internal(Ring, [NodeName, IP, Port]) ->
     Listener = make_listener(NodeName, IP, Port),
@@ -30,15 +36,15 @@ add_listener_internal(Ring, [NodeName, IP, Port]) ->
                 false ->
                     io:format("~p is not a valid IP address for ~p\n",
                               [IP, Listener#repl_listener.nodename]),
-                    {error,error};
+                    error;
                 Error ->
                     io:format("Node ~p must be available to add listener: ~p\n",
                               [Listener#repl_listener.nodename, Error]),
-                    {error,error}
+                    error
             end;
         false ->
             io:format("~p is not a member of the cluster\n", [Listener#repl_listener.nodename]),
-            {error, error}
+            error
     end.
 
 add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
@@ -51,14 +57,11 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
                     {ok, NewRing2};
                 {error, IPParseError} ->
                     io:format("Invalid NAT IP address: ~p~n", [IPParseError]),
-                    {error, error};
-                {_,Error} ->
-                    io:format("Error adding NAT Listener: ~s~n",[Error]),
-                    {error, error}
+                    error
             end;
         {error,_} ->
             io:format("Error adding nat address. ~n"),
-            {error, error}
+            error
     end.
 
 del_listener([NodeName, IP, Port]) ->

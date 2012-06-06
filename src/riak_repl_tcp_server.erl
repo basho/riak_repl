@@ -28,7 +28,9 @@
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
         resume_fullsync/1, handle_peerinfo/3, make_state/5]).
 
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -427,7 +429,7 @@ non_nat_redirect_test() ->
     ?assertEqual("127.0.0.1", Ip),
     ?assertEqual(9010, Port).
 
-skip_nap_test() ->
+skip_nat_test() ->
     Ring0 = riak_repl_ring:ensure_config_test(),
     NodeName   = "test@test",
     ListenAddr = "127.0.0.1",
