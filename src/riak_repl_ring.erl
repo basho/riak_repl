@@ -342,4 +342,111 @@ del_natlistener_publicip_test() ->
     %% in this test
     ?assertEqual(undefined, get_listener(Ring1, {ListenAddr, ListenPort})),
     ?assertEqual(undefined, get_nat_listener(Ring1, Listener)).
+
+get_all_listeners(Ring) ->
+    RC = riak_repl_ring:get_repl_config(Ring),
+    Listeners = dict:fetch(listeners, RC),
+    NatListeners = dict:fetch(natlisteners, RC),
+    {Listeners, NatListeners}.
+
+add_del_private_and_publicip_nat_test() ->
+    Ring0 = ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    %% you can only get a nat_listener by using a repl_listener
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    %% similar to riak_repl_console:add_nat_listener
+    Ring1 = add_listener(Ring0, Listener),
+    Ring2 = add_nat_listener(Ring1, NatListener),
+    Ring3 = del_listener(Ring2, Listener),
+    Ring4 = del_nat_listener(Ring3, Listener),
+    {Listeners, NatListeners} = get_all_listeners(Ring4),
+    ?assertEqual(0,length(Listeners)),
+    ?assertEqual(0,length(NatListeners)),
+    ?assertEqual(undefined, get_listener(Ring4, {ListenAddr, ListenPort})),
+    ?assertEqual(undefined, get_nat_listener(Ring4, Listener)).
+
+%% similar to test above, however, just delete the nat address
+add_del_private_and_publicip_nat2_test() ->
+    Ring0 = ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    %% you can only get a nat_listener by using a repl_listener
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    %% similar to riak_repl_console:add_nat_listener
+    Ring1 = add_listener(Ring0, Listener),
+    Ring2 = add_nat_listener(Ring1, NatListener),
+    Ring3 = del_listener(Ring2, Listener),
+    {Listeners, NatListeners} = get_all_listeners(Ring3),
+    ?assertEqual(0,length(Listeners)),
+    ?assertEqual(0,length(NatListeners)),
+    ?assertEqual(undefined, get_listener(Ring3, {ListenAddr, ListenPort})),
+    ?assertEqual(undefined, get_nat_listener(Ring3, Listener)).
+
+%% similar to test above, however, just delete the nat address
+%% This will "downgrade" the listener to a standard listener
+add_del_private_and_publicip_nat3_test() ->
+    Ring0 = ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    %% you can only get a nat_listener by using a repl_listener
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    %% similar to riak_repl_console:add_nat_listener
+    Ring1 = add_listener(Ring0, Listener),
+    Ring2 = add_nat_listener(Ring1, NatListener),
+    Ring3 = del_nat_listener(Ring2, Listener),
+    {Listeners, NatListeners} = get_all_listeners(Ring3),
+    ?assertEqual(1,length(Listeners)),
+    ?assertEqual(0,length(NatListeners)),
+    ?assertNot(undefined == get_listener(Ring3, {ListenAddr, ListenPort})),
+    ?assertEqual(undefined, get_nat_listener(Ring3, Listener)).
+
+%% verify that adding a listener, and then a nat listener
+%% with the same internal IP "upgrades" the current listener
+verify_adding_nat_upgrades_test() ->
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    %% add a regular listener
+    Ring1 = riak_repl_ring:add_listener(Ring0, Listener),
+    %% then add a nat listener. The regular listener now becomes a NAT listener
+    Ring2 = riak_repl_ring:add_nat_listener(Ring1, NatListener),
+    {Listeners, NatListeners} = get_all_listeners(Ring2),
+    ?assertEqual(1,length(Listeners)),
+    ?assertEqual(1,length(NatListeners)),
+    ?assertNot(undefined == riak_repl_ring:get_listener(Ring2, {ListenAddr, ListenPort})).
+
 -endif.
