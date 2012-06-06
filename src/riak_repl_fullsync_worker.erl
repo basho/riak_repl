@@ -7,7 +7,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
--export([start_link/1, do_put/3, do_get/5, do_get/6]).
+-export([start_link/1, do_put/3, do_get/6, do_get/7]).
 
 -record(state, {
     }).
@@ -18,11 +18,11 @@ start_link(_Args) ->
 do_put(Pid, Obj, Pool) ->
     gen_server:call(Pid, {put, Obj, Pool}, infinity).
 
-do_get(Pid, Bucket, Key, Socket, Pool) ->
-    gen_server:call(Pid, {get, Bucket, Key, Socket, Pool}, infinity).
+do_get(Pid, Bucket, Key, Transport, Socket, Pool) ->
+    gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool}, infinity).
 
-do_get(Pid, Bucket, Key, Socket, Pool, Partition) ->
-    gen_server:call(Pid, {get, Bucket, Key, Socket, Pool, Partition}, infinity).
+do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
+    gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool, Partition}, infinity).
 
 
 init([]) ->
@@ -36,7 +36,7 @@ handle_call({put, Obj, Pool}, From, State) ->
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
-handle_call({get, B, K, Socket, Pool}, From, State) ->
+handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
     %% do the get and send it to the client
@@ -49,8 +49,8 @@ handle_call({get, B, K, Socket, Pool}, From, State) ->
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Socket, {fs_diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Socket, {fs_diff_obj, RObj})
+                    [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
+                    riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
             end,
             ok;
         {error, notfound} ->
@@ -61,7 +61,7 @@ handle_call({get, B, K, Socket, Pool}, From, State) ->
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
-handle_call({get, B, K, Socket, Pool, Partition}, From, State) ->
+handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
 
@@ -91,8 +91,8 @@ handle_call({get, B, K, Socket, Pool, Partition}, From, State) ->
                         cancel ->
                             skipped;
                         Objects when is_list(Objects) ->
-                            [riak_repl_tcp_server:send(Socket, {fs_diff_obj, O}) || O <- Objects],
-                            riak_repl_tcp_server:send(Socket, {fs_diff_obj, RObj})
+                            [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
+                            riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->

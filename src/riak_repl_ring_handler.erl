@@ -131,6 +131,7 @@ update_leader(Ring) ->
                 {_, true, true} ->
                     riak_repl:install_hook()
             end,
+            riak_repl_listener_sup:ensure_listeners(Ring),
             riak_repl_leader:set_candidates(Candidates, Workers)
     end.
 
@@ -142,4 +143,4 @@ has_listeners(ReplConfig) ->
 
 listener_nodes(ReplConfig) ->
     Listeners = dict:fetch(listeners, ReplConfig),
-    [L#repl_listener.nodename || L <- Listeners].
+    lists:usort([L#repl_listener.nodename || L <- Listeners]).

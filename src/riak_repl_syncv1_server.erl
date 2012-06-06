@@ -27,7 +27,7 @@
 -include_lib("kernel/include/file.hrl").
 
 %% API
--export([start_link/4, start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
+-export([start_link/5, start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
     resume_fullsync/1]).
 
 %% gen_fsm
@@ -49,6 +49,7 @@
 -record(state, {
         sitename :: repl_sitename(),
         socket :: repl_socket(),
+        transport,
         client,
         work_dir,
         helper_pid,
@@ -66,8 +67,8 @@
         diff_errs                                 % errors retrieving different keys
     }).
 
-start_link(SiteName, Socket, WorkDir, Client) ->
-    gen_fsm:start_link(?MODULE, [SiteName, Socket, WorkDir, Client], []).
+start_link(SiteName, Transport, Socket, WorkDir, Client) ->
+    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
 
 start_fullsync(Pid) ->
     Pid ! start_fullsync.
@@ -81,9 +82,9 @@ pause_fullsync(Pid) ->
 resume_fullsync(Pid) ->
     gen_fsm:send_all_state_event(Pid, resume_fullsync).
 
-init([SiteName, Socket, WorkDir, Client]) ->
-    State0 = #state{sitename=SiteName, socket=Socket,
-        work_dir=WorkDir, client=Client},
+init([SiteName, Transport, Socket, WorkDir, Client]) ->
+    State0 = #state{sitename=SiteName, transport=Transport,
+        socket=Socket, work_dir=WorkDir, client=Client},
     riak_repl_util:schedule_fullsync(),
     State = case application:get_env({progress, SiteName}) of
         {ok, Partitions} when is_list(Partitions) ->
@@ -164,7 +165,8 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
                           [State#state.sitename, State#state.partition,
                            elapsed_secs(State#state.stage_start)]),
     Now = now(),
-    riak_repl_tcp_server:send(State#state.socket, {merkle, FileSize, State#state.partition}),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+        {merkle, FileSize, State#state.partition}),
     next_state(merkle_xfer, State#state{helper_pid = undefined,
                                         merkle_ref = undefined,
                                         stage_start = Now,
@@ -185,7 +187,8 @@ merkle_xfer(timeout, State) ->
     MerkleFd = State#state.merkle_fd,
     case file:read(MerkleFd, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
-            riak_repl_tcp_server:send(State#state.socket, {merk_chunk, Data}),
+            riak_repl_tcp_server:send(State#state.transport,
+                State#state.socket, {merk_chunk, Data}),
             next_state(merkle_xfer, State);
         eof ->
             file:close(MerkleFd),
@@ -212,7 +215,8 @@ merkle_diff(cancel_fullsync, State) ->
     next_state(merkle_diff, do_cancel_fullsync(State));
 merkle_diff(timeout, #state{partitions=cancelled}=State) ->
     %% abandon the diff if the fullsync has been cancelled
-    riak_repl_tcp_server:send(State#state.socket, {partition_complete, State#state.partition}),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+        {partition_complete, State#state.partition}),
     next_state(merkle_send, State#state{partition = undefined,
                                         diff_vclocks = [],
                                         diff_sent = undefined,
@@ -220,7 +224,8 @@ merkle_diff(timeout, #state{partitions=cancelled}=State) ->
                                         diff_errs = undefined,
                                         stage_start = undefined});
 merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
-    riak_repl_tcp_server:send(State#state.socket, {partition_complete, State#state.partition}),
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+        {partition_complete, State#state.partition}),
     DiffsSent = State#state.diff_sent,
     DiffsRecv = State#state.diff_recv,
     case DiffsRecv of
@@ -247,7 +252,7 @@ merkle_diff(timeout, #state{diff_vclocks=[{{B, K}, ClientVC} | Rest]}=State) ->
     Errs  = State#state.diff_errs,
     case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
         {ok, RObj} ->
-            case maybe_send(RObj, ClientVC, State#state.socket, Client) of
+            case maybe_send(RObj, ClientVC, State#state.transport, State#state.socket, Client) of
                 skipped ->
                     next_state(merkle_diff, State#state{diff_vclocks = Rest,
                                                         diff_recv = Recv + 1});
@@ -402,7 +407,7 @@ elapsed_secs(Then) ->
     CentiSecs = timer:now_diff(now(), Then) div 10000,
     CentiSecs / 100.0.
 
-maybe_send(RObj, ClientVC, Socket, Client) ->
+maybe_send(RObj, ClientVC, Transport, Socket, Client) ->
     ServerVC = riak_object:vclock(RObj),
     case vclock:descends(ClientVC, ServerVC) of
         true ->
@@ -412,8 +417,8 @@ maybe_send(RObj, ClientVC, Socket, Client) ->
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Socket, {diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Socket, {diff_obj, RObj})
+                    [riak_repl_tcp_server:send(Transport, Socket, {diff_obj, O}) || O <- Objects],
+                    riak_repl_tcp_server:send(Transport, Socket, {diff_obj, RObj})
             end
     end.
 

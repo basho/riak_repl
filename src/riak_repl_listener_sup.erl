@@ -2,17 +2,17 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl_listener_sup).
 -author('Andy Gross <andy@basho.com>').
--behaviour(supervisor).
 -include("riak_repl.hrl").
--export([start_link/0, init/1, stop/1]).
--export([start_listener/1, ensure_listeners/1]).
+-export([start_listener/1, ensure_listeners/1, close_all_connections/0]).
 
-start_listener(#repl_listener{listen_addr={IP, Port}}) ->
+start_listener(Listener = #repl_listener{listen_addr={IP, Port}}) ->
     case riak_repl_util:valid_host_ip(IP) of
         true ->
             lager:info("Starting replication listener on ~s:~p",
                 [IP, Port]),
-            supervisor:start_child(?MODULE, [IP, Port]);
+            {ok, RawAddress} = inet_parse:address(IP),
+            ranch:start_listener(Listener, 10, ranch_tcp,
+                [{ip, RawAddress}, {port, Port}], riak_repl_tcp_server, []);
         _ ->
             lager:error("Cannot start replication listener "
                 "on ~s:~p - invalid address.",
@@ -26,11 +26,9 @@ ensure_listeners(Ring) ->
             riak_repl_ring:initial_config();
         RC -> RC
     end,
-    CurrentConfig = [begin Res = riak_repl_listener:config(Pid), {Pid, Res} end||
-        {_Id, Pid, _Type, _Modules} <- supervisor:which_children(?MODULE),
+    CurrentListeners = [L ||
+        {{_, L}, Pid, _Type, _Modules} <- supervisor:which_children(ranch_sup),
         is_pid(Pid)],
-    CurrentListeners = lists:map(fun({_Pid, Listener}) -> Listener end,
-        CurrentConfig),
     ConfiguredListeners = [Listener || Listener <- dict:fetch(listeners, ReplConfig),
         Listener#repl_listener.nodename == node()],
     ToStop = sets:to_list(
@@ -43,35 +41,13 @@ ensure_listeners(Ring) ->
                  sets:from_list(CurrentListeners))),
     [start_listener(Listener) || Listener <- ToStart],
     lists:foreach(fun(Listener) ->
-                case lists:keyfind(Listener, 2, CurrentConfig) of
-                    {Pid, Listener} ->
-                        riak_repl_listener:stop(Pid);
-                    _ ->
-                        ok
-                end
+                {IP, Port} = Listener#repl_listener.listen_addr,
+                lager:info("Stopping replicaion listener on ~s:~p",
+                    [IP, Port]),
+                ranch:stop_listener(Listener)
         end, ToStop),
     ok.
 
-start_link() ->
-    {ok, Pid} = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    ReplConfig = 
-    case riak_repl_ring:get_repl_config(Ring) of
-        undefined ->
-            riak_repl_ring:initial_config();
-        RC -> RC
-    end,
-    [start_listener(Listener) || Listener <- dict:fetch(listeners,
-            ReplConfig), Listener#repl_listener.nodename == node()],
-    {ok, Pid}.
-
-
-stop(_S) -> ok.
-
-%% @private
-init([]) ->
-    {ok, 
-     {{simple_one_for_one, 100, 10}, 
-      [{undefined,
-        {riak_repl_listener, start_link, []},
-        transient, brutal_kill, worker, [riak_repl_listener]}]}}.
+close_all_connections() ->
+    [exit(P, kill) || {_, P, _, _} <-
+        supervisor:which_children(riak_repl_server_sup)]. 

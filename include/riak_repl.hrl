@@ -11,11 +11,13 @@
 -define(REPL_DEFAULT_QUEUE_SIZE, 104857600).
 -define(REPL_DEFAULT_MAX_PENDING, 5).
 -define(REPL_DEFAULT_ACK_FREQUENCY, 5).
--define(FSM_SOCKOPTS, [{active, once}, {packet, 4}, {send_timeout, 60000},
+-define(FSM_SOCKOPTS, [{packet, 4}, {send_timeout, 60000},
         {send_timeout_close, true}]).
 -define(REPL_VERSION, 3).
 -define(LEGACY_STRATEGY, syncv1).
 -define(KEEPALIVE_TIME, 60000).
+-define(PEERINFO_TIMEOUT, 60000).
+-define(ELECTION_TIMEOUT, 60000).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).

@@ -209,13 +209,8 @@ handle_cast(ensure_sites, State) ->
 
 handle_info(update_leader, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_repl_ring:get_repl_config(Ring) of
-        undefined ->
-            {noreply, State};
-        _ ->
-            riak_repl_ring_handler:update_leader(Ring),
-            {noreply, State}
-    end;
+    riak_repl_ring_handler:update_leader(Ring),
+    {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             #state{leader_mref=Mref}=State) ->
     case State#state.helper_pid of
@@ -341,7 +336,7 @@ leader_change(false, true) ->
         {SiteName, _Pid} <- RunningSiteProcs];
 leader_change(true, false) ->
     %% we've lost the leadership, close any local listeners
-    riak_repl_listener:close_all_connections().
+    riak_repl_listener_sup:close_all_connections().
 
 %% Inspect the cluster and determine if we can balance clients between
 %% non-leader nodes
@@ -355,7 +350,7 @@ ensure_sites(Leader) ->
             riak_repl_client_sup:ensure_sites(Ring);
         _ when InverseConnections == true ->
             %% inverse connections are incompatible with client balancing
-            lager:notice("Inverse connections enabled; clients will all be "
+            lager:info("Inverse connections enabled; clients will all be "
                 "run on the leader"),
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             riak_repl_client_sup:ensure_sites(Ring);
@@ -635,12 +630,12 @@ prop_balance() ->
 
                     %% check that we are only starting sites that are supposed
                     %% to start
-                    lists:all(fun({Node, Site}) ->
+                    lists:all(fun({_Node, Site}) ->
                                 lists:member(Site, ConfiguredSites)
                         end, ToStart) andalso
                     %% check that we've balanced the # of sites across the
                     %% nodes
-                    case lists:foldl(fun({Node, Sites}, {Valid, Over}) ->
+                    case lists:foldl(fun({_Node, Sites}, {Valid, Over}) ->
                                     ClientsPlusOne = ClientsPerNode + 1,
                                     case length(Sites) of
                                         ClientsPerNode ->

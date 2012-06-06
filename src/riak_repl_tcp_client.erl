@@ -16,8 +16,8 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, status/1, status/2, async_connect/3, send/2,
-        handle_peerinfo/3, make_state/5]).
+-export([start_link/1, status/1, status/2, async_connect/3, send/3,
+        handle_peerinfo/3, make_state/6]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -28,10 +28,10 @@
         listeners,
         listener,
         socket,
+        transport,
         pending,
         client,
         my_pi,
-        partitions,
         ack_freq,
         count,
         work_dir,
@@ -41,9 +41,9 @@
         keepalive_time
     }).
 
-make_state(SiteName, Socket, MyPI, WorkDir, Client) ->
-    {ok, {IP, Port}} = inet:sockname(Socket),
-    #state{sitename=SiteName, socket=Socket, my_pi=MyPI, work_dir=WorkDir,
+make_state(SiteName, Transport, Socket, MyPI, WorkDir, Client) ->
+    {ok, {IP, Port}} = Transport:sockname(Socket),
+    #state{sitename=SiteName, transport=Transport, socket=Socket, my_pi=MyPI, work_dir=WorkDir,
         client=Client, listeners=[], pending=[], listener={connected, IP,
             Port}}.
 
@@ -120,23 +120,31 @@ handle_call(_Event, _From, State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 
-handle_info({connected, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
+handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
     lager:info("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
-    ok = riak_repl_util:configure_socket(Socket),
-    gen_tcp:send(Socket, State#state.sitename),
-    Props = riak_repl_fsm_common:common_init(Socket),
+    ok = riak_repl_util:configure_socket(Transport, Socket),
+    Transport:send(Socket, State#state.sitename),
+    Props = riak_repl_fsm_common:common_init(Transport, Socket),
     NewState = State#state{
         listener = {connected, IPAddr, Port},
-        socket=Socket, 
+        socket=Socket,
+        transport=Transport,
         client=proplists:get_value(client, Props),
-        my_pi=proplists:get_value(my_pi, Props),
-        partitions=proplists:get_value(partitions, Props)},
-    send(Socket, {peerinfo, NewState#state.my_pi,
-            [bounded_queue, keepalive, {fullsync_strategies,
-                    app_helper:get_env(riak_repl, fullsync_strategies,
-                        [?LEGACY_STRATEGY])}]}),
-    inet:setopts(Socket, [{active, once}]),
+        my_pi=proplists:get_value(my_pi, Props)},
+    case riak_repl_util:maybe_use_ssl() of
+        false ->
+            send(Transport, Socket, {peerinfo, NewState#state.my_pi,
+                    [bounded_queue, keepalive, {fullsync_strategies,
+                            app_helper:get_env(riak_repl, fullsync_strategies,
+                                [?LEGACY_STRATEGY])}]});
+        _ ->
+            %% Send a fake peerinfo that will cause a connection failure if
+            %% we don't renegotiate SSL. This avoids leaking the ring and
+            %% accidentally connecting to an insecure site
+            send(Transport, Socket, {peerinfo,
+                    riak_repl_util:make_fake_peer_info(), [ssl_required]})
+    end,
     recv_peerinfo(NewState);
 handle_info({connect_failed, Reason}, State) ->
     lager:debug("Failed to connect to site ~p: ~p", [State#state.sitename,
@@ -149,12 +157,20 @@ handle_info({tcp_closed, Socket}, #state{socket = Socket} = State) ->
 handle_info({tcp_closed, _Socket}, State) ->
     %% Ignore old sockets - e.g. after a redirect
     {noreply, State};
+handle_info({ssl_closed, Socket}, #state{socket = Socket} = State) ->
+    lager:info("Connection to site ~p closed", [State#state.sitename]),
+    {stop, normal, State};
 handle_info({tcp_error, Socket, Reason}, #state{socket = Socket} = State) ->
     lager:error("Connection to site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
-handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
-    inet:setopts(Socket, [{active, once}]),
+handle_info({ssl_error, Socket, Reason}, #state{socket = Socket} = State) ->
+    lager:error("Connection to site ~p closed unexpectedly: ~p",
+        [State#state.sitename, Reason]),
+    {stop, normal, State};
+handle_info({Proto, Socket, Data},
+        State=#state{transport=Transport,socket=Socket}) when Proto==tcp; Proto==ssl ->
+    Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
     Reply = case Msg of
@@ -171,7 +187,7 @@ handle_info({tcp, Socket, Data}, State=#state{socket=Socket}) ->
             ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
             {noreply, State};
         keepalive ->
-            send(Socket, keepalive_ack),
+            send(Transport, Socket, keepalive_ack),
             {noreply, State};
         keepalive_ack ->
             %% noop
@@ -200,7 +216,7 @@ handle_info(timeout, State) ->
     case State#state.keepalive_time of
         Time when is_integer(Time) ->
             %% keepalive timeout fired
-            send(State#state.socket, keepalive),
+            send(State#state.transport, State#state.socket, keepalive),
             {noreply, State, Time};
         _ ->
             {noreply, State}
@@ -258,25 +274,26 @@ do_async_connect(#state{pending=[{IPAddr, Port}|T]} = State) ->
 %% Function spawned to do async connect
 async_connect(Parent, IPAddr, Port) ->
     Timeout = app_helper:get_env(riak_repl, client_connect_timeout, 15000),
+    Transport = ranch_tcp,
     case gen_tcp:connect(IPAddr, Port, [binary, 
                                         {packet, 4},
                                         {active, false},
                                         {keepalive, true},
                                         {nodelay, true}], Timeout) of
         {ok, Socket} ->
-            ok = gen_tcp:controlling_process(Socket, Parent),
-            Parent ! {connected, Socket};
+            ok = Transport:controlling_process(Socket, Parent),
+            Parent ! {connected, Transport, Socket};
         {error, Reason} ->
             %% Send Reason so it shows in traces even if nothing is done with it
             Parent ! {connect_failed, Reason}
     end.
 
-send(Socket, Data) when is_binary(Data) -> 
-    R = gen_tcp:send(Socket, Data),
+send(Transport, Socket, Data) when is_binary(Data) -> 
+    R = Transport:send(Socket, Data),
     riak_repl_stats:client_bytes_sent(size(Data)),
     R;
-send(Socket, Data) ->
-    send(Socket, term_to_binary(Data)).
+send(Transport, Socket, Data) ->
+    send(Transport, Socket, term_to_binary(Data)).
 
 do_repl_put(Obj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
     Worker = poolboy:checkout(Pool, true, infinity),
@@ -286,22 +303,55 @@ do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
-do_repl_put(Obj, State=#state{socket=S, ack_freq=F, pool_pid=Pool}) ->
+do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
-    send(S, {q_ack, F}),
+    send(T, S, {q_ack, F}),
     State#state{count=0}.
 
-recv_peerinfo(#state{socket=Socket} = State) ->
-    receive
-        {tcp, Socket, Data} ->
+recv_peerinfo(#state{transport=T,socket=Socket} = State) ->
+    Proto = T:name(),
+    case T:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+        {ok, Data} ->
             Msg = binary_to_term(Data),
+            NeedSSL = riak_repl_util:maybe_use_ssl(),
             case Msg of
-                {peerinfo, TheirPeerInfo} ->
+                {peerinfo, _, [ssl_required]} when Proto == tcp, NeedSSL /= false ->
+                    case riak_repl_util:upgrade_client_to_ssl(Socket) of
+                        {ok, SSLSocket} ->
+                            lager:info("Upgraded replication connection to SSL"),
+                            Transport = ranch_ssl,
+                            %% re-send peer info
+                            send(Transport, SSLSocket, {peerinfo, State#state.my_pi,
+                                    [bounded_queue, {fullsync_strategies,
+                                            app_helper:get_env(riak_repl, fullsync_strategies,
+                                                [?LEGACY_STRATEGY])}]}),
+                            recv_peerinfo(State#state{socket=SSLSocket,
+                                    transport=Transport});
+                        {error, Reason} ->
+                            lager:error("Unable to comply with request to "
+                                "upgrade connection with site ~p to SSL: ~p",
+                                [State#state.sitename, Reason]),
+                            riak_repl_client_sup:stop_site(State#state.sitename),
+                            {stop, normal, State}
+                    end;
+                {peerinfo, _, [ssl_required]} ->
+                    %% other side wants SSL, but we aren't configured for it
+                    lager:error("Site ~p requires SSL to connect",
+                        [State#state.sitename]),
+                    riak_repl_client_sup:stop_site(State#state.sitename),
+                    {stop, normal, State};
+                {peerinfo, TheirPeerInfo} when Proto == ssl; NeedSSL == false ->
                     Capability = riak_repl_util:capability_from_vsn(TheirPeerInfo),
                     handle_peerinfo(State, TheirPeerInfo, Capability);
-                {peerinfo, TheirPeerInfo, Capability} ->
+                {peerinfo, TheirPeerInfo, Capability}  when  Proto == ssl; NeedSSL == false->
                     handle_peerinfo(State, TheirPeerInfo, Capability);
+                PeerInfo when element(1, PeerInfo) == peerinfo ->
+                    %% SSL was required, but not provided by the other side
+                    lager:error("Server for site ~p does not support SSL, refusing "
+                        "to connect", [State#state.sitename]),
+                    riak_repl_client_sup:stop_site(State#state.sitename),
+                    {stop, normal, State};
                 {redirect, IPAddr, Port} ->
                     case lists:member({IPAddr, Port}, State#state.listeners) of
                         false ->
@@ -311,7 +361,7 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                             ok
                     end,
                     riak_repl_stats:client_redirect(),
-                    catch gen_tcp:close(Socket),
+                    catch T:close(Socket),
                     self() ! try_connect,
                     {noreply, State#state{pending=[{IPAddr, Port} |
                                 State#state.pending]}};
@@ -319,15 +369,15 @@ recv_peerinfo(#state{socket=Socket} = State) ->
                     lager:error("Expected peer_info from ~p, but got something else: ~p.",
                         [State#state.sitename, Other]),
                     {stop, normal, State}
-            end
-    after 60000 ->
+            end;
+        _ ->
             %% the server will wait for 60 seconds for gen_leader to stabilize
             lager:error("Timed out waiting for peer info from ~p.",
                 [State#state.sitename]),
             {stop, normal, State}
     end.
 
-handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo, Capability) ->
+handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket} = State, TheirPeerInfo, Capability) ->
     MyPeerInfo = State#state.my_pi,
     case riak_repl_util:validate_peer_info(TheirPeerInfo, MyPeerInfo) of
         true ->
@@ -336,14 +386,14 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
                 true ->
                     case riak_repl_leader:add_receiver_pid(self()) of
                         ok ->
-                            lager:notice("added as receiver pid"),
+                            lager:info("Inverting connection"),
                             self() ! {tcp, Socket, term_to_binary({peerinfo,
                                         TheirPeerInfo, Capability})},
                             put(inverted, true),
                             gen_server:enter_loop(riak_repl_tcp_server,
                                 [],
                                 riak_repl_tcp_server:make_state(SiteName,
-                                    Socket, State#state.my_pi,
+                                    Transport, Socket, State#state.my_pi,
                                     State#state.work_dir,
                                     State#state.client)),
                             {stop, normal, State};
@@ -361,28 +411,27 @@ handle_peerinfo(#state{sitename=SiteName, socket=Socket} = State, TheirPeerInfo,
                     StratMod = riak_repl_util:strategy_module(Strategy, client),
                     lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
                             State#state.sitename]),
-                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Socket, SiteName),
-                    {ok, FullsyncWorker} = StratMod:start_link(SiteName, Socket,
-                        WorkDir),
+                    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
+                    {ok, FullsyncWorker} = StratMod:start_link(SiteName, Transport, Socket, WorkDir),
                     %% Set up for bounded queue if remote server supports it
-                    case proplists:get_bool(bounded_queue, Capability) of
+                    State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
                             AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
                                 ?REPL_DEFAULT_ACK_FREQUENCY),
-                            State1 = State#state{count=0, 
+                            State#state{count=0, 
                                 ack_freq=AckFreq};
                         false ->
-                            State1 = State
+                            State
                     end,
-                    case proplists:get_bool(keepalive, Capability) of
+                    KeepaliveTime = case proplists:get_bool(keepalive, Capability) of
                         true ->
-                            KeepaliveTime = ?KEEPALIVE_TIME;
+                            ?KEEPALIVE_TIME;
                         _ ->
-                            KeepaliveTime = undefined
+                            undefined
                     end,
                     TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
                     update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName),
-                    inet:setopts(Socket, [{active, once}]),
+                    Transport:setopts(Socket, [{active, once}]),
                     riak_repl_stats:client_connects(),
                     MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
                     MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
