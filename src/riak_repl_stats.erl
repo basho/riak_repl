@@ -4,11 +4,16 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(gen_server).
 -include("riak_repl.hrl").
--export([init/1, 
-         handle_call/3, 
-         handle_cast/2, 
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
          handle_info/2,
-         terminate/2, 
+         terminate/2,
          code_change/3]).
 -export([start_link/0,
          client_bytes_sent/1,
@@ -46,7 +51,7 @@ client_bytes_recv(Bytes) ->
 
 client_connects() ->
     increment_counter(client_connects).
-    
+
 client_connect_errors() ->
     increment_counter(client_connect_errors).
 
@@ -90,7 +95,7 @@ get_stats() ->
     lists:flatten([backwards_compat(Stat, Type) ||
         {Stat, Type} <- stats()]).
 
-init([]) -> 
+init([]) ->
     schedule_report_bw(),
     {ok, ok}.
 
@@ -118,7 +123,7 @@ stats() ->
      {objects_sent, counter},
      {objects_forwarded, counter},
      {elections_elected, counter},
-     {elections_leader_change, counter},
+     {elections_leader_changed, counter},
      {client_rx_kbps, history},
      {client_tx_kbps, history},
      {server_rx_kbps, history},
@@ -165,7 +170,7 @@ handle_info(report_bw, State) ->
                               {last_client_bytes_recv, ThisClientBytesRecv},
                               {last_server_bytes_sent, ThisServerBytesSent},
                               {last_server_bytes_recv, ThisServerBytesRecv}]],
-    
+
     schedule_report_bw(),
     {noreply, State};
 handle_info(_Info, State) -> {noreply, State}.
@@ -198,3 +203,68 @@ backwards_compat(_Name, gauge) ->
     [];
 backwards_compat(Name,  _Type) ->
     {Name, lookup_stat(Name)}.
+
+-ifdef(TEST).
+
+repl_stats_test_() ->
+    {setup, fun() ->
+                    folsom:start(),
+                    {ok, Pid} = riak_repl_stats:start_link(),
+                    Pid  end,
+     fun(Pid) ->
+             folsom:stop(),
+             exit(Pid, kill) end,
+     [{"Register stats", fun test_register_stats/0},
+      {"Populate stats", fun test_populate_stats/0},
+      {"Check stats", fun test_check_stats/0}]
+    }.
+
+test_register_stats() ->
+    register_stats(),
+    RegisteredReplStats = [Stat || {App, Stat} <- folsom_metrics:get_metrics(),
+                                   App == riak_repl],
+    {Stats, _Types} = lists:unzip(stats()),
+    ?assertEqual(lists:sort(Stats), lists:sort(RegisteredReplStats)).
+
+test_populate_stats() ->
+    Bytes = 1000,
+    ok = client_bytes_sent(Bytes),
+    ok = client_bytes_recv(Bytes),
+    ok = client_connects(),
+    ok = client_connect_errors(),
+    ok = client_redirect(),
+    ok = server_bytes_sent(Bytes),
+    ok = server_bytes_recv(Bytes),
+    ok = server_connects(),
+    ok = server_connect_errors(),
+    ok = server_fullsyncs(),
+    ok = objects_dropped_no_clients(),
+    ok = objects_dropped_no_leader(),
+    ok = objects_sent(),
+    ok = objects_forwarded(),
+    ok = elections_elected(),
+    ok = elections_leader_changed().
+
+test_check_stats() ->
+    ?assertEqual([{server_bytes_sent,1000},
+                  {server_bytes_recv,1000},
+                  {server_connects,1},
+                  {server_connect_errors,1},
+                  {server_fullsyncs,1},
+                  {client_bytes_sent,1000},
+                  {client_bytes_recv,1000},
+                  {client_connects,1},
+                  {client_connect_errors,1},
+                  {client_redirect,1},
+                  {objects_dropped_no_clients,1},
+                  {objects_dropped_no_leader,1},
+                  {objects_sent,1},
+                  {objects_forwarded,1},
+                  {elections_elected,1},
+                  {elections_leader_changed,1},
+                  {client_rx_kbps,[]},
+                  {client_tx_kbps,[]},
+                  {server_rx_kbps,[]},
+                  {server_tx_kbps,[]}], get_stats()).
+
+-endif.
