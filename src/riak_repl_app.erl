@@ -28,6 +28,8 @@ start(_Type, _StartArgs) ->
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
+            %% register stats
+            riak_repl_stats:register_stats(),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
             {ok, Pid};
         {error, Reason} ->
