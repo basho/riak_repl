@@ -32,6 +32,7 @@
 -type(repl_np_pairs() :: [repl_np_pair()]).
 -type(repl_node_sites() :: {node(), [{repl_sitename(), pid()}]}).
 -type(ring() :: tuple()).
+-type(repl_config() :: dict()|undefined).
 
 -record(peer_info, {
           riak_version :: string(), %% version number of the riak_kv app
@@ -52,12 +53,18 @@
           nodename    :: atom(),     %% cluster-local node name
           listen_addr :: repl_addr() %% ip/port to bind/listen on
          }).
+
 -record(repl_site, {
           name  :: repl_sitename(),   %% site name
           addrs=[] :: repl_addrlist(),%% list of ip/ports to connect to
           last_sync=?NEVER_SYNCED :: tuple()  
          }).
 
+-record(nat_listener, {
+          nodename    :: atom(),      %% cluster-local node name
+          listen_addr :: repl_addr(), %% ip/port to bind/listen on
+          nat_addr :: repl_addr()     %% ip/port that nat bind/listens to
+         }).
 
 -define(REPL_HOOK, {struct, 
                     [{<<"mod">>, <<"riak_repl_leader">>},

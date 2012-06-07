@@ -28,6 +28,10 @@
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
         resume_fullsync/1, handle_peerinfo/3, make_state/6]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -103,7 +107,7 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
-    Desc = 
+    Desc =
         [
             {node, node()},
             {site, State#state.sitename},
@@ -362,7 +366,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                             %% with the ssl_required capability
                             {ok, Data} = Transport:recv(Socket, 0, infinity),
                             case binary_to_term(Data) of
-                                {peerinfo, _, [ssl_required]} ->
+                                {peerinfo, _, [ssl_required|_]} ->
                                     case ssl:ssl_accept(Socket, Config) of
                                         {ok, SSLSocket} ->
                                             send_peerinfo(State#state{socket=SSLSocket,
@@ -389,9 +393,23 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                     send_peerinfo(State)
             end;
         OtherNode ->
-            OtherListener = listener_for_node(OtherNode),
-            {Ip, Port} = OtherListener#repl_listener.listen_addr,
-            send(Transport, Socket, {redirect, Ip, Port}),
+            %% receive stuff off of wire
+            case Transport:recv(Socket, 0, infinity) of
+                {ok, Data} ->
+                    case binary_to_term(Data) of
+                        {peerinfo, _, Capabilities} ->
+                            ConnectedIP = proplists:get_value(connected_ip,Capabilities),
+                            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                            {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, ConnectedIP),
+                            send(Transport, Socket, {redirect, Ip, Port});
+                        Other ->
+                            Transport:close(Socket),
+                            lager:error("Received unknown peer data: ~p",[Other])
+                    end;
+                {error, closed} ->
+                    Transport:close(Socket),
+                    lager:error("Peer info tcp error")
+            end,
             {stop, normal, State}
     end.
 
@@ -402,13 +420,24 @@ send(Transport, Sock, Data) when is_binary(Data) ->
 send(Transport, Sock, Data) ->
     send(Transport, Sock, term_to_binary(Data)).
 
-listener_for_node(Node) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+ip_and_port_for_node(Node, Ring, ConnectedIp) ->
     ReplConfig = riak_repl_ring:get_repl_config(Ring),
     Listeners = dict:fetch(listeners, ReplConfig),
     NodeListeners = [L || L <- Listeners,
-                          L#repl_listener.nodename =:= Node],
-    hd(NodeListeners).
+                          L#repl_listener.nodename == Node],
+    NatListeners = dict:fetch(natlisteners, ReplConfig),
+    NatNodeListeners = [N || N <- NatListeners,
+                             N#nat_listener.nodename == Node],
+    NatListenAddrs = [R#nat_listener.nat_addr || R <- NatListeners],
+    UseNats = lists:keymember(ConnectedIp, 1, NatListenAddrs),
+    case UseNats of
+        false ->
+            L = hd(NodeListeners),
+            L#repl_listener.listen_addr;
+        true ->
+            NL = hd(NatNodeListeners),
+            NL#nat_listener.nat_addr
+    end.
 
 drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
     case bounded_queue:out(Q) of
@@ -434,3 +463,55 @@ send_diffobj(Msg,State=#state{transport=Transport,socket=Socket,pending=Pending}
     send(Transport, Socket, Msg),
     State#state{pending=Pending+1}.
 
+%% unit tests
+
+-ifdef(TEST).
+
+nat_redirect_test() ->
+    Ring0 = riak_repl_ring:ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    Ring1 = riak_repl_ring:add_nat_listener(Ring0, NatListener),
+    {Ip, Port} = ip_and_port_for_node(NodeName, Ring1, NatAddr),
+    ?assertEqual("10.11.12.13", Ip),
+    ?assertEqual(9011, Port).
+
+non_nat_redirect_test() ->
+    Ring0 = riak_repl_ring:ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+    Ring1 = riak_repl_ring:add_listener(Ring0, Listener),
+    {Ip, Port} = ip_and_port_for_node(NodeName, Ring1, ListenAddr),
+    ?assertEqual("127.0.0.1", Ip),
+    ?assertEqual(9010, Port).
+
+skip_nat_test() ->
+    Ring0 = riak_repl_ring:ensure_config_test(),
+    NodeName   = "test@test",
+    ListenAddr = "127.0.0.1",
+    ListenPort = 9010,
+    NatAddr    = "10.11.12.13",
+    NatPort    = 9011,
+    Listener = #repl_listener{nodename=NodeName,
+                              listen_addr={ListenAddr, ListenPort}},
+
+    NatListener = #nat_listener{nodename=NodeName,
+                                listen_addr={ListenAddr, ListenPort},
+                                nat_addr={NatAddr, NatPort}
+                               },
+    Ring1 = riak_repl_ring:add_nat_listener(Ring0, NatListener),
+    Ring2 = riak_repl_ring:add_listener(Ring1, Listener),
+    {Ip, Port} = ip_and_port_for_node(NodeName, Ring2, ListenAddr),
+    ?assertEqual("127.0.0.1", Ip),
+    ?assertEqual(9010, Port).
+-endif.
