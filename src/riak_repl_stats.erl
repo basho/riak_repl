@@ -33,7 +33,8 @@
          elections_elected/0,
          elections_leader_changed/0,
          register_stats/0,
-         get_stats/0]).
+         get_stats/0,
+         produce_stats/0]).
 
 -define(APP, riak_repl).
 
@@ -41,6 +42,7 @@ start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 register_stats() ->
     [register_stat(Name, Type) || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
     folsom_metrics:notify_existing_metric({?APP, last_report}, now(), gauge).
 
 client_bytes_sent(Bytes) ->
@@ -92,6 +94,9 @@ elections_leader_changed() ->
     increment_counter(elections_leader_changed).
 
 get_stats() ->
+    riak_core_stat_cache:get_stats(?APP).
+
+produce_stats() ->
     lists:flatten([backwards_compat(Stat, Type) ||
         {Stat, Type} <- stats()]).
 
