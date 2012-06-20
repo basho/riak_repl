@@ -33,7 +33,8 @@
          elections_elected/0,
          elections_leader_changed/0,
          register_stats/0,
-         get_stats/0]).
+         get_stats/0,
+         produce_stats/0]).
 
 -define(APP, riak_repl).
 
@@ -41,6 +42,7 @@ start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 register_stats() ->
     [register_stat(Name, Type) || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
     folsom_metrics:notify_existing_metric({?APP, last_report}, now(), gauge).
 
 client_bytes_sent(Bytes) ->
@@ -92,6 +94,13 @@ elections_leader_changed() ->
     increment_counter(elections_leader_changed).
 
 get_stats() ->
+    case riak_core_stat_cache:get_stats(?APP) of
+        {ok, Stats, _TS} ->
+            Stats;
+        Error -> Error
+    end.
+
+produce_stats() ->
     lists:flatten([backwards_compat(Stat, Type) ||
         {Stat, Type} <- stats()]).
 
@@ -138,11 +147,14 @@ increment_counter(Name) ->
     increment_counter(Name, 1).
 
 increment_counter(Name, IncrBy) when is_atom(Name) andalso is_integer(IncrBy) ->
-    folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter).
+    gen_server:cast(?MODULE, {increment_counter, Name, IncrBy}).
 
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({increment_counter, Name, IncrBy}, State) ->
+    folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -209,11 +221,12 @@ backwards_compat(Name,  _Type) ->
 repl_stats_test_() ->
     {setup, fun() ->
                     folsom:start(),
+                    {ok, CPid} = riak_core_stat_cache:start_link(),
                     {ok, Pid} = riak_repl_stats:start_link(),
-                    Pid  end,
-     fun(Pid) ->
+                    [CPid, Pid]  end,
+     fun(Pids) ->
              folsom:stop(),
-             exit(Pid, kill) end,
+             [ exit(Pid, kill) || Pid <- Pids ] end,
      [{"Register stats", fun test_register_stats/0},
       {"Populate stats", fun test_populate_stats/0},
       {"Check stats", fun test_check_stats/0}]
