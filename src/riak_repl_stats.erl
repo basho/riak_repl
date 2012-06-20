@@ -143,11 +143,14 @@ increment_counter(Name) ->
     increment_counter(Name, 1).
 
 increment_counter(Name, IncrBy) when is_atom(Name) andalso is_integer(IncrBy) ->
-    folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter).
+    gen_server:cast(?MODULE, {increment_counter, Name, IncrBy}).
 
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({increment_counter, Name, IncrBy}, State) ->
+    folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
