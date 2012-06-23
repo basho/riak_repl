@@ -94,7 +94,11 @@ elections_leader_changed() ->
     increment_counter(elections_leader_changed).
 
 get_stats() ->
-    riak_core_stat_cache:get_stats(?APP).
+    case riak_core_stat_cache:get_stats(?APP) of
+        {ok, Stats, _TS} ->
+            Stats;
+        Error -> Error
+    end.
 
 produce_stats() ->
     lists:flatten([backwards_compat(Stat, Type) ||
