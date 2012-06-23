@@ -293,7 +293,7 @@ handle_sync_event(status, _From, StateName, State) ->
 handle_sync_event(stop,_F,_StateName,State) ->
     {stop, normal, ok, State};
 handle_sync_event(_Event,_F,StateName,State) ->
-    lager:debug("Fulsync with site ~p; ignoring ~p", [State#state.sitename,_Event]),
+    lager:debug("Fullsync with site ~p; ignoring ~p", [State#state.sitename,_Event]),
     {reply, ok, StateName, State}.
 
 handle_info(start_fullsync, wait_for_partition, State) ->

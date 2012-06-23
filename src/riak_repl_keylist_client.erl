@@ -225,7 +225,7 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
             lager:info("Full-sync with site ~p; sent keylist for ~p (sent in ~p secs)",
                 [State#state.sitename, State#state.partition,
                     riak_repl_util:elapsed_secs(State#state.stage_start)]),
-            lager:info("Full-sync with site ~p; exhanging differences for ~p",
+            lager:info("Full-sync with site ~p; exchanging differences for ~p",
                 [State#state.sitename, State#state.partition]),
             {next_state, wait_ack, State#state{kl_fh=undefined,
                     stage_start=now()}}
