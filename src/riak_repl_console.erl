@@ -266,4 +266,7 @@ server_stats(Pid) ->
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 server_pids() ->
-    [P || {_,P,_,_} <- supervisor:which_children(riak_repl_server_sup), P /= undefined].
+  [Pid2 ||
+        {{ranch_listener_sup, _}, Pid, _Type, _Modules} <- supervisor:which_children(ranch_sup), is_pid(Pid),
+        {ranch_conns_sup,Pid1,_,_} <- supervisor:which_children(Pid),
+        {_,Pid2,_,_} <- supervisor:which_children(Pid1)].
