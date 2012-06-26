@@ -221,11 +221,12 @@ backwards_compat(Name,  _Type) ->
 repl_stats_test_() ->
     {setup, fun() ->
                     folsom:start(),
+                    {ok, CPid} = riak_core_stat_cache:start_link(),
                     {ok, Pid} = riak_repl_stats:start_link(),
-                    Pid  end,
-     fun(Pid) ->
+                    [CPid, Pid]  end,
+     fun(Pids) ->
              folsom:stop(),
-             exit(Pid, kill) end,
+             [ exit(Pid, kill) || Pid <- Pids ] end,
      [{"Register stats", fun test_register_stats/0},
       {"Populate stats", fun test_populate_stats/0},
       {"Check stats", fun test_check_stats/0}]
