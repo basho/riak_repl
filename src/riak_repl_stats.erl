@@ -16,6 +16,7 @@
          terminate/2,
          code_change/3]).
 -export([start_link/0,
+         stop/0,
          client_bytes_sent/1,
          client_bytes_recv/1,
          client_connects/0,
@@ -40,10 +41,13 @@
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+stop() ->
+    gen_server:cast(?MODULE, stop).
+
 register_stats() ->
     [register_stat(Name, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
-    folsom_metrics:notify_existing_metric({?APP, last_report}, now(), gauge).
+    folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
 
 client_bytes_sent(Bytes) ->
     increment_counter(client_bytes_sent, Bytes).
@@ -155,6 +159,8 @@ handle_call(_Req, _From, State) ->
 handle_cast({increment_counter, Name, IncrBy}, State) ->
     folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
     {noreply, State};
+handle_cast(stop, State) ->
+    {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -164,7 +170,7 @@ handle_info(report_bw, State) ->
     ThisServerBytesSent=lookup_stat(server_bytes_sent),
     ThisServerBytesRecv=lookup_stat(server_bytes_recv),
 
-    Now = now(),
+    Now = tstamp(),
     DeltaSecs = now_diff(Now, lookup_stat(last_report)),
     ClientTx = bytes_to_kbits_per_sec(ThisClientBytesSent, lookup_stat(last_client_bytes_sent), DeltaSecs),
     ClientRx = bytes_to_kbits_per_sec(ThisClientBytesRecv, lookup_stat(last_client_bytes_recv), DeltaSecs),
@@ -184,6 +190,7 @@ handle_info(report_bw, State) ->
                               {last_server_bytes_recv, ThisServerBytesRecv}]],
 
     schedule_report_bw(),
+    folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),
     {noreply, State};
 handle_info(_Info, State) -> {noreply, State}.
 
@@ -201,8 +208,11 @@ bytes_to_kbits_per_sec(This, Last, Delta) ->
 lookup_stat(Name) ->
     folsom_metrics:get_metric_value({?APP, Name}).
 
-now_diff({Lmega,Lsecs,_Lmicro}, {Emega,Esecs,_Emicro}) ->
-    1000000*(Lmega-Emega)+(Lsecs-Esecs).
+now_diff(NowSecs, ThenSecs) ->
+    NowSecs - ThenSecs.
+
+tstamp() ->
+    folsom_utils:now_epoch().
 
 get_bw_history_len() ->
     app_helper:get_env(riak_repl, bw_history_len, 8).
@@ -210,7 +220,7 @@ get_bw_history_len() ->
 backwards_compat(Name, history) ->
     Stats = folsom_metrics:get_history_values({?APP, Name}, get_bw_history_len()),
     Readings = [[Reading || {event, Reading} <- Events] || {_Moment, Events} <- Stats],
-    {Name, Readings};
+    {Name, lists:flatten(Readings)};
 backwards_compat(_Name, gauge) ->
     [];
 backwards_compat(Name,  _Type) ->
@@ -221,15 +231,22 @@ backwards_compat(Name,  _Type) ->
 repl_stats_test_() ->
     {setup, fun() ->
                     folsom:start(),
-                    {ok, CPid} = riak_core_stat_cache:start_link(),
+                    meck:new(folsom_utils, [passthrough]),
+                    {ok, _CPid} = riak_core_stat_cache:start_link(),
                     {ok, Pid} = riak_repl_stats:start_link(),
-                    [CPid, Pid]  end,
-     fun(Pids) ->
+                    tick(1000, 0),
+                    Pid
+            end,
+     fun(_Pid) ->
              folsom:stop(),
-             [ exit(Pid, kill) || Pid <- Pids ] end,
+             riak_repl_stats:stop(),
+             riak_core_stat_cache:stop(),
+             meck:unload(folsom_utils)
+     end,
      [{"Register stats", fun test_register_stats/0},
       {"Populate stats", fun test_populate_stats/0},
-      {"Check stats", fun test_check_stats/0}]
+      {"Check stats", fun test_check_stats/0},
+      {"check report", fun  test_report/0}]
     }.
 
 test_register_stats() ->
@@ -279,5 +296,45 @@ test_check_stats() ->
                   {client_tx_kbps,[]},
                   {server_rx_kbps,[]},
                   {server_tx_kbps,[]}], get_stats()).
+
+test_report() ->
+    Bytes = 1024 * 60,
+    Now = 10000,
+    ReportMinutes = 10,
+    for_n_minutes(ReportMinutes, Now, Bytes),
+    %% Rates = [Stat || {Name, _Val}=Stat <- get_stats(),
+    %%                  lists:member(Name, [client_rx_kbps,
+    %%                                      client_tx_kbps,
+    %%                                      server_rx_kbps,
+    %%                                      server_tx_kbps])],
+    [begin
+         ?assertEqual(8, length(Values)),
+         [?assertEqual(8, Val) || Val <- Values]
+     end || {Name, Values} <- get_stats(),
+            lists:member(Name, [client_rx_kbps,
+                                client_tx_kbps,
+                                server_rx_kbps,
+                                server_tx_kbps])].
+
+for_n_minutes(0, _Time, _Bytes) ->
+    ok;
+for_n_minutes(Minutes, Time0, Bytes) ->
+    Time = tick(Time0, 60),
+    [folsom_metrics:notify_existing_metric({?APP, Name},
+                                           {inc, Bytes},
+                                           counter) || Name <-
+                                                           [client_bytes_sent,
+                                                            client_bytes_recv,
+                                                            server_bytes_sent,
+                                                            server_bytes_recv]],
+
+    riak_repl_stats:handle_info(report_bw, ok),
+    for_n_minutes(Minutes - 1, Time, Bytes).
+
+tick(Time, Interval) ->
+    NewTime = Time+Interval,
+    meck:expect(folsom_utils, now_epoch, fun() ->
+                                                 NewTime end),
+    NewTime.
 
 -endif.
