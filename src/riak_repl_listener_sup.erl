@@ -42,7 +42,7 @@ ensure_listeners(Ring) ->
     [start_listener(Listener) || Listener <- ToStart],
     lists:foreach(fun(Listener) ->
                 {IP, Port} = Listener#repl_listener.listen_addr,
-                lager:info("Stopping replicaion listener on ~s:~p",
+                lager:info("Stopping replication listener on ~s:~p",
                     [IP, Port]),
                 ranch:stop_listener(Listener)
         end, ToStop),
