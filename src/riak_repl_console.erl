@@ -123,6 +123,12 @@ format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
     io:format("~s: ~p~n", [K,V]),
     format_counter_stats(T);
+format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
+                                     K == client_tx_kbps;
+                                     K == server_rx_kbps;
+                                     K == server_tx_kbps ->
+    io:format("~s: ~w~n", [K,V]),
+    format_counter_stats(T);
 format_counter_stats([{K,V}|T]) ->
     io:format("~p: ~p~n", [K,V]),
     format_counter_stats(T).
