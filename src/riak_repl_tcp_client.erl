@@ -469,7 +469,12 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
 %% then use the NAT addresses. Otherwise, use local addresses. If
 %% there are no NAT addresses, then use the local ones.
 get_public_listener_addrs(ReplConfig, ConnectedIP) ->
-    NatListeners = dict:fetch(natlisteners, ReplConfig),
+    NatListeners = case dict:find(natlisteners, ReplConfig) of
+        {ok, Value} ->
+            Value;
+        error ->
+            []
+    end,
     NatListenAddrs = [R#nat_listener.nat_addr || R <- NatListeners],
     UseNats = lists:keymember(ConnectedIP, 1, NatListenAddrs),
     case UseNats of
