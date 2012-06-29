@@ -188,7 +188,7 @@ handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
     %% acknowledge the change of socket ownership
     ok = ranch:accept_ack(State#state.listener),
     ok = Transport:setopts(Socket, [
-            binary, 
+            binary,
             {keepalive, true},
             {nodelay, true},
             {packet, 4},
@@ -425,7 +425,11 @@ ip_and_port_for_node(Node, Ring, ConnectedIp) ->
     Listeners = dict:fetch(listeners, ReplConfig),
     NodeListeners = [L || L <- Listeners,
                           L#repl_listener.nodename == Node],
-    NatListeners = dict:fetch(natlisteners, ReplConfig),
+    NatListeners =
+        case dict:find(natlisteners, ReplConfig) of
+            {ok, Value} -> Value;
+            error -> []
+        end,
     NatNodeListeners = [N || N <- NatListeners,
                              N#nat_listener.nodename == Node],
     NatListenAddrs = [R#nat_listener.nat_addr || R <- NatListeners],
