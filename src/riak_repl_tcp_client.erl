@@ -296,7 +296,7 @@ async_connect(Parent, IPAddr, Port) ->
             Parent ! {connect_failed, Reason}
     end.
 
-send(Transport, Socket, Data) when is_binary(Data) -> 
+send(Transport, Socket, Data) when is_binary(Data) ->
     R = Transport:send(Socket, Data),
     riak_repl_stats:client_bytes_sent(size(Data)),
     R;
@@ -490,7 +490,11 @@ get_public_listener_addrs(ReplConfig, ConnectedIP) ->
 get_all_listener_addrs(ReplConfig) ->
     Listeners = dict:fetch(listeners, ReplConfig),
     ListenAddrs = [R#repl_listener.listen_addr || R <- Listeners],
-    NatListeners = dict:fetch(natlisteners, ReplConfig),
+    NatListeners =
+        case dict:find(natlisteners, ReplConfig) of
+            {ok, Value} -> Value;
+            error  -> []
+        end,
     NatAddrs = [R#nat_listener.nat_addr || R <- NatListeners],
     NatListenAddrs = [R#nat_listener.listen_addr || R <- NatListeners],
     ListenAddrs++NatAddrs++NatListenAddrs.
