@@ -239,6 +239,14 @@ handle_msg(keepalive, State) ->
 handle_msg(keepalive_ack, State) ->
     %% noop
     {noreply, State};
+handle_msg({proxy_get, Ref, Bucket, Key, Options}, State) ->
+    lager:info("Got proxy_get for ~p:~p", [Bucket, Key]),
+    %% do this GET in a worker?
+    C = State#state.client,
+    Res = C:get(Bucket, Key, Options),
+    send(State#state.transport, State#state.socket, {proxy_get_resp, Ref,
+            Res}),
+    {noreply, State};
 handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
     gen_fsm:send_event(FSW, Msg),
     {noreply, State}.
@@ -328,8 +336,14 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                     %% upgraded
                     Props = riak_repl_fsm_common:common_init(Transport, Socket),
 
+                    %% annoying we have to do this again, but the ring
+                    %% in peerinfo is the 0.14 'downgraded' ring,
+                    %% which lacks the cluster_name stuff
+                    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+
                     PI = proplists:get_value(my_pi, Props),
                     send(Transport, Socket, {peerinfo, PI,
+                                             {cluster_name, riak_core_ring:cluster_name(Ring)},
                                              [bounded_queue, keepalive, {fullsync_strategies,
                                                                          app_helper:get_env(riak_repl, fullsync_strategies,
                                                                                             [?LEGACY_STRATEGY])}]}),
