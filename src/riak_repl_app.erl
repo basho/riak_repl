@@ -20,6 +20,8 @@ start(_Type, _StartArgs) ->
     ok = ensure_dirs(),
 
     riak_core:register([{bucket_fixup, riak_repl}]),
+    % skip Riak CS blocks
+    riak_core:register([{repl_helper, riak_repl_cs}]),
 
     %% Register our cluster_info app callback modules, with catch if
     %% the app is missing or packaging is broken.
@@ -44,7 +46,7 @@ ensure_dirs() ->
     {ok, DataRoot} = application:get_env(riak_repl, data_root),
     LogDir = filename:join(DataRoot, "logs"),
     case filelib:ensure_dir(filename:join(LogDir, "empty")) of
-        ok -> 
+        ok ->
             application:set_env(riak_repl, log_dir, LogDir),
             ok;
         {error, Reason} ->
@@ -56,7 +58,7 @@ ensure_dirs() ->
     prune_old_workdirs(WorkRoot),
     WorkDir = filename:join([WorkRoot, integer_to_list(Incarnation)]),
     case filelib:ensure_dir(filename:join([WorkDir, "empty"])) of
-        ok -> 
+        ok ->
             application:set_env(riak_repl, work_dir, WorkDir),
             ok;
         {error, R} ->
@@ -74,7 +76,3 @@ prune_old_workdirs(WorkRoot) ->
         _ ->
             ignore
     end.
-
-
-    
-
