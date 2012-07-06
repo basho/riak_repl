@@ -373,14 +373,14 @@ ensure_sites(Leader) ->
                 RC -> RC
             end,
 
-            {BadNodes, CurrentConfig} =
-            lists:foldl(fun({Node, {'EXIT', _}}, {N, C}) ->
-                        {[Node|N], C};
+            {AliveNodes, CurrentConfig} =
+            lists:foldl(fun({badrpc, {'EXIT', _}}, Acc) ->
+                        Acc;
+                    ({Node, {'EXIT', _}}, Acc) ->
+                        Acc;
                     ({Node, Sites}, {N, C}) ->
-                        {N, [{Node, Sites}|C]}
+                        {[Node|N], [{Node, Sites}|C]}
                 end, {[], []}, Results),
-
-            AliveNodes = AliveNodes0 -- BadNodes,
 
             case AliveNodes of
                 [] ->
