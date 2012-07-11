@@ -245,7 +245,12 @@ client_stats_rpc() ->
 
 server_stats() ->
     LeaderNode = riak_repl_leader:leader_node(),
-    [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])}].
+    case LeaderNode of
+        undefined ->
+            [{server_stats, []}];
+        _ ->
+            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])}]
+    end.
 
 server_stats_rpc() ->
     [server_stats(P) || P <- server_pids()].
