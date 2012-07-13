@@ -3,7 +3,7 @@
  riak_repl,
  [{description,  "Enterprise replication for Riak"},
   {id,           "riak_repl"},
-  {vsn,          "1.1.2"},
+  {vsn,          "1.2.0"},
   {modules,      ['bounded_queue',
                   'couch_btree',
                   'couch_file',
