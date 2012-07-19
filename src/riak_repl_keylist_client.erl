@@ -126,7 +126,7 @@ request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=So
             our_kl_ready=false, their_kl_ready=false,
             partition_start=now(), stage_start=now(), skipping=false,
             kl_pid=KeyListPid, kl_ref=KeyListRef, partition=P, partitions=T}};
-request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
+request_partition({Ref, keylist_built, _Size}, State=#state{kl_ref = Ref}) ->
     lager:info("Full-sync with site ~p; built keylist for ~p, (built in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
