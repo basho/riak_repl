@@ -28,8 +28,7 @@ start(_Type, _StartArgs) ->
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
-            %% register stats
-            riak_repl_stats:register_stats(),
+            riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
             {ok, Pid};
         {error, Reason} ->
@@ -44,7 +43,7 @@ ensure_dirs() ->
     {ok, DataRoot} = application:get_env(riak_repl, data_root),
     LogDir = filename:join(DataRoot, "logs"),
     case filelib:ensure_dir(filename:join(LogDir, "empty")) of
-        ok -> 
+        ok ->
             application:set_env(riak_repl, log_dir, LogDir),
             ok;
         {error, Reason} ->
@@ -56,7 +55,7 @@ ensure_dirs() ->
     prune_old_workdirs(WorkRoot),
     WorkDir = filename:join([WorkRoot, integer_to_list(Incarnation)]),
     case filelib:ensure_dir(filename:join([WorkDir, "empty"])) of
-        ok -> 
+        ok ->
             application:set_env(riak_repl, work_dir, WorkDir),
             ok;
         {error, R} ->
@@ -76,5 +75,5 @@ prune_old_workdirs(WorkRoot) ->
     end.
 
 
-    
+
 
