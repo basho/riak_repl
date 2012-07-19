@@ -33,6 +33,7 @@
                 merkle_pid,
                 folder_pid,
                 kl_fp,
+                kl_total,
                 filename,
                 buf=[],
                 size=0}).
@@ -152,9 +153,9 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
-                             riak_kv_vnode:fold({Partition,OwnerNode},
-                                 fun ?MODULE:keylist_fold/3, {Self, 0}),
-                             gen_server2:cast(Self, kl_finish)
+                             {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
+                                 fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
+                             gen_server2:cast(Self, {kl_finish, Total})
                      end,
             FolderPid = spawn_link(Worker),
             NewState = State#state{ref = Ref, 
@@ -248,7 +249,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
     end,
 
     {stop, normal, State}.
-    
+
 handle_cast({merkle, K, H}, State) ->
     PackedKey = pack_key(K),
     NewSize = State#state.size+size(PackedKey)+4,
@@ -272,11 +273,14 @@ handle_cast(merkle_finish, State) ->
     _Mref = erlang:monitor(process, State#state.merkle_pid),
     couch_merkle:close(State#state.merkle_pid),
     {noreply, State};
-handle_cast(kl_finish, State) ->
+handle_cast({kl_finish, Count}, State) ->
+    %% delayed_write can mean sync/close might not work the first time around
+    file:sync(State#state.kl_fp),
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
+    file:close(State#state.kl_fp),
     gen_server2:cast(self(), kl_sort),
-    {noreply, State};
+    {noreply, State#state{kl_total=Count}};
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     %% we want the GC to stop running, so set a giant heap size
@@ -284,9 +288,10 @@ handle_cast(kl_sort, State) ->
     lager:info("Sorting keylist ~p", [Filename]),
     erlang:process_flag(min_heap_size, 1000000),
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
-    lager:info("Sorted ~s in ~.2f seconds",
-                          [Filename, ElapsedUsec / 1000000]),
-    gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built}),
+    lager:info("Sorted ~s of ~p keys in ~.2f seconds",
+                          [Filename, State#state.kl_total, ElapsedUsec / 1000000]),
+    gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built,
+        State#state.kl_total}),
     {stop, normal, State}.
 
 handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.merkle_pid ->
@@ -459,14 +464,14 @@ merkle_fold(K, V, Pid) ->
 %% @private
 %%
 %% @doc Visting function for building keylists. Similar to merkle_fold.
-keylist_fold(K, V, {MPid, Count}) ->
+keylist_fold(K, V, {MPid, Count, Total}) ->
     H = hash_object(V),
     Bin = term_to_binary({pack_key(K), H}),
     gen_server2:cast(MPid, {keylist, Bin}),
     case Count of
         100 ->
             ok = gen_server2:call(MPid, keylist_ack, infinity),
-            {MPid, 0};
+            {MPid, 0, Total+1};
         _ ->
-            {MPid, Count+1}
+            {MPid, Count+1, Total+1}
     end.
