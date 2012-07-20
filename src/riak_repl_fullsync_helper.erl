@@ -275,7 +275,7 @@ handle_cast(merkle_finish, State) ->
     {noreply, State};
 handle_cast({kl_finish, Count}, State) ->
     %% delayed_write can mean sync/close might not work the first time around
-    file:sync(State#state.kl_fp),
+    file:sync(State#state.kl_fp), %% TODO: Race condition here?
     file:sync(State#state.kl_fp),
     file:close(State#state.kl_fp),
     file:close(State#state.kl_fp),

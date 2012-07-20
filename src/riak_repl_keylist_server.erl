@@ -17,16 +17,23 @@
 %% this more of a pull model as compared to the legacy strategy, which was more
 %% push oriented. The new protocol is outlined below.
 %%
-%% When the server receives a message to begin a fullsync, it relays it to the
-%% client. The client builds the partition list and instructs the server to
-%% build the keylist for the first partition, while also starting off its own
+%% When the server receives a message to begin a fullsync, it checks that all
+%% nodes in the cluster support the new bloom_fold capability, and relays the
+%% caommand to the client. If bloom_fold is not supported by all nodes, it will
+%% ignore the command and check again on the next fullsync request.
+%%
+%% For fullsync, the client builds the partition list and instructs the server
+%% to build the keylist for the first partition, while also starting off its own
 %% keylist build locally. When *both* builds are complete, the client sends
 %% the keylist to the server. The server does the diff and then sends *any*
 %% differing keys to the client, using the realtime repl protocol. This is a
 %% departure from the legacy protocol in which vector clocks were available
 %% for comparison. However, worst case is we try to write stale keys, which
 %% will be ignored by the put_fsm. Once all the diffs are sent (and a final
-% ack is received). The client moves onto the next partition, if any.
+%% ack is received), the client moves onto the next partition, if any.
+%%
+%% Note that the new key list algorithm uses a bloom fold filter to keep the
+%% keys in disk-order to speed up the key-list creation process.
 
 -behaviour(gen_fsm).
 
@@ -108,11 +115,26 @@ init([SiteName, Transport, Socket, WorkDir, Client]) ->
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
+%% Full sync command received
 wait_for_partition(Command, State)
         when Command == start_fullsync; Command == resume_fullsync ->
-    %% annoyingly the server is the one that triggers the fullsync in the old
-    %% protocol, so we'll just send it on to the client.
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    %% check capability of all nodes for bloom fold ability. Since we are the leader,
+    %% the fact that we have this new code means we can choose to do a full-sync iff
+    %% all nodes have been upgraded to use bloom.
+    case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+        true ->
+            %% All nodes support boom, yay.
+            %% annoyingly the server is the one that triggers the fullsync in the old
+            %% protocol, so we'll just send it on to the client.
+            riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command);
+        false ->
+            %% Not all of the nodes support bloom fold, so we can't start yet.
+            %% we'll stay in the same state and just wait for the next request
+            %% to check again.
+            lager:warning("Full-sync with site ~p skipped because some node(s) are not upgraded to support bloom_fold.",
+                          [State#state.sitename]),
+            ok
+    end,
     {next_state, wait_for_partition, State};
 wait_for_partition(fullsync_complete, State) ->
     lager:info("Full-sync with site ~p completed", [State#state.sitename]),
@@ -169,8 +191,7 @@ build_keylist({Ref, keylist_built, Size}, State=#state{kl_ref=Ref, socket=Socket
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
     {ok, Bloom} = ebloom:new(Size, 0.01, random:uniform(1000)),
-    {next_state, wait_keylist, State#state{stage_start=now(),
-            bloom=Bloom}};
+    {next_state, wait_keylist, State#state{stage_start=now(), bloom=Bloom}};
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
@@ -286,7 +307,7 @@ diff_keylist({Ref, diff_exchanged}, #state{diff_ref=Ref, partition=Partition} = 
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     lager:info("done exchanging keys"),
     {next_state, wait_for_partition, State};
-diff_keylist({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition} = State) ->
+diff_keylist({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Bloom} = State) ->
     %lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         %[State#state.sitename, State#state.partition,
             %riak_repl_util:elapsed_secs(State#state.stage_start)]),
@@ -301,7 +322,7 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition} = State
     Worker = fun() ->
             riak_kv_vnode:fold({Partition,OwnerNode},
                 fun ?MODULE:bloom_fold/3, {Self,
-                    {serialized, ebloom:serialize(State#state.bloom)},
+                    {serialized, ebloom:serialize(Bloom)},
                     State#state.client, State#state.transport,
                     State#state.socket}),
             %gen_server2:cast(Self, merkle_finish)
