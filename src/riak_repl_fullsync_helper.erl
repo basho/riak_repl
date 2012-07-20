@@ -275,10 +275,16 @@ handle_cast(merkle_finish, State) ->
     {noreply, State};
 handle_cast({kl_finish, Count}, State) ->
     %% delayed_write can mean sync/close might not work the first time around
-    file:sync(State#state.kl_fp), %% TODO: Race condition here?
-    file:sync(State#state.kl_fp),
-    file:close(State#state.kl_fp),
-    file:close(State#state.kl_fp),
+    %% because of a previous error that is only now being reported. In this case,
+    %% call close again. See http://www.erlang.org/doc/man/file.html#open-2
+    case file:sync(State#state.kl_fp) of
+        ok -> ok;
+        _ -> file:sync(State#state.kl_fp)
+    end,
+    case file:close(State#state.kl_fp) of
+        ok -> ok;
+        _ -> file:close(State#state.kl_fp)
+    end,
     gen_server2:cast(self(), kl_sort),
     {noreply, State#state{kl_total=Count}};
 handle_cast(kl_sort, State) ->
