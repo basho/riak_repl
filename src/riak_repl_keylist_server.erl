@@ -276,19 +276,6 @@ diff_keylist(Command, #state{diff_pid=Pid} = State)
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
-%diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
-        %transport=Transport, socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
-    %Worker = poolboy:checkout(Pool, true, infinity),
-    %case State#state.vnode_gets of
-        %true ->
-            % do a direct get against the vnode, not a regular riak client
-            % get().
-            %ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
-                %State#state.partition);
-        %_ ->
-            %ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool)
-    %end,
-    %{next_state, diff_keylist, State};
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{diff_ref=Ref, bloom=Bloom} = State) ->
     ebloom:insert(Bloom, <<B/binary, K/binary>>),
     {next_state, diff_keylist, State};
@@ -299,22 +286,16 @@ diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
     %riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_keylist, State};
-%diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
-    %% client has processed last batch of differences, generate some more
-    %State#state.diff_pid ! {Ref, diff_resume},
-    %{next_state, diff_keylist, State};
 diff_keylist({Ref, diff_exchanged}, #state{diff_ref=Ref, partition=Partition} = State) ->
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
-    lager:info("done exchanging keys"),
+    lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
+               [State#state.sitename, State#state.partition,
+                riak_repl_util:elapsed_secs(State#state.stage_start)]),
     {next_state, wait_for_partition, State};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Bloom} = State) ->
-    %lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
-        %[State#state.sitename, State#state.partition,
-            %riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %lager:info("Full-sync with site ~p; fullsync for ~p complete (completed in ~p secs)",
         %[State#state.sitename, State#state.partition,
             %riak_repl_util:elapsed_secs(State#state.partition_start)]),
-    %riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
 
@@ -325,8 +306,6 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=B
                     {serialized, ebloom:serialize(Bloom)},
                     State#state.client, State#state.transport,
                     State#state.socket}),
-            %gen_server2:cast(Self, merkle_finish)
-            lager:info("Done folding keys"),
             gen_fsm:send_event(Self, {Ref, diff_exchanged}),
             ok
     end,
@@ -404,20 +383,14 @@ command_verb(pause_fullsync) ->
     "paused".
 
 bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket}) ->
-    lager:info("deserializing bloom filter"),
     {ok, Bloom} = ebloom:deserialize(SBloom),
-    lager:info("deserialized bloom filter"),
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket});
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket} = Acc) ->
     case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
         true ->
             RObj = binary_to_term(V),
             gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
-
-            %lager:info("replicate ~p/~p", [B, K]),
         false ->
-            %lager:info("not replicating ~p/~p", [B, K])
             ok
     end,
     Acc.
-
