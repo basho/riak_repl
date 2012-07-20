@@ -21,6 +21,11 @@ start(_Type, _StartArgs) ->
 
     riak_core:register([{bucket_fixup, riak_repl}]),
 
+    %% Register our capabilities
+    riak_core_capability:register({riak_repl, bloom_fold},
+                                  [true, false], %% prefer to use bloom_fold in new code
+                                  false),        %% the default is false for legacy code
+
     %% Register our cluster_info app callback modules, with catch if
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
