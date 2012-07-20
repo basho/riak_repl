@@ -158,7 +158,7 @@ build_keylist({Ref, keylist_built}, State=#state{kl_ref=Ref, socket=Socket,
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
-        [State#state.partition, Reason]),
+        [State#state.sitename, State#state.partition, Reason]),
     riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
     {next_state, wait_for_partition, State};
 build_keylist({skip_partition, Partition}, #state{partition=Partition,
