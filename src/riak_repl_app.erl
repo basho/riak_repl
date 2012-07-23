@@ -27,8 +27,7 @@ start(_Type, _StartArgs) ->
         false -> lager:info("REPL CS block skip disabled")
     end,
 
-    ok = riak_api_pb_service:register(riak_repl_pb_get, 128),
-    ok = riak_api_pb_service:register(riak_repl_pb_get, 129),
+    ok = riak_api_pb_service:register(riak_repl_pb_get, 128, 129),
 
     %% Register our cluster_info app callback modules, with catch if
     %% the app is missing or packaging is broken.

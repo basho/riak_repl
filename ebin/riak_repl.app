@@ -35,7 +35,7 @@
                   'riak_repl_fullsync_worker',
                   'riak_repl_util',
                   'riak_repl_web',
-                  'riak_repl_wm_stats']},
+                  'riak_repl_wm_stats',
                   'riak_repl_cs']},
   {applications, [kernel,
                   stdlib,
