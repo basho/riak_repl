@@ -402,6 +402,11 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                             {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, ConnectedIP),
                             send(Transport, Socket, {redirect, Ip, Port});
+                        {peerinfo, _PeerInfo} ->
+                            %% 1.0 and earlier nodes don't send capability
+                            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                            {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, undefined),
+                            send(Transport, Socket, {redirect, Ip, Port});
                         Other ->
                             Transport:close(Socket),
                             lager:error("Received unknown peer data: ~p",[Other])
