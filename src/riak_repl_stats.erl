@@ -110,6 +110,7 @@ produce_stats() ->
         {Stat, Type} <- stats()]).
 
 init([]) ->
+    register_stats(),
     schedule_report_bw(),
     {ok, ok}.
 
