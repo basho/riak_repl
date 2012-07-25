@@ -121,7 +121,7 @@ wait_for_partition({partition, Partition}, State) ->
         [State#state.sitename, Partition]),
     gen_fsm:send_event(self(), continue),
     {next_state, build_keylist, State#state{partition=Partition,
-            partition_start=now()}};
+            partition_start=now(), stage_start=now()}};
 wait_for_partition(Event, State) ->
     lager:debug("Full-sync with site ~p; ignoring event ~p",
         [State#state.sitename, Event]),
@@ -146,7 +146,7 @@ build_keylist(continue, #state{partition=Partition, work_dir=WorkDir} = State) -
                                                                  Partition,
                                                                  KeyListFn),
     {next_state, build_keylist, State#state{kl_pid=KeyListPid,
-            kl_ref=KeyListRef, kl_fn=KeyListFn, stage_start=now(),
+            kl_ref=KeyListRef, kl_fn=KeyListFn,
             their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
 build_keylist({Ref, keylist_built}, State=#state{kl_ref=Ref, socket=Socket,
     transport=Transport, partition=Partition}) ->
