@@ -116,12 +116,23 @@ wait_for_partition(fullsync_complete, State) ->
     riak_repl_stats:server_fullsyncs(),
     riak_repl_util:schedule_fullsync(),
     {next_state, wait_for_partition, State};
-wait_for_partition({partition, Partition}, State) ->
+wait_for_partition({partition, Partition}, State = #state{work_dir=WorkDir}) ->
     lager:info("Full-sync with site ~p; doing fullsync for ~p",
         [State#state.sitename, Partition]),
-    gen_fsm:send_event(self(), continue),
-    {next_state, build_keylist, State#state{partition=Partition,
-            partition_start=now(), stage_start=now(), kl_ref=undefined}};
+
+    lager:info("Full-sync with site ~p; building keylist for ~p",
+        [State#state.sitename, Partition]),
+    %% client wants keylist for this partition
+    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
+    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
+    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
+                                                                 Partition,
+                                                                 KeyListFn),
+    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
+            kl_ref=KeyListRef, kl_fn=KeyListFn,
+            partition=Partition, partition_start=now(), stage_start=now(),
+            their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
 wait_for_partition(Event, State) ->
     lager:debug("Full-sync with site ~p; ignoring event ~p",
         [State#state.sitename, Event]),
@@ -135,29 +146,6 @@ build_keylist(Command, #state{kl_pid=Pid} = State)
     file:delete(State#state.kl_fn),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
-build_keylist(continue, #state{partition=Partition, work_dir=WorkDir,
-        kl_ref=Ref} = State) when Ref == undefined ->
-    lager:info("Full-sync with site ~p; building keylist for ~p",
-        [State#state.sitename, Partition]),
-    %% client wants keylist for this partition
-    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
-    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
-    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
-                                                                 Partition,
-                                                                 KeyListFn),
-    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
-            kl_ref=KeyListRef, kl_fn=KeyListFn,
-            their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
-build_keylist(continue, State) ->
-    %% Duplicate continue message, we already have a keylist ref, meaning
-    %% we're already building a keylist. This happens when the client asks us
-    %% to skip a partition before we've processed the first continue message,
-    %% we go back into wait_for_partition, get another {partition, P} message,
-    %% send ourselves another continue and end up here, where we simply ignore
-    %% the message.
-    lager:warning("Stale continue message received, ignoring"),
-    {next_state, build_keylist, State};
 build_keylist({Ref, keylist_built}, State=#state{kl_ref=Ref, socket=Socket,
     transport=Transport, partition=Partition}) ->
     lager:info("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
