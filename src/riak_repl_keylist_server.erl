@@ -391,20 +391,14 @@ command_verb(pause_fullsync) ->
     "paused".
 
 bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket}) ->
-    lager:info("deserializing bloom filter"),
     {ok, Bloom} = ebloom:deserialize(SBloom),
-    lager:info("deserialized bloom filter"),
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket});
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket} = Acc) ->
     case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
         true ->
             RObj = binary_to_term(V),
             gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
-
-            %lager:info("replicate ~p/~p", [B, K]),
         false ->
-            %lager:info("not replicating ~p/~p", [B, K])
             ok
     end,
     Acc.
-
