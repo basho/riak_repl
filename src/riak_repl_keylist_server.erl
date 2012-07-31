@@ -76,6 +76,7 @@
         pending_acks = 0
     }).
 
+-define(ACKS_IN_FLIGHT,2).
 
 start_link(SiteName, Transport, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
@@ -221,10 +222,14 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
     lager:info("Full-sync with site ~p; calculating differences for ~p",
         [State#state.sitename, State#state.partition]),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    %% generate differences in batches of 1000, to add some backpressure
+    %% generate differences in ACKS_IN_FLIGHT batches of diff_batch_size/ACKS_IN_FLIGHT,
+    %% to add some backpressure, while keeping the pipeline full (as long as the
+    %% client continues to reply diff_ack).
+    lager:info("Full-sync for ~p using ~p windows of batch_size ~p",
+               [State#state.partition, ?ACKS_IN_FLIGHT, State#state.diff_batch_size / ?ACKS_IN_FLIGHT]),
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
         State#state.kl_fn, State#state.their_kl_fn,
-        State#state.diff_batch_size),
+        State#state.diff_batch_size / ?ACKS_IN_FLIGHT),
     {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
             stage_start=now()}};
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
@@ -259,14 +264,16 @@ diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
     PendingAcks = PendingAcks0+1,
     %% If we have already received the ack for the previous batch, we immediately
     %% resume the generator, otherwise we wait for the ack from the client. We'll
-    %% have at most 2 windows of differences in flight.
-    WorkerPaused = case PendingAcks < 2 of
+    %% have at most ACKS_IN_FLIGHT windows of differences in flight.
+    WorkerPaused = case PendingAcks < ?ACKS_IN_FLIGHT of
                        true ->
                            %% another batch can be sent immediately
+                           lager:info("resuming diff generator with ~p pending acks",[PendingAcks]),
                            State#state.diff_pid ! {Ref, diff_resume},
                            false;
                        false ->
-                           %% already 2 batches out. Don't resume yet.
+                           %% already ACKS_IN_FLIGHT batches out. Don't resume yet.
+                           lager:info("diff generator paused with ~p pending acks",[PendingAcks]),
                            true
                    end,
     {next_state, diff_keylist, State#state{pending_acks=PendingAcks, generator_paused=WorkerPaused}};
@@ -278,7 +285,8 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
     PendingAcks = PendingAcks0-1,
     riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     %% If the generator was paused, resume it. That would happen if there are already
-    %% 2 batches in flight. Better to check "paused" state than guess by pending acks count.
+    %% ACKS_IN_FLIGHT batches in flight. Better to check "paused" state than guess by
+    %% pending acks count.
     case WorkerPaused of
         true ->
             State#state.diff_pid ! {Ref, diff_resume};
