@@ -256,8 +256,9 @@ server_stats_rpc() ->
     [server_stats(P) || P <- server_pids()].
 
 client_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
-                riak_repl_tcp_client:status(Pid, 1000)
+                riak_repl_tcp_client:status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy
@@ -265,11 +266,9 @@ client_stats(Pid) ->
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 server_stats(Pid) ->
-    %% try and work out what state the TCP server is in.  In the middle
-    %% of merkle generation etc this could take a long time, so punt with a
-    %% too_busy message rather than hold up status
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
-                riak_repl_tcp_server:status(Pid, 1000)
+                riak_repl_tcp_server:status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy
