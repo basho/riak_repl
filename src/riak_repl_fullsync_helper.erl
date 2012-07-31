@@ -385,6 +385,7 @@ itr_next(Size, File, Tag) ->
 
 diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
     gen_fsm:send_event(FSM, {Ref, diff_paused}),
+    lager:info("waiting for stop or resume"),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
     receive
