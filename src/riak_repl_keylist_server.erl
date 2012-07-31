@@ -71,7 +71,9 @@
         partition_start,
         pool,
         vnode_gets = true,
-        diff_batch_size
+        diff_batch_size,
+        generator_paused = false,
+        pending_acks = 0
     }).
 
 
@@ -251,15 +253,39 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
     end,
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
-        partition=Partition, diff_ref=Ref} = State) ->
-    %% we've sent all the diffs in this batch, wait for the client to be ready
-    %% for more
+        partition=Partition, diff_ref=Ref, pending_acks=PendingAcks0} = State) ->
+    %% request ack from client
     riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
-    {next_state, diff_keylist, State};
-diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
-    %% client has processed last batch of differences, generate some more
-    State#state.diff_pid ! {Ref, diff_resume},
-    {next_state, diff_keylist, State};
+    PendingAcks = PendingAcks0+1,
+    %% If we have already received the ack for the previous batch, we immediately
+    %% resume the generator, otherwise we wait for the ack from the client. We'll
+    %% have at most 2 windows of differences in flight.
+    WorkerPaused = case PendingAcks < 2 of
+                       true ->
+                           %% another batch can be sent immediately
+                           State#state.diff_pid ! {Ref, diff_resume},
+                           false;
+                       false ->
+                           %% already 2 batches out. Don't resume yet.
+                           true
+                   end,
+    {next_state, diff_keylist, State#state{pending_acks=PendingAcks, generator_paused=WorkerPaused}};
+diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
+                                           socket=Socket, transport=Transport,
+                                           generator_paused=WorkerPaused,
+                                           pending_acks=PendingAcks0} = State) ->
+    %% That's one less "pending" ack from the client. Tell client to keep going.
+    PendingAcks = PendingAcks0-1,
+    riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
+    %% If the generator was paused, resume it. That would happen if there are already
+    %% 2 batches in flight. Better to check "paused" state than guess by pending acks count.
+    case WorkerPaused of
+        true ->
+            State#state.diff_pid ! {Ref, diff_resume};
+        false ->
+            ok
+    end,
+    {next_state, diff_keylist, State#state{pending_acks=PendingAcks,generator_paused=false}};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         [State#state.sitename, State#state.partition,
