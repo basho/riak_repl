@@ -141,7 +141,9 @@ handle_info({repl, RObj}, State) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         [] ->
             %% no additional objects to queue
-            drain(enqueue(term_to_binary({diff_obj, RObj}), State));
+            State2 = enqueue(term_to_binary({diff_obj, RObj}), State),
+            State3 = enqueue_others(State2),
+            drain(State3);
         Objects when is_list(Objects) ->
             %% enqueue all the objects the hook asked us to send as a list.
             %% They're enqueued together so that they can't be dumped from the
@@ -460,6 +462,20 @@ drain(State) ->
 
 enqueue(Msg, State=#state{q=Q}) ->
     State#state{q=bounded_queue:in(Q,Msg)}.
+
+enqueue_others(State=#state{q=Q}) ->
+    receive
+        {repl, RObj} ->
+            case bounded_queue:full(Q) of
+                true ->
+                    enqueue_others(State);
+                false ->
+                    State2 = enqueue(term_to_binary({diff_obj, RObj}), State),
+                    enqueue_others(State2)
+            end
+    after 0 ->
+            State
+    end.
 
 send_diffobj(Msgs, State0) when is_list(Msgs) ->
     %% send all the messages in the list

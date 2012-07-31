@@ -29,6 +29,7 @@
          out/1, 
          byte_size/1, 
          len/1,
+         full/1,
          dropped_count/1]).
 
 -ifdef(TEST).
@@ -106,8 +107,9 @@ element_size([H|_T] = Element) when is_binary(H) ->
 element_size(Element) when is_binary(Element) ->
     erlang:byte_size(Element).
 
+full(Q=#bq{m=Max}) ->
+    len(Q) >= Max.
 
-   
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
