@@ -80,7 +80,12 @@ is_leader() ->
 
 %% Send the object to the leader
 postcommit(Object) ->
-    gen_server:cast(?SERVER, {repl, Object}).
+    case erlang:process_info(whereis(?SERVER), message_queue_len) of
+        {message_queue_len, X} when X < 20000 ->
+            gen_server:cast(?SERVER, {repl, Object});
+        _ ->
+            ok
+    end.
 
 %% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
 %% and removed from the list when it exits. 
@@ -189,7 +194,10 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
         [] ->
             riak_repl_stats:objects_dropped_no_clients();
         Receivers ->
-            [P ! {repl, Msg} || {_Mref, P} <- Receivers],
+            [P ! {repl, Msg} || {_Mref, P} <- Receivers,
+                                {message_queue_len, L} <-
+                                [erlang:process_info(P, message_queue_len)],
+                                L < 20000],
             riak_repl_stats:objects_sent()
     end,
     {noreply, State};
