@@ -57,7 +57,11 @@
                 leader_mref=undefined :: undefined | reference(), % monitor
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
-                receivers=[] :: [{reference(),pid()}]}). % {Mref,Pid} pairs
+                receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
+                check_tref :: timer:tref(),     % check mailbox timer
+                elected_mbox_size :: integer(), % elected leader box size
+                lastpoll = {0, 0, 0}
+               }).
      
 %%%===================================================================
 %%% API
@@ -80,7 +84,12 @@ is_leader() ->
 
 %% Send the object to the leader
 postcommit(Object) ->
-    gen_server:cast(?SERVER, {repl, Object}).
+    case erlang:process_info(whereis(?SERVER), message_queue_len) of
+        {message_queue_len, X} when X < 20000 ->
+            gen_server:cast(?SERVER, {repl, Object});
+        _ ->
+            ok
+    end.
 
 %% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
 %% and removed from the list when it exits. 
@@ -132,20 +141,20 @@ init([]) ->
             end
     end,
     riak_core_node_watcher_events:add_sup_callback(Fn),
-    {ok, #state{}}.
+    {ok, TRef} = timer:send_interval(1000, check_mailbox),
+    {ok, #state{check_tref = TRef}}.
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
     Mref = erlang:monitor(process, Pid),
-    UpdReceivers = orddict:store(Mref, Pid, State#state.receivers),
-    {reply, ok, State#state{receivers = UpdReceivers}};
+    {reply, ok, State#state{receivers = [{Mref, Pid, send} | State#state.receivers]}};
 handle_call({add_receiver_pid, _Pid}, _From, State) ->
     {reply, {error, not_leader}, State};
 
 handle_call({rm_receiver_pid, Pid}, _From, State = #state{receivers=R0}) when State#state.i_am_leader =:= true ->
     Receivers = case lists:keyfind(Pid, 2, R0) of
-        {MRef, Pid} ->
+        {MRef, Pid, _} ->
             erlang:demonitor(MRef),
-            orddict:erase(MRef, R0);
+            lists:keydelete(MRef, 1, R0);
         false ->
             R0
     end,
@@ -185,17 +194,58 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             {noreply, restart_helper(UpdState2)}
     end;
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
+    %% To simulate a slow elected repl leader, uncomment and/or change amount
+    %% timer:sleep(1),
     case State#state.receivers of
         [] ->
-            riak_repl_stats:objects_dropped_no_clients();
+            riak_repl_stats:objects_dropped_no_clients(),
+            {noreply, State};
         Receivers ->
-            [P ! {repl, Msg} || {_Mref, P} <- Receivers],
-            riak_repl_stats:objects_sent()
-    end,
-    {noreply, State};
+            case timer:now_diff(os:timestamp(), State#state.lastpoll) of
+                X when X > 1000000 ->
+                    R2 = lists:map(fun({Mref, Pid, _}) ->
+                                    S = case erlang:process_info(Pid,message_queue_len) of
+                                        {message_queue_len, L} when L < 20000 ->
+                                            send;
+                                        _ ->
+                                            drop
+                                    end,
+                                    {Mref, Pid, S}
+                            end, Receivers),
+                    [P ! {repl, Msg} || {_Mref, P, send} <- R2],
+                    riak_repl_stats:objects_sent(),
+                    {noreply, State#state{receivers=R2,
+                                          lastpoll=os:timestamp()}};
+                _ ->
+                    [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
+                    riak_repl_stats:objects_sent(),
+                    {noreply, State}
+            end
+    end;
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
-    gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
-    riak_repl_stats:objects_forwarded(),
+    MboxSize = State#state.elected_mbox_size,
+    {MaybeDropSize, DefiniteDropSize} = get_drop_sizes(),
+    SendProb = if MboxSize < MaybeDropSize ->
+                       1.0;
+                  MboxSize < DefiniteDropSize ->
+                       (DefiniteDropSize - MboxSize) /
+                            (DefiniteDropSize - MaybeDropSize);
+                  true ->
+                       0.0
+               end,
+    Rand = random:uniform(),
+    case SendProb == 1.0 orelse Rand < SendProb of
+        true ->
+            %% S = definitely send, s = send in middle probability range
+            %% if SendProb == 1.0 -> io:format("S"); true -> io:format("s") end,
+            gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
+            riak_repl_stats:objects_forwarded();
+        false ->
+            %% D = definitely drop
+            %% io:format("D"),
+            %% TODO: create a new stat rather than abusing this counter.
+            riak_repl_stats:objects_dropped_no_clients()
+    end,        
     {noreply, State};
 handle_cast({repl, _Msg}, State) ->
     %% No leader currently defined - cannot do anything
@@ -220,10 +270,37 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             riak_repl_leader_helper:refresh_leader(Pid)
     end,
     {noreply, State#state{leader_node = undefined, leader_mref = undefined}};
+handle_info({elected_mailbox_size, MboxSize}, State) ->
+    %% io:format("\n~p\n", [MboxSize]),
+    {noreply, State#state{elected_mbox_size = MboxSize}};
+handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
+                                       State#state.leader_node =/= undefined ->
+    Parent = self(),
+    spawn(fun() ->
+                  try
+                      %% The default timeouts are fine, failure is fine.
+                      LeaderPid = rpc:call(State#state.leader_node,
+                                           erlang, whereis, [?SERVER]),
+                      {_, MboxSize} = rpc:call(State#state.leader_node,
+                                               erlang, process_info,
+                                               [LeaderPid, message_queue_len]),
+                      Parent ! {elected_mailbox_size, MboxSize},
+                      exit(normal)
+                  catch
+                      _:_ ->
+                          ok
+                  after
+                      exit(normal)
+                  end
+          end),
+    {noreply, State};
+handle_info(check_mailbox, State) ->
+    %% We're the leader, or we don't know who the leader is, so ignore.
+    {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
     %% May be called here with a stale leader_mref, will not matter
     %% as it will not be in the State#state.receivers so will do nothing.
-    UpdReceivers = orddict:erase(Mref, State#state.receivers),
+    UpdReceivers = lists:keydelete(Mref, 1, State#state.receivers),
     {noreply, State#state{receivers = UpdReceivers}};
 handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
     {noreply, maybe_start_helper(State)};
@@ -554,6 +631,11 @@ is_down(Up) ->
     fun(Site) ->
             not lists:member(Site, Up)
     end.
+
+get_drop_sizes() ->
+    %% TODO: configurable?
+    {10*1000, 20*1000}.
+    %% {1, 200}.                                   % 2-node testing @ slow rates
 
 -ifdef(TEST).
 
