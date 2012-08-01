@@ -57,7 +57,9 @@
                 leader_mref=undefined :: undefined | reference(), % monitor
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
-                receivers=[] :: [{reference(),pid()}]}). % {Mref,Pid} pairs
+                receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
+                check_tref :: timer:tref(),    % check mailbox timer
+                elected_mbox_size :: integer()}). % elected leader box size
      
 %%%===================================================================
 %%% API
@@ -132,7 +134,8 @@ init([]) ->
             end
     end,
     riak_core_node_watcher_events:add_sup_callback(Fn),
-    {ok, #state{}}.
+    {ok, TRef} = timer:send_interval(1000, check_mailbox),
+    {ok, #state{check_tref = TRef}}.
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
     Mref = erlang:monitor(process, Pid),
@@ -194,8 +197,21 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     end,
     {noreply, State};
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
-    gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
-    riak_repl_stats:objects_forwarded(),
+    MboxSize = State#state.elected_mbox_size,
+    {MaybeDropSize, DefiniteDropSize} = get_drop_sizes(),
+    Prob = if MboxSize < DropSize ->
+                   0.0;
+              MboxSize < DefiniteDropSize ->
+                   1.0 - ((DefiniteDropSize - MboxSize) /
+                              (DefiniteDropSize - MaybeDropSize));
+              true ->
+                   1.0
+           end,
+    case Prob /= 0.0 andalso random:uniform() > Prob of
+        LEFT OFF HERE!
+        true
+            gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
+            riak_repl_stats:objects_forwarded(),
     {noreply, State};
 handle_cast({repl, _Msg}, State) ->
     %% No leader currently defined - cannot do anything
@@ -220,6 +236,32 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             riak_repl_leader_helper:refresh_leader(Pid)
     end,
     {noreply, State#state{leader_node = undefined, leader_mref = undefined}};
+handle_info({elected_mailbox_size, MboxSize}, State) ->
+    {noreply, State#state{elected_mbox_size = MboxSize}};
+handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
+                                       State#state.leader_node =/= undefined ->
+    Parent = self(),
+    spawn(fun() ->
+                  try
+                      %% The default timeouts are fine, failure is fine.
+                      LeaderPid = rpc:call(State#state.leader_node,
+                                           erlang, whereis, [?SERVER]),
+                      {_, MboxSize} = rpc:call(State#state.leader_node,
+                                               erlang, process_info,
+                                               [message_queue_len]),
+                      Parent ! {elected_mailbox_size, MboxSize},
+                      exit(normal)
+                  catch
+                      _:_ ->
+                          ok
+                  after
+                      exit(normal)
+                  end
+          end),
+    {noreply, State};
+handle_info(check_mailbox, State) ->
+    %% We're the leader, or we don't know who the leader is, so ignore.
+    {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
     %% May be called here with a stale leader_mref, will not matter
     %% as it will not be in the State#state.receivers so will do nothing.
@@ -554,6 +596,10 @@ is_down(Up) ->
     fun(Site) ->
             not lists:member(Site, Up)
     end.
+
+get_drop_sizes() ->
+    %% TODO: configurable?
+    {10*1000, 20*1000}.
 
 -ifdef(TEST).
 
