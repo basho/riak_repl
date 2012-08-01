@@ -202,7 +202,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
             {noreply, State};
         Receivers ->
             case timer:now_diff(os:timestamp(), State#state.lastpoll) of
-                X when X > 5000000 ->
+                X when X > 1000000 ->
                     R2 = lists:map(fun({Mref, Pid, _}) ->
                                     S = case erlang:process_info(Pid,message_queue_len) of
                                         {message_queue_len, L} when L < 20000 ->
@@ -212,7 +212,6 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
                                     end,
                                     {Mref, Pid, S}
                             end, Receivers),
-                    lager:info("poll result ~p", [R2]),
                     [P ! {repl, Msg} || {_Mref, P, send} <- R2],
                     riak_repl_stats:objects_sent(),
                     {noreply, State#state{receivers=R2,
