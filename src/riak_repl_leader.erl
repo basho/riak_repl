@@ -188,6 +188,8 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             {noreply, restart_helper(UpdState2)}
     end;
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
+    %% To simulate a slow elected repl leader, uncomment and/or change amount
+    %% timer:sleep(1),
     case State#state.receivers of
         [] ->
             riak_repl_stats:objects_dropped_no_clients();
@@ -202,16 +204,21 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
     SendProb = if MboxSize < MaybeDropSize ->
                        1.0;
                   MboxSize < DefiniteDropSize ->
-                       1.0 - ((DefiniteDropSize - MboxSize) /
-                                  (DefiniteDropSize - MaybeDropSize));
+                       (DefiniteDropSize - MboxSize) /
+                            (DefiniteDropSize - MaybeDropSize);
                   true ->
                        0.0
                end,
-    case SendProb == 1.0 orelse random:uniform() > SendProb of
+    Rand = random:uniform(),
+    case SendProb == 1.0 orelse Rand < SendProb of
         true ->
+            %% S = definitely send, s = send in middle probability range
+            %% if SendProb == 1.0 -> io:format("S"); true -> io:format("s") end,
             gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
             riak_repl_stats:objects_forwarded();
         false ->
+            %% D = definitely drop
+            %% io:format("D"),
             %% TODO: create a new stat rather than abusing this counter.
             riak_repl_stats:objects_dropped_no_clients()
     end,        
@@ -240,6 +247,7 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
     end,
     {noreply, State#state{leader_node = undefined, leader_mref = undefined}};
 handle_info({elected_mailbox_size, MboxSize}, State) ->
+    %% io:format("\n~p\n", [MboxSize]),
     {noreply, State#state{elected_mbox_size = MboxSize}};
 handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                                        State#state.leader_node =/= undefined ->
@@ -603,6 +611,7 @@ is_down(Up) ->
 get_drop_sizes() ->
     %% TODO: configurable?
     {10*1000, 20*1000}.
+    %% {1, 200}.                                   % 2-node testing @ slow rates
 
 -ifdef(TEST).
 
