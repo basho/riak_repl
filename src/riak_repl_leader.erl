@@ -58,8 +58,10 @@
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
                 receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
-                check_tref :: timer:tref(),    % check mailbox timer
-                elected_mbox_size :: integer()}). % elected leader box size
+                check_tref :: timer:tref(),     % check mailbox timer
+                elected_mbox_size :: integer(), % elected leader box size
+                lastpoll = {0, 0, 0}
+               }).
      
 %%%===================================================================
 %%% API
@@ -82,7 +84,12 @@ is_leader() ->
 
 %% Send the object to the leader
 postcommit(Object) ->
-    gen_server:cast(?SERVER, {repl, Object}).
+    case erlang:process_info(whereis(?SERVER), message_queue_len) of
+        {message_queue_len, X} when X < 20000 ->
+            gen_server:cast(?SERVER, {repl, Object});
+        _ ->
+            ok
+    end.
 
 %% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
 %% and removed from the list when it exits. 
@@ -139,16 +146,15 @@ init([]) ->
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
     Mref = erlang:monitor(process, Pid),
-    UpdReceivers = orddict:store(Mref, Pid, State#state.receivers),
-    {reply, ok, State#state{receivers = UpdReceivers}};
+    {reply, ok, State#state{receivers = [{Mref, Pid, send} | State#state.receivers]}};
 handle_call({add_receiver_pid, _Pid}, _From, State) ->
     {reply, {error, not_leader}, State};
 
 handle_call({rm_receiver_pid, Pid}, _From, State = #state{receivers=R0}) when State#state.i_am_leader =:= true ->
     Receivers = case lists:keyfind(Pid, 2, R0) of
-        {MRef, Pid} ->
+        {MRef, Pid, _} ->
             erlang:demonitor(MRef),
-            orddict:erase(MRef, R0);
+            lists:keydelete(MRef, 1, R0);
         false ->
             R0
     end,
@@ -192,12 +198,31 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     %% timer:sleep(1),
     case State#state.receivers of
         [] ->
-            riak_repl_stats:objects_dropped_no_clients();
+            riak_repl_stats:objects_dropped_no_clients(),
+            {noreply, State};
         Receivers ->
-            [P ! {repl, Msg} || {_Mref, P} <- Receivers],
-            riak_repl_stats:objects_sent()
-    end,
-    {noreply, State};
+            case timer:now_diff(os:timestamp(), State#state.lastpoll) of
+                X when X > 5000000 ->
+                    R2 = lists:map(fun({Mref, Pid, _}) ->
+                                    S = case erlang:process_info(Pid,message_queue_len) of
+                                        {message_queue_len, L} when L < 20000 ->
+                                            send;
+                                        _ ->
+                                            drop
+                                    end,
+                                    {Mref, Pid, S}
+                            end, Receivers),
+                    lager:info("poll result ~p", [R2]),
+                    [P ! {repl, Msg} || {_Mref, P, send} <- R2],
+                    riak_repl_stats:objects_sent(),
+                    {noreply, State#state{receivers=R2,
+                                          lastpoll=os:timestamp()}};
+                _ ->
+                    [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
+                    riak_repl_stats:objects_sent(),
+                    {noreply, State}
+            end
+    end;
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
     MboxSize = State#state.elected_mbox_size,
     {MaybeDropSize, DefiniteDropSize} = get_drop_sizes(),
@@ -276,7 +301,7 @@ handle_info(check_mailbox, State) ->
 handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
     %% May be called here with a stale leader_mref, will not matter
     %% as it will not be in the State#state.receivers so will do nothing.
-    UpdReceivers = orddict:erase(Mref, State#state.receivers),
+    UpdReceivers = lists:keydelete(Mref, 1, State#state.receivers),
     {noreply, State#state{receivers = UpdReceivers}};
 handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
     {noreply, maybe_start_helper(State)};
