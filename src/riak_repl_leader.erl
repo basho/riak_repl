@@ -199,19 +199,22 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
     MboxSize = State#state.elected_mbox_size,
     {MaybeDropSize, DefiniteDropSize} = get_drop_sizes(),
-    Prob = if MboxSize < DropSize ->
-                   0.0;
-              MboxSize < DefiniteDropSize ->
-                   1.0 - ((DefiniteDropSize - MboxSize) /
-                              (DefiniteDropSize - MaybeDropSize));
-              true ->
-                   1.0
-           end,
-    case Prob /= 0.0 andalso random:uniform() > Prob of
-        LEFT OFF HERE!
-        true
+    SendProb = if MboxSize < MaybeDropSize ->
+                       1.0;
+                  MboxSize < DefiniteDropSize ->
+                       1.0 - ((DefiniteDropSize - MboxSize) /
+                                  (DefiniteDropSize - MaybeDropSize));
+                  true ->
+                       0.0
+               end,
+    case SendProb == 1.0 orelse random:uniform() > SendProb of
+        true ->
             gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
-            riak_repl_stats:objects_forwarded(),
+            riak_repl_stats:objects_forwarded();
+        false ->
+            %% TODO: create a new stat rather than abusing this counter.
+            riak_repl_stats:objects_dropped_no_clients()
+    end,        
     {noreply, State};
 handle_cast({repl, _Msg}, State) ->
     %% No leader currently defined - cannot do anything
@@ -248,7 +251,7 @@ handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                                            erlang, whereis, [?SERVER]),
                       {_, MboxSize} = rpc:call(State#state.leader_node,
                                                erlang, process_info,
-                                               [message_queue_len]),
+                                               [LeaderPid, message_queue_len]),
                       Parent ! {elected_mailbox_size, MboxSize},
                       exit(normal)
                   catch
