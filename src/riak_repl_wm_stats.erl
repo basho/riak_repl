@@ -88,7 +88,9 @@ get_stats() ->
     LeaderStats = riak_repl_console:leader_stats(),
     [{server_stats, Servers}] = riak_repl_console:server_stats(),
     [{client_stats, Clients}] = riak_repl_console:client_stats(),
-    Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []).
+    Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []) ++
+        format_stats(server_stats, Servers, []).
+    
 
 format_stats(Type, [], Acc) ->
     [{Type, lists:reverse(Acc)}];
@@ -106,3 +108,4 @@ jsonify_stats([{connected,IP,Port}|T], Acc) ->
                        list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
+    
