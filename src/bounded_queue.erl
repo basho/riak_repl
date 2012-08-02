@@ -28,6 +28,7 @@
          in/2, 
          out/1, 
          byte_size/1, 
+         max_size/1,
          len/1,
          dropped_count/1]).
 
@@ -81,6 +82,8 @@ out(BQ=#bq{q=Q,s=Size}) ->
 %% @doc  The size of the queue, in bytes.
 -spec byte_size(bounded_queue()) -> non_neg_integer().
 byte_size(#bq{s=Size}) -> Size.
+
+max_size(#bq{m=Max}) -> Max.
 
 %% @spec len(bounded_queue()) ->  non_neg_integer()
 %% @doc  The number of items in the queue.
