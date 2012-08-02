@@ -120,7 +120,11 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
             _ ->
                 [{dropped_count, bounded_queue:dropped_count(Q)},
                     {queue_length, bounded_queue:len(Q)},
-                    {queue_byte_size, bounded_queue:byte_size(Q)}]
+                    {queue_byte_size, bounded_queue:byte_size(Q)},
+                    {queue_max_size, bounded_queue:max_size(Q)},
+                    {queue_percentage, (bounded_queue:byte_size(Q) * 100) div
+                     bounded_queue:max_size(Q)}
+                ]
         end,
     {reply, {status, Desc ++ Res}, State}.
 
