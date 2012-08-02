@@ -99,7 +99,6 @@ init([SiteName, Transport, Socket, WorkDir, Client]) ->
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
     VnodeGets = app_helper:get_env(riak_repl, vnode_gets, true),
     DiffBatchSize = app_helper:get_env(riak_repl, diff_batch_size, 100),
-%%    lager:info("diff_batch_size = ~p", [DiffBatchSize]),
     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
             {worker_args, []},
             {size, MinPool}, {max_overflow, MaxPool}]),
@@ -266,7 +265,6 @@ diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
     %% request ack from client
     riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     PendingAcks = PendingAcks0+1,
-%%    lager:info("server ---ACK---> client, pending is now ~p", [PendingAcks]),
     %% If we have already received the ack for the previous batch, we immediately
     %% resume the generator, otherwise we wait for the ack from the client. We'll
     %% have at most ACKS_IN_FLIGHT windows of differences in flight.
@@ -286,13 +284,11 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
                                            pending_acks=PendingAcks0} = State) ->
     %% That's one less "pending" ack from the client. Tell client to keep going.
     PendingAcks = PendingAcks0-1,
-%%    lager:info("server <---ACK--- client, pending is now ~p", [PendingAcks]),
     %% If the generator was paused, resume it. That would happen if there are already
     %% ACKS_IN_FLIGHT batches in flight. Better to check "paused" state than guess by
     %% pending acks count.
     case WorkerPaused of
         true ->
-%%            lager:info("resuming diff generator from diff_ack with ~p pending acks",[PendingAcks]),
             State#state.diff_pid ! {Ref, diff_resume};
         false ->
             ok
