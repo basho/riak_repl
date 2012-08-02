@@ -9,6 +9,11 @@
          pause_fullsync/1, resume_fullsync/1]).
 -export([client_stats_rpc/0, server_stats_rpc/0]).
 
+-export([get_config/0,
+         leader_stats/0,
+         client_stats/0,
+         server_stats/0]).
+         
 add_listener(Params) ->
     Ring = get_ring(),
     case add_listener_internal(Ring,Params) of
