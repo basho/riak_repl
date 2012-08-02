@@ -71,7 +71,9 @@ forbidden(RD, Ctx) ->
     {riak_kv_wm_utils:is_forbidden(RD), RD, Ctx}.
 
 produce_body(ReqData, Ctx) ->
-    Body = mochijson2:encode({struct, riak_repl_stats:get_stats()}),
+    Body = mochijson2:encode({struct, 
+                              get_stats()
+                              }),    
     {Body, ReqData, Ctx}.
 
 %% @spec pretty_print(webmachine:wrq(), context()) ->
@@ -80,3 +82,27 @@ produce_body(ReqData, Ctx) ->
 pretty_print(RD1, C1=#ctx{}) ->
     {Json, RD2, C2} = produce_body(RD1, C1),
     {json_pp:print(binary_to_list(list_to_binary(Json))), RD2, C2}.
+
+get_stats() ->
+    Stats1 = riak_repl_stats:get_stats(),
+    LeaderStats = riak_repl_console:leader_stats(),
+    [{server_stats, Servers}] = riak_repl_console:server_stats(),
+    [{client_stats, Clients}] = riak_repl_console:client_stats(),
+    Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []).
+
+format_stats(Type, [], Acc) ->
+    [{Type, lists:reverse(Acc)}];
+format_stats(Type, [{P, M, {status, S}}|T], Acc) ->
+    format_stats(Type, T, [[{pid, list_to_binary(erlang:pid_to_list(P))},
+                            M, {status, jsonify_stats(S, [])}]|Acc]).
+jsonify_stats([], Acc) ->
+    lists:flatten(lists:reverse(Acc));
+jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
+    jsonify_stats(T, [{K,list_to_binary(erlang:pid_to_list(V))}|Acc]);
+jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
+    jsonify_stats(T, [{K,list_to_binary(V)}|Acc]);
+jsonify_stats([{connected,IP,Port}|T], Acc) ->
+    jsonify_stats(T, [{connected,
+                       list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
+jsonify_stats([{K,V}|T], Acc) ->
+    jsonify_stats(T, [{K,V}|Acc]).
