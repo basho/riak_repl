@@ -148,6 +148,10 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
         _ ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
     end;
+request_partition({kl_exchange, P},  State) ->
+    lager:warning("Stale kl_exchange message received for ~p, ignoring",
+        [P]),
+    {next_state, request_partition, State};
 request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref,
         transport=Transport, skipping=Skip} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
