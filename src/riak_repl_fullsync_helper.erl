@@ -140,6 +140,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
+%% request from client of server to write a keylist of hashed key/value to Filename for Partition
 handle_call({make_keylist, Partition, Filename}, From, State) ->
     Ref = make_ref(),
     gen_server2:reply(From, {ok, Ref}),
@@ -167,6 +168,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
+%% sent from keylist_fold every 100 key/value hashes
 handle_call(keylist_ack, _From, State) ->
     {reply, ok, State};
 handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
@@ -261,6 +263,7 @@ handle_cast({merkle, K, H}, State) ->
         false ->
             {noreply, State#state{buf = NewBuf, size = NewSize}}
     end;
+%% write Key/Value Hash to file
 handle_cast({keylist, Row}, State) ->
     ok = file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
     {noreply, State};
@@ -395,7 +398,8 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
             lager:info("stop request while diffing"),
             DiffState;
         {Ref, diff_resume} ->
-            %lager:info("resuming diff stream"),
+            %% Resuming the diff stream generation
+            lager:info("resuming diff stream"),
             diff_keys(R, L, DiffState#diff_state{replies=Count})
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
@@ -473,9 +477,11 @@ merkle_fold(K, V, Pid) ->
 keylist_fold(K, V, {MPid, Count, Total}) ->
     H = hash_object(V),
     Bin = term_to_binary({pack_key(K), H}),
+    %% write key/value hash to file
     gen_server2:cast(MPid, {keylist, Bin}),
     case Count of
         100 ->
+            %% send keylist_ack to "self" every 100 key/value hashes
             ok = gen_server2:call(MPid, keylist_ack, infinity),
             {MPid, 0, Total+1};
         _ ->
