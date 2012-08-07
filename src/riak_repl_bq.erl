@@ -1,9 +1,9 @@
 -module(riak_repl_bq).
--behaviour(gen_server).
+-behaviour(gen_server2).
 
 -export([start_link/2, q_ack/2, status/1]).
 
-%% gen_server callbacks
+%% gen_server2 callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -19,15 +19,20 @@
         }).
 
 start_link(Transport, Socket) ->
-    gen_server:start_link(?MODULE, [Transport, Socket], []).
+    gen_server2:start_link(?MODULE, [Transport, Socket], []).
 
 q_ack(Pid, Count) ->
-    gen_server:cast(Pid, {q_ack, Count}).
+    gen_server2:pcast(Pid, 1, {q_ack, Count}).
 
 status(Pid) ->
-    gen_server:call(Pid, status).
+    try
+        gen_server2:pcall(Pid, 1, status)
+    catch
+        _:_ ->
+            [{queue, too_busy}]
+    end.
 
-%% gen_server
+%% gen_server2
 
 init([Transport, Socket]) ->
     QSize = app_helper:get_env(riak_repl,queue_size,
