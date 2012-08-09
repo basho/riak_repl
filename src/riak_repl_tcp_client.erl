@@ -574,21 +574,22 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
 %% leaked into the remote site's list of listen IP addresses. Not likely, but game over
 %% if it happens.
 update_site_ips(TheirReplConfig, SiteName, ConnectedIP) ->
-    {ok, OurRing} = riak_core_ring_manager:get_my_ring(),
-    NeededConfigChanges = rewrite_config_site_ips_pure(TheirReplConfig, OurRing,
-                                                       SiteName, ConnectedIP),
-    case NeededConfigChanges of
-        none ->
-            %% don't transform the ring for no reason
+    F = fun(InRing, _) ->
+                R1 = riak_repl_ring:ensure_config(InRing),
+                case rewrite_config_site_ips_pure(TheirReplConfig, R1, SiteName, ConnectedIP) of
+                    none ->
+                        ignore;
+                    R2 ->
+                        RC = riak_repl_ring:get_repl_config(R2),
+                        NewRing = riak_repl_ring:set_repl_config(R2, RC),
+                        {new_ring, NewRing}
+                end
+        end,
+    case riak_core_ring_manager:ring_trans(F, undefined) of
+        {ok, _} ->
             ok;
-        MyNewRing ->
-            %% apply changes to the ring now
-            F = fun(InRing, ReplConfig) ->
-                        {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
-                end,
-            MyNewRC = riak_repl_ring:get_repl_config(MyNewRing),
-            {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, MyNewRC),
-            ok
+        not_changed ->
+            error
     end.
 
 %% unit tests
