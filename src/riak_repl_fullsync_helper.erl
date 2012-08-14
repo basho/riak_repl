@@ -395,11 +395,9 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
     receive
         {'$gen_call', From, stop} ->
             gen_server2:reply(From, ok),
-            lager:info("stop request while diffing"),
             DiffState;
         {Ref, diff_resume} ->
             %% Resuming the diff stream generation
-            lager:info("resuming diff stream"),
             diff_keys(R, L, DiffState#diff_state{replies=Count})
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
