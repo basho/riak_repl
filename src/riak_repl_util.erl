@@ -69,25 +69,35 @@ do_repl_put(Object) ->
     K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
-            {ok,Ring} = riak_core_ring_manager:get_my_ring(),
-            BucketProps = riak_core_bucket:get_bucket(B, Ring),
-            DocIdx = riak_core_util:chash_key({B, K}),
-            N = proplists:get_value(n_val,BucketProps),
-            UpNodes = riak_core_node_watcher:nodes(riak_kv),
-            Preflist2 = riak_core_apl:get_apl_ann(DocIdx, N, Ring, UpNodes),
-            {{_Partition, Node}, _Type} = hd(Preflist2),
+            %{ok,Ring} = riak_core_ring_manager:get_my_ring(),
+            %BucketProps = riak_core_bucket:get_bucket(B, Ring),
+            %DocIdx = riak_core_util:chash_key({B, K}),
+            %N = proplists:get_value(n_val,BucketProps),
+            %UpNodes = riak_core_node_watcher:nodes(riak_kv),
+            %Preflist2 = riak_core_apl:get_apl_ann(DocIdx, N, Ring, UpNodes),
+            %{{_Partition, Node}, _Type} = hd(Preflist2),
 
             ReqId = erlang:phash2(erlang:now()),
             B = riak_object:bucket(Object),
             K = riak_object:key(Object),
             Opts = [asis, disable_hooks, {update_last_modified, false}],
 
-            riak_kv_put_fsm_sup:start_put_fsm(Node, [ReqId, Object, 1, 1,
+            {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
                     ?REPL_FSM_TIMEOUT,
-                    self(), Opts]),
+                    self(), Opts),
+
+            MRef = erlang:monitor(process, PutPid),
 
             %% block waiting for response
             wait_for_response(ReqId, "put"),
+
+            receive 
+                {'DOWN', MRef, _, _, _} ->
+                    ok
+            after 60000 ->
+                    lager:warning("put fsm did not exit on schedule"),
+                    ok
+            end,
 
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
