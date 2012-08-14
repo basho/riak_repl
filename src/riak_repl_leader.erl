@@ -1,5 +1,5 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 
 %%===================================================================
 %% Replication leader - responsible for receiving objects to be replicated
@@ -40,7 +40,9 @@
 %% portion has been broken out into riak_repl_leader_helper. 
 %% During rolling upgrades old gen_leader messages from pre-0.14
 %% would be sent to the gen_server
--define(SERVER, riak_repl_leader_gs).
+-define(NUM_SLAVES, 8).
+-define(SERVER,      riak_repl_leader_gs).
+-define(SERVER_STR, "riak_repl_leader_gs").
 
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
@@ -55,6 +57,9 @@
                 i_am_leader=false :: boolean(), % true if the leader
                 leader_node=undefined :: undefined | node(), % current leader
                 leader_mref=undefined :: undefined | reference(), % monitor
+                el_jeffe=true :: boolean(),     % am I El Jeffe?
+                slaves=[] :: [pid()],           % slaves to do our bidding
+                my_el_jeffe :: pid(),           % my El Jeffe process
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
                 receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
@@ -68,7 +73,7 @@
 %%%===================================================================
 
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [el_jeffe], []).
 
 %% Set the list of candidate nodes for replication leader
 set_candidates(Candidates, Workers) ->
@@ -84,9 +89,10 @@ is_leader() ->
 
 %% Send the object to the leader
 postcommit(Object) ->
-    case erlang:process_info(whereis(?SERVER), message_queue_len) of
+    SomeServer = random_w_name(),
+    case erlang:process_info(SomeServer, message_queue_len) of
         {message_queue_len, X} when X < 20000 ->
-            gen_server:cast(?SERVER, {repl, Object});
+            gen_server:cast(SomeServer, {repl, Object});
         _ ->
             ok
     end.
@@ -122,7 +128,8 @@ helper_pid() ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([]) ->
+init(Props) ->
+    io:format(user, "DEBUG Ps ~p\n", [Props]),
     process_flag(trap_exit, true),
     erlang:send_after(0, self(), update_leader),
     Fn=fun(Services) ->
@@ -140,17 +147,43 @@ init([]) ->
                     ok
             end
     end,
+    ElJeffe = proplists:get_value(el_jeffe, Props, false),
+    {Slaves, MyElJeffe} =
+        if not ElJeffe ->
+                MyNum = proplists:get_value(num, Props),
+                register(w_name(MyNum), self()),
+                {[], proplists:get_value(my_el_jeffe, Props)};
+           true ->
+                {[QB || Num <- lists:seq(1, ?NUM_SLAVES),
+                        {ok, QB} <- [gen_server:start_link(
+                                       ?MODULE, [{num,Num},
+                                                 {my_el_jeffe, self()}],
+                                       [])]], self()}
+        end,
     riak_core_node_watcher_events:add_sup_callback(Fn),
     {ok, TRef} = timer:send_interval(1000, check_mailbox),
-    {ok, #state{check_tref = TRef}}.
+    {ok, #state{check_tref = TRef,
+                el_jeffe = true,
+                slaves = Slaves,
+                my_el_jeffe = MyElJeffe
+               }}.
 
 handle_call({add_receiver_pid, Pid}, _From, State) when State#state.i_am_leader =:= true ->
+    %% SLF: TODO: Hrm, so here's the chance where we can insert a layer
+    %%            of indirection, adding a process that can do its own
+    %%            (bounded-queue-size / ?NUM_SLAVES)-size bounded buffering
+    %%            before sending downstream to the "real" process 'Pid',
+    %%            and then give each slave process its own buffering
+    %%            proxy-in-the-middle pid.
+    true = State#state.el_jeffe,
     Mref = erlang:monitor(process, Pid),
     {reply, ok, State#state{receivers = [{Mref, Pid, send} | State#state.receivers]}};
 handle_call({add_receiver_pid, _Pid}, _From, State) ->
     {reply, {error, not_leader}, State};
 
 handle_call({rm_receiver_pid, Pid}, _From, State = #state{receivers=R0}) when State#state.i_am_leader =:= true ->
+    %% SLF: TODO: Hrm, undo the bounded buffering proxy-in-the-middle.
+    true = State#state.el_jeffe,
     Receivers = case lists:keyfind(Pid, 2, R0) of
         {MRef, Pid, _} ->
             erlang:demonitor(MRef),
@@ -163,12 +196,15 @@ handle_call({rm_receiver_pid, _Pid}, _From, State) ->
     {reply, {error, not_leader}, State};
 
 handle_call(leader_node, _From, State) ->
+    true = State#state.el_jeffe,
     {reply, State#state.leader_node, State};
 
 handle_call(is_leader, _From, State) ->
+    true = State#state.el_jeffe,
     {reply, State#state.i_am_leader, State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
+    true = State#state.el_jeffe,
     case node() of
         LeaderNode ->
             {reply, ok, become_leader(LeaderNode, State)};
@@ -177,9 +213,11 @@ handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
     end;
 
 handle_call(helper_pid, _From, State) ->
+    true = State#state.el_jeffe,
     {reply, State#state.helper_pid, State}.
 
 handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
+    true = State#state.el_jeffe,
     Candidates = lists:sort(CandidatesIn),
     Workers = lists:sort(WorkersIn),
     case {State#state.candidates, State#state.workers} of
@@ -194,6 +232,7 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             {noreply, restart_helper(UpdState2)}
     end;
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
+    false = State#state.el_jeffe,
     %% To simulate a slow elected repl leader, uncomment and/or change amount
     %% timer:sleep(1),
     case State#state.receivers of
@@ -223,6 +262,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
             end
     end;
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
+    false = State#state.el_jeffe,
     MboxSize = State#state.elected_mbox_size,
     {MaybeDropSize, DefiniteDropSize} = get_drop_sizes(),
     SendProb = if MboxSize < MaybeDropSize ->
@@ -236,9 +276,10 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
     Rand = random:uniform(),
     case SendProb == 1.0 orelse Rand < SendProb of
         true ->
+            SomeServer = random_w_name(),
             %% S = definitely send, s = send in middle probability range
             %% if SendProb == 1.0 -> io:format("S"); true -> io:format("s") end,
-            gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
+            gen_server:cast({SomeServer, State#state.leader_node}, {repl, Msg}),
             riak_repl_stats:objects_forwarded();
         false ->
             %% D = definitely drop
@@ -248,21 +289,28 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
     end,        
     {noreply, State};
 handle_cast({repl, _Msg}, State) ->
+    false = State#state.el_jeffe,
     %% No leader currently defined - cannot do anything
     riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State};
+handle_cast({el_jeffe_is_leader, Bool}, State) ->
+    false = State#state.el_jeffe,
+    {noreply, State#state{i_am_leader = Bool}};
 handle_cast(ensure_sites, State) ->
+    true = State#state.el_jeffe,
     %% use the leader refresh to trigger a set_leader which will call
     %% ensure_sites
     riak_repl_leader_helper:refresh_leader(State#state.helper_pid),
     {noreply, State}.
 
 handle_info(update_leader, State) ->
+    true = State#state.el_jeffe,
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_repl_ring_handler:update_leader(Ring),
     {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             #state{leader_mref=Mref}=State) ->
+    true = State#state.el_jeffe,
     case State#state.helper_pid of
         undefined ->
             ok;
@@ -271,20 +319,27 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
     end,
     {noreply, State#state{leader_node = undefined, leader_mref = undefined}};
 handle_info({elected_mailbox_size, MboxSize}, State) ->
+    true = State#state.el_jeffe,
     %% io:format("\n~p\n", [MboxSize]),
     {noreply, State#state{elected_mbox_size = MboxSize}};
 handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                                        State#state.leader_node =/= undefined ->
+    true = State#state.el_jeffe,
     Parent = self(),
     spawn(fun() ->
                   try
                       %% The default timeouts are fine, failure is fine.
-                      LeaderPid = rpc:call(State#state.leader_node,
-                                           erlang, whereis, [?SERVER]),
-                      {_, MboxSize} = rpc:call(State#state.leader_node,
-                                               erlang, process_info,
-                                               [LeaderPid, message_queue_len]),
-                      Parent ! {elected_mailbox_size, MboxSize},
+                      LeaderPids = [rpc:call(State#state.leader_node,
+                                             erlang, whereis, [w_name(Num)]) ||
+                                                Num <- lists:seq(1,
+                                                                 ?NUM_SLAVES)],
+                      Ss = [MBoxSize ||
+                               LPid <- LeaderPids,
+                               {_, MBoxSize} <- [rpc:call(
+                                                   State#state.leader_node,
+                                                   erlang, process_info,
+                                                   [LPid, message_queue_len])]],
+                      Parent ! {elected_mailbox_size, lists:sum(Ss)},
                       exit(normal)
                   catch
                       _:_ ->
@@ -295,22 +350,28 @@ handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
           end),
     {noreply, State};
 handle_info(check_mailbox, State) ->
+    true = State#state.el_jeffe,
     %% We're the leader, or we don't know who the leader is, so ignore.
     {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
+    true = State#state.el_jeffe,
     %% May be called here with a stale leader_mref, will not matter
     %% as it will not be in the State#state.receivers so will do nothing.
+    %% SLF: TODO: Hrm, undo the bounded buffering proxy-in-the-middle.
     UpdReceivers = lists:keydelete(Mref, 1, State#state.receivers),
     {noreply, State#state{receivers = UpdReceivers}};
 handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
+    true = State#state.el_jeffe,
     {noreply, maybe_start_helper(State)};
 handle_info({'EXIT', Pid, Reason}, State=#state{helper_pid=Pid}) ->
+    true = State#state.el_jeffe,
     lager:warning(
       "Replication leader helper exited unexpectedly: ~p",
       [Reason]),
     {noreply, maybe_start_helper(State)}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+    catch unlink(State#state.my_el_jeffe),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -332,6 +393,8 @@ become_leader(Leader, State) ->
             riak_repl_stats:elections_elected(),
             riak_repl_stats:elections_leader_changed(),
             leader_change(State#state.i_am_leader, true),
+            [tell_slave_el_jeffe_is_leader(Num, true) ||
+                Num <- lists:seq(1, ?NUM_SLAVES)],
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
             ensure_sites(Leader),
@@ -359,6 +422,8 @@ new_leader(Leader, LeaderPid, State) ->
     %% check the elected node if it ever goes away.  This handles
     %% the case where all candidate nodes are down and only workers
     %% remain.
+    [tell_slave_el_jeffe_is_leader(Num, false) ||
+        Num <- lists:seq(1, ?NUM_SLAVES)],
     NewState = State#state{i_am_leader = false, leader_node = Leader},
     remonitor_leader(LeaderPid, NewState).
 
@@ -636,6 +701,16 @@ get_drop_sizes() ->
     %% TODO: configurable?
     {10*1000, 20*1000}.
     %% {1, 200}.                                   % 2-node testing @ slow rates
+
+w_name(Num) when is_integer(Num) ->
+    list_to_atom(integer_to_list(Num) ++ ?SERVER_STR).
+
+random_w_name() ->
+    {_, _, USec} = os:timestamp(),
+    w_name((USec rem ?NUM_SLAVES) + 1).
+
+tell_slave_el_jeffe_is_leader(Num, Boolean) ->
+    gen_server:cast(w_name(Num), {el_jeffe_is_leader, Boolean}).
 
 -ifdef(TEST).
 
