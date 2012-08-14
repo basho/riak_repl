@@ -60,7 +60,8 @@
                 receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
                 check_tref :: timer:tref(),     % check mailbox timer
                 elected_mbox_size :: integer(), % elected leader box size
-                lastpoll = {0, 0, 0}
+                lastpoll = {0, 0, 0},
+                realtime_buffer = []
                }).
      
 %%%===================================================================
@@ -193,6 +194,12 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             leader_change(State#state.i_am_leader, false),
             {noreply, restart_helper(UpdState2)}
     end;
+handle_cast({repl_batch, Msg}, State) when State#state.i_am_leader =:= true ->
+    [P ! {repl_batch, Msg} ||
+            {_Mref, P, _} <- State#state.receivers],
+    riak_repl_stats:objects_sent(),
+    {noreply, State};
+
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     %% To simulate a slow elected repl leader, uncomment and/or change amount
     %% timer:sleep(1),
@@ -212,14 +219,15 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
                                     end,
                                     {Mref, Pid, S}
                             end, Receivers),
-                    [P ! {repl, Msg} || {_Mref, P, send} <- R2],
+                    State2 = maybe_send([P || {_Mref, P, send} <- R2], Msg, State),
                     riak_repl_stats:objects_sent(),
-                    {noreply, State#state{receivers=R2,
+                    {noreply, State2#state{receivers=R2,
                                           lastpoll=os:timestamp()}};
                 _ ->
-                    [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
+                    State2 = maybe_send([P ||
+                            {_Mref, P, send} <- Receivers], Msg, State),
                     riak_repl_stats:objects_sent(),
-                    {noreply, State}
+                    {noreply, State2}
             end
     end;
 handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
@@ -238,15 +246,17 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
         true ->
             %% S = definitely send, s = send in middle probability range
             %% if SendProb == 1.0 -> io:format("S"); true -> io:format("s") end,
-            gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
-            riak_repl_stats:objects_forwarded();
+            %gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
+            riak_repl_stats:objects_forwarded(),
+            {noreply, maybe_cast({?SERVER, State#state.leader_node}, Msg,
+                    State)};
         false ->
             %% D = definitely drop
             %% io:format("D"),
             %% TODO: create a new stat rather than abusing this counter.
-            riak_repl_stats:objects_dropped_no_clients()
-    end,        
-    {noreply, State};
+            riak_repl_stats:objects_dropped_no_clients(),
+            {noreply, State}
+    end;
 handle_cast({repl, _Msg}, State) ->
     %% No leader currently defined - cannot do anything
     riak_repl_stats:objects_dropped_no_leader(),
@@ -293,7 +303,21 @@ handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                       exit(normal)
                   end
           end),
-    {noreply, State};
+    case State#state.realtime_buffer of
+        [] ->
+            {noreply, State};
+        Buf ->
+            case State#state.i_am_leader of
+                true ->
+                    [P ! {repl_batch, State#state.realtime_buffer} ||
+                        {_Mref, P, _} <- State#state.receivers],
+                    {noreply, State#state{realtime_buffer=[]}};
+                false ->
+                    gen_server:cast({?SERVER, State#state.leader_node}, {repl_batch,
+                            State#state.realtime_buffer}),
+                    {noreply, State#state{realtime_buffer=[]}}
+            end
+    end;
 handle_info(check_mailbox, State) ->
     %% We're the leader, or we don't know who the leader is, so ignore.
     {noreply, State};
@@ -309,6 +333,8 @@ handle_info({'EXIT', Pid, Reason}, State=#state{helper_pid=Pid}) ->
       "Replication leader helper exited unexpectedly: ~p",
       [Reason]),
     {noreply, maybe_start_helper(State)}.
+
+
 
 terminate(_Reason, _State) ->
     ok.
@@ -636,6 +662,26 @@ get_drop_sizes() ->
     %% TODO: configurable?
     {10*1000, 20*1000}.
     %% {1, 200}.                                   % 2-node testing @ slow rates
+
+maybe_cast(Dest, Msg, State) ->
+    Buf = [Msg|State#state.realtime_buffer],
+    case length(Buf) >= 50 of
+        true ->
+            gen_server:cast(Dest, {repl_batch, Buf}),
+            State#state{realtime_buffer=[]};
+        false ->
+            State#state{realtime_buffer=Buf}
+    end.
+
+maybe_send(Dests, Msg, State) ->
+    Buf = [Msg|State#state.realtime_buffer],
+    case length(Buf) >= 50 of
+        true ->
+            [Dest ! {repl_batch, Buf} || Dest <- Dests],
+            State#state{realtime_buffer=[]};
+        false ->
+            State#state{realtime_buffer=Buf}
+    end.
 
 -ifdef(TEST).
 

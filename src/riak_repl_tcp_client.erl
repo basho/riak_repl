@@ -42,7 +42,10 @@
         fullsync_worker,
         fullsync_strategy,
         pool_pid,
-        keepalive_time
+        keepalive_time,
+        ack_bloat,
+        bloat_buffer,
+        last_ack={0,0,0}
     }).
 
 make_state(SiteName, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -73,7 +76,10 @@ init([SiteName]) ->
             Listeners = Site#repl_site.addrs,
             State = #state{sitename=SiteName,
                 listeners=Listeners,
-                pending=Listeners},
+                pending=Listeners,
+                ack_bloat=app_helper:get_env(riak_repl, ack_bloat, undefined),
+                bloat_buffer=init_source()
+            },
             {ok, do_async_connect(State)}
     end.
 
@@ -130,6 +136,7 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
     ok = riak_repl_util:configure_socket(Transport, Socket),
     Transport:send(Socket, State#state.sitename),
     Props = riak_repl_fsm_common:common_init(Transport, Socket),
+    erlang:send_after(1000, self(), flush_q_ack),
     NewState = State#state{
         listener = {connected, IPAddr, Port},
         socket=Socket,
@@ -139,7 +146,10 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
     case riak_repl_util:maybe_use_ssl() of
         false ->
             send(Transport, Socket, {peerinfo, NewState#state.my_pi,
-                    [bounded_queue, keepalive, {fullsync_strategies,
+                    [bounded_queue ||
+                        app_helper:get_env(riak_repl,
+                            bounded_queue, true) == true] ++
+                    [keepalive, {fullsync_strategies,
                             app_helper:get_env(riak_repl, fullsync_strategies,
                                 [?LEGACY_STRATEGY])},
                      {connected_ip, IPAddr}
@@ -182,6 +192,11 @@ handle_info({Proto, Socket, Data},
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
     Reply = case Msg of
+        {diff_objs, RObjList} ->
+            {noreply, lists:foldl(fun(E, S) ->
+                            {diff_obj, RObj} = binary_to_term(E),
+                        do_repl_put(RObj, S)
+                end, State, RObjList)};
         {diff_obj, RObj} ->
             %% realtime diff object, or a fullsync diff object from legacy
             %% repl. Because you can't tell the difference this can screw up
@@ -229,6 +244,16 @@ handle_info(timeout, State) ->
         _ ->
             {noreply, State}
     end;
+handle_info(flush_q_ack, State=#state{transport=T,socket=S,count=C}) ->
+    NewState = case timer:now_diff(os:timestamp(), State#state.last_ack) > 1000000 of
+        true ->
+            send(T, S, make_q_ack(C, State)),
+            State#state{count=0, last_ack=os:timestamp()};
+        false ->
+            State
+    end,
+    erlang:send_after(1000, self(), flush_q_ack),
+    {noreply, NewState};
 handle_info(_Event, State) ->
     {noreply, State}.
 
@@ -287,7 +312,9 @@ async_connect(Parent, IPAddr, Port) ->
                                         {packet, 4},
                                         {active, false},
                                         {keepalive, true},
-                                        {nodelay, true}], Timeout) of
+                                        {nodelay,
+                                            app_helper:get_env(riak_repl,
+                                                nodelay, true)}], Timeout) of
         {ok, Socket} ->
             ok = Transport:controlling_process(Socket, Parent),
             Parent ! {connected, Transport, Socket};
@@ -312,10 +339,32 @@ do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
 do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
+    send(T, S, make_q_ack(F, State)),
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
-    send(T, S, {q_ack, F}),
-    State#state{count=0}.
+    State#state{count=0, last_ack=os:timestamp()}.
+
+make_q_ack(F, S=#state{ack_bloat=N}) when is_integer(N) ->
+    {q_ack, F, data_block(S#state.bloat_buffer, S#state.ack_bloat)};
+make_q_ack(F, _) ->
+    {q_ack, F}.
+
+%% from basho_bench
+init_source() ->
+    SourceSz = 1048576,
+    {SourceSz, crypto:rand_bytes(SourceSz)}.
+
+data_block({SourceSz, Source}, BlockSize) ->
+    case SourceSz - BlockSize > 0 of
+        true ->
+            Offset = random:uniform(SourceSz - BlockSize),
+            <<_:Offset/bytes, Slice:BlockSize/bytes, _Rest/binary>> = Source,
+            Slice;
+        false ->
+            lager:warning("value_generator_source_size is too small; it needs a value > ~p.\n",
+                [BlockSize]),
+            Source
+    end.
 
 recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = State) ->
     Proto = T:name(),
@@ -331,7 +380,10 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                             Transport = ranch_ssl,
                             %% re-send peer info
                             send(Transport, SSLSocket, {peerinfo, State#state.my_pi,
-                                    [bounded_queue, {fullsync_strategies,
+                                    [bounded_queue ||
+                                        app_helper:get_env(riak_repl,
+                                            bounded_queue, true) == true] ++
+                                    [{fullsync_strategies,
                                             app_helper:get_env(riak_repl, fullsync_strategies,
                                                 [?LEGACY_STRATEGY])},
                                      {connected_ip, ConnIP}
@@ -426,6 +478,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName, Transport, Socket, WorkDir),
                     %% Set up for bounded queue if remote server supports it
+                    lager:info("capability ~p", [Capability]),
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
                             AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
