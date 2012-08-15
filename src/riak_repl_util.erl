@@ -75,12 +75,23 @@ do_repl_put(Object) ->
             K = riak_object:key(Object),
             Opts = [asis, disable_hooks, {update_last_modified, false}],
 
-            riak_kv_put_fsm_sup:start_put_fsm(node(), [ReqId, Object, 1, 1,
+            {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
                     ?REPL_FSM_TIMEOUT,
-                    self(), Opts]),
+                    self(), Opts),
+
+            MRef = erlang:monitor(process, PutPid),
 
             %% block waiting for response
             wait_for_response(ReqId, "put"),
+
+            %% wait for put FSM to exit
+            receive
+                {'DOWN', MRef, _, _, _} ->
+                    ok
+            after 60000 ->
+                    lager:warning("put fsm did not exit on schedule"),
+                    ok
+            end,
 
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
