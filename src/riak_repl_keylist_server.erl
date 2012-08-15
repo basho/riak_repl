@@ -89,6 +89,9 @@
         pending_acks = 0
     }).
 
+%% -define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
+
 -define(ACKS_IN_FLIGHT,2).
 %% -define(KEY_LIST_THRESHOLD,(10 * 1024)).
 -define(KEY_LIST_THRESHOLD,(4 * 1024)).
@@ -261,8 +264,8 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumDiffs} = State) ->
     lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
-        [State#state.sitename, NumDiffs, State#state.partition]),
+    ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
+                      [State#state.sitename, NumDiffs, State#state.partition])),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
     %% difference generator's window size...
     DiffSize = case NumDiffs > ?KEY_LIST_THRESHOLD of
@@ -357,10 +360,7 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         [State#state.sitename, State#state.partition,
-            riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    lager:info("Full-sync with site ~p; fullsync for ~p complete (completed in ~p secs)",
-        [State#state.sitename, State#state.partition,
-            riak_repl_util:elapsed_secs(State#state.partition_start)]),
+         riak_repl_util:elapsed_secs(State#state.stage_start)]),
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     {next_state, wait_for_partition, State}.
 
@@ -391,28 +391,33 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
 
     Self = self(),
+    DiffSize = State#state.diff_batch_size,
     Worker = fun() ->
             riak_kv_vnode:fold({Partition,OwnerNode},
                 fun ?MODULE:bloom_fold/3, {Self,
                     {serialized, ebloom:serialize(Bloom)},
                     State#state.client, State#state.transport,
-                    State#state.socket}),
+                    State#state.socket, DiffSize, DiffSize}),
             gen_fsm:send_event(Self, {Ref, diff_exchanged}),
             ok
     end,
-    FolderPid = spawn_link(Worker),
-    {next_state, diff_bloom, State#state{bloom_pid=FolderPid}};
+    spawn_link(Worker), %% this isn't the Pid we need because it's just the vnode:fold
+    {next_state, diff_bloom, State#state{bloom_pid=undefined}};
 
 %% @plu server <-- s:helper : diff_paused
 %% For bloom folding, we don't want the difference generator to pause at all.
-diff_bloom({_,diff_paused}, #state{diff_ref=Ref} = State) ->
+diff_bloom({Ref,diff_paused}, #state{diff_ref=Ref} = State) ->
+    ?TRACE(lager:info("diff_bloom <- diff_keys: {Ref, diff_paused}. resuming diff gen for ~p",
+                      [State#state.partition])),
+    ?TRACE(lager:info("diff_bloom -> diff_keys: {Ref, diff_resume}")),
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_bloom, State};
 
 %% Sent by bloom_folder after a window of diffs have been sent and it paused itself.
-%% @plu server <-- bloom_fold: bloom_paused
-diff_bloom(bloom_paused, #state{socket=Socket, transport=Transport,
+%% @plu server <-- bloom_fold: {BloomFoldPid, bloom_paused}
+diff_bloom({BFPid,bloom_paused}, #state{socket=Socket, transport=Transport,
         partition=Partition, pending_acks=PendingAcks0} = State) ->
+    ?TRACE(lager:info("diff_bloom <- bloom_paused")),
     %% request ack from client
     riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     PendingAcks = PendingAcks0+1,
@@ -422,14 +427,18 @@ diff_bloom(bloom_paused, #state{socket=Socket, transport=Transport,
     WorkerPaused = case PendingAcks < ?ACKS_IN_FLIGHT of
                        true ->
                            %% another batch can be sent immediately
-                           State#state.bloom_pid ! bloom_resume,
+                           ?TRACE(lager:info("diff_bloom resuming bloom worker immediately")),
+                           ?TRACE(lager:info("diff_bloom -> ~p : bloom_resume", [BFPid])),
+                           BFPid ! bloom_resume,
                            false;
                        false ->
                            %% already ACKS_IN_FLIGHT batches out. Don't resume yet.
                            true
                    end,
+    ?TRACE(lager:info("diff_bloom WorkerPaused = ~p, PendingAcks = ~p", [WorkerPaused, PendingAcks])),
     {next_state, diff_bloom, State#state{pending_acks=PendingAcks,
-                                           generator_paused=WorkerPaused}};
+                                         generator_paused=WorkerPaused,
+                                         bloom_pid=BFPid}};
 
 %% @plu server <-- client : diff_ack 'when ready for more
 diff_bloom({diff_ack, Partition}, #state{partition=Partition,
@@ -437,11 +446,15 @@ diff_bloom({diff_ack, Partition}, #state{partition=Partition,
                                          pending_acks=PendingAcks0} = State) ->
     %% That's one less "pending" ack from the client. Tell client to keep going.
     PendingAcks = PendingAcks0-1,
+    ?TRACE(lager:info("diff_bloom <- diff_ack: PendingAcks = ~p", [PendingAcks])),
     %% If the generator was paused, resume it. That would happen if there are already
     %% ACKS_IN_FLIGHT batches in flight. Better to check "paused" state than guess by
     %% pending acks count.
     case WorkerPaused of
         true ->
+            ?TRACE(lager:info("diff_bloom resuming bloom fold worker after ACK")),
+            ?TRACE(lager:info("diff_bloom -> ~p : bloom_resume",
+                              [State#state.bloom_pid])),
             State#state.bloom_pid ! bloom_resume;
         false ->
             ok
@@ -449,9 +462,9 @@ diff_bloom({diff_ack, Partition}, #state{partition=Partition,
     {next_state, diff_bloom, State#state{pending_acks=PendingAcks,generator_paused=false}};
 
 %% Sent by the Worker function after the bloom_fold exchanges a partition's worth of diffs
-%% with the client; see diff_keylist({Ref, diff_done}, ...) below.
+%% with the client.
 %% @plu server <- bloom_fold : diff_exchanged 'all done
-diff_bloom(diff_exchanged, State) ->
+diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
     %% Tell client that we're done with differences for this partition.
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
@@ -474,7 +487,7 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
             riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
     end,
-    {reply, ok, diff_keylist, State}.
+    {reply, ok, diff_bloom, State}.
 
 %% gen_fsm callbacks
 
@@ -534,19 +547,26 @@ command_verb(cancel_fullsync) ->
 command_verb(pause_fullsync) ->
     "paused".
 
+%% This folder will send batches of differences to the client. Each batch is "WinSz"
+%% riak objects. After a batch is sent, it will pause itself and wait to be resumed
+%% by receiving "bloom_resume".
 bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent, WinSz}) ->
     {ok, Bloom} = ebloom:deserialize(SBloom),
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz});
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
-    gen_fsm:send_event(MPid, bloom_paused),
+    ?TRACE(lager:info("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
+    gen_fsm:send_event(MPid, {self(), bloom_paused}),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
     receive
         {'$gen_call', From, stop} ->
             gen_server2:reply(From, ok),
-            Acc; %% why would this stop anything?
+            Acc;
         bloom_resume ->
-            bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz})
+            ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
+            bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz});
+        Other ->
+            ?TRACE(lager:info("bloom_fold <- ? : ~p", [Other]))
     end;
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of

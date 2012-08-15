@@ -106,10 +106,13 @@ alt YES
     server -> "s:key-lister": spawn(diff_stream)
     activate "s:key-lister"
     "s:key-lister" -> server: {ok,Reg}
-    note over server: (diff_keylist)
+    note over "server" #FFAAAA: NumDiffs > KEY_LIST_THRESHOLD
+    note over server: (diff_bloom)
     loop keys in Keylist
         "s:key-lister" -> server: {merkle_diff,{K,B}}
         note over server #FFAAAA: ebloom:insert({K,B})
+        "s:key-lister" -> server: diff_paused
+        server -> "s:key-lister": diff_resume
     end loop
     "s:key-lister" -> server: diff_done
     destroy "s:key-lister"
@@ -129,18 +132,18 @@ alt YES
            else
            end
         end loop
-        "s:key-lister" -> server: diff_paused
+        "s:key-lister" -> server: bloom_paused
 
         ' implement latency reduction with multiple windows in flight
         note over "server" #FFAAAA: did server receive\nprevious diff_ack?
         alt YES
             server -> client: diff_ack
-            server -> "s:key-lister": diff_resume
+            server -> "s:key-lister": bloom_resume
         else NO
             note over "s:key-lister" #FFAAAA: wait for resume
             client -> server: diff_ack
             server -> client: diff_ack
-            server -> "s:key-lister": diff_resume
+            server -> "s:key-lister": bloom_resume
         end
     end loop
     "s:key-lister" -> server: diff_exchanged
@@ -153,7 +156,7 @@ alt YES
     note over client: "(request_partition)"
     client -> client: continue
 else NO
-     note over server: (-)
+     note over server: (wait_for_partition)
 end
 
 @enduml

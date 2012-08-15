@@ -388,7 +388,9 @@ itr_next(Size, File, Tag) ->
             eof
     end.
 
-diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
+diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) 
+  when Count /= 0 ->
+    lager:info("diff_keys -> FSM : {Ref, diff_paused}"), %% DBG
     gen_fsm:send_event(FSM, {Ref, diff_paused}),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
@@ -397,6 +399,7 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
             gen_server2:reply(From, ok),
             DiffState;
         {Ref, diff_resume} ->
+            lager:info("diff_keys <- FSM : {Ref, diff_resume}"), %% DBG
             %% Resuming the diff stream generation
             diff_keys(R, L, DiffState#diff_state{replies=Count})
     end;
