@@ -208,13 +208,14 @@ handle_info(timeout, State) ->
 handle_info(_Event, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
+terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir,q=Q}) ->
     case is_pid(FSW) of
         true ->
             gen_fsm:sync_send_all_state_event(FSW, stop);
         _ ->
             ok
     end,
+    catch(riak_repl_bq:stop(Q)),
     %% clean up work dir
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
     os:cmd(Cmd).

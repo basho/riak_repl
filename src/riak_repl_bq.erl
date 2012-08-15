@@ -1,7 +1,7 @@
 -module(riak_repl_bq).
 -behaviour(gen_server).
 
--export([start_link/2, q_ack/2, status/1]).
+-export([start_link/2, q_ack/2, status/1, stop/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -31,6 +31,9 @@ status(Pid) ->
         _:_ ->
             [{queue, too_busy}]
     end.
+
+stop(Pid) ->
+    gen_server:call(Pid, stop).
 
 %% gen_server
 
@@ -63,7 +66,9 @@ handle_call(status, _From, State = #state{q=Q}) ->
               {queue_pending, State#state.pending},
               {queue_max_pending, State#state.max_pending}
              ],
-    {reply, Status, State}.
+    {reply, Status, State};
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State}.
 
 handle_info({repl, RObj}, State) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
