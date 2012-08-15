@@ -42,7 +42,8 @@
         fullsync_worker,
         fullsync_strategy,
         pool_pid,
-        keepalive_time
+        keepalive_time,
+        last_ack={0,0,0}
     }).
 
 make_state(SiteName, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -130,6 +131,7 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
     ok = riak_repl_util:configure_socket(Transport, Socket),
     Transport:send(Socket, State#state.sitename),
     Props = riak_repl_fsm_common:common_init(Transport, Socket),
+    erlang:send_after(3000, self(), flush_q_ack),
     NewState = State#state{
         listener = {connected, IPAddr, Port},
         socket=Socket,
@@ -234,6 +236,16 @@ handle_info(timeout, State) ->
         _ ->
             {noreply, State}
     end;
+handle_info(flush_q_ack, State=#state{transport=T,socket=S,count=C}) ->
+    NewState = case timer:now_diff(os:timestamp(), State#state.last_ack) > 1000000 of
+        true ->
+            send(T, S, {q_ack, C}),
+            State#state{count=0, last_ack=os:timestamp()};
+        false ->
+            State
+    end,
+    erlang:send_after(3000, self(), flush_q_ack),
+    {noreply, NewState};
 handle_info(_Event, State) ->
     {noreply, State}.
 
@@ -317,10 +329,10 @@ do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
 do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
+    send(T, S, {q_ack, F}),
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
-    send(T, S, {q_ack, F}),
-    State#state{count=0}.
+    State#state{count=0, last_ack=os:timestamp()}.
 
 recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = State) ->
     Proto = T:name(),

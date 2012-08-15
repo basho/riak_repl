@@ -74,14 +74,14 @@ handle_info({repl, RObj}, State) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         [] ->
             %% no additional objects to queue
-            drain(enqueue(term_to_binary({diff_obj, RObj}), State));
+            {noreply, enqueue(term_to_binary({diff_obj, RObj}), State)};
         Objects when is_list(Objects) ->
             %% enqueue all the objects the hook asked us to send as a list.
             %% They're enqueued together so that they can't be dumped from the
             %% queue piecemeal if it overflows
             NewState = enqueue([term_to_binary({diff_obj, O}) ||
                         O <- Objects ++ [RObj]], State),
-            drain(NewState);
+            {noreply, NewState};
         cancel ->
             {noreply, State}
     end.
