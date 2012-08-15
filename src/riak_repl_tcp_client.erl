@@ -182,6 +182,11 @@ handle_info({Proto, Socket, Data},
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
     Reply = case Msg of
+        {diff_objs, RObjList} ->
+            {noreply, lists:foldl(fun(E, S) ->
+                            {diff_obj, RObj} = binary_to_term(E),
+                            do_repl_put(RObj, S)
+                    end, State, RObjList)};
         {diff_obj, RObj} ->
             %% realtime diff object, or a fullsync diff object from legacy
             %% repl. Because you can't tell the difference this can screw up

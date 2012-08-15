@@ -94,27 +94,60 @@ terminate(_Reason, _State) ->
 
 %% internal
 
-drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
-    case bounded_queue:out(Q) of
-        {{value, Msg}, NewQ} ->
-            drain(send_diffobj(Msg, State#state{q=NewQ}));
-        {empty, NewQ} ->
-            {noreply, State#state{q=NewQ}}
-    end;
-drain(State) ->
-    {noreply, State}.
-
 enqueue(Msg, State=#state{q=Q}) ->
     State#state{q=bounded_queue:in(Q,Msg)}.
 
-send_diffobj(Msgs, State0) when is_list(Msgs) ->
+drain(State=#state{pending=P,max_pending=M}) when P < M ->
+    drain(State, {0, []});
+drain(State) ->
+    {noreply, State}.
+
+drain(State=#state{q=Q,pending=P,max_pending=M,
+        transport=Transport,socket=Socket}, OldBuf) when P < M ->
+    %lager:error("dequeueing"),
+    case bounded_queue:out(Q) of
+        {empty, NewQ} ->
+            case OldBuf of
+                {0, []} ->
+                    ok;
+                {_N, Buf} ->
+                    %lager:notice("flushing final ~p bytes from buffer", [_N]),
+                    riak_repl_tcp_server:send(Transport, Socket,
+                        buffer_to_packets(Buf))
+            end,
+            {noreply, State#state{q=NewQ}};
+        {{value, Msg}, NewQ} ->
+            {State2, Buffer} = send_diffobj(Msg, State, OldBuf),
+            drain(State2#state{q=NewQ}, Buffer)
+    end;
+drain(State, {0, []}) ->
+    %% nothing left in the buffer
+    {noreply, State};
+drain(State=#state{transport=Transport,socket=Socket}, {_N, Buffer}) ->
+    %% send the rest of the buffer
+    %lager:notice("flushing final ~p bytes from buffer", [_N]),
+    riak_repl_tcp_server:send(Transport, Socket, buffer_to_packets(Buffer)),
+    {noreply, State}.
+
+send_diffobj(Msgs, State0, Buffer0) when is_list(Msgs) ->
     %% send all the messages in the list
     %% we correctly increment pending, so we should get enough q_acks
     %% to restore pending to be less than max_pending when we're done.
-    lists:foldl(fun(Msg, State) ->
-                send_diffobj(Msg, State)
-        end, State0, Msgs);
-send_diffobj(Msg,State=#state{transport=Transport,socket=Socket,pending=Pending}) ->
-    riak_repl_tcp_server:send(Transport, Socket, Msg),
-    State#state{pending=Pending+1}.
+    lists:foldl(fun(Msg, {State, Buffer}) ->
+                send_diffobj(Msg, State, Buffer)
+        end, {State0, Buffer0}, Msgs);
+send_diffobj(Msg,State=#state{transport=Transport,socket=Socket,pending=Pending},
+        {BufferSz, Buffer}) ->
+    NewBuffer = case (BufferSz + byte_size(Msg)) > 1400 of
+        true ->
+            %lager:notice("intermediate buffer flush"),
+            riak_repl_tcp_server:send(Transport, Socket,
+                buffer_to_packets(lists:reverse(Buffer))),
+            {byte_size(Msg), [Msg]};
+        false ->
+            {BufferSz+byte_size(Msg), [Msg|Buffer]}
+    end,
+    {State#state{pending=Pending+1}, NewBuffer}.
 
+buffer_to_packets(Buf) ->
+    term_to_binary({diff_objs, Buf}).
