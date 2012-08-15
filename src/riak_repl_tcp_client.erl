@@ -396,23 +396,17 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
-                    case riak_repl_leader:add_receiver_pid(self()) of
-                        ok ->
-                            lager:info("Inverting connection"),
-                            self() ! {tcp, Socket, term_to_binary({peerinfo,
-                                        TheirPeerInfo, Capability})},
-                            put(inverted, true),
-                            gen_server:enter_loop(riak_repl_tcp_server,
-                                [],
-                                riak_repl_tcp_server:make_state(SiteName,
-                                    Transport, Socket, State#state.my_pi,
-                                    State#state.work_dir,
-                                    State#state.client)),
-                            {stop, normal, State};
-                        {error, _Reason} ->
-                            %% election has not completed.. apparently
-                            {stop, normal, State}
-                    end;
+                    lager:info("Inverting connection"),
+                    self() ! {tcp, Socket, term_to_binary({peerinfo,
+                                TheirPeerInfo, Capability})},
+                    put(inverted, true),
+                    gen_server:enter_loop(riak_repl_tcp_server,
+                        [],
+                        riak_repl_tcp_server:make_state(SiteName,
+                            Transport, Socket, State#state.my_pi,
+                            State#state.work_dir,
+                            State#state.client)),
+                    {stop, normal, State};
                 _ ->
 
                     ServerStrats = proplists:get_value(fullsync_strategies, Capability,
