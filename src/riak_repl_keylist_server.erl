@@ -90,7 +90,8 @@
     }).
 
 -define(ACKS_IN_FLIGHT,2).
--define(KEY_LIST_THRESHOLD,(10 * 1024)).
+%% -define(KEY_LIST_THRESHOLD,(10 * 1024)).
+-define(KEY_LIST_THRESHOLD,(4 * 1024)).
 
 start_link(SiteName, Transport, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
@@ -153,7 +154,7 @@ wait_for_partition(fullsync_complete, State) ->
     {next_state, wait_for_partition, State};
 %% Start full-sync of a partition
 %% @plu server <- client: {partition,P}
-wait_for_partition({partition, Partition}, State = #state{work_dir=WorkDir}) ->
+wait_for_partition({partition, Partition}, State) ->
     lager:info("Full-sync with site ~p; doing fullsync for ~p",
         [State#state.sitename, Partition]),
     gen_fsm:send_event(self(), continue),
@@ -260,8 +261,8 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumDiffs} = State) ->
     lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    lager:info("Full-sync with site ~p; calculating differences for ~p",
-        [State#state.sitename, State#state.partition]),
+    lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
+        [State#state.sitename, NumDiffs, State#state.partition]),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
     %% difference generator's window size...
     DiffSize = case NumDiffs > ?KEY_LIST_THRESHOLD of
@@ -286,6 +287,8 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumDiffs} = State) ->
                     true ->
                         diff_bloom
                 end,
+    lager:info("Full-sync with site ~p; using ~p for ~p",
+               [State#state.sitename, NextState, State#state.partition]),
     {next_state, NextState, State#state{diff_ref=Ref, diff_pid=Pid, stage_start=now()}};
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
@@ -337,7 +340,6 @@ diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
                                            generator_paused=WorkerPaused}};
 %% @plu server <-- client: diff_ack
 diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
-                                           socket=Socket, transport=Transport,
                                            generator_paused=WorkerPaused,
                                            pending_acks=PendingAcks0} = State) ->
     %% That's one less "pending" ack from the client. Tell client to keep going.
@@ -377,7 +379,7 @@ diff_bloom(Command, #state{diff_pid=Pid} = State)
 %% @plu server <- s:helper : merke_diff
 diff_bloom({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{diff_ref=Ref, bloom=Bloom} = State) ->
     ebloom:insert(Bloom, <<B/binary, K/binary>>),
-    {next_state, diff_keylist, State};
+    {next_state, diff_bloom, State};
 
 %% Sent by the fullsync_helper "streaming" difference generator when it's done.
 %% @plu server <- s:helper : diff_done
@@ -399,12 +401,18 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
             ok
     end,
     FolderPid = spawn_link(Worker),
-    {next_state, diff_keylist, State#state{bloom_pid=FolderPid}};
+    {next_state, diff_bloom, State#state{bloom_pid=FolderPid}};
+
+%% @plu server <-- s:helper : diff_paused
+%% For bloom folding, we don't want the difference generator to pause at all.
+diff_bloom({_,diff_paused}, #state{diff_ref=Ref} = State) ->
+    State#state.diff_pid ! {Ref, diff_resume},
+    {next_state, diff_bloom, State};
 
 %% Sent by bloom_folder after a window of diffs have been sent and it paused itself.
 %% @plu server <-- bloom_fold: bloom_paused
-diff_bloom({Ref, bloom_paused}, #state{socket=Socket, transport=Transport,
-        partition=Partition, diff_ref=Ref, pending_acks=PendingAcks0} = State) ->
+diff_bloom(bloom_paused, #state{socket=Socket, transport=Transport,
+        partition=Partition, pending_acks=PendingAcks0} = State) ->
     %% request ack from client
     riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     PendingAcks = PendingAcks0+1,
@@ -414,18 +422,17 @@ diff_bloom({Ref, bloom_paused}, #state{socket=Socket, transport=Transport,
     WorkerPaused = case PendingAcks < ?ACKS_IN_FLIGHT of
                        true ->
                            %% another batch can be sent immediately
-                           State#state.bloom_pid ! {Ref, bloom_resume},
+                           State#state.bloom_pid ! bloom_resume,
                            false;
                        false ->
                            %% already ACKS_IN_FLIGHT batches out. Don't resume yet.
                            true
                    end,
-    {next_state, diff_keylist, State#state{pending_acks=PendingAcks,
+    {next_state, diff_bloom, State#state{pending_acks=PendingAcks,
                                            generator_paused=WorkerPaused}};
 
 %% @plu server <-- client : diff_ack 'when ready for more
-diff_bloom({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
-                                         socket=Socket, transport=Transport,
+diff_bloom({diff_ack, Partition}, #state{partition=Partition,
                                          generator_paused=WorkerPaused,
                                          pending_acks=PendingAcks0} = State) ->
     %% That's one less "pending" ack from the client. Tell client to keep going.
@@ -435,16 +442,16 @@ diff_bloom({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
     %% pending acks count.
     case WorkerPaused of
         true ->
-            State#state.bloom_pid ! {Ref, bloom_resume};
+            State#state.bloom_pid ! bloom_resume;
         false ->
             ok
     end,
-    {next_state, diff_keylist, State#state{pending_acks=PendingAcks,generator_paused=false}};
+    {next_state, diff_bloom, State#state{pending_acks=PendingAcks,generator_paused=false}};
 
 %% Sent by the Worker function after the bloom_fold exchanges a partition's worth of diffs
 %% with the client; see diff_keylist({Ref, diff_done}, ...) below.
 %% @plu server <- bloom_fold : diff_exchanged 'all done
-diff_bloom({Ref, diff_exchanged}, #state{diff_ref=Ref, partition=Partition} = State) ->
+diff_bloom(diff_exchanged, State) ->
     %% Tell client that we're done with differences for this partition.
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
@@ -530,6 +537,17 @@ command_verb(pause_fullsync) ->
 bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent, WinSz}) ->
     {ok, Bloom} = ebloom:deserialize(SBloom),
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz});
+bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
+    gen_fsm:send_event(MPid, bloom_paused),
+    %% wait for a message telling us to stop, or to continue.
+    %% TODO do this more correctly when there's more time.
+    receive
+        {'$gen_call', From, stop} ->
+            gen_server2:reply(From, ok),
+            Acc; %% why would this stop anything?
+        bloom_resume ->
+            bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz})
+    end;
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
                 true ->
@@ -540,14 +558,5 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
                     ok,
                     NSent0
             end,
-    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz};
-bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
-    %% wait for a message telling us to stop, or to continue.
-    %% TODO do this more correctly when there's more time.
-    receive
-        {'$gen_call', From, stop} ->
-            gen_server2:reply(From, ok),
-            Acc; %% why would this stop anything?
-        {_, bloom_resume} ->
-            bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz})
-    end.
+    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz}.
+
