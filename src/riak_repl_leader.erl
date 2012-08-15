@@ -25,7 +25,8 @@
          is_leader/0,
          postcommit/1,
          add_receiver_pid/1,
-         rm_receiver_pid/1]).
+         rm_receiver_pid/1,
+         receiver_pids/0]).
 -export([set_leader/3]).
 -export([ensure_sites/0]).
 -export([helper_pid/0]).
@@ -99,6 +100,9 @@ add_receiver_pid(Pid) when is_pid(Pid) ->
 rm_receiver_pid(Pid) when is_pid(Pid) ->
     gen_server:call(?SERVER, {rm_receiver_pid, Pid}).
 
+receiver_pids() ->
+    gen_server:call(?SERVER, receiver_pids).
+
 ensure_sites() ->
     gen_server:cast(?SERVER, ensure_sites).
 
@@ -161,6 +165,8 @@ handle_call({rm_receiver_pid, Pid}, _From, State = #state{receivers=R0}) when St
     {reply, ok, State#state{receivers = Receivers}};
 handle_call({rm_receiver_pid, _Pid}, _From, State) ->
     {reply, {error, not_leader}, State};
+handle_call(receiver_pids, _From, State) ->
+    {reply, [Pid || {_Mref, Pid, send} <- State#state.receivers], State};
 
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
