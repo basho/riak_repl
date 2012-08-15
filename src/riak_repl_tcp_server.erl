@@ -42,10 +42,8 @@
         transport :: 'ranch_tcp' | 'ranch_ssl',
         listener :: pid(),
         client :: tuple(),
-        q :: undefined | bounded_queue:bounded_queue(),
-        max_pending :: undefined | pos_integer(),
+        q :: undefined | pid(),
         work_dir :: string(),   %% working directory for this repl session
-        pending :: undefined | non_neg_integer(),
         my_pi :: #peer_info{},
         their_pi :: #peer_info{},
         fullsync_worker :: pid() | undefined,
@@ -114,13 +112,11 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
             {strategy, State#state.fullsync_strategy},
             {fullsync_worker, State#state.fullsync_worker}
         ] ++
-        case State#state.q of
+        case Q of
             undefined ->
                 [{bounded_queue, disabled}];
             _ ->
-                [{dropped_count, bounded_queue:dropped_count(Q)},
-                    {queue_length, bounded_queue:len(Q)},
-                    {queue_byte_size, bounded_queue:byte_size(Q)}]
+                riak_repl_bq:status(Q)
         end,
     {reply, {status, Desc ++ Res}, State}.
 
@@ -134,21 +130,6 @@ handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when
                 Objects],
             send(Transport, Socket, term_to_binary({diff_obj, RObj})),
             {noreply, State};
-        cancel ->
-            {noreply, State}
-    end;
-handle_info({repl, RObj}, State) ->
-    case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
-        [] ->
-            %% no additional objects to queue
-            drain(enqueue(term_to_binary({diff_obj, RObj}), State));
-        Objects when is_list(Objects) ->
-            %% enqueue all the objects the hook asked us to send as a list.
-            %% They're enqueued together so that they can't be dumped from the
-            %% queue piecemeal if it overflows
-            NewState = enqueue([term_to_binary({diff_obj, O}) ||
-                    O <- Objects ++ [RObj]], State),
-            drain(NewState);
         cancel ->
             {noreply, State}
     end;
@@ -248,8 +229,9 @@ handle_msg({peerinfo, PI}, State) ->
     handle_msg({peerinfo, PI, Capability}, State);
 handle_msg({peerinfo, TheirPI, Capability}, State) ->
     handle_peerinfo(State, TheirPI, Capability);
-handle_msg({q_ack, N}, #state{pending=Pending} = State) ->
-    drain(State#state{pending=Pending-N});
+handle_msg({q_ack, N}, #state{q=BQ} = State) ->
+    riak_repl_bq:q_ack(BQ, N),
+    {noreply, State};
 handle_msg(keepalive, State) ->
     send(State#state.transport, State#state.socket, keepalive_ack),
     {noreply, State};
@@ -294,17 +276,16 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     %% Set up bounded queue if remote supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
-                            QSize = app_helper:get_env(riak_repl,queue_size,
-                                ?REPL_DEFAULT_QUEUE_SIZE),
-                            MaxPending = app_helper:get_env(riak_repl,server_max_pending,
-                                ?REPL_DEFAULT_MAX_PENDING),
-                            State#state{q = bounded_queue:new(QSize),
+                            {ok, BQPid} = riak_repl_bq:start_link(Transport,
+                                                                  Socket),
+                            ok = riak_repl_leader:add_receiver_pid(BQPid),
+
+                            State#state{q = BQPid,
                                 fullsync_worker = FullsyncWorker,
                                 fullsync_strategy = StratMod,
-                                max_pending = MaxPending,
-                                work_dir = WorkDir,
-                                pending = 0};
+                                work_dir = WorkDir};
                         false ->
+                            ok = riak_repl_leader:add_receiver_pid(self()),
                             State#state{fullsync_worker = FullsyncWorker,
                                 fullsync_strategy = StratMod}
                     end,
@@ -338,59 +319,53 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
             erlang:send_after(5000, self(), election_wait),
             {noreply, State};
         OurNode ->
-            case riak_repl_leader:add_receiver_pid(self()) of
-                ok ->
-                    erlang:cancel_timer(State#state.election_timeout),
-                    %% are we configured to upgrade to ssl?
-                    case {riak_repl_util:maybe_use_ssl(), Transport:name()} of
-                        {B, T} when B == false; T == ssl ->
-                            %% if there's no valid ssl config or we've already
-                            %% upgraded
-                            Props = riak_repl_fsm_common:common_init(Transport, Socket),
+            erlang:cancel_timer(State#state.election_timeout),
+            %% are we configured to upgrade to ssl?
+            case {riak_repl_util:maybe_use_ssl(), Transport:name()} of
+                {B, T} when B == false; T == ssl ->
+                    %% if there's no valid ssl config or we've already
+                    %% upgraded
+                    Props = riak_repl_fsm_common:common_init(Transport, Socket),
 
-                            PI = proplists:get_value(my_pi, Props),
-                            send(Transport, Socket, {peerinfo, PI,
-                                    [bounded_queue, keepalive, {fullsync_strategies,
-                                            app_helper:get_env(riak_repl, fullsync_strategies,
-                                                [?LEGACY_STRATEGY])}]}),
-                            Transport:setopts(Socket, [{active, once}]),
-                            {noreply, State#state{
-                                    client=proplists:get_value(client, Props),
-                                    election_timeout=undefined,
-                                    my_pi=PI}};
-                        {Config, tcp} ->
-                            send(Transport, Socket, {peerinfo,
-                                    riak_repl_util:make_fake_peer_info(),
-                                    [ssl_required]}),
-                            %% verify the other side has sent us a fake ring
-                            %% with the ssl_required capability
-                            {ok, Data} = Transport:recv(Socket, 0, infinity),
-                            case binary_to_term(Data) of
-                                {peerinfo, _, [ssl_required|_]} ->
-                                    case ssl:ssl_accept(Socket, Config) of
-                                        {ok, SSLSocket} ->
-                                            send_peerinfo(State#state{socket=SSLSocket,
-                                                    transport=ranch_ssl});
-                                        {error, Reason} ->
-                                            lager:error("Unable to negotiate SSL for "
+                    PI = proplists:get_value(my_pi, Props),
+                    send(Transport, Socket, {peerinfo, PI,
+                                             [bounded_queue, keepalive, {fullsync_strategies,
+                                                                         app_helper:get_env(riak_repl, fullsync_strategies,
+                                                                                            [?LEGACY_STRATEGY])}]}),
+                    Transport:setopts(Socket, [{active, once}]),
+                    {noreply, State#state{
+                            client=proplists:get_value(client, Props),
+                            election_timeout=undefined,
+                            my_pi=PI}};
+                {Config, tcp} ->
+                    send(Transport, Socket, {peerinfo,
+                                             riak_repl_util:make_fake_peer_info(),
+                                             [ssl_required]}),
+                    %% verify the other side has sent us a fake ring
+                    %% with the ssl_required capability
+                    {ok, Data} = Transport:recv(Socket, 0, infinity),
+                    case binary_to_term(Data) of
+                        {peerinfo, _, [ssl_required|_]} ->
+                            case ssl:ssl_accept(Socket, Config) of
+                                {ok, SSLSocket} ->
+                                    send_peerinfo(State#state{socket=SSLSocket,
+                                                              transport=ranch_ssl});
+                                {error, Reason} ->
+                                    lager:error("Unable to negotiate SSL for "
                                                 "replication connection to ~p: ~p",
                                                 [SiteName, Reason]),
-                                            {stop, normal, State}
-                                    end;
-                                _ ->
-                                    lager:error("Client does not support SSL; "
+                                    {stop, normal, State}
+                            end;
+                        _ ->
+                            lager:error("Client does not support SSL; "
                                         "closing connection to ~p",
                                         [SiteName]),
-                                    %% sleep for a really long time so the
-                                    %% client doesn't DOS us with reconnect
-                                    %% attempts
-                                    timer:sleep(300000),
-                                    {stop, normal, State}
-                            end
-                    end;
-                {error, _Reason} ->
-                    %% leader has changed, try again
-                    send_peerinfo(State)
+                            %% sleep for a really long time so the
+                            %% client doesn't DOS us with reconnect
+                            %% attempts
+                            timer:sleep(300000),
+                            {stop, normal, State}
+                    end
             end;
         OtherNode ->
             %% receive stuff off of wire
@@ -448,29 +423,6 @@ ip_and_port_for_node(Node, Ring, ConnectedIp) ->
             NL#nat_listener.nat_addr
     end.
 
-drain(State=#state{q=Q,pending=P,max_pending=M}) when P < M ->
-    case bounded_queue:out(Q) of
-        {{value, Msg}, NewQ} ->
-            drain(send_diffobj(Msg, State#state{q=NewQ}));
-        {empty, NewQ} ->
-            {noreply, State#state{q=NewQ}}
-    end;
-drain(State) ->
-    {noreply, State}.
-
-enqueue(Msg, State=#state{q=Q}) ->
-    State#state{q=bounded_queue:in(Q,Msg)}.
-
-send_diffobj(Msgs, State0) when is_list(Msgs) ->
-    %% send all the messages in the list
-    %% we correctly increment pending, so we should get enough q_acks
-    %% to restore pending to be less than max_pending when we're done.
-    lists:foldl(fun(Msg, State) ->
-                send_diffobj(Msg, State)
-        end, State0, Msgs);
-send_diffobj(Msg,State=#state{transport=Transport,socket=Socket,pending=Pending}) ->
-    send(Transport, Socket, Msg),
-    State#state{pending=Pending+1}.
 
 %% unit tests
 
