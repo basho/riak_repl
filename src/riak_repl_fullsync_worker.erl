@@ -16,7 +16,7 @@ start_link(_Args) ->
     gen_server:start_link(?MODULE, [], []).
 
 do_put(Pid, Obj, Pool) ->
-    gen_server:call(Pid, {put, Obj, Pool}, infinity).
+    gen_server:cast(Pid, {put, Obj, Pool}).
 
 do_get(Pid, Bucket, Key, Transport, Socket, Pool) ->
     gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool}, infinity).
@@ -28,14 +28,6 @@ do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
 init([]) ->
     {ok, #state{}}.
 
-handle_call({put, Obj, Pool}, From, State) ->
-    %% unblock the caller
-    gen_server:reply(From, ok),
-    %% do the put
-    riak_repl_util:do_repl_put(Obj),
-    %% unblock this worker for more work (or death)
-    poolboy:checkin(Pool, self()),
-    {noreply, State};
 handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
@@ -110,6 +102,12 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({put, Obj, Pool}, State) ->
+    %% do the put
+    riak_repl_util:do_repl_put(Obj),
+    %% unblock this worker for more work (or death)
+    poolboy:checkin(Pool, self()),
+    {noreply, State};
 handle_cast(_Event, State) ->
     {noreply, State}.
 
