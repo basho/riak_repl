@@ -131,7 +131,7 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
     ok = riak_repl_util:configure_socket(Transport, Socket),
     Transport:send(Socket, State#state.sitename),
     Props = riak_repl_fsm_common:common_init(Transport, Socket),
-    erlang:send_after(3000, self(), flush_q_ack),
+    erlang:send_after(1000, self(), flush_q_ack),
     NewState = State#state{
         listener = {connected, IPAddr, Port},
         socket=Socket,
@@ -244,7 +244,7 @@ handle_info(flush_q_ack, State=#state{transport=T,socket=S,count=C}) ->
         false ->
             State
     end,
-    erlang:send_after(3000, self(), flush_q_ack),
+    erlang:send_after(1000, self(), flush_q_ack),
     {noreply, NewState};
 handle_info(_Event, State) ->
     {noreply, State}.
