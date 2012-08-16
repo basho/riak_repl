@@ -42,6 +42,7 @@
                   ssl,
                   riak_core,
                   riak_kv,
+                  erl_lfq,
                   ranch]},
   {registered,   [riak_repl_connector_sup,
                   riak_repl_leader,
