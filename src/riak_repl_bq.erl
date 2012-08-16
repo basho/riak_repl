@@ -84,7 +84,13 @@ handle_info({repl, RObj}, State) ->
             {noreply, NewState};
         cancel ->
             {noreply, State}
-    end.
+    end;
+
+handle_info({repl_batch, RObjs}, State0) ->
+    State = lists:foldl(fun(RObj, S) ->
+                enqueue(term_to_binary({diff_obj, RObj}), S)
+        end, State0, RObjs),
+    {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
