@@ -42,7 +42,10 @@
         transport :: 'ranch_tcp' | 'ranch_ssl',
         listener :: pid(),
         client :: tuple(),
-        q :: undefined | pid(),
+        q_pid :: undefined | pid(),
+        q,
+        pending = 0,
+        max_pending,
         work_dir :: string(),   %% working directory for this repl session
         my_pi :: #peer_info{},
         their_pi :: #peer_info{},
@@ -82,7 +85,9 @@ status(Pid, Timeout) ->
 
 init([Listener, Socket, Transport]) ->
     self() ! init_ack,
-    {ok, #state{socket=Socket, transport=Transport, listener=Listener}}.
+    MaxPending = app_helper:get_env(riak_repl,server_max_pending,
+                                    ?REPL_DEFAULT_MAX_PENDING),
+    {ok, #state{socket=Socket, transport=Transport, listener=Listener, max_pending=MaxPending}}.
 
 handle_call(start_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
@@ -116,7 +121,9 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
             undefined ->
                 [{bounded_queue, disabled}];
             _ ->
-                riak_repl_bq:status(Q)
+                riak_repl_bq:status(State#state.q_pid) ++
+                [{max_pending, State#state.max_pending},
+                    {pending, State#state.pending}]
         end,
     {reply, {status, Desc ++ Res}, State}.
 
@@ -230,9 +237,8 @@ handle_msg({peerinfo, PI}, State) ->
     handle_msg({peerinfo, PI, Capability}, State);
 handle_msg({peerinfo, TheirPI, Capability}, State) ->
     handle_peerinfo(State, TheirPI, Capability);
-handle_msg({q_ack, N}, #state{q=BQ} = State) ->
-    riak_repl_bq:q_ack(BQ, N),
-    {noreply, State};
+handle_msg({q_ack, N}, State = #state{pending=P}) ->
+    drain(State#state{pending=P - N});
 handle_msg(keepalive, State) ->
     send(State#state.transport, State#state.socket, keepalive_ack),
     {noreply, State};
@@ -277,11 +283,12 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     %% Set up bounded queue if remote supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
-                            {ok, BQPid} = riak_repl_bq:start_link(Transport,
-                                                                  Socket),
+                            {ok, BQPid} = riak_repl_bq:start_link(),
+                            QH = riak_repl_bq:get_handle(BQPid),
                             ok = riak_repl_leader:add_receiver_pid(BQPid),
 
-                            State#state{q = BQPid,
+                            State#state{q = QH,
+                                q_pid=BQPid,
                                 fullsync_worker = FullsyncWorker,
                                 fullsync_strategy = StratMod,
                                 work_dir = WorkDir};
@@ -423,6 +430,62 @@ ip_and_port_for_node(Node, Ring, ConnectedIp) ->
             NL = hd(NatNodeListeners),
             NL#nat_listener.nat_addr
     end.
+
+
+drain(State=#state{pending=P,max_pending=M}) when P < M ->
+    drain(State, {0, []});
+drain(State) ->
+    {noreply, State}.
+
+drain(State=#state{q=Q,pending=P,max_pending=M,
+        transport=Transport,socket=Socket}, OldBuf) when P < M ->
+    %lager:error("dequeueing"),
+    case erl_lfq:out(Q) of
+        {empty, NewQ} ->
+            case OldBuf of
+                {0, []} ->
+                    ok;
+                {_N, Buf} ->
+                    %lager:notice("flushing final ~p bytes from buffer", [_N]),
+                    riak_repl_tcp_server:send(Transport, Socket,
+                        buffer_to_packets(Buf))
+            end,
+            {noreply, State#state{q=NewQ}};
+        {{value, Msg}, NewQ} ->
+            {State2, Buffer} = send_diffobj(Msg, State, OldBuf),
+            drain(State2#state{q=NewQ}, Buffer)
+    end;
+drain(State, {0, []}) ->
+    %% nothing left in the buffer
+    {noreply, State};
+drain(State=#state{transport=Transport,socket=Socket}, {_N, Buffer}) ->
+    %% send the rest of the buffer
+    %lager:notice("flushing final ~p bytes from buffer", [_N]),
+    riak_repl_tcp_server:send(Transport, Socket, buffer_to_packets(Buffer)),
+    {noreply, State}.
+
+send_diffobj(Msgs, State0, Buffer0) when is_list(Msgs) ->
+    %% send all the messages in the list
+    %% we correctly increment pending, so we should get enough q_acks
+    %% to restore pending to be less than max_pending when we're done.
+    lists:foldl(fun(Msg, {State, Buffer}) ->
+                send_diffobj(Msg, State, Buffer)
+        end, {State0, Buffer0}, Msgs);
+send_diffobj(Msg,State=#state{transport=Transport,socket=Socket,pending=Pending},
+        {BufferSz, Buffer}) ->
+    NewBuffer = case (BufferSz + byte_size(Msg)) > 1400 of
+        true ->
+            %lager:notice("intermediate buffer flush"),
+            riak_repl_tcp_server:send(Transport, Socket,
+                buffer_to_packets(lists:reverse(Buffer))),
+            {byte_size(Msg), [Msg]};
+        false ->
+            {BufferSz+byte_size(Msg), [Msg|Buffer]}
+    end,
+    {State#state{pending=Pending+1}, NewBuffer}.
+
+buffer_to_packets(Buf) ->
+    term_to_binary({diff_objs, Buf}).
 
 
 %% unit tests
