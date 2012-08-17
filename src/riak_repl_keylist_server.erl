@@ -93,8 +93,15 @@
 -define(TRACE(Stmt),ok).
 
 -define(ACKS_IN_FLIGHT,2).
-%% -define(KEY_LIST_THRESHOLD,(10 * 1024)).
--define(KEY_LIST_THRESHOLD,(4 * 1024)).
+
+%% This is currently compared against the number of keys, not really
+%% the number of differences, because we don't have a fast way to count
+%% the differences before we start generating the diff stream. But, if
+%% the number of keys is small, then we know the number of diffs is small
+%% too. TODO: when we change the diff generator to use hash trees, revisit
+%% this threshold to compare it to the actual number of differences or an
+%% estimate of them.
+-define(KEY_LIST_THRESHOLD,(1024)).
 
 start_link(SiteName, Transport, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
@@ -202,6 +209,8 @@ build_keylist({Ref, keylist_built, Size},
     %% @plu server -> client: {kl_exchange, P}
     riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
     {ok, Bloom} = ebloom:new(Size, 0.01, random:uniform(1000)),
+    %% note that num_diffs is being assigned the number of keys, regardless of diffs,
+    %% because we don't the number of diffs yet. See TODO: above redarding KEY_LIST_THRESHOLD
     {next_state, wait_keylist, State#state{stage_start=now(), bloom=Bloom, num_diffs=Size}};
 %% Error
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
@@ -250,7 +259,7 @@ wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     file:write(FH, Hunk),
     {next_state, wait_keylist, State#state{their_kl_fh=FH}};
 %% the client has finished sending the keylist
-wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumDiffs} = State) ->
+wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     case FH of
         undefined ->
             %% client has a blank vnode, write a blank file
@@ -265,10 +274,10 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumDiffs} = State) ->
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
-                      [State#state.sitename, NumDiffs, State#state.partition])),
+                      [State#state.sitename, NumDKeys, State#state.partition])),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
     %% difference generator's window size...
-    DiffSize = case NumDiffs > ?KEY_LIST_THRESHOLD of
+    DiffSize = case NumKeys > ?KEY_LIST_THRESHOLD of
                    false ->
                        %% generate differences in ACKS_IN_FLIGHT batches of
                        %% diff_batch_size/ACKS_IN_FLIGHT to add some backpressure,
@@ -284,7 +293,7 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumDiffs} = State) ->
                                                       DiffSize),
     %% Use bloom fold unless the number of keys is small, which would just be slower
     %% because we'd have to fold over a giant key space for a small number of things.
-    NextState = case NumDiffs > ?KEY_LIST_THRESHOLD of
+    NextState = case NumKeys > ?KEY_LIST_THRESHOLD of
                     false ->
                         diff_keylist;
                     true ->
