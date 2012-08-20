@@ -28,7 +28,9 @@ start(_Type, _StartArgs) ->
 
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of
-        true -> riak_core:register([{repl_helper, riak_repl_cs}]);
+        true -> 
+        lager:info("REPL CS block skip enabled"),
+        riak_core:register([{repl_helper, riak_repl_cs}]);
         false -> lager:info("REPL CS block skip disabled")
     end,
 

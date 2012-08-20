@@ -6,18 +6,29 @@
 
 -define(OBJECT_BUCKET_PREFIX, "0o:">).
 -define(BLOCK_BUCKET_PREFIX, "0b:").
+-define(GC_BUCKET, <<"riak-cs-gc">>).
 
-send(_Object, _RiakClient) ->
-    ok.
+send(Object, _RiakClient) ->
+    Bucket = riak_object:bucket(Object),
+    %% what about OBJECT_BUCKET_PREFIX?
+    case skip_cs(Bucket) and riak_kv_util:is_x_deleted(Object) of
+        true -> cancel;
+        false -> ok
+    end.
 
 recv (_Object) ->
     ok.
 
 send_realtime(Object, _RiakClient) ->
     Bucket = riak_object:bucket(Object),
-    check_cs(Bucket).
+    case skip_cs(Bucket) or riak_kv_util:is_x_deleted(Object) of
+        true -> cancel;
+        false -> ok
+    end.
 
-check_cs(<< ?BLOCK_BUCKET_PREFIX, _Rest/binary>>) ->
-    cancel;
-check_cs(_Object) ->
-    ok.
+skip_cs(<< ?BLOCK_BUCKET_PREFIX, _Rest/binary>>) ->
+    true;
+skip_cs(?GC_BUCKET) ->
+    true;
+skip_cs(_Object) ->
+    false.
