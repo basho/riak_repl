@@ -71,9 +71,12 @@
         partition_start,
         pool,
         vnode_gets = true,
-        diff_batch_size
+        diff_batch_size,
+        generator_paused = false,
+        pending_acks = 0
     }).
 
+-define(ACKS_IN_FLIGHT,2).
 
 start_link(SiteName, Transport, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
@@ -119,20 +122,10 @@ wait_for_partition(fullsync_complete, State) ->
 wait_for_partition({partition, Partition}, State = #state{work_dir=WorkDir}) ->
     lager:info("Full-sync with site ~p; doing fullsync for ~p",
         [State#state.sitename, Partition]),
-
-    lager:info("Full-sync with site ~p; building keylist for ~p",
-        [State#state.sitename, Partition]),
-    %% client wants keylist for this partition
-    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
-    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
-    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
-                                                                 Partition,
-                                                                 KeyListFn),
-    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
-            kl_ref=KeyListRef, kl_fn=KeyListFn,
-            partition=Partition, partition_start=now(), stage_start=now(),
-            their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
+    gen_fsm:send_event(self(), continue),
+    {next_state, build_keylist, State#state{partition=Partition,
+                                            partition_start=now(), stage_start=now(),
+                                            pending_acks=0, generator_paused=false}};
 wait_for_partition(Event, State) ->
     lager:debug("Full-sync with site ~p; ignoring event ~p",
         [State#state.sitename, Event]),
@@ -146,6 +139,19 @@ build_keylist(Command, #state{kl_pid=Pid} = State)
     file:delete(State#state.kl_fn),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
+build_keylist(continue, #state{partition=Partition, work_dir=WorkDir} = State) ->
+    lager:info("Full-sync with site ~p; building keylist for ~p",
+        [State#state.sitename, Partition]),
+    %% client wants keylist for this partition
+    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
+    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
+    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
+                                                                 Partition,
+                                                                 KeyListFn),
+    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
+            kl_ref=KeyListRef, kl_fn=KeyListFn,
+            their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
 build_keylist({Ref, keylist_built}, State=#state{kl_ref=Ref, socket=Socket,
     transport=Transport, partition=Partition}) ->
     lager:info("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
@@ -219,10 +225,14 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH} = State) ->
     lager:info("Full-sync with site ~p; calculating differences for ~p",
         [State#state.sitename, State#state.partition]),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    %% generate differences in batches of 1000, to add some backpressure
+    %% generate differences in ACKS_IN_FLIGHT batches of diff_batch_size/ACKS_IN_FLIGHT,
+    %% to add some backpressure, while keeping the pipeline full (as long as the
+    %% client continues to reply diff_ack).
+    lager:info("Full-sync for ~p using ~p windows of batch_size ~p",
+               [State#state.partition, ?ACKS_IN_FLIGHT, State#state.diff_batch_size div ?ACKS_IN_FLIGHT]),
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
         State#state.kl_fn, State#state.their_kl_fn,
-        State#state.diff_batch_size),
+        State#state.diff_batch_size div ?ACKS_IN_FLIGHT),
     {next_state, diff_keylist, State#state{diff_ref=Ref, diff_pid=Pid,
             stage_start=now()}};
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
@@ -251,15 +261,39 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
     end,
     {next_state, diff_keylist, State};
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
-        partition=Partition, diff_ref=Ref} = State) ->
-    %% we've sent all the diffs in this batch, wait for the client to be ready
-    %% for more
+        partition=Partition, diff_ref=Ref, pending_acks=PendingAcks0} = State) ->
+    %% request ack from client
     riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
-    {next_state, diff_keylist, State};
-diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref} = State) ->
-    %% client has processed last batch of differences, generate some more
-    State#state.diff_pid ! {Ref, diff_resume},
-    {next_state, diff_keylist, State};
+    PendingAcks = PendingAcks0+1,
+    %% If we have already received the ack for the previous batch, we immediately
+    %% resume the generator, otherwise we wait for the ack from the client. We'll
+    %% have at most ACKS_IN_FLIGHT windows of differences in flight.
+    WorkerPaused = case PendingAcks < ?ACKS_IN_FLIGHT of
+                       true ->
+                           %% another batch can be sent immediately
+                           State#state.diff_pid ! {Ref, diff_resume},
+                           false;
+                       false ->
+                           %% already ACKS_IN_FLIGHT batches out. Don't resume yet.
+                           true
+                   end,
+    {next_state, diff_keylist, State#state{pending_acks=PendingAcks, generator_paused=WorkerPaused}};
+diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
+                                           socket=Socket, transport=Transport,
+                                           generator_paused=WorkerPaused,
+                                           pending_acks=PendingAcks0} = State) ->
+    %% That's one less "pending" ack from the client. Tell client to keep going.
+    PendingAcks = PendingAcks0-1,
+    %% If the generator was paused, resume it. That would happen if there are already
+    %% ACKS_IN_FLIGHT batches in flight. Better to check "paused" state than guess by
+    %% pending acks count.
+    case WorkerPaused of
+        true ->
+            State#state.diff_pid ! {Ref, diff_resume};
+        false ->
+            ok
+    end,
+    {next_state, diff_keylist, State#state{pending_acks=PendingAcks,generator_paused=false}};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         [State#state.sitename, State#state.partition,
