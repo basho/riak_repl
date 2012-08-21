@@ -19,6 +19,17 @@
 -define(PEERINFO_TIMEOUT, 60000).
 -define(ELECTION_TIMEOUT, 60000).
 
+
+%% These are used as compression headers for binaries
+-define(GZIP_COMPRESSION_HEADER, 1).
+-define(SNAPPY_COMPRESSION_HEADER, 2).
+
+-define(GZIP_COMPRESSION, gzip).
+-define(SNAPPY_COMPRESSION, snappy).
+-define(NO_COMPRESSION, none).
+-define(DISABLED_COMPRESSION, disabled).
+-define(DEFAULT_COMPRESSION, ?SNAPPY_COMPRESSION).
+
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
 -type(repl_addr() :: {ip_addr_str(), ip_portnum()}).
@@ -46,7 +57,7 @@
           my_pi           :: #peer_info{},    %% local peer_info
           client          :: tuple(),         %% riak local_client
           partitions = [] :: list(),          %% list of local partitions
-          work_dir        :: string()         %% working directory 
+          work_dir        :: string()         %% working directory
          }).
 
 -record(repl_listener, {
@@ -57,7 +68,7 @@
 -record(repl_site, {
           name  :: repl_sitename(),   %% site name
           addrs=[] :: repl_addrlist(),%% list of ip/ports to connect to
-          last_sync=?NEVER_SYNCED :: tuple()  
+          last_sync=?NEVER_SYNCED :: tuple()
          }).
 
 -record(nat_listener, {
@@ -66,6 +77,6 @@
           nat_addr :: repl_addr()     %% ip/port that nat bind/listens to
          }).
 
--define(REPL_HOOK, {struct, 
+-define(REPL_HOOK, {struct,
                     [{<<"mod">>, <<"riak_repl_leader">>},
                      {<<"fun">>, <<"postcommit">>}]}).

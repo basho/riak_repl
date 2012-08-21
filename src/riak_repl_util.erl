@@ -20,7 +20,7 @@
          format_socketaddrs/2,
          maybe_use_ssl/0,
          upgrade_client_to_ssl/1,
-         choose_strategy/2,
+         choose_common/3,
          strategy_module/2,
          configure_socket/2,
          repl_helper_send/2,
@@ -28,7 +28,10 @@
          schedule_fullsync/0,
          schedule_fullsync/1,
          elapsed_secs/1,
-         shuffle_partitions/2
+         shuffle_partitions/2,
+         compress/2,
+         uncompress/1,
+         get_env_as_list/3
      ]).
 
 make_peer_info() ->
@@ -232,30 +235,30 @@ binpack_bkey({B, K}) ->
     SK = size(K),
     <<SB:32/integer, B/binary, SK:32/integer, K/binary>>.
 
-binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) -> 
+binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) ->
     {B,K}.
 
 
 merkle_filename(WorkDir, Partition, Type) ->
-    case Type of
+    Ext = case Type of
         ours ->
-            Ext=".merkle";
+            ".merkle";
         theirs ->
-            Ext=".theirs"
+            ".theirs"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 keylist_filename(WorkDir, Partition, Type) ->
-    case Type of
+    Ext = case Type of
         ours ->
-            Ext=".ours.sterm";
+            ".ours.sterm";
         theirs ->
-            Ext=".theirs.sterm"
+            ".theirs.sterm"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 %% Returns true if the IP address given is a valid host IP address
-valid_host_ip(IP) ->     
+valid_host_ip(IP) ->
     {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
     lists:foldl(
@@ -494,7 +497,7 @@ validate_common_name(CN, [Filter|Filters]) ->
 %% the beginning in both lists, and thus the one we want. A power of two is
 %% used so that there is always one clear winner, simple index weighting will
 %% often give the same score to several entries.
-choose_strategy(ServerStrats, ClientStrats) ->
+choose_common(ServerStrats, ClientStrats, Default) ->
     %% find the first common strategy in both lists
     CalcPref = fun(E, Acc) ->
             Index = length(Acc) + 1,
@@ -508,7 +511,9 @@ choose_strategy(ServerStrats, ClientStrats) ->
     case TotalPref of
         [] ->
             %% no common strategies, force legacy
-            ?LEGACY_STRATEGY;
+            Default;
+
+
         _ ->
             %% sort and return the first one
             element(1, hd(lists:keysort(2, TotalPref)))
@@ -578,3 +583,30 @@ parse_vsn(Str) ->
             end || T <- Toks],
     list_to_tuple(Vsns).
 
+%% get a value from app_helper env, ensure the result is a list
+get_env_as_list(Section, Key, Default) ->
+    Conf = app_helper:get_env(Section, Key, Default),
+    case Conf of
+        Val when is_atom(Conf) -> [Val];
+        Val when is_list(Conf) -> Val
+    end.
+
+compress(?GZIP_COMPRESSION, Data) ->
+    CompressedBin = zlib:gzip(Data),
+    << ?GZIP_COMPRESSION_HEADER, CompressedBin/binary>>;
+compress(?SNAPPY_COMPRESSION, Data) ->
+    {ok, CompressedBin} = snappy:compress(Data),
+    << ?SNAPPY_COMPRESSION_HEADER, CompressedBin/binary >>;
+compress(UnknownCompScheme, Data) ->
+    %% don't blow up, just pass the data on uncompressed
+    lager:warning("Unknown replication compression scheme specified: ~p",
+                  [UnknownCompScheme]),
+    Data.
+
+uncompress(<< ?SNAPPY_COMPRESSION_HEADER, Data/binary>>) ->
+    {ok, UncompressedData} = snappy:decompress(Data),
+    UncompressedData;
+uncompress(<< ?GZIP_COMPRESSION_HEADER, Data/binary>>) ->
+    zlib:gunzip(Data);
+uncompress(Data) ->
+    Data.

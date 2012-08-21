@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/4, set_socket/2, send/3, status/1, status/2]).
+-export([start_link/4, set_socket/2, send/4, status/1, status/2]).
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
         resume_fullsync/1, handle_peerinfo/3, make_state/6]).
 
@@ -37,20 +37,21 @@
          terminate/2, code_change/3]).
 
 -record(state, {
-        sitename :: repl_sitename(),
-        socket :: repl_socket(),
-        transport :: 'ranch_tcp' | 'ranch_ssl',
-        listener :: pid(),
-        client :: tuple(),
-        q :: undefined | pid(),
-        work_dir :: string(),   %% working directory for this repl session
-        my_pi :: #peer_info{},
-        their_pi :: #peer_info{},
-        fullsync_worker :: pid() | undefined,
-        fullsync_strategy :: atom(),
-        election_timeout :: undefined | reference(), % reference for the election timeout
-        keepalive_time :: undefined | integer()
-    }).
+          sitename :: repl_sitename(),
+          socket :: repl_socket(),
+          transport :: 'ranch_tcp' | 'ranch_ssl',
+          listener :: pid(),
+          client :: tuple(),
+          q :: undefined | pid(),
+          work_dir :: string(),   %% working directory for this repl session
+          my_pi :: #peer_info{},
+          their_pi :: #peer_info{},
+          fullsync_worker :: pid() | undefined,
+          fullsync_strategy :: atom(),
+          election_timeout :: undefined | reference(), % reference for the election timeout
+          keepalive_time :: undefined | integer(),
+          compression :: undefined | atom()
+         }).
 
 make_state(Sitename, Transport, Socket, MyPI, WorkDir, Client) ->
     #state{sitename=Sitename, socket=Socket, transport=Transport, my_pi=MyPI,
@@ -123,12 +124,13 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 
-handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when State#state.q == undefined ->
+handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket, compression=Compression})
+  when State#state.q == undefined ->
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         Objects when is_list(Objects) ->
-            [send(Transport, Socket, term_to_binary({diff_obj, O})) || O <-
+            [send(Transport, Socket, term_to_binary({diff_obj, O}), Compression) || O <-
                 Objects],
-            send(Transport, Socket, term_to_binary({diff_obj, RObj})),
+            send(Transport, Socket, term_to_binary({diff_obj, RObj}), Compression),
             {noreply, State};
         cancel ->
             {noreply, State}
@@ -147,9 +149,10 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
     lager:error("Connection for site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
-handle_info({Proto, Socket, Data},
+handle_info({Proto, Socket, CompressedData},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
+    Data = riak_repl_util:uncompress(CompressedData),
     Msg = binary_to_term(Data),
     Reply = handle_msg(Msg, State),
     riak_repl_stats:server_bytes_recv(size(Data)),
@@ -196,11 +199,11 @@ handle_info(election_timeout, #state{election_timeout=Timer} = State) when is_re
     {stop, normal, State};
 handle_info(election_wait, State) ->
     send_peerinfo(State);
-handle_info(timeout, State) ->
+handle_info(timeout, #state{compression=Compression} = State) ->
     case State#state.keepalive_time of
         Time when is_integer(Time) ->
             %% keepalive timeout fired
-            send(State#state.transport, State#state.socket, keepalive),
+            send(State#state.transport, State#state.socket, keepalive, Compression),
             {noreply, State, Time};
         _ ->
             {noreply, State}
@@ -230,11 +233,18 @@ handle_msg({peerinfo, PI}, State) ->
     handle_msg({peerinfo, PI, Capability}, State);
 handle_msg({peerinfo, TheirPI, Capability}, State) ->
     handle_peerinfo(State, TheirPI, Capability);
+<<<<<<< HEAD
 handle_msg({q_ack, N}, #state{q=BQ} = State) ->
     riak_repl_bq:q_ack(BQ, N),
     {noreply, State};
 handle_msg(keepalive, State) ->
     send(State#state.transport, State#state.socket, keepalive_ack),
+=======
+handle_msg({q_ack, N}, #state{pending=Pending} = State) ->
+    drain(State#state{pending=Pending-N});
+handle_msg(keepalive, #state{compression=Compression}=State) ->
+    send(State#state.transport, State#state.socket, keepalive_ack, Compression),
+>>>>>>> added snappy/gzip compression
     {noreply, State};
 handle_msg(keepalive_ack, State) ->
     %% noop
@@ -264,16 +274,30 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     {stop, normal, State};
                 _ ->
 
+                    %% negotiate compression scheme, snappy, gzip, etc
+                    %% before strategy is initialized
+                    ClientCompTypes = proplists:get_value(compression,Capability,[]),
+                    ServerCompTypes = riak_repl_util:get_env_as_list(riak_repl,compression,[]),
+                    Compression =
+                        case riak_repl_util:choose_common(ClientCompTypes, ServerCompTypes, undefined) of
+                            [Value] -> Value;
+                            Other -> Other
+                        end,
+                    case Compression of
+                        undefined -> lager:info("REPL compression not enabled");
+                        _ -> lager:info("REPL server using ~p compression", [Compression])
+                    end,
+
                     ClientStrats = proplists:get_value(fullsync_strategies, Capability,
                         [?LEGACY_STRATEGY]),
                     ServerStrats = app_helper:get_env(riak_repl, fullsync_strategies,
                         [?LEGACY_STRATEGY]),
-                    Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
+                    Strategy = riak_repl_util:choose_common(ServerStrats, ClientStrats, ?LEGACY_STRATEGY),
                     StratMod = riak_repl_util:strategy_module(Strategy, server),
                     lager:info("Using fullsync strategy ~p.", [StratMod]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
-                        Transport, Socket, WorkDir, State#state.client),
+                        Transport, Socket, WorkDir, State#state.client, Compression),
                     %% Set up bounded queue if remote supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
@@ -291,28 +315,30 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                                 fullsync_strategy = StratMod}
                     end,
 
-                    KeepaliveTime = case proplists:get_bool(keepalive, Capability) of
-                        true ->
-                            ?KEEPALIVE_TIME;
-                        _ ->
-                            undefined
-                    end,
+                    KeepaliveTime =
+                        case proplists:get_bool(keepalive, Capability) of
+                            true ->
+                                ?KEEPALIVE_TIME;
+                            _ ->
+                                undefined
+                        end,
+
 
                     case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                         true ->
                             FullsyncWorker ! start_fullsync,
-                            lager:info("Full-sync on connect"),
-                            {noreply, State1#state{keepalive_time=KeepaliveTime}};
+                            lager:info("Full-sync on connect");
                         false ->
-                            {noreply, State1#state{keepalive_time=KeepaliveTime}}
-                    end
+                            lager:info("Full-sync on connect disabled")
+                    end,
+                    {noreply, State1#state{keepalive_time=KeepaliveTime, compression=Compression}}
             end;
         false ->
             lager:error("Invalid peer info, ring sizes do not match."),
             {stop, normal, State}
     end.
 
-send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = State) ->
+send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName, compression=Compression} = State) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
         undefined -> % leader not elected yet
@@ -327,18 +353,20 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                     %% if there's no valid ssl config or we've already
                     %% upgraded
                     Props = riak_repl_fsm_common:common_init(Transport, Socket),
-
+                    Comp = riak_repl_util:get_env_as_list(riak_repl, compression, []),
                     PI = proplists:get_value(my_pi, Props),
                     send(Transport, Socket, {peerinfo, PI,
                                              [bounded_queue, keepalive, {fullsync_strategies,
                                                                          app_helper:get_env(riak_repl, fullsync_strategies,
-                                                                                            [?LEGACY_STRATEGY])}]}),
+                                                                                            [?LEGACY_STRATEGY])}
+                                              {compression, Comp}]}, Compression),
                     Transport:setopts(Socket, [{active, once}]),
                     {noreply, State#state{
                             client=proplists:get_value(client, Props),
                             election_timeout=undefined,
                             my_pi=PI}};
                 {Config, tcp} ->
+                    %% Don't send this data compressed. Compression hasn't been negotiated.
                     send(Transport, Socket, {peerinfo,
                                              riak_repl_util:make_fake_peer_info(),
                                              [ssl_required]}),
@@ -377,12 +405,12 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                             ConnectedIP = proplists:get_value(connected_ip,Capabilities),
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                             {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, ConnectedIP),
-                            send(Transport, Socket, {redirect, Ip, Port});
+                            send(Transport, Socket, {redirect, Ip, Port}, Compression);
                         {peerinfo, _PeerInfo} ->
                             %% 1.0 and earlier nodes don't send capability
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                             {Ip, Port} = ip_and_port_for_node(OtherNode, Ring, undefined),
-                            send(Transport, Socket, {redirect, Ip, Port});
+                            send(Transport, Socket, {redirect, Ip, Port}, Compression);
                         Other ->
                             Transport:close(Socket),
                             lager:error("Received unknown peer data: ~p",[Other])
@@ -394,12 +422,32 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
             {stop, normal, State}
     end.
 
-send(Transport, Sock, Data) when is_binary(Data) ->
-    R = Transport:send(Sock,Data),
+send(Transport, Socket, Data, undefined) when is_binary(Data) ->
+    lager:debug("Server send uncompressed"),
+    R = Transport:send(Socket,Data),
+    riak_repl_stats:server_bytes_sent_uncompressed(size(Data)),
+    R;
+send(Transport, Socket, Data0, CompType) when is_binary(Data0) ->
+    lager:debug("Server send compressed"),
+    riak_repl_stats:server_bytes_sent_uncompressed(size(Data0)),
+    Data = riak_repl_util:compress(CompType, Data0),
+    R = Transport:send(Socket,Data),
     riak_repl_stats:server_bytes_sent(size(Data)),
     R;
-send(Transport, Sock, Data) ->
-    send(Transport, Sock, term_to_binary(Data)).
+send(Transport, Socket, Data0, term) ->
+    lager:debug("Server send term compressed"),
+    case is_atom(Data0) of
+        true ->
+            pass;
+        false ->
+            riak_repl_stats:server_bytes_sent_uncompressed(size(Data0))
+    end,
+    Data = term_to_binary(Data0,[compressed]),
+    R = Transport:send(Socket,Data),
+    riak_repl_stats:server_bytes_sent(size(Data)),
+    R;
+send(Transport, Socket, Data, CompressionOps) ->
+    send(Transport, Socket, term_to_binary(Data), CompressionOps).
 
 ip_and_port_for_node(Node, Ring, ConnectedIp) ->
     ReplConfig = riak_repl_ring:get_repl_config(Ring),
@@ -423,7 +471,6 @@ ip_and_port_for_node(Node, Ring, ConnectedIp) ->
             NL = hd(NatNodeListeners),
             NL#nat_listener.nat_addr
     end.
-
 
 %% unit tests
 

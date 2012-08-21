@@ -16,7 +16,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/1, status/1, status/2, async_connect/3, send/3,
+-export([start_link/1, status/1, status/2, async_connect/3, send/4,
         handle_peerinfo/3, make_state/6]).
 
 %% gen_server callbacks
@@ -28,21 +28,22 @@
 -endif.
 
 -record(state, {
-        sitename,
-        listeners,
-        listener,
-        socket,
-        transport,
-        pending,
-        client,
-        my_pi,
-        ack_freq,
-        count,
-        work_dir,
-        fullsync_worker,
-        fullsync_strategy,
-        pool_pid,
-        keepalive_time
+          sitename,
+          listeners,
+          listener,
+          socket,
+          transport,
+          pending,
+          client,
+          my_pi,
+          ack_freq,
+          count,
+          work_dir,
+          fullsync_worker,
+          fullsync_strategy,
+          pool_pid,
+          keepalive_time,
+          compression
     }).
 
 make_state(SiteName, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -124,7 +125,8 @@ handle_call(_Event, _From, State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 
-handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
+handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port},
+                                                   compression=Compression} = State) ->
     lager:info("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
     ok = riak_repl_util:configure_socket(Transport, Socket),
@@ -142,16 +144,19 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
                     [bounded_queue, keepalive, {fullsync_strategies,
                             app_helper:get_env(riak_repl, fullsync_strategies,
                                 [?LEGACY_STRATEGY])},
+                     {compression, riak_repl_util:get_env_as_list(riak_repl, compression, undefined)},
                      {connected_ip, IPAddr}
-                    ]});
+                    ]}, Compression);
         _ ->
             %% Send a fake peerinfo that will cause a connection failure if
             %% we don't renegotiate SSL. This avoids leaking the ring and
             %% accidentally connecting to an insecure site
+            %% Don't send this data compressed. Compression hasn't been negotiated.
+
             send(Transport, Socket, {peerinfo,
-                    riak_repl_util:make_fake_peer_info(),
+                                     riak_repl_util:make_fake_peer_info(),
                                      [ssl_required,
-                                      {connected_ip, IPAddr}]})
+                                      {connected_ip, IPAddr}]}, undefined)
     end,
     recv_peerinfo(NewState);
 handle_info({connect_failed, Reason}, State) ->
@@ -176,9 +181,11 @@ handle_info({ssl_error, Socket, Reason}, #state{socket = Socket} = State) ->
     lager:error("Connection to site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
-handle_info({Proto, Socket, Data},
-        State=#state{transport=Transport,socket=Socket}) when Proto==tcp; Proto==ssl ->
+handle_info({Proto, Socket, CompressedData},
+        State=#state{transport=Transport,socket=Socket,
+                     compression=Compression}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
+    Data = riak_repl_util:uncompress(CompressedData),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
     Reply = case Msg of
@@ -195,7 +202,7 @@ handle_info({Proto, Socket, Data},
             ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
             {noreply, State};
         keepalive ->
-            send(Transport, Socket, keepalive_ack),
+            send(Transport, Socket, keepalive_ack, Compression),
             {noreply, State};
         keepalive_ack ->
             %% noop
@@ -220,11 +227,11 @@ handle_info({Proto, Socket, Data},
 handle_info(try_connect, State) ->
     NewState = do_async_connect(State),
     {noreply, NewState};
-handle_info(timeout, State) ->
+handle_info(timeout, #state{compression=Compression}=State) ->
     case State#state.keepalive_time of
         Time when is_integer(Time) ->
             %% keepalive timeout fired
-            send(State#state.transport, State#state.socket, keepalive),
+            send(State#state.transport, State#state.socket, keepalive, Compression),
             {noreply, State, Time};
         _ ->
             {noreply, State}
@@ -296,12 +303,32 @@ async_connect(Parent, IPAddr, Port) ->
             Parent ! {connect_failed, Reason}
     end.
 
-send(Transport, Socket, Data) when is_binary(Data) ->
+send(Transport, Socket, Data, undefined) when is_binary(Data) ->
+    lager:debug("Client send uncompressed"),
+    R = Transport:send(Socket, Data),
+    riak_repl_stats:client_bytes_sent_uncompressed(size(Data)),
+    R;
+send(Transport, Socket, Data0, CompType) when is_binary(Data0) ->
+    lager:debug("Client send compressed"),
+    riak_repl_stats:client_bytes_sent_uncompressed(size(Data0)),
+    Data = riak_repl_util:compress(CompType, Data0),
     R = Transport:send(Socket, Data),
     riak_repl_stats:client_bytes_sent(size(Data)),
     R;
-send(Transport, Socket, Data) ->
-    send(Transport, Socket, term_to_binary(Data)).
+send(Transport, Socket, Data0, term) ->
+    lager:debug("Client send term compressed"),
+    case is_atom(Data0) of
+        true ->
+            pass;
+        false ->
+            riak_repl_stats:client_bytes_sent_uncompressed(size(Data0))
+    end,
+    Data = term_to_binary(Data0,[compressed]),
+    R = Transport:send(Socket,Data),
+    riak_repl_stats:server_bytes_sent(size(Data)),
+    R;
+send(Transport, Socket, Data, Compression) ->
+    send(Transport, Socket, term_to_binary(Data), Compression).
 
 do_repl_put(Obj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
     Worker = poolboy:checkout(Pool, true, infinity),
@@ -311,16 +338,19 @@ do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
     State#state{count=C+1};
-do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
+do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool,
+                              compression=Compression}) ->
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
-    send(T, S, {q_ack, F}),
+    send(T, S, {q_ack, F}, Compression),
     State#state{count=0}.
 
-recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = State) ->
+recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port},
+                     compression=Compression} = State) ->
     Proto = T:name(),
     case T:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
-        {ok, Data} ->
+        {ok, CompressedData} ->
+            Data = riak_repl_util:uncompress(CompressedData),
             Msg = binary_to_term(Data),
             NeedSSL = riak_repl_util:maybe_use_ssl(),
             case Msg of
@@ -330,12 +360,14 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                             lager:info("Upgraded replication connection to SSL"),
                             Transport = ranch_ssl,
                             %% re-send peer info
+                            Comp = riak_repl_util:get_env_as_list(riak_repl, compression, undefined),
                             send(Transport, SSLSocket, {peerinfo, State#state.my_pi,
                                     [bounded_queue, {fullsync_strategies,
                                             app_helper:get_env(riak_repl, fullsync_strategies,
                                                 [?LEGACY_STRATEGY])},
-                                     {connected_ip, ConnIP}
-                                    ]}),
+                                     {connected_ip, ConnIP},
+                                     {compression, Comp}
+                                    ]}, Compression),
                             recv_peerinfo(State#state{socket=SSLSocket,
                                     transport=Transport});
                         {error, Reason} ->
@@ -413,12 +445,27 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                         [?LEGACY_STRATEGY]),
                     ClientStrats = app_helper:get_env(riak_repl, fullsync_strategies,
                         [?LEGACY_STRATEGY]),
-                    Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
+
+                    ClientCompTypes = riak_repl_util:get_env_as_list(riak_repl,compression,[]),
+                    ServerCompTypes = proplists:get_value(compression,Capability,[]),
+
+                    Compression =
+                        case riak_repl_util:choose_common(ClientCompTypes, ServerCompTypes, undefined) of
+                            [Value] -> Value;
+                            Other -> Other
+                        end,
+                    case Compression of
+                        undefined -> lager:info("REPL compression not enabled");
+                        _ -> lager:info("REPL client using ~p compression", [Compression])
+                    end,
+
+                    Strategy = riak_repl_util:choose_common(ServerStrats, ClientStrats, []),
                     StratMod = riak_repl_util:strategy_module(Strategy, client),
                     lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
                             State#state.sitename]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
-                    {ok, FullsyncWorker} = StratMod:start_link(SiteName, Transport, Socket, WorkDir),
+                    {ok, FullsyncWorker} =
+                        StratMod:start_link(SiteName, Transport, Socket, WorkDir, Compression),
                     %% Set up for bounded queue if remote server supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
@@ -442,13 +489,14 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                     MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
                     MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
                     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
-                            {worker_args, []},
-                            {size, MinPool}, {max_overflow, MaxPool}]),
+                                                    {worker_args, [{compression,Compression}]},
+                                                    {size, MinPool}, {max_overflow, MaxPool}]),
                     {noreply, State1#state{work_dir = WorkDir,
-                            fullsync_worker=FullsyncWorker,
-                            fullsync_strategy=StratMod,
-                            keepalive_time=KeepaliveTime,
-                            pool_pid=Pid}}
+                                           fullsync_worker=FullsyncWorker,
+                                           fullsync_strategy=StratMod,
+                                           keepalive_time=KeepaliveTime,
+                                           pool_pid=Pid,
+                                           compression=Compression}}
             end;
         false ->
             lager:error("Invalid peer info for site ~p, "

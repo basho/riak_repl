@@ -25,8 +25,6 @@
                   'riak_repl_server_sup',
                   'riak_repl_stats',
                   'riak_repl_sup',
-                  'riak_repl_syncv1_client',
-                  'riak_repl_syncv1_server',
                   'riak_repl_keylist_client',
                   'riak_repl_keylist_server',
                   'riak_repl_tcp_client',

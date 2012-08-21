@@ -18,11 +18,13 @@
 -export([start_link/0,
          stop/0,
          client_bytes_sent/1,
+         client_bytes_sent_uncompressed/1,
          client_bytes_recv/1,
          client_connects/0,
          client_connect_errors/0,
          client_redirect/0,
          server_bytes_sent/1,
+         server_bytes_sent_uncompressed/1,
          server_bytes_recv/1,
          server_connects/0,
          server_connect_errors/0,
@@ -53,6 +55,9 @@ register_stats() ->
 client_bytes_sent(Bytes) ->
     increment_counter(client_bytes_sent, Bytes).
 
+client_bytes_sent_uncompressed(Bytes) ->
+    increment_counter(client_bytes_sent_uncompressed, Bytes).
+
 client_bytes_recv(Bytes) ->
     increment_counter(client_bytes_recv, Bytes).
 
@@ -67,6 +72,9 @@ client_redirect() ->
 
 server_bytes_sent(Bytes) ->
     increment_counter(server_bytes_sent, Bytes).
+
+server_bytes_sent_uncompressed(Bytes) ->
+    increment_counter(server_bytes_sent_uncompressed, Bytes).
 
 server_bytes_recv(Bytes) ->
     increment_counter(server_bytes_recv, Bytes).
@@ -124,11 +132,13 @@ register_stat(Name, gauge) ->
 
 stats() ->
     [{server_bytes_sent, counter},
+     {server_bytes_sent_uncompressed, counter},
      {server_bytes_recv, counter},
      {server_connects, counter},
      {server_connect_errors, counter},
      {server_fullsyncs, counter},
      {client_bytes_sent, counter},
+     {client_bytes_sent_uncompressed, counter},
      {client_bytes_recv, counter},
      {client_connects, counter},
      {client_connect_errors, counter},
@@ -141,12 +151,16 @@ stats() ->
      {elections_leader_changed, counter},
      {client_rx_kbps, history},
      {client_tx_kbps, history},
+     {client_tx_uncompressed_kbps, history},
      {server_rx_kbps, history},
      {server_tx_kbps, history},
+     {server_tx_uncompressed_kbps, history},
      {last_report, gauge},
      {last_client_bytes_sent, gauge},
+     {last_client_bytes_sent_uncompressed, gauge},
      {last_client_bytes_recv, gauge},
      {last_server_bytes_sent, gauge},
+     {last_server_bytes_sent_uncompressed, gauge},
      {last_server_bytes_recv, gauge}].
 
 increment_counter(Name) ->
@@ -168,28 +182,41 @@ handle_cast(_Msg, State) ->
 
 handle_info(report_bw, State) ->
     ThisClientBytesSent=lookup_stat(client_bytes_sent),
+    ThisClientBytesSentUncomp=lookup_stat(client_bytes_sent_uncompressed),
     ThisClientBytesRecv=lookup_stat(client_bytes_recv),
     ThisServerBytesSent=lookup_stat(server_bytes_sent),
+    ThisServerBytesSentUncomp=lookup_stat(server_bytes_sent_uncompressed),
     ThisServerBytesRecv=lookup_stat(server_bytes_recv),
 
     Now = tstamp(),
     DeltaSecs = now_diff(Now, lookup_stat(last_report)),
     ClientTx = bytes_to_kbits_per_sec(ThisClientBytesSent, lookup_stat(last_client_bytes_sent), DeltaSecs),
+    ClientTxUncomp = bytes_to_kbits_per_sec(ThisClientBytesSentUncomp,
+                                            lookup_stat(last_client_bytes_sent_uncompressed), DeltaSecs),
     ClientRx = bytes_to_kbits_per_sec(ThisClientBytesRecv, lookup_stat(last_client_bytes_recv), DeltaSecs),
     ServerTx = bytes_to_kbits_per_sec(ThisServerBytesSent, lookup_stat(last_server_bytes_sent), DeltaSecs),
+    ServerTxUncomp = bytes_to_kbits_per_sec(ThisServerBytesSentUncomp,
+                                            lookup_stat(last_server_bytes_sent_uncompressed), DeltaSecs),
+
     ServerRx = bytes_to_kbits_per_sec(ThisServerBytesRecv, lookup_stat(last_server_bytes_recv), DeltaSecs),
 
     [folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, history)
      || {Metric, Reading} <- [{client_tx_kbps, ClientTx},
                               {client_rx_kbps, ClientRx},
                               {server_tx_kbps, ServerTx},
-                              {server_rx_kbps, ServerRx}]],
+                              {server_rx_kbps, ServerRx},
+                              {client_tx_uncompressed_kbps, ClientTxUncomp},
+                              {server_tx_uncompressed_kbps, ServerTxUncomp}
+                             ]],
 
     [folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, gauge)
      || {Metric, Reading} <- [{last_client_bytes_sent, ThisClientBytesSent},
                               {last_client_bytes_recv, ThisClientBytesRecv},
                               {last_server_bytes_sent, ThisServerBytesSent},
-                              {last_server_bytes_recv, ThisServerBytesRecv}]],
+                              {last_server_bytes_recv, ThisServerBytesRecv},
+                              {last_client_bytes_sent_uncompressed, ThisClientBytesSentUncomp},
+                              {last_server_bytes_sent_uncompressed, ThisServerBytesSentUncomp}
+                             ]],
 
     schedule_report_bw(),
     folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),
@@ -260,12 +287,15 @@ test_register_stats() ->
 
 test_populate_stats() ->
     Bytes = 1000,
+    UncompressedBytes=2000,
     ok = client_bytes_sent(Bytes),
+    ok = client_bytes_sent_uncompressed(UncompressedBytes),
     ok = client_bytes_recv(Bytes),
     ok = client_connects(),
     ok = client_connect_errors(),
     ok = client_redirect(),
     ok = server_bytes_sent(Bytes),
+    ok = server_bytes_sent_uncompressed(UncompressedBytes),
     ok = server_bytes_recv(Bytes),
     ok = server_connects(),
     ok = server_connect_errors(),
@@ -278,7 +308,7 @@ test_populate_stats() ->
     ok = elections_leader_changed().
 
 test_check_stats() ->
-    ?assertEqual([{server_bytes_sent,1000},
+    Foo = [{server_bytes_sent,1000},
                   {server_bytes_recv,1000},
                   {server_connects,1},
                   {server_connect_errors,1},
@@ -297,7 +327,33 @@ test_check_stats() ->
                   {client_rx_kbps,[]},
                   {client_tx_kbps,[]},
                   {server_rx_kbps,[]},
-                  {server_tx_kbps,[]}], get_stats()).
+                  {server_tx_kbps,[]}],
+    io:format("~p",[Foo]),
+    ?assertEqual([{server_bytes_sent,1000},
+                  {server_bytes_sent_uncompressed,2000},
+                  {server_bytes_recv,1000},
+                  {server_connects,1},
+                  {server_connect_errors,1},
+                  {server_fullsyncs,1},
+                  {client_bytes_sent,1000},
+                  {client_bytes_sent_uncompressed,2000},
+                  {client_bytes_recv,1000},
+                  {client_connects,1},
+                  {client_connect_errors,1},
+                  {client_redirect,1},
+                  {objects_dropped_no_clients,1},
+                  {objects_dropped_no_leader,1},
+                  {objects_sent,1},
+                  {objects_forwarded,1},
+                  {elections_elected,1},
+                  {elections_leader_changed,1},
+                  {client_rx_kbps,[]},
+                  {client_tx_kbps,[]},
+                  {client_tx_uncompressed_kbps,[]},
+                  {server_rx_kbps,[]},
+                  {server_tx_kbps,[]},
+                  {server_tx_uncompressed_kbps,[]}
+                 ], get_stats()).
 
 test_report() ->
     Bytes = 1024 * 60,
@@ -314,9 +370,12 @@ test_report() ->
          [?assertEqual(8, Val) || Val <- Values]
      end || {Name, Values} <- get_stats(),
             lists:member(Name, [client_rx_kbps,
+                                client_tx_uncompressed_kbps,
                                 client_tx_kbps,
                                 server_rx_kbps,
-                                server_tx_kbps])].
+                                server_tx_kbps,
+                                server_tx_uncompressed_kbps
+                               ])].
 
 for_n_minutes(0, _Time, _Bytes) ->
     ok;
@@ -326,8 +385,10 @@ for_n_minutes(Minutes, Time0, Bytes) ->
                                            {inc, Bytes},
                                            counter) || Name <-
                                                            [client_bytes_sent,
+                                                            client_bytes_sent_uncompressed,
                                                             client_bytes_recv,
                                                             server_bytes_sent,
+                                                            server_bytes_sent_uncompressed,
                                                             server_bytes_recv]],
 
     riak_repl_stats:handle_info(report_bw, ok),

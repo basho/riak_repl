@@ -10,10 +10,11 @@
 -export([start_link/1, do_put/3, do_get/6, do_get/7]).
 
 -record(state, {
+          compression
     }).
 
-start_link(_Args) ->
-    gen_server:start_link(?MODULE, [], []).
+start_link(Args) ->
+    gen_server:start_link(?MODULE, Args, []).
 
 do_put(Pid, Obj, Pool) ->
     gen_server:cast(Pid, {put, Obj, Pool}).
@@ -25,10 +26,13 @@ do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
     gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool, Partition}, infinity).
 
 
-init([]) ->
-    {ok, #state{}}.
+init(Args) ->
+    WorkerArgs = proplists:get_value(worker_args,Args,[]),
+    Compression = proplists:get_value(compression, WorkerArgs, undefined),
+    {ok, #state{compression=Compression}}.
 
-handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
+handle_call({get, B, K, Transport, Socket, Pool}, From,
+            #state{compression=Compression}=State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
     %% do the get and send it to the client
@@ -41,8 +45,8 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
+                    [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}, Compression) || O <- Objects],
+                    riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj}, Compression)
             end,
             ok;
         {error, notfound} ->
@@ -53,7 +57,8 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
-handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
+handle_call({get, B, K, Transport, Socket, Pool, Partition}, From,
+            #state{compression=Compression}=State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
 
@@ -83,8 +88,9 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                         cancel ->
                             skipped;
                         Objects when is_list(Objects) ->
-                            [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
-                            riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
+                            [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}, Compression)
+                             || O <- Objects],
+                            riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj}, Compression)
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->
@@ -121,4 +127,3 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
