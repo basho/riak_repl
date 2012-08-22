@@ -528,7 +528,9 @@ handle_info(_I, StateName, State) ->
     lager:info("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _I]),
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, State) -> 
+terminate(_Reason, _StateName, State) ->
+    catch(riak_repl_fullsync_helper:stop(State#state.kl_pid)),
+    catch(file:close(State#state.their_kl_fh)),
     %% Clean up the working directory on crash/exit
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
     os:cmd(Cmd),
