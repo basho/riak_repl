@@ -485,4 +485,18 @@ keylist_fold(K, V, {MPid, Count, Total}) ->
             {MPid, 0, Total+1};
         _ ->
             {MPid, Count+1, Total+1}
+    end;
+%% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
+keylist_fold(K, V, {MPid, Count}) ->
+    H = hash_object(V),
+    Bin = term_to_binary({pack_key(K), H}),
+    %% write key/value hash to file
+    gen_server2:cast(MPid, {keylist, Bin}),
+    case Count of
+        100 ->
+            %% send keylist_ack to "self" every 100 key/value hashes
+            ok = gen_server2:call(MPid, keylist_ack, infinity),
+            {MPid, 0};
+        _ ->
+            {MPid, Count+1}
     end.
