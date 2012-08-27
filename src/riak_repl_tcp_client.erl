@@ -296,10 +296,17 @@ async_connect(Parent, IPAddr, Port) ->
             Parent ! {connect_failed, Reason}
     end.
 
-send(Transport, Socket, Data) when is_binary(Data) ->
-    R = Transport:send(Socket, Data),
-    riak_repl_stats:client_bytes_sent(size(Data)),
-    R;
+send(Transport, {Owner, Socket}, Data) when is_binary(Data) ->
+    case Transport:send(Socket, Data) of
+        ok ->
+            riak_repl_stats:client_bytes_sent(size(Data)),
+            ok;
+        {error, _} = Error ->
+            Owner ! {list_to_atom(Transport:name() ++ "_error"), Socket, Error},
+            Error
+    end;
+send(Transport, Socket, Data) when is_binary(Data)->
+    send(Transport, {self(), Socket}, Data);
 send(Transport, Socket, Data) ->
     send(Transport, Socket, term_to_binary(Data)).
 
@@ -418,7 +425,8 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                     lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
                             State#state.sitename]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
-                    {ok, FullsyncWorker} = StratMod:start_link(SiteName, Transport, Socket, WorkDir),
+                    {ok, FullsyncWorker} = StratMod:start_link(SiteName,
+                        Transport, {self(), Socket}, WorkDir),
                     %% Set up for bounded queue if remote server supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
