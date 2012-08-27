@@ -118,9 +118,6 @@ pause_fullsync(Pid) ->
 resume_fullsync(Pid) ->
     gen_fsm:send_event(Pid, resume_fullsync).
 
-stop(Pid) ->
-    gen_server2:call(Pid, stop, infinity).
-
 init([SiteName, Transport, Socket, WorkDir, Client]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
@@ -570,8 +567,8 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
         bloom_resume ->
             ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
             bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz});
-        Other ->
-            ?TRACE(lager:info("bloom_fold <- ? : ~p", [Other]))
+        _Other ->
+            ?TRACE(lager:info("bloom_fold <- ? : ~p", [_Other]))
     end;
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
