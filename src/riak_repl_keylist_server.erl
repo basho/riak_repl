@@ -138,23 +138,9 @@ init([SiteName, Transport, Socket, WorkDir, Client]) ->
 %% Request to start or resume Full Sync
 wait_for_partition(Command, State)
         when Command == start_fullsync; Command == resume_fullsync ->
-    %% check capability of all nodes for bloom fold ability. Since we are the leader,
-    %% the fact that we have this new code means we can choose to do a full-sync iff
-    %% all nodes have been upgraded to use bloom.
-    case riak_core_capability:get({riak_repl, bloom_fold}, false) of
-        true ->
-            %% All nodes support bloom, yay.
-            %% annoyingly the server is the one that triggers the fullsync in the old
-            %% protocol, so we'll just send it on to the client.
-            riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command);
-        false ->
-            %% Not all of the nodes support bloom fold, so we can't start yet.
-            %% we'll stay in the same state and just wait for the next request
-            %% to check again.
-            lager:warning("Full-sync with site ~p skipped because some node(s) are not upgraded to support bloom_fold.",
-                          [State#state.sitename]),
-            ok
-    end,
+    %% annoyingly the server is the one that triggers the fullsync in the old
+    %% protocol, so we'll just send it on to the client.
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     {next_state, wait_for_partition, State};
 %% Full sync has completed
 wait_for_partition(fullsync_complete, State) ->
@@ -205,10 +191,9 @@ build_keylist({Ref, keylist_built, Size},
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %% @plu server -> client: {kl_exchange, P}
     riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
-    {ok, Bloom} = ebloom:new(Size, 0.01, random:uniform(1000)),
     %% note that num_diffs is being assigned the number of keys, regardless of diffs,
     %% because we don't the number of diffs yet. See TODO: above redarding KEY_LIST_THRESHOLD
-    {next_state, wait_keylist, State#state{stage_start=now(), bloom=Bloom, num_diffs=Size}};
+    {next_state, wait_keylist, State#state{stage_start=now(), num_diffs=Size}};
 %% Error
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
@@ -279,32 +264,33 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
                       [State#state.sitename, NumDKeys, State#state.partition])),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
-    %% difference generator's window size...
-    DiffSize = case NumKeys > ?KEY_LIST_THRESHOLD of
-                   false ->
-                       %% generate differences in ACKS_IN_FLIGHT batches of
-                       %% diff_batch_size/ACKS_IN_FLIGHT to add some backpressure,
-                       %% while keeping the pipeline full (as long as the
-                       %% client continues to reply diff_ack).
-                       State#state.diff_batch_size div ?ACKS_IN_FLIGHT;
-                   true ->
-                       0 %% indicates never to pause difference generator
-               end,
+
+    %% check capability of all nodes for bloom fold ability.
+    %% Since we are the leader, the fact that we have this
+    %% new code means we can only choose to use it if
+    %% all nodes have been upgraded to use bloom.
+    NextState = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+        true ->
+            %% all nodes support bloom, yay
+
+            %% don't need the diff stream to pause itself
+            DiffSize = 0,
+            {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+            diff_bloom;
+        false ->
+            DiffSize = State#state.diff_batch_size div ?ACKS_IN_FLIGHT,
+            Bloom = undefined,
+            diff_keylist
+    end,
+
     {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
                                                       State#state.kl_fn,
                                                       State#state.their_kl_fn,
                                                       DiffSize),
-    %% Use bloom fold unless the number of keys is small, which would just be slower
-    %% because we'd have to fold over a giant key space for a small number of things.
-    NextState = case NumKeys > ?KEY_LIST_THRESHOLD of
-                    false ->
-                        diff_keylist;
-                    true ->
-                        diff_bloom
-                end,
+
     lager:info("Full-sync with site ~p; using ~p for ~p",
                [State#state.sitename, NextState, State#state.partition]),
-    {next_state, NextState, State#state{diff_ref=Ref, diff_pid=Pid, stage_start=now()}};
+    {next_state, NextState, State#state{diff_ref=Ref, bloom=Bloom, diff_pid=Pid, stage_start=now()}};
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
         [State#state.sitename, Partition]),
@@ -399,22 +385,29 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
     lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.partition_start)]),
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    OwnerNode = riak_core_ring:index_owner(Ring, Partition),
+    case ebloom:elements(Bloom) == 0 of
+        true ->
+            lager:info("No differences, skipping bloom fold"),
+            riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
+            {next_state, wait_for_partition, State};
+        false ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            OwnerNode = riak_core_ring:index_owner(Ring, Partition),
 
-    Self = self(),
-    DiffSize = State#state.diff_batch_size,
-    Worker = fun() ->
-            riak_kv_vnode:fold({Partition,OwnerNode},
-                fun ?MODULE:bloom_fold/3, {Self,
-                    {serialized, ebloom:serialize(Bloom)},
-                    State#state.client, State#state.transport,
-                    State#state.socket, DiffSize, DiffSize}),
-            gen_fsm:send_event(Self, {Ref, diff_exchanged}),
-            ok
-    end,
-    spawn_link(Worker), %% this isn't the Pid we need because it's just the vnode:fold
-    {next_state, diff_bloom, State#state{bloom_pid=undefined}};
+            Self = self(),
+            DiffSize = State#state.diff_batch_size,
+            Worker = fun() ->
+                    riak_kv_vnode:fold({Partition,OwnerNode},
+                        fun ?MODULE:bloom_fold/3, {Self,
+                            {serialized, ebloom:serialize(Bloom)},
+                            State#state.client, State#state.transport,
+                            State#state.socket, DiffSize, DiffSize}),
+                    gen_fsm:send_event(Self, {Ref, diff_exchanged}),
+                    ok
+            end,
+            spawn_link(Worker), %% this isn't the Pid we need because it's just the vnode:fold
+            {next_state, diff_bloom, State#state{bloom_pid=undefined}}
+    end;
 
 %% @plu server <-- s:helper : diff_paused
 %% For bloom folding, we don't want the difference generator to pause at all.
