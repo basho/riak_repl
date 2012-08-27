@@ -14,6 +14,7 @@
                   'riak_repl_bq',
                   'riak_repl_cinfo',
                   'riak_repl_client_sup',
+                  'riak_repl2_conn_mgr',
                   'riak_repl_console',
                   'riak_repl_fsm_common',
                   'riak_repl_fullsync_helper',
