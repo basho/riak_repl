@@ -216,7 +216,7 @@ build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         [State#state.sitename, State#state.partition, Reason]),
     riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
     {next_state, wait_for_partition, State};
-build_keylist({_Ref, keylist_built}, State) ->
+build_keylist({_Ref, keylist_built, _Size}, State) ->
     lager:warning("Stale keylist_built message received, ignoring"),
     {next_state, build_keylist, State};
 build_keylist({_Ref, {error, Reason}}, State) ->
