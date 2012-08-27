@@ -11,7 +11,7 @@
 send(Object, _RiakClient) ->
     Bucket = riak_object:bucket(Object),
     %% what about OBJECT_BUCKET_PREFIX?
-    case skip_cs(Bucket) and riak_kv_util:is_x_deleted(Object) of
+    case skip_cs(Bucket) oralso riak_kv_util:is_x_deleted(Object) of
         true -> cancel;
         false -> ok
     end.
@@ -21,7 +21,7 @@ recv (_Object) ->
 
 send_realtime(Object, _RiakClient) ->
     Bucket = riak_object:bucket(Object),
-    case skip_cs(Bucket) or riak_kv_util:is_x_deleted(Object) of
+    case skip_cs(Bucket) oralso riak_kv_util:is_x_deleted(Object) of
         true -> cancel;
         false -> ok
     end.
