@@ -273,12 +273,12 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     lager:info("Using fullsync strategy ~p.", [StratMod]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
-                        Transport, Socket, WorkDir, State#state.client),
+                        Transport, {self(), Socket}, WorkDir, State#state.client),
                     %% Set up bounded queue if remote supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
                             {ok, BQPid} = riak_repl_bq:start_link(Transport,
-                                                                  Socket),
+                                {self(), Socket}),
                             ok = riak_repl_leader:add_receiver_pid(BQPid),
 
                             State#state{q = BQPid,
@@ -394,12 +394,19 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
             {stop, normal, State}
     end.
 
-send(Transport, Sock, Data) when is_binary(Data) ->
-    R = Transport:send(Sock,Data),
-    riak_repl_stats:server_bytes_sent(size(Data)),
-    R;
-send(Transport, Sock, Data) ->
-    send(Transport, Sock, term_to_binary(Data)).
+send(Transport, {Owner, Socket}, Data) when is_binary(Data) ->
+    case Transport:send(Socket, Data) of
+        ok ->
+            riak_repl_stats:server_bytes_sent(size(Data)),
+            ok;
+        {error, _} = Error ->
+            Owner ! {list_to_atom(Transport:name() ++ "_error"), Socket, Error},
+            Error
+    end;
+send(Transport, Socket, Data) when is_binary(Data)->
+    send(Transport, {self(), Socket}, Data);
+send(Transport, Socket, Data) ->
+    send(Transport, Socket, term_to_binary(Data)).
 
 ip_and_port_for_node(Node, Ring, ConnectedIp) ->
     ReplConfig = riak_repl_ring:get_repl_config(Ring),
