@@ -343,8 +343,8 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
 
                     PI = proplists:get_value(my_pi, Props),
                     send(Transport, Socket, {peerinfo, PI,
-                                             {cluster_name, riak_core_ring:cluster_name(Ring)},
-                                             [bounded_queue, keepalive, {fullsync_strategies,
+                                             [{cluster_name, riak_core_ring:cluster_name(Ring)},
+                                             bounded_queue, keepalive, {fullsync_strategies,
                                                                          app_helper:get_env(riak_repl, fullsync_strategies,
                                                                                             [?LEGACY_STRATEGY])}]}),
                     Transport:setopts(Socket, [{active, once}]),
