@@ -580,9 +580,7 @@ update_site_ips(TheirReplConfig, SiteName, ConnectedIP) ->
                     none ->
                         ignore;
                     R2 ->
-                        RC = riak_repl_ring:get_repl_config(R2),
-                        NewRing = riak_repl_ring:set_repl_config(R2, RC),
-                        {new_ring, NewRing}
+                        {new_ring, R2}
                 end
         end,
     case riak_core_ring_manager:ring_trans(F, undefined) of
