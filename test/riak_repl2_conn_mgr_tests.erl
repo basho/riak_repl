@@ -33,7 +33,7 @@ handshake_test() ->
     ?debugMsg("Starting connection manager"),
     riak_repl2_conn_mgr:start_dispatcher({IP,Port}, MaxListeners, SubProtocols),
     ?debugMsg("Started connection manager"),
-    timer:sleep(20000),
+    timer:sleep(1000),
     %% try to connect via a client
     Client = fun() ->
                      ClientProtocol = {test1proto, {1,1}},
