@@ -105,6 +105,7 @@ request_partition(Command, #state{kl_pid=Pid, sitename=SiteName} = State)
     end,
     log_stop(Command, State),
     {next_state, wait_for_fullsync, NewState};
+%% Start from beginning or resume failed sync
 request_partition(continue, #state{partitions=[], sitename=SiteName} = State) ->
     application:unset_env(riak_repl, {progress, SiteName}),
     lager:info("Full-sync with site ~p completed", [State#state.sitename]),
@@ -126,7 +127,8 @@ request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=So
             our_kl_ready=false, their_kl_ready=false,
             partition_start=now(), stage_start=now(), skipping=false,
             kl_pid=KeyListPid, kl_ref=KeyListRef, partition=P, partitions=T}};
-request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
+%% @plu client <- key-lister
+request_partition({Ref, keylist_built, _Size}, State=#state{kl_ref = Ref}) ->
     lager:info("Full-sync with site ~p; built keylist for ~p, (built in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
@@ -142,7 +144,9 @@ request_partition({Ref, keylist_built}, State=#state{kl_ref = Ref}) ->
 request_partition({kl_exchange, P}, #state{partition=P} = State) ->
     case State#state.our_kl_ready of
         true ->
+            %% @plu client -> client: continue
             gen_fsm:send_event(self(), continue),
+            %% @plu note over client: (send_keylist)
             {next_state, send_keylist, State#state{stage_start=now(),
                     kl_counter=State#state.kl_ack_freq}};
         _ ->

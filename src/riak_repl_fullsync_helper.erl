@@ -33,6 +33,7 @@
                 merkle_pid,
                 folder_pid,
                 kl_fp,
+                kl_total,
                 filename,
                 buf=[],
                 size=0}).
@@ -139,6 +140,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
+%% request from client of server to write a keylist of hashed key/value to Filename for Partition
 handle_call({make_keylist, Partition, Filename}, From, State) ->
     Ref = make_ref(),
     gen_server2:reply(From, {ok, Ref}),
@@ -152,9 +154,18 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
-                             riak_kv_vnode:fold({Partition,OwnerNode},
-                                 fun ?MODULE:keylist_fold/3, {Self, 0}),
-                             gen_server2:cast(Self, kl_finish)
+                             case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+                                true ->
+                                    {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
+                                        fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
+                                    gen_server2:cast(Self, {kl_finish, Total});
+                                false ->
+                                    %% use old accumulator without the total
+                                    {Self, _} = riak_kv_vnode:fold({Partition,OwnerNode},
+                                        fun ?MODULE:keylist_fold/3, {Self, 0}),
+                                    %% total is 0, not much else we can do
+                                    gen_server2:cast(Self, {kl_finish, 0})
+                            end
                      end,
             FolderPid = spawn_link(Worker),
             NewState = State#state{ref = Ref, 
@@ -166,6 +177,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
+%% sent from keylist_fold every 100 key/value hashes
 handle_call(keylist_ack, _From, State) ->
     {reply, ok, State};
 handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
@@ -248,7 +260,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
     end,
 
     {stop, normal, State}.
-    
+
 handle_cast({merkle, K, H}, State) ->
     PackedKey = pack_key(K),
     NewSize = State#state.size+size(PackedKey)+4,
@@ -260,6 +272,7 @@ handle_cast({merkle, K, H}, State) ->
         false ->
             {noreply, State#state{buf = NewBuf, size = NewSize}}
     end;
+%% write Key/Value Hash to file
 handle_cast({keylist, Row}, State) ->
     ok = file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
     {noreply, State};
@@ -272,7 +285,7 @@ handle_cast(merkle_finish, State) ->
     _Mref = erlang:monitor(process, State#state.merkle_pid),
     couch_merkle:close(State#state.merkle_pid),
     {noreply, State};
-handle_cast(kl_finish, State) ->
+handle_cast({kl_finish, Count}, State) ->
     %% delayed_write can mean sync/close might not work the first time around
     %% because of a previous error that is only now being reported. In this case,
     %% call close again. See http://www.erlang.org/doc/man/file.html#open-2
@@ -285,7 +298,7 @@ handle_cast(kl_finish, State) ->
         _ -> file:close(State#state.kl_fp)
     end,
     gen_server2:cast(self(), kl_sort),
-    {noreply, State};
+    {noreply, State#state{kl_total=Count}};
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     %% we want the GC to stop running, so set a giant heap size
@@ -293,9 +306,10 @@ handle_cast(kl_sort, State) ->
     lager:info("Sorting keylist ~p", [Filename]),
     erlang:process_flag(min_heap_size, 1000000),
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
-    lager:info("Sorted ~s in ~.2f seconds",
-                          [Filename, ElapsedUsec / 1000000]),
-    gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built}),
+    lager:info("Sorted ~s of ~p keys in ~.2f seconds",
+                          [Filename, State#state.kl_total, ElapsedUsec / 1000000]),
+    gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built,
+        State#state.kl_total}),
     {stop, normal, State}.
 
 handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.merkle_pid ->
@@ -383,17 +397,17 @@ itr_next(Size, File, Tag) ->
             eof
     end.
 
-diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) ->
+diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) 
+  when Count /= 0 ->
     gen_fsm:send_event(FSM, {Ref, diff_paused}),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
     receive
         {'$gen_call', From, stop} ->
             gen_server2:reply(From, ok),
-            lager:info("stop request while diffing"),
             DiffState;
         {Ref, diff_resume} ->
-            %lager:info("resuming diff stream"),
+            %% Resuming the diff stream generation
             diff_keys(R, L, DiffState#diff_state{replies=Count})
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
@@ -468,12 +482,28 @@ merkle_fold(K, V, Pid) ->
 %% @private
 %%
 %% @doc Visting function for building keylists. Similar to merkle_fold.
-keylist_fold(K, V, {MPid, Count}) ->
+keylist_fold(K, V, {MPid, Count, Total}) ->
     H = hash_object(V),
     Bin = term_to_binary({pack_key(K), H}),
+    %% write key/value hash to file
     gen_server2:cast(MPid, {keylist, Bin}),
     case Count of
         100 ->
+            %% send keylist_ack to "self" every 100 key/value hashes
+            ok = gen_server2:call(MPid, keylist_ack, infinity),
+            {MPid, 0, Total+1};
+        _ ->
+            {MPid, Count+1, Total+1}
+    end;
+%% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
+keylist_fold(K, V, {MPid, Count}) ->
+    H = hash_object(V),
+    Bin = term_to_binary({pack_key(K), H}),
+    %% write key/value hash to file
+    gen_server2:cast(MPid, {keylist, Bin}),
+    case Count of
+        100 ->
+            %% send keylist_ack to "self" every 100 key/value hashes
             ok = gen_server2:call(MPid, keylist_ack, infinity),
             {MPid, 0};
         _ ->

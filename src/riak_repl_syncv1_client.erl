@@ -97,7 +97,7 @@ merkle_recv({merk_chunk, Data}, State=#state{merkle_fp=FP, their_merkle_sz=SZ}) 
         _ ->
             {next_state, merkle_recv, State#state{their_merkle_sz=LeftBytes}}
     end;
-merkle_recv({Ref, keylist_built}, State=#state{our_kl_ref = Ref}) ->
+merkle_recv({Ref, keylist_built, _}, State=#state{our_kl_ref = Ref}) ->
     merkle_recv_next(State#state{our_kl_ref = undefined,
                                  our_kl_pid = undefined});
 merkle_recv({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
