@@ -154,9 +154,18 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
                              %% accept there could be a potentially huge message queue
-                             {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
-                                 fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
-                             gen_server2:cast(Self, {kl_finish, Total})
+                             case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+                                true ->
+                                    {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
+                                        fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
+                                    gen_server2:cast(Self, {kl_finish, Total});
+                                false ->
+                                    %% use old accumulator without the total
+                                    {Self, _} = riak_kv_vnode:fold({Partition,OwnerNode},
+                                        fun ?MODULE:keylist_fold/3, {Self, 0}),
+                                    %% total is 0, not much else we can do
+                                    gen_server2:cast(Self, {kl_finish, 0})
+                            end
                      end,
             FolderPid = spawn_link(Worker),
             NewState = State#state{ref = Ref, 
