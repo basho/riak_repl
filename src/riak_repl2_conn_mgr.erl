@@ -14,8 +14,8 @@
 %% internal functions
 -export([async_connect/5, dispatch_service/4]).
 
--define(CLIENT_HELLO, <<"riak-client:hello">>).
--define(HOST_HELLO, <<"riak-host:hello">>).
+-define(CTRL_HELLO, <<"riak-ctrl:hello">>).
+-define(CTRL_ACK, <<"riak-ctrl:ack">>).
 
 -type(rev() :: non_neg_integer()). %% major or minor revision number
 -type(proto() :: {atom(), {rev(), rev()}}). %% e.g. {realtime_repl, 1, 0}
@@ -72,24 +72,23 @@ connect({IP,Port}, {Protocol, {Major, Minor}}, Options, {Module, Args}) ->
 %% exchange brief handshake with client to ensure that we're supporting sub-protocols.
 %% client -> server : Client-Hello
 %% server -> client : Server-Hello
-exchange_handshakes_with(client, Transport, Socket) ->
+exchange_handshakes_with(client, Socket, Transport) ->
     ?debugMsg("exchange_handshakes with client"),
     case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
-        {ok, ?CLIENT_HELLO} ->
-            Transport:send(Socket, ?HOST_HELLO),
-            ok;
+        {ok, ?CTRL_HELLO} ->
+            Transport:send(Socket, ?CTRL_ACK);
         {error, Reason} ->
             riak_repl_stats:server_connect_errors(),
             lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
             {error, Reason}
     end;
-exchange_handshakes_with(host, Transport, Socket) ->
-    ?debugFmt("exchange_handshakes with host: send ~p", [?CLIENT_HELLO]),
-    Transport:send(Socket, ?CLIENT_HELLO),
+exchange_handshakes_with(host, Socket, Transport) ->
+    ?debugFmt("exchange_handshakes with host: send ~p", [?CTRL_HELLO]),
+    ok = Transport:send(Socket, ?CTRL_HELLO),
     ?debugMsg("exchange_handshakes with host: recv handshake"),
     case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
-        {ok, ?HOST_HELLO} ->
-            ?debugFmt("exchange_handshakes with host: got ~p", [?HOST_HELLO]),
+        {ok, ?CTRL_ACK} ->
+            ?debugFmt("exchange_handshakes with host: got ~p", [?CTRL_ACK]),
             ok;
         {error, Reason} ->
             ?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason]),
@@ -108,7 +107,7 @@ async_connect(Parent, {IP,Port}, ClientProtocol,  Options, {Module, Args}) ->
     case gen_tcp:connect(IP, Port, [binary | Options], Timeout) of 
         {ok, Socket} ->
             %% handshake to make sure it's a riak sub-protocol dispatcher
-            ok = exchange_handshakes_with(host, Transport, Socket),
+            ok = exchange_handshakes_with(host, Socket, Transport),
             %% ask for protocol, see what host has
             {ok,HostProtocol} = negotiate_proto_with_server(Socket, Transport, ClientProtocol),
             %% transfer the socket to the process that requested the connection
@@ -122,7 +121,7 @@ async_connect(Parent, {IP,Port}, ClientProtocol,  Options, {Module, Args}) ->
 %% Host callback function, called by ranch for each accepted connection by way of
 %% of the ranch:start_listener() call above, specifying this module.
 start_link(Listener, Socket, Transport, SubProtocols) ->
-    spawn_link(?MODULE, dispatch_service, [Listener, Socket, Transport, SubProtocols]).
+    {ok, spawn_link(?MODULE, dispatch_service, [Listener, Socket, Transport, SubProtocols])}.
 
 %% Body of the main dispatch loop. This is instantiated once for each connection
 %% we accept because it transforms itself into the SubProtocol once it receives
@@ -141,7 +140,7 @@ dispatch_service(Listener, Socket, Transport, SubProtocols) ->
             {packet, 4},
             {reuseaddr, true},
             {active, false}]),
-    ok = exchange_handshakes_with(client, Transport, Socket),
+    ok = exchange_handshakes_with(client, Socket, Transport),
     {ok,Chosen} = negotiate_proto_with_client(Socket, Transport, SubProtocols),
     run_negotiated_service(Socket, Transport, Chosen).
 
