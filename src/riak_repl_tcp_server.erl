@@ -278,7 +278,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
                             {ok, BQPid} = riak_repl_bq:start_link(Transport,
-                                                                  Socket),
+                                {self(), Socket}),
                             ok = riak_repl_leader:add_receiver_pid(BQPid),
 
                             State#state{q = BQPid,
