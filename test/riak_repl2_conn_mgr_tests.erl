@@ -6,10 +6,12 @@
 
 %% host service functions
 test1service(_Socket, _Transport, ClientProtocol, Args) ->
-    ?debugFmt("started test1service with args ~p, client speaks ~p", [Args, ClientProtocol]).
+    ?debugFmt("started test1service with args ~p, client speaks ~p", [Args, ClientProtocol]),
+    {ok, self()}.
 
 test2service(_Socket, _Transport, ClientProtocol, Args) ->
-    ?debugFmt("started test2service with args ~p, client speaks ~p", [Args, ClientProtocol]).
+    ?debugFmt("started test2service with args ~p, client speaks ~p", [Args, ClientProtocol]),
+    {ok, self()}.
 
 %% client connection callbacks
 connected(_Socket, _Transport, {IP, Port}, HostProtocol, Args) ->
@@ -37,7 +39,7 @@ handshake_test() ->
     %% try to connect via a client
     Client = fun() ->
                      ClientProtocol = {test1proto, {1,1}},
-                     ?debugMsg("Connecting with client"),
+                     ?debugMsg("Starting client connect"),
                      riak_repl2_conn_mgr:connect({IP,Port}, ClientProtocol, [], {?MODULE, [handshake]})
              end,
     spawn(Client),
