@@ -426,7 +426,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                             State#state.sitename]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
-                        Transport, {self, Socket}, WorkDir),
+                        Transport, {self(), Socket}, WorkDir),
                     %% Set up for bounded queue if remote server supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
