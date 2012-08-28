@@ -7,7 +7,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
--export([start_link/1, do_put/3, do_get/6, do_get/7]).
+-export([start_link/1, do_put/3, do_binputs/4, do_get/6, do_get/7]).
 
 -record(state, {
     }).
@@ -17,6 +17,10 @@ start_link(_Args) ->
 
 do_put(Pid, Obj, Pool) ->
     gen_server:cast(Pid, {put, Obj, Pool}).
+
+do_binputs(Pid, BinObjs, DoneFun, Pool) ->
+    %% safe to cast as the pool size will add backpressure on the sink
+    gen_server:cast(Pid, {puts, BinObjs, DoneFun, Pool).
 
 do_get(Pid, Bucket, Key, Transport, Socket, Pool) ->
     gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool}, infinity).
@@ -105,6 +109,16 @@ handle_call(_Event, _From, State) ->
 handle_cast({put, Obj, Pool}, State) ->
     %% do the put
     riak_repl_util:do_repl_put(Obj),
+    %% unblock this worker for more work (or death)
+    poolboy:checkin(Pool, self()),
+    {noreply, State};
+handle_cast({puts, BinObjs, DoneFun, Pool}, From, State) ->
+    %% do the put(s)
+    %% TODO: add mechanism for detecting put failure so 
+    %% we can drop rtsink an have it resent
+    [riak_repl_util:do_repl_put(Obj) || Obj <- binary_to_term(BinObjs)],
+    %% let the caller know
+    DoneFun(),
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
