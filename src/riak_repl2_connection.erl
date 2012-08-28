@@ -3,7 +3,7 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 
--module(riak_repl2_conn_mgr).
+-module(riak_repl2_connection).
 
 -include("riak_repl.hrl").
 -include_lib("eunit/include/eunit.hrl").
