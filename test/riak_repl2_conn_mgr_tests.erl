@@ -2,22 +2,41 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([test1service/4, test2service/4, connected/5]).
+-export([test1service/4, test2service/4, connected/5, connect_failed/3]).
 
 %% host service functions
-test1service(_Socket, _Transport, ClientProtocol, Args) ->
-    ?debugFmt("started test1service with args ~p, client speaks ~p", [Args, ClientProtocol]),
+test1service(_Socket, _Transport, {Proto, MyVer, RemoteVer}, Args) ->
+    [ExpectedMyVer, ExpectedRemoteVer] = Args,
+    ?debugFmt("started test1service mine = ~p, remote = ~p", [MyVer, RemoteVer]),
+    ?assert(ExpectedMyVer == MyVer),
+    ?assert(ExpectedRemoteVer == RemoteVer),
+    ?assert(Proto == test1proto),
+    timer:sleep(2000),
     {ok, self()}.
 
-test2service(_Socket, _Transport, ClientProtocol, Args) ->
-    ?debugFmt("started test2service with args ~p, client speaks ~p", [Args, ClientProtocol]),
+test2service(_Socket, _Transport, {Proto, MyVer, RemoteVer}, Args) ->
+    [ExpectedMyVer, ExpectedRemoteVer] = Args,
+%%    ?debugFmt("started test2service mine = ~p, remote = ~p", [MyVer, RemoteVer]),
+    ?assert(ExpectedMyVer == MyVer),
+    ?assert(ExpectedRemoteVer == RemoteVer),
+    ?assert(Proto == test1proto),
+    timer:sleep(2000),
     {ok, self()}.
 
 %% client connection callbacks
-connected(_Socket, _Transport, {IP, Port}, HostProtocol, Args) ->
-        ?debugFmt("client connected on {~p,~p} with args ~p, host speaks ~p",
-                  [IP, Port, Args, HostProtocol]).
+connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
+    [ExpectedMyVer, ExpectedRemoteVer] = Args,
+%%    ?debugFmt("client connected on {~p,~p} with args ~p, mine = ~p remote = ~p",
+%%              [_IP, _Port, Args, MyVer, RemoteVer]),
+    ?assert(Proto == test1proto),
+    ?assert(ExpectedMyVer == MyVer),
+    ?assert(ExpectedRemoteVer == RemoteVer),
+    timer:sleep(2000).
 
+connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
+    ?debugFmt("connect_failed: Proto = ~p, error = ~p", [Proto, Reason]),
+    ?assert(Args == some_args),
+    ?assert(Proto == test1protoFailed).
 
 
 handshake_test() ->
@@ -27,22 +46,50 @@ handshake_test() ->
     %% local host
     IP = "127.0.0.1",
     Port = 10365,
+    %% Socket options set on both client and host. Note: binary is mandatory.
+    TcpOptions = [{keepalive, true},
+                  {nodelay, true},
+                  {packet, 4},
+                  {reuseaddr, true},
+                  {active, false}],
     %% start dispatcher
     MaxListeners = 10,
-    SubProtocols = [{{test1proto, [{2,1}, {1,0}]}, ?MODULE, test1service, [one]},
-                    {{test2proto, [{3,4}]}, ?MODULE, test2service, [two]}
+    SubProtocols = [{{test1proto, [{2,1}, {1,0}]}, ?MODULE, test1service, [{1,0}, {1,1}]},
+                    {{test2proto, [{3,4}]}, ?MODULE, test2service, []}
                    ],
-    ?debugMsg("Starting connection manager"),
-    riak_repl2_conn_mgr:start_dispatcher({IP,Port}, MaxListeners, SubProtocols),
-    ?debugMsg("Started connection manager"),
-    timer:sleep(1000),
-    %% try to connect via a client
-    Client = fun() ->
-                     ClientProtocol = {test1proto, {1,1}},
-                     ?debugMsg("Starting client connect"),
-                     riak_repl2_conn_mgr:connect({IP,Port}, ClientProtocol, [], {?MODULE, [handshake]})
-             end,
-    spawn(Client),
+    riak_repl2_conn_mgr:start_dispatcher({IP,Port}, MaxListeners, TcpOptions, SubProtocols),
+
+    %% try to connect via a client that speaks 0.1 and 1.1
+    ClientProtocol = {test1proto, [{0,1},{1,1}]},
+    riak_repl2_conn_mgr:connect({IP,Port}, ClientProtocol, TcpOptions, {?MODULE, [{1,1},{1,0}]}),
+
+    timer:sleep(2000),
+    application:stop(ranch),
+    ok.
+
+failed_protocol_match_test() ->
+    %% start ranch as an application so that we have a supervision tree,
+    %% otherwise ranch will crash with a noproc in gen_server call.
+    application:start(ranch),
+    %% local host
+    IP = "127.0.0.1",
+    Port = 10364,
+    %% Socket options set on both client and host. Note: binary is mandatory.
+    TcpOptions = [{keepalive, true},
+                  {nodelay, true},
+                  {packet, 4},
+                  {reuseaddr, true},
+                  {active, false}],
+    %% start dispatcher
+    MaxListeners = 10,
+    SubProtocols = [{{test1protoFailed, [{2,1}, {1,0}]}, ?MODULE, test1service, [{1,0}, {1,1}]}
+                   ],
+    riak_repl2_conn_mgr:start_dispatcher({IP,Port}, MaxListeners, TcpOptions, SubProtocols),
+
+    %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
+    ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
+    riak_repl2_conn_mgr:connect({IP,Port}, ClientProtocol, TcpOptions, {?MODULE, some_args}),
+
     timer:sleep(2000),
     application:stop(ranch),
     ok.
