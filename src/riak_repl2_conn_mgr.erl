@@ -147,8 +147,8 @@ dispatch_service(Listener, Socket, Transport, Options, SubProtocols) ->
         {error, Reason} ->
             ?debugFmt("Failed to start listener for subprotocols ~p because ~p",
                       [SubProtocols, Reason]),
-%%            lager:warn("Failed to start listener for subprotocols ~p because ~p",
-%%                       [SubProtocols, Reason]),
+            lager:error("Failed to start listener for subprotocols ~p because ~p",
+                        [SubProtocols, Reason]),
             {error, Reason}
     end.
 
