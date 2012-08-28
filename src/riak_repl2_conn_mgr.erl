@@ -42,8 +42,8 @@ start_dispatcher({IP,Port}, MaxListeners, Options, SubProtocols) ->
             ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
                 [{ip, RawAddress}, {port, Port}], ?MODULE, {Options,SubProtocols});
         _ ->
-            ?debugFmt("Connection mananger: failed to start ranch listener "
-                    "on ~s:~p - invalid address.", [IP, Port])
+            lager:error("Connection mananger: failed to start ranch listener "
+                        "on ~s:~p - invalid address.", [IP, Port])
     end.
 
 %% Make async connection request. The connection manager is responsible for retry/backoff
@@ -120,8 +120,8 @@ async_connect(Parent, {IP,Port}, ClientProtocol,  Options, {Module, Args}) ->
                     ok = Transport:controlling_process(Socket, Parent),
                     %% notify requester of connection and negotiated protocol from host
                     Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args);
-                Error ->
-                    Module:connect_failed(ClientProtocol, {error, Error}, Args)
+                {error, Reason} ->
+                    Module:connect_failed(ClientProtocol, {error, Reason}, Args)
             end;
         {error, Reason} ->
             Module:connect_failed(ClientProtocol, {error, Reason}, Args)
@@ -141,24 +141,22 @@ dispatch_service(Listener, Socket, Transport, Options, SubProtocols) ->
     %% set some starting options for the channel; these should match the client
     ok = Transport:setopts(Socket, [binary|Options]),
     ok = exchange_handshakes_with(client, Socket, Transport),
-    case negotiate_proto_with_client(Socket, Transport, SubProtocols) of
-        {ok,Chosen} ->
-            start_negotiated_service(Socket, Transport, Chosen);
-        {error, Reason} ->
-            ?debugFmt("Failed to start listener for subprotocols ~p because ~p",
-                      [SubProtocols, Reason]),
-            lager:error("Failed to start listener for subprotocols ~p because ~p",
-                        [SubProtocols, Reason]),
-            {error, Reason}
-    end.
+    Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
+%%    ?debugFmt("negotiated = ~p", [Negotiated]),
+    start_negotiated_service(Socket, Transport, Negotiated).
 
 %% start user's module:function and transfer socket to it's process.
 start_negotiated_service(Socket, Transport, {NegotiatedProtocols, Module, Function, Args}) ->
-    %% call service body function for matching protocol. The callee should start
-    %% a process or gen_server or such, and return {ok, pid()}.
-    {ok, Pid} = Module:Function(Socket, Transport, NegotiatedProtocols, Args),
-    ok = Transport:controlling_process(Socket, Pid),
-    {ok, Pid}.
+    case NegotiatedProtocols of
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            %% call service body function for matching protocol. The callee should start
+            %% a process or gen_server or such, and return {ok, pid()}.
+            {ok, Pid} = Module:Function(Socket, Transport, Other, Args),
+            ok = Transport:controlling_process(Socket, Pid),
+            {ok, Pid}
+    end.
 
 %% Negotiate the highest common major protocol revisision with the connected client.
 %% client -> server : Prefs List = {SubProto, [{Major, Minor}]} as binary
@@ -170,11 +168,20 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
         {ok, PrefsBin} ->
             {ClientProto,Versions} = erlang:binary_to_term(PrefsBin),
             case choose_version({ClientProto,Versions}, HostProtocols) of
-                {ok,{{ClientProto,Major,CN,HN}, Module, Function, Args}} ->
-                    Transport:send(Socket, erlang:term_to_binary({ClientProto,{Major,HN,CN}})),
-                    {ok,{{ClientProto,{Major,HN},{Major,CN}}, Module, Function, Args}};
-                Reason ->
-                    {error, Reason}
+                {error, Reason} ->
+                    lager:error("Failed to negotiate protocol ~p from client because ~p",
+                                [ClientProto, Reason]),
+                    Transport:send(Socket, erlang:term_to_binary({error,Reason})),
+                    {error, Reason};
+                {ok,{ClientProto,Major,CN,HN}, Module, Function, Args} ->
+                    Transport:send(Socket, erlang:term_to_binary({ok,{ClientProto,{Major,HN,CN}}})),
+                    {{ok,{ClientProto,{Major,HN},{Major,CN}}}, Module, Function, Args};
+                {error, Reason, Module, Function, Args} ->
+                    lager:error("Failed to negotiate protocol ~p from client because ~p",
+                                [ClientProto, Reason]),
+                    %% notify client it failed to negotiate
+                    Transport:send(Socket, erlang:term_to_binary({error,Reason})),
+                    {{error, Reason}, Module, Function, Args}
             end;
         {error, Reason} ->
             riak_repl_stats:server_connect_errors(),
@@ -193,37 +200,41 @@ negotiate_proto_with_server(Socket, Transport, ClientProtocol) ->
     Transport:send(Socket, erlang:term_to_binary(ClientProtocol)),
     case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
         {ok, NegotiatedProtocolBin} ->
-            {Proto,{CommonMajor,HMinor,CMinor}} = erlang:binary_to_term(NegotiatedProtocolBin),
-            {ok, {Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}};
+            case erlang:binary_to_term(NegotiatedProtocolBin) of
+                {ok, {Proto,{CommonMajor,HMinor,CMinor}}} ->
+                    {ok, {Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
         {error, Reason} ->
             riak_repl_stats:client_connect_errors(),
-            lager:error("Failed to negotiate protocol ~p with server. Error = ~p",
+            lager:error("Failed to receive protocol ~p response from server. Reason = ~p",
                         [ClientProtocol, Reason]),
-            connection_failed
+            {error, connection_failed}
     end.
 
 choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
-    ?debugFmt("choose_version: client proto = ~p", [_CProtocol]),
+%%    ?debugFmt("choose_version: client proto = ~p", [_CProtocol]),
     %% first, see if the host supports the subprotocol
     case [H || {{HostProto,_Versions},_M,_F,_A}=H <- HostProtocols, ClientProto == HostProto] of
         [] ->
             %% oops! The host does not support this sub protocol type
-            lager:warn("Failed to find host support for protocol: ~p", [ClientProto]),
-            protocol_not_supported;
+            lager:error("Failed to find host support for protocol: ~p", [ClientProto]),
+            {error,protocol_not_supported};
         [{{_HostProto,HostVersions},M,F,A}=_Matched | _DuplicatesIgnored] ->
-            ?debugFmt("choose_version: unsorted = ~p clientversions = ~p", [_Matched, ClientVersions]),
+%%            ?debugFmt("choose_version: unsorted = ~p clientversions = ~p", [_Matched, ClientVersions]),
             CommonVers = [{CM,CN,HN} || {CM,CN} <- ClientVersions, {HM,HN} <- HostVersions, CM == HM],
-            ?debugFmt("common versions = ~p", [CommonVers]),
+%%            ?debugFmt("common versions = ~p", [CommonVers]),
             %% sort by major version, highest to lowest, and grab the top one.
             case lists:reverse(lists:keysort(1,CommonVers)) of
                 [] ->
                     %% oops! No common major versions for Proto.
-                    ?debugFmt("Failed to find a common major version for protocol: ~p", [ClientProto]),
-%%                    lager:warn("Failed to find a common major version for protocol: ~p", [ClientProto]),
-                    protocol_version_not_supported;
+%%                    ?debugFmt("Failed to find a common major version for protocol: ~p", [ClientProto]),
+                    lager:error("Failed to find a common major version for protocol: ~p", [ClientProto]),
+                    {error,protocol_version_not_supported,M,F,A};
                 [{Major,CN,HN}] ->
-                    {ok, {{ClientProto,Major,CN,HN},M,F,A}};
+                    {ok, {ClientProto,Major,CN,HN},M,F,A};
                 [{Major,CN,HN}, _] ->
-                    {ok, {{ClientProto,Major,CN,HN},M,F,A}}
+                    {ok, {ClientProto,Major,CN,HN},M,F,A}
             end
     end.
