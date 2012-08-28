@@ -1,0 +1,2 @@
+-define(REPLICATE_CS_USER_OBJECTS, true).
+-define(REPLICATE_CS_BUCKET_OBJECTS, true).
