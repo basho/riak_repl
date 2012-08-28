@@ -5,27 +5,14 @@
 
 -module(riak_repl2_connection).
 
--include("riak_repl.hrl").
+-include("riak_core_connection.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 %% public API
 -export([start_dispatcher/4, connect/4, start_link/4]).
 
 %% internal functions
--export([async_connect/5, dispatch_service/5]).
-
--define(CTRL_HELLO, <<"riak-ctrl:hello">>).
--define(CTRL_ACK, <<"riak-ctrl:ack">>).
-
--type(rev() :: non_neg_integer()). %% major or minor revision number
--type(proto() :: {atom(), {rev(), rev()}}). %% e.g. {realtime_repl, 1, 0}
--type(protoprefs() :: {atom(), [{rev(), rev()}]}).
-
-%% Function = fun(Socket, Transport, Protocol, Args) -> ok
-%% Protocol :: proto()
--type(service_started_callback() :: fun((inet:socket(), module(), proto(), [any()]) -> no_return())).
-
--type(protospec() :: {protoprefs(), module(), service_started_callback(), [any()]}).
+-export([async_connect/5, dispatch_service/5, valid_host_ip/1, normalize_ip/1]).
 
 %% @doc Start the connection dispatcher with a limit of MaxListeners
 %% listener connections and supported sub-protocols. When a connection
@@ -33,7 +20,7 @@
 %% acceptor function called as Module:Function(Listener, Socket, Transport, Args),
 %% which must create it's own process and return {ok, pid()}
 
--spec(start_dispatcher(repl_addr(), non_neg_integer(), [inet:connect_option()], [protospec()]) -> {ok, pid()}).
+-spec(start_dispatcher(ip_addr(), non_neg_integer(), [inet:connect_option()], [protospec()]) -> {ok, pid()}).
 start_dispatcher({IP,Port}, MaxListeners, Options, SubProtocols) ->
     case riak_repl_util:valid_host_ip(IP) of
         true ->
@@ -66,7 +53,7 @@ start_dispatcher({IP,Port}, MaxListeners, Options, SubProtocols) ->
 %%
 %% connect returns the pid() of the asynchronous process that will attempt the connection.
 
--spec(connect({repl_addr(),port()}, protoprefs(), [any()], {module(),[any()]}) -> pid()).
+-spec(connect({ip_addr(),port()}, protoprefs(), [any()], {module(),[any()]}) -> pid()).
 connect({IP,Port}, ClientProtocol, Options, {Module, Args}) ->
     %% start a process to handle the connection request asyncrhonously
     proc_lib:spawn_link(?MODULE, async_connect, [self(), {IP,Port}, ClientProtocol,
@@ -74,16 +61,36 @@ connect({IP,Port}, ClientProtocol, Options, {Module, Args}) ->
 
 %% @private
 
+%% Returns true if the IP address given is a valid host IP address.
+%% stolen from riak_repl_util.erl
+valid_host_ip(IP) ->     
+    {ok, IFs} = inet:getifaddrs(),
+    {ok, NormIP} = normalize_ip(IP),
+    lists:foldl(
+        fun({_IF, Attrs}, Match) ->
+                case lists:member({addr, NormIP}, Attrs) of
+                    true ->
+                        true;
+                    _ ->
+                        Match
+                end
+        end, false, IFs).
+
+%% Convert IP address the tuple form
+normalize_ip(IP) when is_list(IP) ->
+    inet_parse:address(IP);
+normalize_ip(IP) when is_tuple(IP) ->
+    {ok, IP}.
+
 %% exchange brief handshake with client to ensure that we're supporting sub-protocols.
 %% client -> server : Client-Hello
 %% server -> client : Server-Hello
 exchange_handshakes_with(client, Socket, Transport) ->
 %%    ?debugFmt("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO]),
-    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, ?CTRL_HELLO} ->
             Transport:send(Socket, ?CTRL_ACK);
         {error, Reason} ->
-            riak_repl_stats:server_connect_errors(),
             lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
             {error, Reason}
     end;
@@ -91,21 +98,19 @@ exchange_handshakes_with(host, Socket, Transport) ->
 %%    ?debugFmt("exchange_handshakes: sending ~p to host", [?CTRL_HELLO]),
     ok = Transport:send(Socket, ?CTRL_HELLO),
 %%    ?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK]),
-    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, ?CTRL_ACK} ->
 %%            ?debugFmt("exchange_handshakes with host: got ~p", [?CTRL_ACK]),
             ok;
         {error, Reason} ->
 %%            ?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason]),
-            riak_repl_stats:server_connect_errors(),
             lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
             {error, Reason}
     end.
 
 %% Function spawned to do async connect
 async_connect(Parent, {IP,Port}, ClientProtocol,  Options, {Module, Args}) ->
-    %% TODO: move the timeout into the connect call to remove dep on repl.
-    Timeout = app_helper:get_env(riak_repl, client_connect_timeout, 15000),
+    Timeout = 15000,
     Transport = ranch_tcp,
     %%   connect to host's {IP,Port}
 %%    ?debugFmt("async_connect: connect to ~p", [{IP,Port}]),
@@ -164,7 +169,7 @@ start_negotiated_service(Socket, Transport, {NegotiatedProtocols, Module, Functi
 %%
 %% returns {ok,{{Proto,MyVer,RemoteVer},Module,Function,Args}} | Error
 negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
-    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, PrefsBin} ->
             {ClientProto,Versions} = erlang:binary_to_term(PrefsBin),
             case choose_version({ClientProto,Versions}, HostProtocols) of
@@ -184,7 +189,6 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
                     {{error, Reason}, Module, Function, Args}
             end;
         {error, Reason} ->
-            riak_repl_stats:server_connect_errors(),
             lager:error("Failed to receive protocol request from client. Error = ~p",
                         [Reason]),
             connection_failed
@@ -198,7 +202,7 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
 negotiate_proto_with_server(Socket, Transport, ClientProtocol) ->
 %%    ?debugFmt("negotiate protocol with host, client proto = ~p", [ClientProtocol]),
     Transport:send(Socket, erlang:term_to_binary(ClientProtocol)),
-    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, NegotiatedProtocolBin} ->
             case erlang:binary_to_term(NegotiatedProtocolBin) of
                 {ok, {Proto,{CommonMajor,HMinor,CMinor}}} ->
@@ -207,7 +211,6 @@ negotiate_proto_with_server(Socket, Transport, ClientProtocol) ->
                     {error, Reason}
             end;
         {error, Reason} ->
-            riak_repl_stats:client_connect_errors(),
             lager:error("Failed to receive protocol ~p response from server. Reason = ~p",
                         [ClientProtocol, Reason]),
             {error, connection_failed}
