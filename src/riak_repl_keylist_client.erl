@@ -294,7 +294,8 @@ handle_sync_event(_Event,_F,StateName,State) ->
 handle_info(_I, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, State) -> 
+terminate(_Reason, _StateName, State) ->
+    catch(file:close(State#state.kl_fh)),
     %% Clean up the working directory on crash/exit
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
     os:cmd(Cmd).
