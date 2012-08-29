@@ -42,6 +42,11 @@ register_protocol_test() ->
     riak_core_conn_mgr:register_protocol(TestProtocol),
     ?assert(riak_core_conn_mgr:is_registered(testproto) == true).
 
+unregister_protocol_id_test() ->
+    TestProtocolId = testproto,
+    riak_core_conn_mgr:unregister_protocol_id(TestProtocolId),
+    ?assert(riak_core_conn_mgr:is_registered(testproto) == false).
+
 %%------------------------
 %% Helper functions
 %%------------------------
