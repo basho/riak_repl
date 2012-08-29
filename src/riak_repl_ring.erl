@@ -24,12 +24,12 @@
          set_clusterIpAddrs/2,
          get_clusterIpAddrs/2,
          get_clusters/1,
-         fs_enable_trans/2,
-         fs_disable_trans/2,
-         fs_enabled/1,
-         fs_start_trans/2,
-         fs_stop_trans/2,
-         fs_started/1
+         rt_enable_trans/2,
+         rt_disable_trans/2,
+         rt_enabled/1,
+         rt_start_trans/2,
+         rt_stop_trans/2,
+         rt_started/1
          ]).
 
 -ifdef(TEST).
@@ -312,29 +312,28 @@ get_clusters(Ring) ->
     end.
 
 %% Enable replication for the remote (queue will start building)
-fs_enable_trans(Ring, Remote) ->
-    add_list_trans(Remote, fs_enabled, Ring).
+rt_enable_trans(Ring, Remote) ->
+    add_list_trans(Remote, rt_enabled, Ring).
 
 %% Disable replication for the remote (queue will be cleaned up)
-fs_disable_trans(Ring, Remote) ->
-    del_list_trans(Remote, fs_enabled, Ring).
+rt_disable_trans(Ring, Remote) ->
+    del_list_trans(Remote, rt_enabled, Ring).
 
 %% Get list of RT enabled remotes
-fs_enabled(Ring) ->
-    get_list(fs_enabled, Ring).
+rt_enabled(Ring) ->
+    get_list(rt_enabled, Ring).
 
 %% Start replication for the remote - make connection and send
-fs_start_trans(Ring, Remote) ->
-    add_list_trans(Remote, fs_started, Ring).
+rt_start_trans(Ring, Remote) ->
+    add_list_trans(Remote, rt_started, Ring).
 
 %% Stop replication for the remote - break connection and queue
-fs_stop_trans(Ring, Remote) ->
-    del_list_trans(Remote, fs_started, Ring).
+rt_stop_trans(Ring, Remote) ->
+    del_list_trans(Remote, rt_started, Ring).
 
 %% Get list of RT enabled remotes
-fs_started(Ring) ->
-    get_list(fs_started, Ring).
-
+rt_started(Ring) ->
+    get_list(rt_started, Ring).
 
 initial_config() ->
     dict:from_list(

@@ -66,5 +66,5 @@
          }).
 
 -define(REPL_HOOK, {struct, 
-                    [{<<"mod">>, <<"riak_repl_leader">>},
+                    [{<<"mod">>, <<"riak_repl2_rt">>},
                      {<<"fun">>, <<"postcommit">>}]}).
