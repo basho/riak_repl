@@ -9,7 +9,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% public API
--export([start_dispatcher/4, connect/4, start_link/4]).
+-export([start_dispatcher/4, stop_dispatcher/1, connect/4, start_link/4]).
 
 %% internal functions
 -export([async_connect/5, dispatch_service/5, valid_host_ip/1, normalize_ip/1]).
@@ -32,6 +32,9 @@ start_dispatcher({IP,Port}, MaxListeners, Options, SubProtocols) ->
             lager:error("Connection mananger: failed to start ranch listener "
                         "on ~s:~p - invalid address.", [IP, Port])
     end.
+
+stop_dispatcher({IP,Port}) ->
+    ranch:stop_listener({IP,Port}).
 
 %% Make async connection request. The connection manager is responsible for retry/backoff
 %% and calls your module's functions on success or error (asynchrously):
