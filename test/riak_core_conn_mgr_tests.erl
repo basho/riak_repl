@@ -1,3 +1,6 @@
+%% Eunit test cases for the Connection Manager
+%% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+
 -module(riak_core_conn_mgr_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -27,7 +30,7 @@ pause_test() ->
 
 %% set/get the cluster manager finding function
 set_get_finder_function_test() ->
-    FinderFun = fun() -> {ok, "localhost"} end,
+    FinderFun = fun() -> {ok, {"localhost",4092}} end,
     riak_core_conn_mgr:set_cluster_finder(FinderFun),
     FoundFun = riak_core_conn_mgr:get_cluster_finder(),
     ?assert(FinderFun == FoundFun).
@@ -35,7 +38,7 @@ set_get_finder_function_test() ->
 %% register a service
 register_protocol_test() ->
     ExpectedRevs = [{1,0}, {1,0}],
-    TestProtocol = [{{testproto, [{1,0}]}, ?MODULE, testService, ExpectedRevs}],
+    TestProtocol = {{testproto, [{1,0}]}, ?MODULE, testService, ExpectedRevs},
     riak_core_conn_mgr:register_protocol(TestProtocol),
     ?assert(riak_core_conn_mgr:is_registered(testproto) == true).
 
