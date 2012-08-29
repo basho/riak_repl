@@ -1,4 +1,4 @@
--module(riak_repl2_ctrl_tests).
+-module(riak_core_ctrl_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
