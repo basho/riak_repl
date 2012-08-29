@@ -11,8 +11,8 @@
 
 %% this test runs first and leaves the server running for other tests
 start_link_test() ->
-    {ok, Pid} = riak_core_conn_mgr:start_link(),
-    ?debugFmt("started connection manager, Pid = ~p", [Pid]).
+    {Ok, _Pid} = riak_core_conn_mgr:start_link(),
+    ?assert(Ok == ok).
 
 %% conn_mgr should start up paused
 is_paused_test() ->
@@ -35,17 +35,22 @@ set_get_finder_function_test() ->
     FoundFun = riak_core_conn_mgr:get_cluster_finder(),
     ?assert(FinderFun == FoundFun).
 
-%% register a service
+%% register a service and confirm added
 register_protocol_test() ->
     ExpectedRevs = [{1,0}, {1,0}],
     TestProtocol = {{testproto, [{1,0}]}, ?MODULE, testService, ExpectedRevs},
     riak_core_conn_mgr:register_protocol(TestProtocol),
     ?assert(riak_core_conn_mgr:is_registered(testproto) == true).
 
+%% unregister and confirm removed
 unregister_protocol_id_test() ->
     TestProtocolId = testproto,
     riak_core_conn_mgr:unregister_protocol_id(TestProtocolId),
     ?assert(riak_core_conn_mgr:is_registered(testproto) == false).
+
+%%
+start_service_test() ->
+    ?assert(false).
 
 %%------------------------
 %% Helper functions
