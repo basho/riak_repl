@@ -28,7 +28,8 @@
          schedule_fullsync/0,
          schedule_fullsync/1,
          elapsed_secs/1,
-         shuffle_partitions/2
+         shuffle_partitions/2,
+         proxy_get_active/0
      ]).
 
 make_peer_info() ->
@@ -232,7 +233,7 @@ binpack_bkey({B, K}) ->
     SK = size(K),
     <<SB:32/integer, B/binary, SK:32/integer, K/binary>>.
 
-binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) -> 
+binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) ->
     {B,K}.
 
 
@@ -255,7 +256,7 @@ keylist_filename(WorkDir, Partition, Type) ->
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 %% Returns true if the IP address given is a valid host IP address
-valid_host_ip(IP) ->     
+valid_host_ip(IP) ->
     {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
     lists:foldl(
@@ -578,3 +579,10 @@ parse_vsn(Str) ->
             end || T <- Toks],
     list_to_tuple(Vsns).
 
+%% doc Check app.config to see if repl proxy_get is enabled
+%% Defaults to false.
+proxy_get_active() ->
+    case application:get_env(riak_repl, proxy_get) of
+        {ok, enabled} -> true;
+        _ -> false
+    end.

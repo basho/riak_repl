@@ -17,7 +17,7 @@
 
 %% API
 -export([start_link/1, status/1, status/2, async_connect/3, send/3,
-        handle_peerinfo/3, make_state/6]).
+        handle_peerinfo/3, make_state/6, cluster_name/1, proxy_get/4]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -42,7 +42,9 @@
         fullsync_worker,
         fullsync_strategy,
         pool_pid,
-        keepalive_time
+        keepalive_time,
+        cluster_name,
+        proxy_gets = []
     }).
 
 make_state(SiteName, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -59,6 +61,12 @@ status(Pid) ->
 
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
+
+cluster_name(Pid) ->
+    gen_server:call(Pid, cluster_name).
+
+proxy_get(Pid, Bucket, Key, Options) ->
+    gen_server:call(Pid, {proxy_get, Bucket, Key, Options}, infinity).
 
 init([SiteName]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -113,11 +121,21 @@ handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
             undefined ->
                 [{waiting_to_retry, State#state.listeners}];
             {connected, IPAddr, Port} ->
-                [{connected, IPAddr, Port}];
+                [
+                    {connected, IPAddr, Port},
+                    {cluster_name, State#state.cluster_name}
+                ];
             {Pid, IPAddr, Port} ->
                 [{connecting, Pid, IPAddr, Port}]
         end,
     {reply, {status, Desc ++ Res}, State};
+handle_call(cluster_name, _From, State) ->
+    {reply, State#state.cluster_name, State};
+handle_call({proxy_get, Bucket, Key, Options}, From, State) ->
+    Ref = make_ref(),
+    send(State#state.transport, State#state.socket, {proxy_get, Ref, Bucket, Key, Options}),
+    %% wait to send the reply until we hear back from the server
+    {noreply, State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets]}};
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
 
@@ -194,6 +212,16 @@ handle_info({Proto, Socket, Data},
             Worker = poolboy:checkout(Pool, true, infinity),
             ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
             {noreply, State};
+        {proxy_get_resp, Ref, Resp} ->
+            case lists:keytake(Ref, 1, State#state.proxy_gets) of
+                false ->
+                    lager:info("got unexpected proxy_get_resp message"),
+                    {noreply, State};
+                {value, {Ref, From}, ProxyGets} ->
+                    %% send the response to the patiently waiting client
+                    gen_server:reply(From, Resp),
+                    {noreply, State#state{proxy_gets=ProxyGets}}
+            end;
         keepalive ->
             send(Transport, Socket, keepalive_ack),
             {noreply, State};
@@ -445,6 +473,8 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                     end,
                     TheirRing = riak_core_ring:upgrade(TheirPeerInfo#peer_info.ring),
                     update_site_ips(riak_repl_ring:get_repl_config(TheirRing), SiteName, ConnIP),
+                    ClusterName = list_to_binary(io_lib:format("~p",
+                            [proplists:get_value(cluster_name, Capability)])),
                     Transport:setopts(Socket, [{active, once}]),
                     riak_repl_stats:client_connects(),
                     MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
@@ -456,7 +486,8 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                             fullsync_worker=FullsyncWorker,
                             fullsync_strategy=StratMod,
                             keepalive_time=KeepaliveTime,
-                            pool_pid=Pid}}
+                            pool_pid=Pid,
+                            cluster_name=ClusterName}}
             end;
         false ->
             lager:error("Invalid peer info for site ~p, "
