@@ -240,7 +240,7 @@ handle_msg(keepalive_ack, State) ->
     %% noop
     {noreply, State};
 handle_msg({proxy_get, Ref, Bucket, Key, Options}, State) ->
-    lager:info("Got proxy_get for ~p:~p", [Bucket, Key]),
+    lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),
     %% do this GET in a worker?
     C = State#state.client,
     Res = C:get(Bucket, Key, Options),

@@ -584,9 +584,5 @@ parse_vsn(Str) ->
 proxy_get_active() ->
     case application:get_env(riak_repl, proxy_get) of
         {ok, enabled} -> true;
-        {ok, disabled} -> false;
-        {ok, _} ->
-            lager:warning("proxy_get value in app.config is invalid"),
-            false;
-        undefined -> false
+        _ -> false
     end.
