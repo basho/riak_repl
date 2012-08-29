@@ -116,7 +116,8 @@ handle_call(Unhandled, _From, State) ->
     {reply, {error, unhandled}, State}.
 
 handle_cast(pause, State) ->
-    {noreply, State#state{is_paused=true}};
+    NewState = pause_services(State),
+    {noreply, NewState};
 
 handle_cast(resume, State) ->
     NewState = resume_services(State),
@@ -171,3 +172,15 @@ resume_services(State) ->
             State#state{is_paused=false, dispatcher_pid=Pid}
     end.
 
+%% kill existing service dispatcher if running
+pause_services(State) when State#state.is_paused == true ->
+    State;
+pause_services(State) ->
+    case State#state.dispatcher_pid of
+        undefined ->
+            State#state{is_paused=true};
+        _Pid ->
+            IpAddr = State#state.dispatch_addr,
+            ok = riak_core_connection:stop_dispatcher(IpAddr),
+            State#state{is_paused=true, dispatcher_pid=undefined}
+    end.

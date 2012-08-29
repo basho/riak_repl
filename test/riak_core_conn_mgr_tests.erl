@@ -75,6 +75,23 @@ start_service_test() ->
     %% allow client and server to connect and make assertions of success/failure
     timer:sleep(4000).
 
+pause_existing_services_test() ->
+    %% there should be services running now.
+    %% pause them and confirm paused.
+    pause_test(),
+    %% now start a client and confirm failure to connect
+    ClientProtocol = {testproto, [{1,0}]},
+    ExpectedArgs = expectedToFail,
+    %% Socket options set on both client and host. Note: binary is mandatory.
+    TcpOptions = [{keepalive, true},
+                  {nodelay, true},
+                  {packet, 4},
+                  {reuseaddr, true},
+                  {active, false}],
+    riak_repl2_connection:connect(?TEST_ADDR, ClientProtocol, TcpOptions, {?MODULE, ExpectedArgs}),
+    %% allow client and server to connect and make assertions of success/failure
+    timer:sleep(1000).
+
 cleanup_test() ->
     application:stop(ranch).
 
@@ -103,5 +120,11 @@ connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
     ?assert(ExpectedRemoteVer == RemoteVer),
     timer:sleep(2000).
 
-connect_failed({_Proto,_Vers}, {error, _Reason}, _Args) ->
-    ?assert(false).
+connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
+    case Args of
+        expectedToFail ->
+            ?assert(Reason == econnrefused);
+        _ ->
+            ?assert(true)
+    end,
+    timer:sleep(1000).
