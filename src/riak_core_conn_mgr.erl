@@ -8,16 +8,19 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(SERVER, riak_core_connection_manager).
+-define(MAX_LISTENERS, 100).
 
 %% connection manager state:
 %% cluster_finder := function that returns the ip address
 %% registrations := registered protocols, key :: proto_id()
 -record(state, {is_paused = false :: boolean(),
+                dispatch_addr = {"localhost", 9000} :: ip_addr(),
                 cluster_finder = fun() -> {error, undefined} end :: cluster_finder_fun(),
-                registrations = orddict:new() :: orddict:orddict()
+                registrations = orddict:new() :: orddict:orddict(),
+                dispatcher_pid = undefined :: pid()
                }).
 
--export([start_link/0,
+-export([start_link/1,
          resume/0,
          pause/0,
          is_paused/0,
@@ -36,8 +39,13 @@
 %%% API
 %%%===================================================================
 
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+%% start the Connection Manager on the given Ip Address and Port.
+%% All sub-protocols will be dispatched from there.
+-spec(start_link(ip_addr()) -> {ok, pid()}).
+start_link({IP,Port}) ->
+    Args = [{IP,Port}],
+    Options = [],
+    gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
 %% resume() will begin/resume accepting and establishing new connections, in
 %% order to maintain the protocols that have been (or continue to be) registered
@@ -87,9 +95,11 @@ is_registered(ProtocolId) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([]) ->
+init([IpAddr]) ->
     process_flag(trap_exit, true),
-    {ok, #state{is_paused = true}}.
+    {ok, #state{is_paused = true,
+                dispatch_addr = IpAddr
+               }}.
 
 handle_call(is_paused, _From, State) ->
     {reply, State#state.is_paused, State};
@@ -109,7 +119,8 @@ handle_cast(pause, State) ->
     {noreply, State#state{is_paused=true}};
 
 handle_cast(resume, State) ->
-    {noreply, State#state{is_paused=false}};
+    NewState = resume_services(State),
+    {noreply, NewState};
 
 handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
@@ -140,3 +151,23 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Private
 %%%===================================================================
+
+%% resume, start registered protocols
+resume_services(State) ->
+    case orddict:size(State#state.registrations) of
+        0 ->
+            %% no registered protocols yet
+            State#state{is_paused=false};
+        _NotZero ->
+            TcpOptions = [{keepalive, true},
+                          {nodelay, true},
+                          {packet, 4},
+                          {reuseaddr, true},
+                          {active, false}],
+            IpAddr = State#state.dispatch_addr,
+            Protos = [Proto || {_Id, Proto} <- orddict:to_list(State#state.registrations)],
+            {ok, Pid} = riak_core_connection:start_dispatcher(IpAddr, ?MAX_LISTENERS,
+                                                              TcpOptions, Protos),
+            State#state{is_paused=false, dispatcher_pid=Pid}
+    end.
+
