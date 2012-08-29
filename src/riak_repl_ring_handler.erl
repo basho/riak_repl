@@ -35,6 +35,8 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     FinalRing = init_repl_config(OldRing, NewRing),
     update_cluster_name(FinalRing),
     update_leader(FinalRing),
+    riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(FinalRing),
+                            riak_repl_ring:rt_started(FinalRing)),
     riak_repl_listener_sup:ensure_listeners(FinalRing),
     case riak_repl_leader:is_leader() of
         true ->
