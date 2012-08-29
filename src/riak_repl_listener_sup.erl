@@ -27,8 +27,8 @@ ensure_listeners(Ring) ->
         RC -> RC
     end,
     CurrentListeners = [L ||
-        {{_, L}, Pid, _Type, _Modules} <- supervisor:which_children(ranch_sup),
-        is_pid(Pid)],
+        {{_, #repl_listener{}=L}, Pid, _Type, _Modules} <- supervisor:which_children(ranch_sup),
+                           is_pid(Pid)],
     ConfiguredListeners = [Listener || Listener <- dict:fetch(listeners, ReplConfig),
         Listener#repl_listener.nodename == node()],
     ToStop = sets:to_list(

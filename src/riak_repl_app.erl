@@ -33,6 +33,21 @@ start(_Type, _StartArgs) ->
             %% Add routes to webmachine
             [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
+
+            %% TODO: Supervise this somewhere
+            %% Start connection manager listening
+            IP = "0.0.0.0",
+            Port = app_helper:get_env(riak_repl, conn_port, 9900),
+            MaxListeners = 5,
+            TcpOptions = [{keepalive, true},
+                          {nodelay, true},
+                          {packet, 4}, %% TODO: get rid of packet, 4
+                          {reuseaddr, true},
+                          {active, false}],
+            Args = [],
+            SubProtocols = [{{realtime,[{1,0}]}, riak_repl2_rtsink, start_link, Args}],
+            {ok, _CMPid} = riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, 
+                                                                 TcpOptions, SubProtocols),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

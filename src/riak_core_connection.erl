@@ -90,6 +90,8 @@ sync_connect({IP,Port}, ClientSpec) ->
 
 %% Returns true if the IP address given is a valid host IP address.
 %% stolen from riak_repl_util.erl
+valid_host_ip("0.0.0.0") ->
+    true;
 valid_host_ip(IP) ->     
     {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
