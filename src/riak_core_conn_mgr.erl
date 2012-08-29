@@ -1,7 +1,5 @@
 %% Riak Replication Subprotocol Server Dispatch and Client Connections
-%%
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
-%%
 
 -module(riak_core_conn_mgr).
 -behaviour(gen_server).
@@ -11,8 +9,12 @@
 
 -define(SERVER, riak_core_connection_manager).
 
--record(state, {is_paused = false,
-                cluster_finder = fun() -> {error, undefined} end
+%% connection manager state:
+%% cluster_finder := function that returns the ip address
+%% registrations := registered protocols, key :: proto_id()
+-record(state, {is_paused = false :: boolean(),
+                cluster_finder = fun() -> {error, undefined} end :: cluster_finder_fun(),
+                registrations = orddict:new() :: orddict:orddict()
                }).
 
 -export([start_link/0,
@@ -56,7 +58,7 @@ is_paused() ->
 %% Specify a function that will return the IP/Port of our Cluster Manager.
 %% Connection Manager will call this function each time it wants to find the
 %% current ClusterManager
--spec(set_cluster_finder(fun(() -> {ok,ip_addr()} | {error, term()})) -> ok).
+-spec(set_cluster_finder(cluster_finder_fun()) -> ok).
 set_cluster_finder(Fun) ->
     gen_server:cast(?SERVER, {set_cluster_finder, Fun}).
 
@@ -92,8 +94,9 @@ init([]) ->
 handle_call(is_paused, _From, State) ->
     {reply, State#state.is_paused, State};
 
-handle_call({is_registered, _ProtocolId}, _From, State) ->
-    {reply, false, State};
+handle_call({is_registered, ProtocolId}, _From, State) ->
+    Found = orddict:is_key(ProtocolId, State#state.registrations),
+    {reply, Found, State};
 
 handle_call(get_cluster_finder, _From, State) ->
     {reply, State#state.cluster_finder, State};
@@ -111,8 +114,10 @@ handle_cast(resume, State) ->
 handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
 
-handle_cast({register_protocol, _Protocol}, State) ->
-    {noreply, State};
+handle_cast({register_protocol, Protocol}, State) ->
+    {{ProtocolId,_Revs},_M,_F,_A} = Protocol,
+    NewDict = orddict:store(ProtocolId, Protocol, State#state.registrations),
+    {noreply, State#state{registrations=NewDict}};
 
 handle_cast({unregister_protocol_id, _ProtocolId}, State) ->
     {noreply, State};

@@ -17,6 +17,8 @@
 -type(proto() :: {proto_id(), {rev(), rev()}}). %% e.g. {realtime_repl, 1, 0}
 -type(protoprefs() :: {proto_id(), [{rev(), rev()}]}).
 
+-type(cluster_finder_fun() :: fun(() -> {ok,ip_addr()} | {error, term()})).
+
 %% Function = fun(Socket, Transport, Protocol, Args) -> ok
 %% Protocol :: proto()
 -type(service_started_callback() :: fun((inet:socket(), module(), proto(), [any()]) -> no_return())).
