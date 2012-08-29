@@ -8,8 +8,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include("riak_repl_cs.hrl").
-
 -export([send_realtime/2, send/2, recv/1]).
 
 -define(BLOCK_BUCKET_PREFIX, "0b:").
@@ -83,7 +81,7 @@ access_bucket(_Bucket) ->
 -spec skip_user_bucket(binary()) -> boolean().
 skip_user_bucket(Bucket) ->
     ReplicateUsers = app_helper:get_env(riak_repl, replicate_cs_user_objects,
-                       ?REPLICATE_CS_USER_OBJECTS),
+                       true),
     handle_should_replicate_users_bucket(ReplicateUsers, Bucket).
 
 -spec handle_should_replicate_users_bucket(boolean(), binary()) ->
@@ -98,7 +96,7 @@ handle_should_replicate_users_bucket(false, Bucket) ->
 -spec skip_buckets_bucket(binary()) -> boolean().
 skip_buckets_bucket(Bucket) ->
     ReplicateBuckets = app_helper:get_env(riak_repl, replicate_cs_bucket_objects,
-                       ?REPLICATE_CS_BUCKET_OBJECTS),
+                       true),
     handle_should_replicate_buckets_bucket(ReplicateBuckets, Bucket).
 
 -spec handle_should_replicate_buckets_bucket(boolean(), binary()) ->
