@@ -77,7 +77,7 @@ register_protocol(Protocol) ->
 %% for this protocol will not be accepted until re-registered.
 -spec(unregister_protocol_id(proto_id()) -> ok).
 unregister_protocol_id(ProtocolId) ->
-    gen_server:cast(?SERVER, {unregister_protocol, ProtocolId}).
+    gen_server:cast(?SERVER, {unregister_protocol_id, ProtocolId}).
 
 -spec(is_registered(proto_id()) -> boolean()).
 is_registered(ProtocolId) ->
@@ -119,8 +119,9 @@ handle_cast({register_protocol, Protocol}, State) ->
     NewDict = orddict:store(ProtocolId, Protocol, State#state.registrations),
     {noreply, State#state{registrations=NewDict}};
 
-handle_cast({unregister_protocol_id, _ProtocolId}, State) ->
-    {noreply, State};
+handle_cast({unregister_protocol_id, ProtocolId}, State) ->
+    NewDict = orddict:erase(ProtocolId, State#state.registrations),
+    {noreply, State#state{registrations=NewDict}};
 
 handle_cast(Unhandled, _State) ->
     ?debugFmt("Unhandled gen_server cast: ~p", [Unhandled]),
