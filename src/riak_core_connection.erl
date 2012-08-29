@@ -22,7 +22,7 @@
 
 -spec(start_dispatcher(ip_addr(), non_neg_integer(), [inet:connect_option()], [protospec()]) -> {ok, pid()}).
 start_dispatcher({IP,Port}, MaxListeners, Options, SubProtocols) ->
-    case riak_repl_util:valid_host_ip(IP) of
+    case valid_host_ip(IP) of
         true ->
 %%            ?debugFmt("Connection manager: starting listener on ~s:~p", [IP, Port]),
             {ok, RawAddress} = inet_parse:address(IP),
