@@ -12,9 +12,10 @@
 -type(ip_portnum() :: non_neg_integer()).
 -type(ip_addr() :: {ip_addr_str(), ip_portnum()}).
 
+-type(proto_id() :: atom()).
 -type(rev() :: non_neg_integer()). %% major or minor revision number
--type(proto() :: {atom(), {rev(), rev()}}). %% e.g. {realtime_repl, 1, 0}
--type(protoprefs() :: {atom(), [{rev(), rev()}]}).
+-type(proto() :: {proto_id(), {rev(), rev()}}). %% e.g. {realtime_repl, 1, 0}
+-type(protoprefs() :: {proto_id(), [{rev(), rev()}]}).
 
 %% Function = fun(Socket, Transport, Protocol, Args) -> ok
 %% Protocol :: proto()
