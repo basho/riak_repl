@@ -37,7 +37,7 @@ protocol_match_test() ->
     %% local host
     IP = "127.0.0.1",
     Port = 10365,
-    %% Socket options set on both client and host. Note: binary is mandatory.
+    %% Socket options set on both client and host.
     TcpOptions = [{keepalive, true},
                   {nodelay, true},
                   {packet, 4},
@@ -45,12 +45,15 @@ protocol_match_test() ->
                   {active, false}],
     %% start dispatcher
     MaxListeners = 10,
-    SubProtocols = [{{test1proto, [{2,1}, {1,0}]}, ?MODULE, test1service, [{1,0}, {1,1}]}],
-    riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, TcpOptions, SubProtocols),
+    ServiceProto = {test1proto, [{2,1}, {1,0}]},
+    ServiceSpec = {ServiceProto, {TcpOptions, ?MODULE, test1service, [{1,0}, {1,1}]}},
+    ServiceProtocols = [ServiceSpec],
+    riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, ServiceProtocols),
 
     %% try to connect via a client that speaks 0.1 and 1.1
     ClientProtocol = {test1proto, [{0,1},{1,1}]},
-    riak_core_connection:connect({IP,Port}, ClientProtocol, TcpOptions, {?MODULE, [{1,1},{1,0}]}),
+    ClientSpec = {ClientProtocol, {TcpOptions, ?MODULE, [{1,1},{1,0}]}},
+    riak_core_connection:connect({IP,Port}, ClientSpec),
 
     timer:sleep(2000),
     application:stop(ranch),
@@ -73,12 +76,14 @@ failed_protocol_match_test() ->
                   {active, false}],
     %% start dispatcher
     MaxListeners = 10,
-    SubProtocols = [{{test1protoFailed, [{2,1}, {1,0}]}, ?MODULE, test1service, [failed_host_args]}],
-    riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, TcpOptions, SubProtocols),
+    SubProtocols = [{{test1protoFailed, [{2,1}, {1,0}]},
+                     {TcpOptions, ?MODULE, test1service, [failed_host_args]}}],
+    riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, SubProtocols),
 
     %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
     ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
-    riak_core_connection:connect({IP,Port}, ClientProtocol, TcpOptions, {?MODULE, failed_client_args}),
+    ClientSpec = {ClientProtocol, {TcpOptions, ?MODULE, failed_client_args}},
+    riak_core_connection:connect({IP,Port}, ClientSpec),
 
     timer:sleep(2000),
     application:stop(ranch),
