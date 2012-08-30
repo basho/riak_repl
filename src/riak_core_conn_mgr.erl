@@ -12,11 +12,12 @@
 
 %% connection manager state:
 %% cluster_finder := function that returns the ip address
-%% registrations := registered protocols, key :: proto_id()
+%% services & clients := registered protocols, key :: proto_id()
 -record(state, {is_paused = false :: boolean(),
                 dispatch_addr = {"localhost", 9000} :: ip_addr(),
                 cluster_finder = fun() -> {error, undefined} end :: cluster_finder_fun(),
-                registrations = orddict:new() :: orddict:orddict(),
+                services = orddict:new() :: orddict:orddict(),
+                clients = orddict:new() :: orddict:orddict(),
                 dispatcher_pid = undefined :: pid()
                }).
 
@@ -26,9 +27,11 @@
          is_paused/0,
          set_cluster_finder/1,
          get_cluster_finder/0,
-         register_protocol/1,
-         unregister_protocol_id/1,
-         is_registered/1
+         register_service/1,
+         register_client/1,
+         unregister_service/1,
+         unregister_client/1,
+         is_registered/2
          ]).
 
 %% gen_server callbacks
@@ -75,21 +78,30 @@ get_cluster_finder() ->
     gen_server:call(?SERVER, get_cluster_finder).
 
 %% Once a protocol specification is registered, it will be kept available by the
-%% Connection Manager. See the protospec() type defined in the Connection layer.
--spec(register_protocol(protospec()) -> ok).
-register_protocol(Protocol) ->
-    gen_server:cast(?SERVER, {register_protocol, Protocol}).
+%% Connection Manager. See the hostspec() type defined in the Connection layer.
+-spec(register_service(hostspec()) -> ok).
+register_service(HostProtocol) ->
+    gen_server:cast(?SERVER, {register_service, HostProtocol}).
+
+%% Register both host and client protocols.
+-spec(register_client(clientspec()) -> ok).
+register_client(ClientProtocol) ->
+    gen_server:cast(?SERVER, {register_client, ClientProtocol}).
 
 %% Unregister the given protocol-id.
 %% Existing connections for this protocol are not killed. New connections
 %% for this protocol will not be accepted until re-registered.
--spec(unregister_protocol_id(proto_id()) -> ok).
-unregister_protocol_id(ProtocolId) ->
-    gen_server:cast(?SERVER, {unregister_protocol_id, ProtocolId}).
+-spec(unregister_service(proto_id()) -> ok).
+unregister_service(ProtocolId) ->
+    gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
 
--spec(is_registered(proto_id()) -> boolean()).
-is_registered(ProtocolId) ->
-    gen_server:call(?SERVER, {is_registered, ProtocolId}).
+-spec(unregister_client(proto_id()) -> ok).
+unregister_client(ProtocolId) ->
+    gen_server:cast(?SERVER, {unregister_client, ProtocolId}).
+
+-spec(is_registered((client | service), proto_id()) -> boolean()).
+is_registered(Kind, ProtocolId) ->
+    gen_server:call(?SERVER, {is_registered, Kind, ProtocolId}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -104,8 +116,12 @@ init([IpAddr]) ->
 handle_call(is_paused, _From, State) ->
     {reply, State#state.is_paused, State};
 
-handle_call({is_registered, ProtocolId}, _From, State) ->
-    Found = orddict:is_key(ProtocolId, State#state.registrations),
+handle_call({is_registered, service, ProtocolId}, _From, State) ->
+    Found = orddict:is_key(ProtocolId, State#state.services),
+    {reply, Found, State};
+
+handle_call({is_registered, client, ProtocolId}, _From, State) ->
+    Found = orddict:is_key(ProtocolId, State#state.clients),
     {reply, Found, State};
 
 handle_call(get_cluster_finder, _From, State) ->
@@ -126,14 +142,23 @@ handle_cast(resume, State) ->
 handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
 
-handle_cast({register_protocol, Protocol}, State) ->
-    {{ProtocolId,_Revs},_M,_F,_A} = Protocol,
-    NewDict = orddict:store(ProtocolId, Protocol, State#state.registrations),
-    {noreply, State#state{registrations=NewDict}};
+handle_cast({register_service, Protocol}, State) ->
+    {{ProtocolId,_Revs},_Rest} = Protocol,
+    NewDict = orddict:store(ProtocolId, Protocol, State#state.services),
+    {noreply, State#state{services=NewDict}};
 
-handle_cast({unregister_protocol_id, ProtocolId}, State) ->
-    NewDict = orddict:erase(ProtocolId, State#state.registrations),
-    {noreply, State#state{registrations=NewDict}};
+handle_cast({register_client, Protocol}, State) ->
+    {{ProtocolId,_Revs},_Rest} = Protocol,
+    NewDict = orddict:store(ProtocolId, Protocol, State#state.clients),
+    {noreply, State#state{clients=NewDict}};
+
+handle_cast({unregister_service, ProtocolId}, State) ->
+    NewDict = orddict:erase(ProtocolId, State#state.services),
+    {noreply, State#state{services=NewDict}};
+
+handle_cast({unregister_client, ProtocolId}, State) ->
+    NewDict = orddict:erase(ProtocolId, State#state.clients),
+    {noreply, State#state{clients=NewDict}};
 
 handle_cast(Unhandled, _State) ->
     ?debugFmt("Unhandled gen_server cast: ~p", [Unhandled]),
@@ -155,20 +180,14 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% resume, start registered protocols
 resume_services(State) ->
-    case orddict:size(State#state.registrations) of
+    case orddict:size(State#state.services) of
         0 ->
             %% no registered protocols yet
             State#state{is_paused=false};
         _NotZero ->
-            TcpOptions = [{keepalive, true},
-                          {nodelay, true},
-                          {packet, 4},
-                          {reuseaddr, true},
-                          {active, false}],
             IpAddr = State#state.dispatch_addr,
-            Protos = [Proto || {_Id, Proto} <- orddict:to_list(State#state.registrations)],
-            {ok, Pid} = riak_core_connection:start_dispatcher(IpAddr, ?MAX_LISTENERS,
-                                                              TcpOptions, Protos),
+            Protos = [Proto || {_Id, Proto} <- orddict:to_list(State#state.services)],
+            {ok, Pid} = riak_core_connection:start_dispatcher(IpAddr, ?MAX_LISTENERS, Protos),
             State#state{is_paused=false, dispatcher_pid=Pid}
     end.
 

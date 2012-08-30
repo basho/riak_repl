@@ -11,6 +11,7 @@
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
 -type(ip_addr() :: {ip_addr_str(), ip_portnum()}).
+-type(tcp_options() :: [any()]).
 
 -type(proto_id() :: atom()).
 -type(rev() :: non_neg_integer()). %% major or minor revision number
@@ -22,4 +23,9 @@
 %% Function = fun(Socket, Transport, Protocol, Args) -> ok
 %% Protocol :: proto()
 -type(service_started_callback() :: fun((inet:socket(), module(), proto(), [any()]) -> no_return())).
--type(protospec() :: {protoprefs(), module(), service_started_callback(), [any()]}).
+
+%% Host protocol spec
+-type(hostspec() :: {protoprefs(), {tcp_options(), module(), service_started_callback(), [any()]}}).
+
+%% Client protocol spec
+-type(clientspec() :: {protoprefs(), {tcp_options(), module(),[any()]}}).

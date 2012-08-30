@@ -12,6 +12,12 @@
 
 -define(TEST_ADDR, {"127.0.0.1", 4097}).
 
+-define(TCP_OPTIONS, [{keepalive, true},
+                      {nodelay, true},
+                      {packet, 4},
+                      {reuseaddr, true},
+                      {active, false}]).
+
 %% this test runs first and leaves the server running for other tests
 start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
@@ -42,36 +48,30 @@ set_get_finder_function_test() ->
     ?assert(FinderFun == FoundFun).
 
 %% register a service and confirm added
-register_protocol_test() ->
+register_service_test() ->
     ExpectedRevs = [{1,0}, {1,0}],
-    TestProtocol = {{testproto, [{1,0}]}, ?MODULE, testService, ExpectedRevs},
-    riak_core_conn_mgr:register_protocol(TestProtocol),
-    ?assert(riak_core_conn_mgr:is_registered(testproto) == true).
+    TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
+    riak_core_conn_mgr:register_service(TestProtocol),
+    ?assert(riak_core_conn_mgr:is_registered(service,testproto) == true).
 
 %% unregister and confirm removed
-unregister_protocol_id_test() ->
+unregister_service_test() ->
     TestProtocolId = testproto,
-    riak_core_conn_mgr:unregister_protocol_id(TestProtocolId),
-    ?assert(riak_core_conn_mgr:is_registered(testproto) == false).
+    riak_core_conn_mgr:unregister_service(TestProtocolId),
+    ?assert(riak_core_conn_mgr:is_registered(service,testproto) == false).
 
 %% start a service via normal sequence
 start_service_test() ->
     %% pause and confirm paused
     pause_test(),
     %% re-register the test protocol and confirm registered
-    register_protocol_test(),
+    register_service_test(),
     %% resume and confirm not paused, which should cause service to start
     resume_test(),
     %% try to connect via a client that speaks our test protocol
-    ClientProtocol = {testproto, [{1,0}]},
     ExpectedRevs = [{1,0}, {1,0}],
-    %% Socket options set on both client and host. Note: binary is mandatory.
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 4},
-                  {reuseaddr, true},
-                  {active, false}],
-    riak_repl2_connection:connect(?TEST_ADDR, ClientProtocol, TcpOptions, {?MODULE, ExpectedRevs}),
+    riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
+                                              {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
     %% allow client and server to connect and make assertions of success/failure
     timer:sleep(4000).
 
@@ -80,15 +80,9 @@ pause_existing_services_test() ->
     %% pause them and confirm paused.
     pause_test(),
     %% now start a client and confirm failure to connect
-    ClientProtocol = {testproto, [{1,0}]},
     ExpectedArgs = expectedToFail,
-    %% Socket options set on both client and host. Note: binary is mandatory.
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 4},
-                  {reuseaddr, true},
-                  {active, false}],
-    riak_repl2_connection:connect(?TEST_ADDR, ClientProtocol, TcpOptions, {?MODULE, ExpectedArgs}),
+    riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
+                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     %% allow client and server to connect and make assertions of success/failure
     timer:sleep(1000).
 
@@ -103,7 +97,6 @@ cleanup_test() ->
 testService(_Socket, _Transport, {error, _Reason}, _Args) ->
     ?assert(false);
 testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
-    ?debugMsg("testService started"),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -113,7 +106,6 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
 
 %% Client side protocol callbacks
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
-    ?debugMsg("testClient connected"),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(Proto == testproto),
     ?assert(ExpectedMyVer == MyVer),
