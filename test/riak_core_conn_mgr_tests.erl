@@ -60,6 +60,19 @@ unregister_service_test() ->
     riak_core_conn_mgr:unregister_service(TestProtocolId),
     ?assert(riak_core_conn_mgr:is_registered(service,testproto) == false).
 
+%% register a client and confirm added
+register_client_test() ->
+    ExpectedRevs = [{1,0}, {1,0}],
+    TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedRevs}},
+    riak_core_conn_mgr:register_client(TestProtocol),
+    ?assert(riak_core_conn_mgr:is_registered(client,testproto) == true).
+
+%% unregister and confirm removed
+unregister_client_test() ->
+    TestProtocolId = testproto,
+    riak_core_conn_mgr:unregister_client(TestProtocolId),
+    ?assert(riak_core_conn_mgr:is_registered(client,testproto) == false).
+
 %% start a service via normal sequence
 start_service_test() ->
     %% pause and confirm paused
@@ -88,6 +101,7 @@ pause_existing_services_test() ->
 
 cleanup_test() ->
     application:stop(ranch).
+    
 
 %%------------------------
 %% Helper functions
