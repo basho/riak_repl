@@ -6,10 +6,13 @@
 -module(riak_core_connection).
 
 -include("riak_core_connection.hrl").
--include_lib("eunit/include/eunit.hrl").
 
-%% -define(TRACE(Stmt),Stmt).
--define(TRACE(Stmt),ok).
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+-define(TRACE(Stmt),Stmt).
+%%-define(TRACE(Stmt),ok).
 
 %% Tcp options used during the connection and negotiation phase
 -define(CONNECT_OPTIONS, [binary,
@@ -20,10 +23,17 @@
                           {active, false}]).
 
 %% public API
--export([start_dispatcher/3, stop_dispatcher/1, connect/2, start_link/4]).
+-export([start_dispatcher/3,
+         stop_dispatcher/1,
+         connect/2,
+         sync_connect/2,
+         start_link/4]).
 
 %% internal functions
--export([async_connect/3, dispatch_service/4, valid_host_ip/1, normalize_ip/1]).
+-export([async_connect_proc/3,
+         dispatch_service/4,
+         valid_host_ip/1,
+         normalize_ip/1]).
 
 %% @doc Start the connection dispatcher with a limit of MaxListeners
 %% listener connections and supported sub-protocols. When a connection
@@ -71,7 +81,10 @@ stop_dispatcher({IP,Port}) ->
 connect({IP,Port}, ClientSpec) ->
     ?TRACE(?debugMsg("spawning async_connect link")),
     %% start a process to handle the connection request asyncrhonously
-    proc_lib:spawn_link(?MODULE, async_connect, [self(), {IP,Port}, ClientSpec]).
+    proc_lib:spawn_link(?MODULE, async_connect_proc, [self(), {IP,Port}, ClientSpec]).
+
+sync_connect({IP,Port}, ClientSpec) ->
+    sync_connect_status(self(), {IP,Port}, ClientSpec).
 
 %% @private
 
@@ -122,30 +135,40 @@ exchange_handshakes_with(host, Socket, Transport) ->
             {error, Reason}
     end.
 
-%% Function spawned to do async connect
-async_connect(Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}}) ->
+async_connect_proc(Parent, {IP,Port}, ProtocolSpec) ->
+    sync_connect_status(Parent, {IP,Port}, ProtocolSpec).
+
+%% connect synchronously to remote addr/port and return status
+sync_connect_status(Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}}) ->
     Timeout = 15000,
     Transport = ranch_tcp,
     %%   connect to host's {IP,Port}
-    ?TRACE(?debugFmt("async_connect: connect to ~p", [{IP,Port}])),
-    case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of 
+    ?TRACE(?debugFmt("sync_connect: connect to ~p", [{IP,Port}])),
+    case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of
         {ok, Socket} ->
+            ?TRACE(?debugFmt("Setting system options on client side: ~p", [?CONNECT_OPTIONS])),
+            Transport:setopts(Socket, ?CONNECT_OPTIONS),
             %% handshake to make sure it's a riak sub-protocol dispatcher
             ok = exchange_handshakes_with(host, Socket, Transport),
             %% ask for protocol, see what host has
             case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
                 {ok,HostProtocol} ->
                     %% set client's requested Tcp options
+                    ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
                     Transport:setopts(Socket, Options),
                     %% transfer the socket to the process that requested the connection
                     ok = Transport:controlling_process(Socket, Parent),
                     %% notify requester of connection and negotiated protocol from host
-                    Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args);
+                    Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args),
+                    ok;
                 {error, Reason} ->
-                    Module:connect_failed(ClientProtocol, {error, Reason}, Args)
+                    ?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}]),
+                    Module:connect_failed(ClientProtocol, {error, Reason}, Args),
+                    {error, Reason}
             end;
         {error, Reason} ->
-            Module:connect_failed(ClientProtocol, {error, Reason}, Args)
+            Module:connect_failed(ClientProtocol, {error, Reason}, Args),
+            {error, Reason}
     end.
 
 %% Host callback function, called by ranch for each accepted connection by way of
@@ -162,7 +185,7 @@ dispatch_service(Listener, Socket, Transport, SubProtocols) ->
     %% tell ranch "we've got it. thanks pardner"
     ok = ranch:accept_ack(Listener),
     %% set some starting options for the channel; these should match the client
-    ?TRACE(?debugMsg("setting service tcp options")),
+    ?TRACE(?debugFmt("setting system options on service side: ~p", [?CONNECT_OPTIONS])),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     ok = exchange_handshakes_with(client, Socket, Transport),
     Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
@@ -170,19 +193,25 @@ dispatch_service(Listener, Socket, Transport, SubProtocols) ->
     start_negotiated_service(Socket, Transport, Negotiated).
 
 %% start user's module:function and transfer socket to it's process.
-start_negotiated_service(Socket, Transport, {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
-    case NegotiatedProtocols of
-        {error, Reason} ->
-            {error, Reason};
-        Other ->
-            %% Set requested Tcp socket options now that we've finished handshake phase
-            Transport:setopts(Socket, Options),
-            %% call service body function for matching protocol. The callee should start
-            %% a process or gen_server or such, and return {ok, pid()}.
-            {ok, Pid} = Module:Function(Socket, Transport, Other, Args),
+start_negotiated_service(_Socket, _Transport, {error, Reason}) ->
+    ?TRACE(?debugFmt("service dispatch failed with ~p", [{error, Reason}])),
+    {error, Reason};
+start_negotiated_service(Socket, Transport,
+                         {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
+    %% Set requested Tcp socket options now that we've finished handshake phase
+    ?TRACE(?debugFmt("Setting user options on service side; ~p", [Options])),
+    Transport:setopts(Socket, Options),
+    %% call service body function for matching protocol. The callee should start
+    %% a process or gen_server or such, and return {ok, pid()}.
+    case Module:Function(Socket, Transport, NegotiatedProtocols, Args) of
+        {ok, Pid} ->
             %% transfer control of socket to new service process
             ok = Transport:controlling_process(Socket, Pid),
-            {ok, Pid}
+            {ok, Pid};
+        {error, Reason} ->
+            ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",
+                             [Module, Function, Reason])),
+            {error,Reason}
     end.
 
 %% Negotiate the highest common major protocol revisision with the connected client.

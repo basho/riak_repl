@@ -10,8 +10,13 @@
          connected/5, connect_failed/3
         ]).
 
--define(TEST_ADDR, {"127.0.0.1", 4097}).
+%% my name and remote same because I need to talk to myself for testing
+-define(MY_CLUSTER_NAME, "bob").
+-define(REMOTE_CLUSTER_NAME, "bob").
 
+-define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4096}).
+-define(TEST_ADDR, {"127.0.0.1", 4097}).
+-define(MAX_CONS, 2).
 -define(TCP_OPTIONS, [{keepalive, true},
                       {nodelay, true},
                       {packet, 4},
@@ -51,27 +56,14 @@ set_get_finder_function_test() ->
 register_service_test() ->
     ExpectedRevs = [{1,0}, {1,0}],
     TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
-    riak_core_conn_mgr:register_service(TestProtocol),
-    ?assert(riak_core_conn_mgr:is_registered(service,testproto) == true).
+    riak_core_conn_mgr:register_service(TestProtocol, {round_robin,?MAX_CONS}),
+    ?assert(riak_core_conn_mgr:is_registered(testproto) == true).
 
 %% unregister and confirm removed
 unregister_service_test() ->
     TestProtocolId = testproto,
     riak_core_conn_mgr:unregister_service(TestProtocolId),
-    ?assert(riak_core_conn_mgr:is_registered(service,testproto) == false).
-
-%% register a client and confirm added
-register_client_test() ->
-    ExpectedRevs = [{1,0}, {1,0}],
-    TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedRevs}},
-    riak_core_conn_mgr:register_client(TestProtocol),
-    ?assert(riak_core_conn_mgr:is_registered(client,testproto) == true).
-
-%% unregister and confirm removed
-unregister_client_test() ->
-    TestProtocolId = testproto,
-    riak_core_conn_mgr:unregister_client(TestProtocolId),
-    ?assert(riak_core_conn_mgr:is_registered(client,testproto) == false).
+    ?assert(riak_core_conn_mgr:is_registered(testproto) == false).
 
 %% start a service via normal sequence
 start_service_test() ->
@@ -86,7 +78,7 @@ start_service_test() ->
     riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
                                               {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
     %% allow client and server to connect and make assertions of success/failure
-    timer:sleep(4000).
+    timer:sleep(1000).
 
 pause_existing_services_test() ->
     %% there should be services running now.
@@ -99,9 +91,28 @@ pause_existing_services_test() ->
     %% allow client and server to connect and make assertions of success/failure
     timer:sleep(1000).
 
+start_cluster_manager_test() ->
+    %% start a local cluster manager
+    riak_core_cluster_mgr:start_link(),
+    riak_core_cluster_mgr:set_name(?MY_CLUSTER_NAME),
+    %% verify it's running
+    ?assert(?MY_CLUSTER_NAME == riak_core_cluster_mgr:get_name()).
+
+client_connection_test() ->
+    %% pause and confirm paused
+    pause_test(),
+    %% re-register the test protocol and confirm registered
+    unregister_service_test(),
+    register_service_test(),
+    %% resume and confirm not paused, which should cause service to start
+    resume_test(),
+    ExpectedArgs = expectedToFail,
+    riak_core_conn_mgr:connect(?REMOTE_CLUSTER_NAME,
+                               {{testproto2, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+    timer:sleep(1000).
+
 cleanup_test() ->
     application:stop(ranch).
-    
 
 %%------------------------
 %% Helper functions
@@ -111,6 +122,7 @@ cleanup_test() ->
 testService(_Socket, _Transport, {error, _Reason}, _Args) ->
     ?assert(false);
 testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
+    ?debugMsg("testService started"),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -120,6 +132,7 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
 
 %% Client side protocol callbacks
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
+    ?debugMsg("testClient started"),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(Proto == testproto),
     ?assert(ExpectedMyVer == MyVer),

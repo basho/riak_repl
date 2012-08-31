@@ -1,23 +1,34 @@
 %% Riak Replication Subprotocol Server Dispatch and Client Connections
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+%%
 
 -module(riak_core_conn_mgr).
 -behaviour(gen_server).
 
 -include("riak_core_connection.hrl").
+
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-endif.
+
+%% controls retry and backoff.
+%% This combo will cause attempts
+-define(INITIAL_DELAY, 250). %% milliseconds
+-define(MAX_DELAY, 1000).
+
+-define(TRACE(Stmt),Stmt).
+%%-define(TRACE(Stmt),ok).
 
 -define(SERVER, riak_core_connection_manager).
 -define(MAX_LISTENERS, 100).
 
 %% connection manager state:
 %% cluster_finder := function that returns the ip address
-%% services & clients := registered protocols, key :: proto_id()
+%% services := registered protocols, key :: proto_id()
 -record(state, {is_paused = false :: boolean(),
                 dispatch_addr = {"localhost", 9000} :: ip_addr(),
                 cluster_finder = fun() -> {error, undefined} end :: cluster_finder_fun(),
                 services = orddict:new() :: orddict:orddict(),
-                clients = orddict:new() :: orddict:orddict(),
                 dispatcher_pid = undefined :: pid()
                }).
 
@@ -27,16 +38,18 @@
          is_paused/0,
          set_cluster_finder/1,
          get_cluster_finder/0,
-         register_service/1,
-         register_client/1,
+         register_service/2,
          unregister_service/1,
-         unregister_client/1,
-         is_registered/2
+         is_registered/1,
+         connect/2
          ]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+%% internal functions
+-export([try_connect/3, add_connection_proc/4]).
 
 %%%===================================================================
 %%% API
@@ -79,14 +92,11 @@ get_cluster_finder() ->
 
 %% Once a protocol specification is registered, it will be kept available by the
 %% Connection Manager. See the hostspec() type defined in the Connection layer.
--spec(register_service(hostspec()) -> ok).
-register_service(HostProtocol) ->
-    gen_server:cast(?SERVER, {register_service, HostProtocol}).
-
-%% Register both host and client protocols.
--spec(register_client(clientspec()) -> ok).
-register_client(ClientProtocol) ->
-    gen_server:cast(?SERVER, {register_client, ClientProtocol}).
+-spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
+register_service(HostProtocol, Strategy) ->
+    %% only one strategy is supported as yet
+    {round_robin, _NB} = Strategy,
+    gen_server:cast(?SERVER, {register_service, HostProtocol, Strategy}).
 
 %% Unregister the given protocol-id.
 %% Existing connections for this protocol are not killed. New connections
@@ -95,13 +105,16 @@ register_client(ClientProtocol) ->
 unregister_service(ProtocolId) ->
     gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
 
--spec(unregister_client(proto_id()) -> ok).
-unregister_client(ProtocolId) ->
-    gen_server:cast(?SERVER, {unregister_client, ProtocolId}).
+-spec(is_registered(proto_id()) -> boolean()).
+is_registered(ProtocolId) ->
+    gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
 
--spec(is_registered((client | service), proto_id()) -> boolean()).
-is_registered(Kind, ProtocolId) ->
-    gen_server:call(?SERVER, {is_registered, Kind, ProtocolId}).
+%% Establish a connection to the remote destination. be persistent about it,
+%% but not too annoying to the remote end. Connect by name of cluster or
+%% IP address.
+-spec(connect({name,clustername()} | {addr,ip_addr()}, clientspec()) -> pid()).
+connect(Dest, ClientSpec) ->
+    gen_server:cast(?SERVER, {connect, Dest, ClientSpec, default}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -118,10 +131,6 @@ handle_call(is_paused, _From, State) ->
 
 handle_call({is_registered, service, ProtocolId}, _From, State) ->
     Found = orddict:is_key(ProtocolId, State#state.services),
-    {reply, Found, State};
-
-handle_call({is_registered, client, ProtocolId}, _From, State) ->
-    Found = orddict:is_key(ProtocolId, State#state.clients),
     {reply, Found, State};
 
 handle_call(get_cluster_finder, _From, State) ->
@@ -142,23 +151,19 @@ handle_cast(resume, State) ->
 handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
 
-handle_cast({register_service, Protocol}, State) ->
+handle_cast({register_service, Protocol, Strategy}, State) ->
     {{ProtocolId,_Revs},_Rest} = Protocol,
-    NewDict = orddict:store(ProtocolId, Protocol, State#state.services),
+    NewDict = orddict:store(ProtocolId, {Protocol, Strategy}, State#state.services),
     {noreply, State#state{services=NewDict}};
-
-handle_cast({register_client, Protocol}, State) ->
-    {{ProtocolId,_Revs},_Rest} = Protocol,
-    NewDict = orddict:store(ProtocolId, Protocol, State#state.clients),
-    {noreply, State#state{clients=NewDict}};
 
 handle_cast({unregister_service, ProtocolId}, State) ->
     NewDict = orddict:erase(ProtocolId, State#state.services),
     {noreply, State#state{services=NewDict}};
 
-handle_cast({unregister_client, ProtocolId}, State) ->
-    NewDict = orddict:erase(ProtocolId, State#state.clients),
-    {noreply, State#state{clients=NewDict}};
+handle_cast({connect, Dest, Protocol, Strategy}, State) ->
+    CMFun = State#state.cluster_finder,
+    spawn(?MODULE, add_connection_proc, [Dest, Protocol, Strategy, CMFun]),
+    {noreply, State};
 
 handle_cast(Unhandled, _State) ->
     ?debugFmt("Unhandled gen_server cast: ~p", [Unhandled]),
@@ -186,7 +191,7 @@ resume_services(State) ->
             State#state{is_paused=false};
         _NotZero ->
             IpAddr = State#state.dispatch_addr,
-            Protos = [Proto || {_Id, Proto} <- orddict:to_list(State#state.services)],
+            Protos = [Proto || {{_Id, Proto},_S} <- orddict:to_list(State#state.services)],
             {ok, Pid} = riak_core_connection:start_dispatcher(IpAddr, ?MAX_LISTENERS, Protos),
             State#state{is_paused=false, dispatcher_pid=Pid}
     end.
@@ -203,3 +208,31 @@ pause_services(State) ->
             ok = riak_core_connection:stop_dispatcher(IpAddr),
             State#state{is_paused=true, dispatcher_pid=undefined}
     end.
+
+extend_delay(Delay) ->
+    Delay * 2.
+
+try_connect(_Addr, _Protocol, Delay) when Delay > ?MAX_DELAY ->
+    {error, gaveup};
+try_connect(Addr, Protocol, Delay) ->
+    case riak_core_connection:sync_connect(Addr, Protocol) of
+        ok ->
+            ok;
+        {error, _Reason} ->
+            %% try again after some backoff
+            NewDelay = extend_delay(Delay),
+            timer:sleep(NewDelay),
+            try_connect(Addr, Protocol, NewDelay)
+    end.
+
+
+add_connection_proc({addr, Addr}, Protocol, _Strategy, _CMFun) ->
+    try_connect(Addr, Protocol, ?INITIAL_DELAY);
+add_connection_proc({name,Cluster}, Protocol, default, CMFun) ->
+    {ok,ClusterManagerNode} = CMFun(),
+    {{ProtocolId, _Revs}, _Rest} = Protocol,
+    Addrs = gen_server:call({?CLUSTER_MANAGER_SERVER, ClusterManagerNode},
+                            {get_addrs_for_proto_id, ProtocolId}),
+    %% try all in list until success
+    Addr = hd(Addrs),
+    try_connect(Addr, Protocol, ?INITIAL_DELAY).
