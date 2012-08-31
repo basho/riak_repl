@@ -187,11 +187,15 @@ code_change(_OldVsn, State, _Extra) ->
 resume_services(State) ->
     case orddict:size(State#state.services) of
         0 ->
+            ?debugMsg("resume_services: no registered protocols"),
             %% no registered protocols yet
             State#state{is_paused=false};
         _NotZero ->
+            Services = orddict:to_list(State#state.services),
+            ?debugFmt("resume_services: registered services: ~p", [Services]),
             IpAddr = State#state.dispatch_addr,
-            Protos = [Proto || {{_Id, Proto},_S} <- orddict:to_list(State#state.services)],
+            Protos = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
+            ?debugFmt("resume_services: dispatching protos: ~p", [Protos]),
             {ok, Pid} = riak_core_connection:start_dispatcher(IpAddr, ?MAX_LISTENERS, Protos),
             State#state{is_paused=false, dispatcher_pid=Pid}
     end.
@@ -225,14 +229,13 @@ try_connect(Addr, Protocol, Delay) ->
             try_connect(Addr, Protocol, NewDelay)
     end.
 
-
 add_connection_proc({addr, Addr}, Protocol, _Strategy, _CMFun) ->
     try_connect(Addr, Protocol, ?INITIAL_DELAY);
-add_connection_proc({name,Cluster}, Protocol, default, CMFun) ->
+add_connection_proc({name,RemoteCluster}, Protocol, default, CMFun) ->
     {ok,ClusterManagerNode} = CMFun(),
     {{ProtocolId, _Revs}, _Rest} = Protocol,
     Addrs = gen_server:call({?CLUSTER_MANAGER_SERVER, ClusterManagerNode},
-                            {get_addrs_for_proto_id, ProtocolId}),
+                            {get_addrs_for_proto_id, RemoteCluster, ProtocolId}),
     %% try all in list until success
     Addr = hd(Addrs),
     try_connect(Addr, Protocol, ?INITIAL_DELAY).

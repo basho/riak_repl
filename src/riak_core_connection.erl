@@ -181,7 +181,8 @@ start_link(Listener, Socket, Transport, SubProtocols) ->
 %% we accept because it transforms itself into the SubProtocol once it receives
 %% the sub protocol and version, negotiated with the client.
 dispatch_service(Listener, Socket, Transport, SubProtocols) ->
-    ?TRACE(?debugMsg("started dispatch_service")),
+    ?TRACE(?debugFmt("started dispatch_service with protocols: ~p",
+                     [SubProtocols])),
     %% tell ranch "we've got it. thanks pardner"
     ok = ranch:accept_ack(Listener),
     %% set some starting options for the channel; these should match the client
@@ -268,12 +269,14 @@ negotiate_proto_with_server(Socket, Transport, ClientProtocol) ->
     end.
 
 choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
-    ?TRACE(?debugFmt("choose_version: client proto = ~p", [_CProtocol])),
+    ?TRACE(?debugFmt("choose_version: client proto = ~p, HostProtocols = ~p",
+                     [_CProtocol, HostProtocols])),
     %% first, see if the host supports the subprotocol
     case [H || {{HostProto,_Versions},_Rest}=H <- HostProtocols, ClientProto == HostProto] of
         [] ->
             %% oops! The host does not support this sub protocol type
             lager:error("Failed to find host support for protocol: ~p", [ClientProto]),
+            ?TRACE(?debugMsg("choose_version: no common protocols")),
             {error,protocol_not_supported};
         [{{_HostProto,HostVersions},Rest}=_Matched | _DuplicatesIgnored] ->
             ?TRACE(?debugFmt("choose_version: unsorted = ~p clientversions = ~p",
