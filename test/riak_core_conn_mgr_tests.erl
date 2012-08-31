@@ -106,9 +106,10 @@ client_connection_test() ->
     register_service_test(),
     %% resume and confirm not paused, which should cause service to start
     resume_test(),
-    ExpectedArgs = expectedToFail,
-    riak_core_conn_mgr:connect(?REMOTE_CLUSTER_NAME,
-                               {{testproto2, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+    %% do async connect via conn_mgr
+    ExpectedArgs = [{1,0}, {1,0}],
+    riak_core_conn_mgr:connect({addr, ?TEST_ADDR},
+                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     timer:sleep(1000).
 
 cleanup_test() ->
@@ -144,6 +145,6 @@ connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
         expectedToFail ->
             ?assert(Reason == econnrefused);
         _ ->
-            ?assert(true)
+            ?assert(false)
     end,
     timer:sleep(1000).
