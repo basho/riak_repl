@@ -5,6 +5,9 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+%%-define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
+
 %% internal functions
 -export([testService/4,
          connected/5, connect_failed/3
@@ -47,7 +50,7 @@ pause_test() ->
 
 %% set/get the cluster manager finding function
 set_get_finder_function_test() ->
-    FinderFun = fun() -> {ok, ?TEST_ADDR} end,
+    FinderFun = fun() -> {ok, node()} end,
     riak_core_conn_mgr:set_cluster_finder(FinderFun),
     FoundFun = riak_core_conn_mgr:get_cluster_finder(),
     ?assert(FinderFun == FoundFun).
@@ -74,7 +77,7 @@ start_service_test() ->
     %% resume and confirm not paused, which should cause service to start
     resume_test(),
     %% try to connect via a client that speaks our test protocol
-    ExpectedRevs = [{1,0}, {1,0}],
+    ExpectedRevs = {expectedToPass, [{1,0}, {1,0}]},
     riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
                                               {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
     %% allow client and server to connect and make assertions of success/failure
@@ -107,26 +110,33 @@ client_connection_test() ->
     %% resume and confirm not paused, which should cause service to start
     resume_test(),
     %% do async connect via conn_mgr
-    ExpectedArgs = [{1,0}, {1,0}],
+    ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
     riak_core_conn_mgr:connect({addr, ?TEST_ADDR},
                                {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     timer:sleep(1000).
 
 client_retries_test() ->
+    ?TRACE(?debugMsg(" --------------- retry test ------------- ")),
     %% start the service a while after the client has been started so the client
     %% will do retries.
     %% pause and confirm paused
     pause_test(),
     %% re-register the test protocol and confirm registered
     unregister_service_test(),
-    register_test(),
+    register_service_test(),
     %% do async connect via conn_mgr
+    ExpectedArgs = {retry_test, [{1,0}, {1,0}]},
     riak_core_conn_mgr:connect({addr, ?TEST_ADDR},
-                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
+                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     %% delay so the client will keep trying
+    ?TRACE(?debugMsg(" ------ sleeping 3 sec")),
     timer:sleep(3000),
     %% resume and confirm not paused, which should cause service to start and connection :-)
-    resume_test().
+    ?TRACE(?debugMsg(" ------ resuming services")),
+    resume_test(),
+    %% allow connection to setup
+    ?TRACE(?debugMsg(" ------ sleeping 2 sec")),
+    timer:sleep(1000).
     
 
 cleanup_test() ->
@@ -140,7 +150,7 @@ cleanup_test() ->
 testService(_Socket, _Transport, {error, _Reason}, _Args) ->
     ?assert(false);
 testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
-    ?debugMsg("testService started"),
+    ?TRACE(?debugMsg("testService started")),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -150,8 +160,8 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
 
 %% Client side protocol callbacks
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
-    ?debugMsg("testClient started"),
-    [ExpectedMyVer, ExpectedRemoteVer] = Args,
+    ?TRACE(?debugMsg("testClient started")),
+    {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
     ?assert(Proto == testproto),
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -161,7 +171,11 @@ connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
     case Args of
         expectedToFail ->
             ?assert(Reason == econnrefused);
-        _ ->
+        {retry_test, _Stuff} ->
+            ?TRACE(?debugFmt("connect_failed: during retry test: ~p", [Reason])),
+            ok;
+        _Other ->
+            ?TRACE(?debugFmt("connect_failed: ~p with args = ~p", [Reason, _Other])),
             ?assert(false)
     end,
     timer:sleep(1000).

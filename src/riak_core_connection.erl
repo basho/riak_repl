@@ -11,8 +11,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
+%%-define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
 
 %% Tcp options used during the connection and negotiation phase
 -define(CONNECT_OPTIONS, [binary,

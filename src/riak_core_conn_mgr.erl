@@ -218,8 +218,8 @@ extend_delay(Delay) ->
 
 try_connect(_Addr, _Protocol, Delay) when Delay > ?MAX_DELAY ->
     ?debugFmt("try_connect: giving up on ~p after ~p msec",
-              [Addr, Delay]),
-    {error, gaveup};
+              [_Addr, Delay]),
+    {error, timedout};
 try_connect(Addr, Protocol, Delay) ->
     ?debugFmt("try_connect: trying ~p", [Addr]),
     case riak_core_connection:sync_connect(Addr, Protocol) of
@@ -233,6 +233,8 @@ try_connect(Addr, Protocol, Delay) ->
             try_connect(Addr, Protocol, NewDelay)
     end.
 
+%% a spawned process that will try and connect to a remote address
+%% or named cluster, with retries on failure to connect.
 add_connection_proc({addr, Addr}, Protocol, _Strategy, _CMFun) ->
     try_connect(Addr, Protocol, ?INITIAL_DELAY);
 add_connection_proc({name,RemoteCluster}, Protocol, default, CMFun) ->
