@@ -7,7 +7,9 @@
 %% host service functions
 test1service(_Socket, _Transport, {error, Reason}, Args) ->
     ?assert(Args == failed_host_args),
-    ?assert(Reason == protocol_version_not_supported);
+    ?assert(Reason == protocol_version_not_supported),
+    ?debugMsg("test1Service failed returning"),
+    {error, Reason};
 test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
@@ -25,15 +27,18 @@ connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
     timer:sleep(2000).
 
 connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
+    ?debugFmt("client:connect_failed: failed with ~p", [{error, Reason}]),
     ?assert(Args == failed_client_args),
     ?assert(Reason == protocol_version_not_supported),
-    ?assert(Proto == test1protoFailed).
+    ?assert(Proto == test1protoFailed),
+    ?debugMsg("connect_failed returning").
 
-
-protocol_match_test() ->
+setup_test() ->
     %% start ranch as an application so that we have a supervision tree,
     %% otherwise ranch will crash with a noproc in gen_server call.
-    application:start(ranch),
+    application:start(ranch).
+
+protocol_match_test() ->
     %% local host
     IP = "127.0.0.1",
     Port = 10365,
@@ -56,15 +61,11 @@ protocol_match_test() ->
     riak_core_connection:connect({IP,Port}, ClientSpec),
 
     timer:sleep(2000),
-    application:stop(ranch),
     ok.
 
 %% test that a mismatch of client and host args will notify both host and client
 %% of a failed negotiation.
 failed_protocol_match_test() ->
-    %% start ranch as an application so that we have a supervision tree,
-    %% otherwise ranch will crash with a noproc in gen_server call.
-    application:start(ranch),
     %% local host
     IP = "127.0.0.1",
     Port = 10364,
@@ -77,7 +78,7 @@ failed_protocol_match_test() ->
     %% start dispatcher
     MaxListeners = 10,
     SubProtocols = [{{test1protoFailed, [{2,1}, {1,0}]},
-                     {TcpOptions, ?MODULE, test1service, [failed_host_args]}}],
+                     {TcpOptions, ?MODULE, test1service, failed_host_args}}],
     riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, SubProtocols),
 
     %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
@@ -86,5 +87,7 @@ failed_protocol_match_test() ->
     riak_core_connection:connect({IP,Port}, ClientSpec),
 
     timer:sleep(2000),
-    application:stop(ranch),
     ok.
+
+cleanup_test() ->
+    application:stop(ranch).
