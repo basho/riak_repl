@@ -217,14 +217,18 @@ extend_delay(Delay) ->
     Delay * 2.
 
 try_connect(_Addr, _Protocol, Delay) when Delay > ?MAX_DELAY ->
+    ?debugFmt("try_connect: giving up on ~p after ~p msec",
+              [Addr, Delay]),
     {error, gaveup};
 try_connect(Addr, Protocol, Delay) ->
+    ?debugFmt("try_connect: trying ~p", [Addr]),
     case riak_core_connection:sync_connect(Addr, Protocol) of
         ok ->
             ok;
         {error, _Reason} ->
             %% try again after some backoff
             NewDelay = extend_delay(Delay),
+            ?debugFmt("try_connect: waiting ~p msecs", [Delay]),
             timer:sleep(NewDelay),
             try_connect(Addr, Protocol, NewDelay)
     end.

@@ -112,6 +112,23 @@ client_connection_test() ->
                                {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     timer:sleep(1000).
 
+client_retries_test() ->
+    %% start the service a while after the client has been started so the client
+    %% will do retries.
+    %% pause and confirm paused
+    pause_test(),
+    %% re-register the test protocol and confirm registered
+    unregister_service_test(),
+    register_test(),
+    %% do async connect via conn_mgr
+    riak_core_conn_mgr:connect({addr, ?TEST_ADDR},
+                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
+    %% delay so the client will keep trying
+    timer:sleep(3000),
+    %% resume and confirm not paused, which should cause service to start and connection :-)
+    resume_test().
+    
+
 cleanup_test() ->
     application:stop(ranch).
 
