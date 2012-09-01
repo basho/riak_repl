@@ -82,6 +82,7 @@ start(_Type, _StartArgs) ->
             SubProtocols = [{{realtime,[{1,0}]}, riak_repl2_rtsink, start_link, Args}],
             {ok, _CMPid} = riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, 
                                                                  TcpOptions, SubProtocols),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

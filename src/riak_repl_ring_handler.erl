@@ -25,6 +25,7 @@ init([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     AllNodes = riak_core_ring:all_members(Ring),
     riak_repl2_leader:set_candidates(AllNodes, []),
+    rt_update_events(Ring),
     {ok, #state{ring=Ring}}.
 
 handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
@@ -35,8 +36,7 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     FinalRing = init_repl_config(OldRing, NewRing),
     update_cluster_name(FinalRing),
     update_leader(FinalRing),
-    riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(FinalRing),
-                            riak_repl_ring:rt_started(FinalRing)),
+    rt_update_events(FinalRing),
     riak_repl_listener_sup:ensure_listeners(FinalRing),
     case riak_repl_leader:is_leader() of
         true ->
@@ -159,3 +159,11 @@ update_cluster_name(Ring) ->
         Name ->
             riak_core_cluster_mgr:set_my_name(Name)
     end.
+
+%% Run whenever the ring is changed or on startup.
+%% Compare desired state of realtime repl to configured
+rt_update_events(Ring) ->
+    riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(Ring),
+                            riak_repl_ring:rt_started(Ring)),
+    riak_repl:install_hook().
+

@@ -80,6 +80,16 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     ToStart   = WantStarted -- Started,
     ToStop    = Started -- WantStarted,
 
+    %% Set up secret appenv to be master control of
+    %% repl across all buckets.  If no sites are enabled,
+    %% don't even fire the hook.
+    case WantEnabled of
+        [] ->
+            application:set_env(riak_repl, rtenabled, false);
+        _ ->
+            application:set_env(riak_repl, rtenabled, true)
+    end,
+
     case ToEnable ++ ToDisable ++ ToStart ++ ToStop of
         [] ->
             [];
