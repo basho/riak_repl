@@ -4,7 +4,7 @@
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
 -export([start/0, stop/0]).
--export([install_hook/0]).
+-export([install_hook/0, uninstall_hook/0]).
 -export([fixup/2]).
 
 start() ->
@@ -19,10 +19,17 @@ install_hook() ->
     riak_core_bucket:append_bucket_defaults([{repl, true}]),
     ok.
 
+uninstall_hook() ->
+    %% Cannot remove bucket defaults, best we can do is disable
+    riak_core_bucket:append_bucket_defaults([{repl, false}]),
+    ok.
+
 fixup(_Bucket, BucketProps) ->
     CleanPostcommit = strip_postcommit(BucketProps),
+    RTEnabled = app_helper:get_env(riak_repl, rtenabled, false),
     case proplists:get_value(repl, BucketProps) of
-        Val when Val==true; Val==realtime; Val==both ->
+        Val when (Val==true orelse Val==realtime orelse Val==both),
+                 RTEnabled == true  ->
             UpdPostcommit = CleanPostcommit ++ [?REPL_HOOK],
 
             {ok, lists:keystore(postcommit, 1, BucketProps, 
