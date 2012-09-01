@@ -239,9 +239,19 @@ add_connection_proc({addr, Addr}, Protocol, _Strategy, _CMFun) ->
     try_connect(Addr, Protocol, ?INITIAL_DELAY);
 add_connection_proc({name,RemoteCluster}, Protocol, default, CMFun) ->
     {ok,ClusterManagerNode} = CMFun(),
+    ?debugFmt("Got cluster node = ~p", [ClusterManagerNode]),
     {{ProtocolId, _Revs}, _Rest} = Protocol,
-    Addrs = gen_server:call({?CLUSTER_MANAGER_SERVER, ClusterManagerNode},
-                            {get_addrs_for_proto_id, RemoteCluster, ProtocolId}),
-    %% try all in list until success
-    Addr = hd(Addrs),
-    try_connect(Addr, Protocol, ?INITIAL_DELAY).
+    Resp = gen_server:call({?CLUSTER_MANAGER_SERVER, ClusterManagerNode},
+                           {get_addrs_for_proto_id, RemoteCluster, ProtocolId},
+                           ?CM_CALL_TIMEOUT),
+    ?debugFmt("Got ip_addrs response = ~p", [Resp]),
+    case Resp of
+        {ok, Addrs} ->
+            %% try all in list until success
+            Addr = hd(Addrs),
+            try_connect(Addr, Protocol, ?INITIAL_DELAY);
+        Error ->
+            ?debugFmt("add_connection_proc: failed to reach cluster manager: ~p",
+                      [Error]),
+            ok
+    end.

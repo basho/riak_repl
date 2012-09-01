@@ -10,6 +10,7 @@
 
 -define(CLUSTER_MANAGER_SERVER, riak_core_cluster_manager).
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
+-define(CM_CALL_TIMEOUT, 2000).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
