@@ -22,7 +22,7 @@
 -export([start_link/0,
          register/1,
          unregister/1,
-         push/1,
+         push/2,
          pull/2,
          ack/2,
          status/0,
@@ -54,8 +54,8 @@ unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}).
 
 %% Push an item onto the queue
-push(Item) ->
-    gen_server:cast(?SERVER, {push, Item}).
+push(NumItems, Bin) ->
+    gen_server:cast(?SERVER, {push, NumItems, Bin}).
 
 %% DeliverFun - (Seq, Item)
 pull(Name, DeliverFun) ->
@@ -119,12 +119,12 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
     {reply, ets:tab2list(QTab), State}.
 
 
-handle_cast({push, Item}, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+handle_cast({push, NumItems, Bin}, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     QSeq2 = QSeq + 1,
-    SeqItem = {QSeq2, Item},
+    QEntry = {QSeq2, NumItems, Bin},
     %% Send to any pending consumers
-    UpdCs = [maybe_deliver_item(C, SeqItem) || C <- Cs],
-    ets:insert(QTab, SeqItem),
+    UpdCs = [maybe_deliver_item(C, QEntry) || C <- Cs],
+    ets:insert(QTab, QEntry),
     {noreply, State#state{qseq = QSeq2, cs = UpdCs}};
 handle_cast({pull, Name, DeliverFun}, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     UpdCs = case lists:keytake(Name, #c.name, Cs) of
@@ -171,26 +171,26 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, DeliverFun) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
-            [SeqItem] = ets:lookup(QTab, CSeq2),
-            deliver_item(C, DeliverFun, SeqItem);
+            [QEntry] = ets:lookup(QTab, CSeq2),
+            deliver_item(C, DeliverFun, QEntry);
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
             C#c{deliver = DeliverFun}
     end.
 
-maybe_deliver_item(C = #c{deliver = DeliverFun}, SeqItem) ->
+maybe_deliver_item(C = #c{deliver = DeliverFun}, QEntry) ->
     case DeliverFun of
         undefined ->
             C;
         _ ->
-            deliver_item(C, DeliverFun, SeqItem)
+            deliver_item(C, DeliverFun, QEntry)
     end.
 
-deliver_item(C, DeliverFun, {Seq,_Item} = SeqItem) ->
+deliver_item(C, DeliverFun, {Seq,_NumItem,_Bin} = QEntry) ->
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
-        ok = DeliverFun(SeqItem),
+        ok = DeliverFun(QEntry),
         C#c{cseq = Seq, deliver = undefined}
     catch
         _:_ ->

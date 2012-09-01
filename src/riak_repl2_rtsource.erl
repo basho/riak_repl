@@ -74,7 +74,8 @@ init([Remote]) ->
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(status, _From, State = 
-                #state{remote = R, address = A, transport = T, socket = S}) ->
+                #state{remote = R, address = A, transport = T, socket = S,
+                       helper_pid = H}) ->
     Props = case T of
                 undefined ->
                     [{connected, false}];
@@ -85,7 +86,13 @@ handle_call(status, _From, State =
                      {socket, S},
                      {peer, T:peername(S)}]
             end,
-    Status = {R, self(), Props},
+    HelperProps = try
+                      riak_repl2_rtsource_helper:status(H)
+                  catch
+                      _:{timeout, _} ->
+                          [{helper, timeout}]
+                  end,
+    Status = {R, self(), Props ++ HelperProps},
     {reply, Status, State};
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From, 

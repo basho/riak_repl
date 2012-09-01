@@ -10,7 +10,7 @@
 %% API
 -export([start_link/3,
          stop/1,
-         status/1]).
+         status/1, status/2]).
 
 -define(SERVER, ?MODULE).
 
@@ -33,7 +33,10 @@ stop(Pid) ->
     gen_server:call(Pid, stop).
 
 status(Pid) ->
-    gen_server:call(Pid, status).
+    status(Pid, app_helper:get_env(riak_repl, riak_repl2_rtsource_helper_status_to, 5000)).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
 
 init([Remote, Transport, Socket]) ->
     Me = self(),
@@ -54,12 +57,12 @@ handle_call(status, _From, State =
 
 handle_cast({pull, {error, Reason}}, State) ->
     {stop, {queue_error, Reason}, State};
-handle_cast({pull, {Seq, BinObjs}}, 
+handle_cast({pull, {Seq, NumObjects, BinObjs}}, 
             State = #state{transport = T, socket = S, objects = Objects}) ->
     TcpBin = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
     T:send(S, TcpBin),
     async_pull(State),
-    {noreply, State#state{sent_seq = Seq, objects = Objects + 1}}.
+    {noreply, State#state{sent_seq = Seq, objects = Objects + NumObjects}}.
 
 handle_info(_Msg, State) ->
     %% TODO: Log unknown msg
