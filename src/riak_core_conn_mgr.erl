@@ -16,8 +16,8 @@
 -define(INITIAL_DELAY, 250). %% milliseconds
 -define(MAX_DELAY, 1000).
 
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
+%%-define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
 
 -define(SERVER, riak_core_connection_manager).
 -define(MAX_LISTENERS, 100).
@@ -187,15 +187,12 @@ code_change(_OldVsn, State, _Extra) ->
 resume_services(State) ->
     case orddict:size(State#state.services) of
         0 ->
-            ?debugMsg("resume_services: no registered protocols"),
             %% no registered protocols yet
             State#state{is_paused=false};
         _NotZero ->
             Services = orddict:to_list(State#state.services),
-            ?debugFmt("resume_services: registered services: ~p", [Services]),
             IpAddr = State#state.dispatch_addr,
             Protos = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
-            ?debugFmt("resume_services: dispatching protos: ~p", [Protos]),
             {ok, Pid} = riak_core_connection:start_dispatcher(IpAddr, ?MAX_LISTENERS, Protos),
             State#state{is_paused=false, dispatcher_pid=Pid}
     end.
@@ -217,18 +214,18 @@ extend_delay(Delay) ->
     Delay * 2.
 
 try_connect(_Addr, _Protocol, Delay) when Delay > ?MAX_DELAY ->
-    ?debugFmt("try_connect: giving up on ~p after ~p msec",
-              [_Addr, Delay]),
+    ?TRACE(?debugFmt("try_connect: giving up on ~p after ~p msec",
+                     [_Addr, Delay])),
     {error, timedout};
 try_connect(Addr, Protocol, Delay) ->
-    ?debugFmt("try_connect: trying ~p", [Addr]),
+    ?TRACE(?debugFmt("try_connect: trying ~p", [Addr])),
     case riak_core_connection:sync_connect(Addr, Protocol) of
         ok ->
             ok;
         {error, _Reason} ->
             %% try again after some backoff
             NewDelay = extend_delay(Delay),
-            ?debugFmt("try_connect: waiting ~p msecs", [Delay]),
+            ?TRACE(?debugFmt("try_connect: waiting ~p msecs", [Delay])),
             timer:sleep(NewDelay),
             try_connect(Addr, Protocol, NewDelay)
     end.
@@ -239,19 +236,19 @@ add_connection_proc({addr, Addr}, Protocol, _Strategy, _CMFun) ->
     try_connect(Addr, Protocol, ?INITIAL_DELAY);
 add_connection_proc({name,RemoteCluster}, Protocol, default, CMFun) ->
     {ok,ClusterManagerNode} = CMFun(),
-    ?debugFmt("Got cluster node = ~p", [ClusterManagerNode]),
+    ?TRACE(?debugFmt("Got cluster node = ~p", [ClusterManagerNode])),
     {{ProtocolId, _Revs}, _Rest} = Protocol,
     Resp = gen_server:call({?CLUSTER_MANAGER_SERVER, ClusterManagerNode},
                            {get_addrs_for_proto_id, RemoteCluster, ProtocolId},
                            ?CM_CALL_TIMEOUT),
-    ?debugFmt("Got ip_addrs response = ~p", [Resp]),
+    ?TRACE(?debugFmt("Got ip_addrs response = ~p", [Resp])),
     case Resp of
         {ok, Addrs} ->
             %% try all in list until success
             Addr = hd(Addrs),
             try_connect(Addr, Protocol, ?INITIAL_DELAY);
-        Error ->
-            ?debugFmt("add_connection_proc: failed to reach cluster manager: ~p",
-                      [Error]),
+        _Error ->
+            ?TRACE(?debugFmt("add_connection_proc: failed to reach cluster manager: ~p",
+                             [_Error])),
             ok
     end.
