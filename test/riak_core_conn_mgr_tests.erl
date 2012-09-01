@@ -115,6 +115,20 @@ client_connection_test() ->
                                {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     timer:sleep(1000).
 
+client_connect_via_cluster_name_test() ->
+    %% pause and confirm paused
+    pause_test(),
+    %% re-register the test protocol and confirm registered
+    unregister_service_test(),
+    register_service_test(),
+    %% resume and confirm not paused, which should cause service to start
+    resume_test(),
+    %% do async connect via conn_mgr
+    ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
+    riak_core_conn_mgr:connect({name, ?REMOTE_CLUSTER_NAME},
+                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+    timer:sleep(1000).
+
 client_retries_test() ->
     ?TRACE(?debugMsg(" --------------- retry test ------------- ")),
     %% start the service a while after the client has been started so the client
