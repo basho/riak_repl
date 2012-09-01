@@ -29,10 +29,6 @@ start(_Type, _StartArgs) ->
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
-            ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
-            %% Add routes to webmachine
-            [ webmachine_router:add_route(R)
-              || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
 
             %% TODO: Supervise this somewhere
             %% Start connection manager listening
@@ -48,6 +44,16 @@ start(_Type, _StartArgs) ->
             SubProtocols = [{{realtime,[{1,0}]}, riak_repl2_rtsink, start_link, Args}],
             {ok, _CMPid} = riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, 
                                                                  TcpOptions, SubProtocols),
+
+            %% Register the ring handler, this will trigger all configuration based
+            %% on the ring.
+            ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
+
+            %% Add routes to webmachine
+            [ webmachine_router:add_route(R)
+              || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
+
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
