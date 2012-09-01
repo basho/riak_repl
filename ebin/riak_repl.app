@@ -14,6 +14,7 @@
                   'riak_repl_bq',
                   'riak_repl_cinfo',
                   'riak_repl_client_sup',
+                  'riak_core_cluster_mgr',
                   'riak_core_conn_mgr',
                   'riak_core_connection',
                   'riak_repl_console',
