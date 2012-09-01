@@ -137,7 +137,7 @@ handle_call(get_cluster_finder, _From, State) ->
     {reply, State#state.cluster_finder, State};
 
 handle_call(Unhandled, _From, State) ->
-    ?debugFmt("Unhandled gen_server call: ~p", [Unhandled]),
+    ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [Unhandled])),
     {reply, {error, unhandled}, State}.
 
 handle_cast(pause, State) ->
@@ -166,11 +166,11 @@ handle_cast({connect, Dest, Protocol, Strategy}, State) ->
     {noreply, State};
 
 handle_cast(Unhandled, _State) ->
-    ?debugFmt("Unhandled gen_server cast: ~p", [Unhandled]),
+    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [Unhandled])),
     {error, unhandled}. %% this will crash the server
 
 handle_info(Unhandled, State) ->
-    ?debugFmt("Unhandled gen_server info: ~p", [Unhandled]),
+    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [Unhandled])),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
