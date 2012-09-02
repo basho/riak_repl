@@ -204,10 +204,10 @@ status(Local) ->
 %% ====================================================================
 
 write_object_command(S) ->
-    {call, ?MODULE, write_object, [S#ts.client, S#ts.next_val]}.
+    {call, ?MODULE, write_object, [S#ts.client, S#ts.next_val, binary()]}.
 
 write_object_next(S = #ts{remotes = Remotes},
-                  _Res, [_Client, NextVal = <<NextValInt:64>>]) ->
+                  _Res, [_Client, NextVal = <<NextValInt:64>>, _Extra]) ->
     %% Add the expected value
     AddVal = fun(R) -> R#remote{expected = [NextVal | R#remote.expected]} end,
     Remotes2 = 
@@ -216,11 +216,11 @@ write_object_next(S = #ts{remotes = Remotes},
     %% Update next val
     S#ts{next_val = <<(NextValInt + 1):64>>, remotes = Remotes2}.
 
-write_object_post(S, [_Client, _NextVal], Res) ->
+write_object_post(S, [_Client, _NextVal, _Extra], Res) ->
     post_expect([{return, ok, Res}]).
 
-write_object(Client, NextVal) ->
-    O = riak_object:new(?BUCKET, NextVal, NextVal),
+write_object(Client, NextVal, Extra) ->
+    O = riak_object:new(?BUCKET, NextVal, <<NextVal/binary, Extra/binary>>),
     Client:put(O).
 
 %% ====================================================================
@@ -228,7 +228,7 @@ write_object(Client, NextVal) ->
 %% ====================================================================
 
 prop_repl2_rt() ->
-    ?FORALL(Cmds, commands(?MODULE),
+    ?FORALL(Cmds, more_commands(10, commands(?MODULE)),
             begin
                 %% be stupid for now, make same initial state for node names
                 S0 = initial_state(),
