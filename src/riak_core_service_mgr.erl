@@ -1,8 +1,8 @@
-%% Riak Replication Subprotocol Server Dispatch and Client Connections
+%% Riak Replication Subprotocol Server Dispatcher
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 
--module(riak_core_conn_mgr).
+-module(riak_core_service_mgr).
 -behaviour(gen_server).
 
 -include("riak_core_connection.hrl").
@@ -11,15 +11,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% controls retry and backoff.
-%% This combo will cause attempts
--define(INITIAL_DELAY, 250). %% milliseconds
--define(MAX_DELAY, 1000).
-
 %%-define(TRACE(Stmt),Stmt).
 -define(TRACE(Stmt),ok).
 
--define(SERVER, riak_core_connection_manager).
+-define(SERVER, riak_core_service_manager).
 -define(MAX_LISTENERS, 100).
 
 %% connection manager state:
@@ -40,22 +35,18 @@
          get_cluster_finder/0,
          register_service/2,
          unregister_service/1,
-         is_registered/1,
-         connect/2
+         is_registered/1
          ]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
-%% internal functions
--export([try_connect/3, add_connection_proc/4]).
-
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%% start the Connection Manager on the given Ip Address and Port.
+%% start the Service Manager on the given Ip Address and Port.
 %% All sub-protocols will be dispatched from there.
 -spec(start_link(ip_addr()) -> {ok, pid()}).
 start_link({IP,Port}) ->
@@ -80,7 +71,7 @@ is_paused() ->
     gen_server:call(?SERVER, is_paused).
 
 %% Specify a function that will return the IP/Port of our Cluster Manager.
-%% Connection Manager will call this function each time it wants to find the
+%% Service Manager will call this function each time it wants to find the
 %% current ClusterManager
 -spec(set_cluster_finder(cluster_finder_fun()) -> ok).
 set_cluster_finder(Fun) ->
@@ -91,7 +82,7 @@ get_cluster_finder() ->
     gen_server:call(?SERVER, get_cluster_finder).
 
 %% Once a protocol specification is registered, it will be kept available by the
-%% Connection Manager. See the hostspec() type defined in the Connection layer.
+%% Service Manager.
 -spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
 register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
@@ -108,13 +99,6 @@ unregister_service(ProtocolId) ->
 -spec(is_registered(proto_id()) -> boolean()).
 is_registered(ProtocolId) ->
     gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
-
-%% Establish a connection to the remote destination. be persistent about it,
-%% but not too annoying to the remote end. Connect by name of cluster or
-%% IP address.
--spec(connect({name,clustername()} | {addr,ip_addr()}, clientspec()) -> pid()).
-connect(Dest, ClientSpec) ->
-    gen_server:cast(?SERVER, {connect, Dest, ClientSpec, default}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -136,8 +120,8 @@ handle_call({is_registered, service, ProtocolId}, _From, State) ->
 handle_call(get_cluster_finder, _From, State) ->
     {reply, State#state.cluster_finder, State};
 
-handle_call(Unhandled, _From, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [Unhandled])),
+handle_call(_Unhandled, _From, State) ->
+    ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
     {reply, {error, unhandled}, State}.
 
 handle_cast(pause, State) ->
@@ -165,12 +149,12 @@ handle_cast({connect, Dest, Protocol, Strategy}, State) ->
     spawn(?MODULE, add_connection_proc, [Dest, Protocol, Strategy, CMFun]),
     {noreply, State};
 
-handle_cast(Unhandled, _State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [Unhandled])),
+handle_cast(_Unhandled, _State) ->
+    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
     {error, unhandled}. %% this will crash the server
 
-handle_info(Unhandled, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [Unhandled])),
+handle_info(_Unhandled, State) ->
+    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -208,47 +192,4 @@ pause_services(State) ->
             IpAddr = State#state.dispatch_addr,
             ok = riak_core_connection:stop_dispatcher(IpAddr),
             State#state{is_paused=true, dispatcher_pid=undefined}
-    end.
-
-extend_delay(Delay) ->
-    Delay * 2.
-
-try_connect(_Addr, _Protocol, Delay) when Delay > ?MAX_DELAY ->
-    ?TRACE(?debugFmt("try_connect: giving up on ~p after ~p msec",
-                     [_Addr, Delay])),
-    {error, timedout};
-try_connect(Addr, Protocol, Delay) ->
-    ?TRACE(?debugFmt("try_connect: trying ~p", [Addr])),
-    case riak_core_connection:sync_connect(Addr, Protocol) of
-        ok ->
-            ok;
-        {error, _Reason} ->
-            %% try again after some backoff
-            NewDelay = extend_delay(Delay),
-            ?TRACE(?debugFmt("try_connect: waiting ~p msecs", [Delay])),
-            timer:sleep(NewDelay),
-            try_connect(Addr, Protocol, NewDelay)
-    end.
-
-%% a spawned process that will try and connect to a remote address
-%% or named cluster, with retries on failure to connect.
-add_connection_proc({addr, Addr}, Protocol, _Strategy, _CMFun) ->
-    try_connect(Addr, Protocol, ?INITIAL_DELAY);
-add_connection_proc({name,RemoteCluster}, Protocol, default, CMFun) ->
-    {ok,ClusterManagerNode} = CMFun(),
-    ?TRACE(?debugFmt("Got cluster node = ~p", [ClusterManagerNode])),
-    {{ProtocolId, _Revs}, _Rest} = Protocol,
-    Resp = gen_server:call({?CLUSTER_MANAGER_SERVER, ClusterManagerNode},
-                           {get_addrs_for_proto_id, RemoteCluster, ProtocolId},
-                           ?CM_CALL_TIMEOUT),
-    ?TRACE(?debugFmt("Got ip_addrs response = ~p", [Resp])),
-    case Resp of
-        {ok, Addrs} ->
-            %% try all in list until success
-            Addr = hd(Addrs),
-            try_connect(Addr, Protocol, ?INITIAL_DELAY);
-        _Error ->
-            ?TRACE(?debugFmt("add_connection_proc: failed to reach cluster manager: ~p",
-                             [_Error])),
-            ok
     end.

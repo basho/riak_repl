@@ -8,7 +8,6 @@
 test1service(_Socket, _Transport, {error, Reason}, Args) ->
     ?assert(Args == failed_host_args),
     ?assert(Reason == protocol_version_not_supported),
-    ?debugMsg("test1Service failed returning"),
     {error, Reason};
 test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
@@ -27,11 +26,9 @@ connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
     timer:sleep(2000).
 
 connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
-    ?debugFmt("client:connect_failed: failed with ~p", [{error, Reason}]),
     ?assert(Args == failed_client_args),
     ?assert(Reason == protocol_version_not_supported),
-    ?assert(Proto == test1protoFailed),
-    ?debugMsg("connect_failed returning").
+    ?assert(Proto == test1protoFailed).
 
 setup_test() ->
     %% start ranch as an application so that we have a supervision tree,
