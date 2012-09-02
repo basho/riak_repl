@@ -1,7 +1,7 @@
 %% Eunit test cases for the Connection Manager
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 
--module(riak_core_conn_mgr_tests).
+-module(riak_core_service_mgr_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -93,65 +93,6 @@ pause_existing_services_test() ->
                                               {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
     %% allow client and server to connect and make assertions of success/failure
     timer:sleep(1000).
-
-start_cluster_manager_test() ->
-    %% start a local cluster manager
-    riak_core_cluster_mgr:start_link(),
-    riak_core_cluster_mgr:set_name(?MY_CLUSTER_NAME),
-    %% verify it's running
-    ?assert(?MY_CLUSTER_NAME == riak_core_cluster_mgr:get_name()).
-
-client_connection_test() ->
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    unregister_service_test(),
-    register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
-    %% do async connect via conn_mgr
-    ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-    riak_core_conn_mgr:connect({addr, ?TEST_ADDR},
-                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
-    timer:sleep(1000).
-
-client_connect_via_cluster_name_test() ->
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    unregister_service_test(),
-    register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
-    %% do async connect via conn_mgr
-    ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-    riak_core_conn_mgr:connect({name, ?REMOTE_CLUSTER_NAME},
-                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
-    timer:sleep(1000).
-
-client_retries_test() ->
-    ?TRACE(?debugMsg(" --------------- retry test ------------- ")),
-    %% start the service a while after the client has been started so the client
-    %% will do retries.
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    unregister_service_test(),
-    register_service_test(),
-    %% do async connect via conn_mgr
-    ExpectedArgs = {retry_test, [{1,0}, {1,0}]},
-    riak_core_conn_mgr:connect({addr, ?TEST_ADDR},
-                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
-    %% delay so the client will keep trying
-    ?TRACE(?debugMsg(" ------ sleeping 3 sec")),
-    timer:sleep(3000),
-    %% resume and confirm not paused, which should cause service to start and connection :-)
-    ?TRACE(?debugMsg(" ------ resuming services")),
-    resume_test(),
-    %% allow connection to setup
-    ?TRACE(?debugMsg(" ------ sleeping 2 sec")),
-    timer:sleep(1000).
-    
 
 cleanup_test() ->
     application:stop(ranch).
