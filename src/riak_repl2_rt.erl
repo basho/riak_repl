@@ -54,7 +54,7 @@ start(Remote) ->
                     true ->
                         riak_repl_ring:rt_start_trans(Ring, Remote1);
                     _ ->
-                        {ignore, {not_started, Remote1}}
+                        {ignore, {not_enabled, Remote1}}
                 end
         end,
     do_ring_trans(F, Remote).
