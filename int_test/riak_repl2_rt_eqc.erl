@@ -28,9 +28,13 @@
         {node,              % node running as the remote
          rtstate=disabled,  % disabled, enabled, started
          expected=[]}).
--record(ts, {local,         % local node name
+-record(ts, {client,        % riak client
+             next_val = <<1:64>>,  % next value to write
+             local,         % local node name
              remotes=[]
             }).
+
+-define(BUCKET, <<"riak_repl2_rt_eqc">>).
 
 %% Requires manual configuration
 %% add to riak_repl on dev1
@@ -57,9 +61,12 @@
 
 %% initial one, and the value of the initial state data:
 initial_state() ->
+    LocalNode = node_name(1),
+    {ok, Client} = riak:client_connect(LocalNode),
     Remotes = orddict:from_list(
                 [{cluster_name(I), #remote{node = node_name(I)}} || I <- lists:seq(2, 6)]),
-    #ts{local = node_name(1),
+    #ts{client = Client,
+        local = LocalNode,
         remotes = Remotes}.
 
 %% ====================================================================
@@ -193,6 +200,30 @@ status(Local) ->
     rpc:call(Local, riak_repl2_rt, status, []).
 
 %% ====================================================================
+%% write object callbacks
+%% ====================================================================
+
+write_object_command(S) ->
+    {call, ?MODULE, write_object, [S#ts.client, S#ts.next_val]}.
+
+write_object_next(S = #ts{remotes = Remotes},
+                  _Res, [_Client, NextVal = <<NextValInt:64>>]) ->
+    %% Add the expected value
+    AddVal = fun(R) -> R#remote{expected = [NextVal | R#remote.expected]} end,
+    Remotes2 = 
+        lists:foldl(fun(Cluster, Remotes) -> orddict:update(Cluster, AddVal, Remotes) end,
+                    Remotes, orddict:fetch_keys(Remotes)),
+    %% Update next val
+    S#ts{next_val = <<(NextValInt + 1):64>>, remotes = Remotes2}.
+
+write_object_post(S, [_Client, _NextVal], Res) ->
+    post_expect([{return, ok, Res}]).
+
+write_object(Client, NextVal) ->
+    O = riak_object:new(?BUCKET, NextVal, NextVal),
+    Client:put(O).
+
+%% ====================================================================
 %% Property
 %% ====================================================================
 
@@ -205,8 +236,17 @@ prop_repl2_rt() ->
                 %% run the test
                 {H,S,Result} = HSRes = 
                     run_commands(?MODULE, Cmds),
-                pretty_commands(?MODULE, Cmds, HSRes, equals(Result, ok))
+                pretty_commands(?MODULE, Cmds, HSRes, 
+                                aggregate(command_names(Cmds),
+                                          conjunction(check_remote_results(S) ++
+                                                          [{commands, equals(Result, ok)}])))
             end).
+
+weight(S, write_object) ->
+    20;
+weight(_S, _) ->
+    1.
+
 
 %% ====================================================================
 %% Helpers
@@ -235,6 +275,18 @@ expect_disabled(S) ->
 update_tr(Node, Fun, S = #ts{remotes = Remotes}) ->
     S#ts{remotes = orddict:update(Node, Fun, Remotes)}.
 
+
+check_remote_results(S = #ts{client = Client, remotes = Remotes}) ->
+    orddict:fold(fun(Cluster, #remote{expected = Expected}, Acc) ->
+                      [check_remote_result(Client, Cluster, Expected) | Acc]
+              end, [], Remotes).
+
+check_remote_result(Client, Cluster, Expected) ->
+    {ok, Values} = Client:list_keys(?BUCKET),
+%%    io:format("Cluster: ~p\nExpected: ~p\nValues\: ~p\n", [Cluster, Expected, Values]),
+    {{results, Cluster}, 
+     equals(lists:sort(Expected), lists:sort(Values))}.
+    
 
 post_expect(Expectations) ->
     post_expect(Expectations, []).
