@@ -223,16 +223,6 @@ deliver_item(C, DeliverFun, {Seq,_NumItem,_Bin} = QEntry) ->
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.
 
-%% Find the first sequence number
-minseq(QTab, QSeq) ->
-    case ets:first(QTab) of
-        '$end_of_table' ->
-            QSeq;
-        MinSeq ->
-            MinSeq
-    end.
-
-
 %% Cleanup until the start of the table
 cleanup(_QTab, '$end_of_table') ->
     ok;
@@ -243,7 +233,7 @@ cleanup(QTab, Seq) ->
 %% Trim the queue if necessary
 trim_q(State = #state{max_bytes = undefined}) ->
     State;
-trim_q(State = #state{qtab = QTab, max_bytes = MaxBytes}) ->
+trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
     case qbytes(QTab) > MaxBytes of
         true ->
             Cs2 = trim_q_entries(QTab, MaxBytes, State#state.cs),
@@ -253,7 +243,12 @@ trim_q(State = #state{qtab = QTab, max_bytes = MaxBytes}) ->
             %% number.  If that increases a consumers cseq,
             %% reset the aseq too.  The drops have already been
             %% accounted for.
-            NewCSeq = minseq(QTab, State#state.qseq) -1,
+            NewCSeq = case ets:first(QTab) of
+                          '$end_of_table' ->
+                              QSeq; % if empty, make sure pull waits
+                          MinSeq ->
+                              MinSeq - 1
+                      end,
             Cs3 = [case CSeq < NewCSeq of
                        true ->
                            C#c{cseq = NewCSeq, aseq = NewCSeq};
@@ -292,3 +287,13 @@ qbytes(QTab) ->
     WordSize = erlang:system_info(wordsize),
     Words = ets:info(QTab, memory),
     Words * WordSize.
+
+%% Find the first sequence number
+minseq(QTab, QSeq) ->
+    case ets:first(QTab) of
+        '$end_of_table' ->
+            QSeq;
+        MinSeq ->
+            MinSeq
+    end.
+
