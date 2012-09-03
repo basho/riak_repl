@@ -72,7 +72,9 @@ started() ->
 ensure_rt(WantEnabled0, WantStarted0) ->
     WantEnabled = lists:usort(WantEnabled0),
     WantStarted = lists:usort(WantStarted0),
-    Enabled = lists:sort([Remote || {Remote, _Stats} <- riak_repl2_rtq:status()]),
+    Status = riak_repl2_rtq:status(),
+    CStatus = proplists:get_value(consumers, Status, []),
+    Enabled = lists:sort([Remote || {Remote, _Stats} <- CStatus]),
     Started = lists:sort([Remote || {Remote, _Pid}  <- riak_repl2_rtsource_sup:enabled()]),
 
     ToEnable  = WantEnabled -- Enabled,
@@ -101,9 +103,12 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
             [riak_repl2_rtsource_sup:enable(Remote) || Remote <- ToStart],
           
-            %% Stop sources first
-            %% TODO: Check terminate/delete is sync
-            [riak_repl2_rtsource_sup:disable(Remote) || Remote <- ToStop],
+            %% Stop running sources, re-register to get rid of pending
+            %% deliver functions
+            [begin
+                 riak_repl2_rtsource_sup:disable(Remote),
+                 riak_repl2_rtq:register(Remote)
+             end || Remote <- ToStop],
 
             %% Unregister disabled sources, freeing up the queue
             [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
@@ -162,7 +167,7 @@ handle_cast(_Msg, State) ->
     %% TODO: log unknown message
     {noreply, State}.
 
-handle_info({'DOWN', _MRef, process, SinkPid, Reason}, 
+handle_info({'DOWN', _MRef, process, SinkPid, _Reason}, 
             State = #state{sinks = Sinks}) ->
     %%TODO: Check how ranch logs sink process death
     Sinks2 = Sinks -- [SinkPid],

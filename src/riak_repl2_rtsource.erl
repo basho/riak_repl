@@ -130,6 +130,8 @@ handle_info({tcp_error, _S, Reason},
     {stop, normal, State}.
 
 terminate(_Reason, #state{helper_pid = HelperPid}) ->
+    %%TODO: check if this is called, don't think it is on normal supervisor
+    %%      start/shutdown without trap exit set
     case HelperPid of 
         undefined ->
             ok;
