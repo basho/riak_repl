@@ -31,8 +31,13 @@ start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
     %% need to start it here so that a supervision tree will be created.
     application:start(ranch),
-    {Ok, _Pid} = riak_core_connection_mgr:start_link(?TEST_ADDR),
+    {Ok, _Pid} = riak_core_connection_mgr:start_link(),
     ?assert(Ok == ok).
+
+set_peers_test() ->
+    PeerNodeAddrs = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
+    riak_core_connection_mgr:set_peers(PeerNodeAddrs),
+    ?assert(PeerNodeAddrs == riak_core_connection_mgr:get_peers()).
 
 %% conn_mgr should start up paused
 is_paused_test() ->
@@ -55,45 +60,6 @@ set_get_finder_function_test() ->
     FoundFun = riak_core_connection_mgr:get_cluster_finder(),
     ?assert(FinderFun == FoundFun).
 
-%% register a service and confirm added
-register_service_test() ->
-    ExpectedRevs = [{1,0}, {1,0}],
-    TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
-    riak_core_connection_mgr:register_service(TestProtocol, {round_robin,?MAX_CONS}),
-    ?assert(riak_core_connection_mgr:is_registered(testproto) == true).
-
-%% unregister and confirm removed
-unregister_service_test() ->
-    TestProtocolId = testproto,
-    riak_core_connection_mgr:unregister_service(TestProtocolId),
-    ?assert(riak_core_connection_mgr:is_registered(testproto) == false).
-
-%% start a service via normal sequence
-start_service_test() ->
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
-    %% try to connect via a client that speaks our test protocol
-    ExpectedRevs = {expectedToPass, [{1,0}, {1,0}]},
-    riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
-                                              {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
-    %% allow client and server to connect and make assertions of success/failure
-    timer:sleep(1000).
-
-pause_existing_services_test() ->
-    %% there should be services running now.
-    %% pause them and confirm paused.
-    pause_test(),
-    %% now start a client and confirm failure to connect
-    ExpectedArgs = expectedToFail,
-    riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
-                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
-    %% allow client and server to connect and make assertions of success/failure
-    timer:sleep(1000).
-
 start_cluster_manager_test() ->
     %% start a local cluster manager
     riak_core_cluster_mgr:start_link(),
@@ -101,14 +67,16 @@ start_cluster_manager_test() ->
     %% verify it's running
     ?assert(?MY_CLUSTER_NAME == riak_core_cluster_mgr:get_name()).
 
+start_service() ->
+    %% start dispatcher
+    ExpectedRevs = [{1,0}, {1,0}],
+    TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
+    MaxListeners = 10,
+    riak_core_connection:start_dispatcher(?TEST_ADDR, MaxListeners, [TestProtocol]).
+
 client_connection_test() ->
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    unregister_service_test(),
-    register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
+    %% start a test service
+    start_service(),
     %% do async connect via connection_mgr
     ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
     riak_core_connection_mgr:connect({addr, ?TEST_ADDR},
@@ -116,13 +84,7 @@ client_connection_test() ->
     timer:sleep(1000).
 
 client_connect_via_cluster_name_test() ->
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    unregister_service_test(),
-    register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
+    start_service(),
     %% do async connect via connection_mgr
     ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
     riak_core_connection_mgr:connect({name, ?REMOTE_CLUSTER_NAME},
@@ -133,11 +95,7 @@ client_retries_test() ->
     ?TRACE(?debugMsg(" --------------- retry test ------------- ")),
     %% start the service a while after the client has been started so the client
     %% will do retries.
-    %% pause and confirm paused
-    pause_test(),
-    %% re-register the test protocol and confirm registered
-    unregister_service_test(),
-    register_service_test(),
+
     %% do async connect via connection_mgr
     ExpectedArgs = {retry_test, [{1,0}, {1,0}]},
     riak_core_connection_mgr:connect({addr, ?TEST_ADDR},
@@ -147,7 +105,7 @@ client_retries_test() ->
     timer:sleep(3000),
     %% resume and confirm not paused, which should cause service to start and connection :-)
     ?TRACE(?debugMsg(" ------ resuming services")),
-    resume_test(),
+    start_service(),
     %% allow connection to setup
     ?TRACE(?debugMsg(" ------ sleeping 2 sec")),
     timer:sleep(1000).

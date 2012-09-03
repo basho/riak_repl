@@ -105,7 +105,7 @@ init([]) ->
     process_flag(trap_exit, true),
     CtrlProtocol = {{?CTRL_PROTO_ID, [{1,0}]}, {?CTRL_OPTIONS, ?MODULE, testService, []}},
     MaxConnections = 30, %% that's a lot of data centers
-    riak_core_conn_mgr:register_service(CtrlProtocol, {round_robin,MaxConnections}),
+    riak_core_service_mgr:register_service(CtrlProtocol, {round_robin,MaxConnections}),
     {ok, #state{is_paused = true}}.
 
 handle_call(is_paused, _From, State) ->
