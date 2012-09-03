@@ -75,7 +75,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     Status = riak_repl2_rtq:status(),
     CStatus = proplists:get_value(consumers, Status, []),
     Enabled = lists:sort([Remote || {Remote, _Stats} <- CStatus]),
-    Started = lists:sort([Remote || {Remote, _Pid}  <- riak_repl2_rtsource_sup:enabled()]),
+    Started = lists:sort([Remote || {Remote, _Pid}  <- riak_repl2_rtsource_conn_sup:enabled()]),
 
     ToEnable  = WantEnabled -- Enabled,
     ToDisable = Enabled -- WantEnabled,
@@ -101,12 +101,12 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             %% Create a registration to begin queuing, rtsource_sup:ensure_started 
             %% will bring up an rtsource process that will re-register
             [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
-            [riak_repl2_rtsource_sup:enable(Remote) || Remote <- ToStart],
+            [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
           
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
             [begin
-                 riak_repl2_rtsource_sup:disable(Remote),
+                 riak_repl2_rtsource_conn_sup:disable(Remote),
                  riak_repl2_rtq:register(Remote)
              end || Remote <- ToStop],
 
@@ -141,13 +141,13 @@ init([]) ->
 
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Sources = [try
-                   riak_repl2_rtsource:status(Pid)
+                   riak_repl2_rtsource_conn:status(Pid)
                catch
                    _:_ ->
                        {Remote, Pid, unavailable} 
-               end || {Remote, Pid} <- riak_repl2_rtsource_sup:enabled()],
+               end || {Remote, Pid} <- riak_repl2_rtsource_conn_sup:enabled()],
     Sinks = [try
-                 riak_repl2_rtsink:status(Pid)
+                 riak_repl2_rtsink_conn:status(Pid)
              catch
                  _:_ ->
                      {will_be_remote_name, Pid, unavailable} 
