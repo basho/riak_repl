@@ -1,8 +1,8 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl2_rtsource).
+-module(riak_repl2_rtsource_conn).
 
-%% @doc Realtime replication source module
+%% @doc Realtime replication source connection module
 %%
 %% High level responsibility...
 %%
@@ -128,6 +128,7 @@ handle_info({tcp_error, _S, Reason},
     lager:warning("Realtime connection ~p to ~p network error ~p - ~b bytes pending\n",
                   [T:peername(S), Remote, Reason, size(Cont)]),
     {stop, normal, State}.
+
 
 terminate(_Reason, #state{helper_pid = HelperPid}) ->
     %%TODO: check if this is called, don't think it is on normal supervisor

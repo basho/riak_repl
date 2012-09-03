@@ -79,7 +79,7 @@ start(_Type, _StartArgs) ->
                           {reuseaddr, true},
                           {active, false}],
             Args = [],
-            SubProtocols = [{{realtime,[{1,0}]}, riak_repl2_rtsink, start_link, Args}],
+            SubProtocols = [{{realtime,[{1,0}]}, riak_repl2_rtsink_conn, start_link, Args}],
             {ok, _CMPid} = riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, 
                                                                  TcpOptions, SubProtocols),
 
