@@ -21,6 +21,9 @@
 -record(state, {transport,        %% Module for sending
                 socket,           %% Socket
                 proto,            %% Protocol version negotiated
+                max_pending,      %% Maximum number of operations
+                active = true,    %% If socket is set active
+                deactivated = 0,  %% Count of times deactivated
                 helper,           %% Helper PID
                 seq_ref,          %% Sequence reference for completed/acked
                 expect_seq = undefined,%% Next expected sequence number
@@ -46,24 +49,21 @@ init([Transport, Socket, Proto]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     ok = Transport:setopts(Socket, [{active, true}]),
+    MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
     {ok, #state{transport = Transport, socket = Socket,
-                proto = Proto, helper = Helper}}.
+                proto = Proto, max_pending = MaxPending, helper = Helper}}.
 
 handle_call(status, _From, State = #state{transport = T, socket = S, helper = Helper,
-                                          expect_seq = ExpSeq, acked_seq = AckedSeq,
-                                          completed = Completed}) ->
-    Pending = case AckedSeq of 
-                  undefined -> % nothing sent yet
-                      0;
-                  _ ->
-                      ExpSeq - AckedSeq - length(Completed) - 1
-              end,
-    
+                                          active = Active, deactivated = Deactivated,
+                                          expect_seq = ExpSeq, acked_seq = AckedSeq}) ->
+    Pending = pending(State),    
     Status = {will_be_remote, self(), [{connected, true},
                                        {transport, T},
                                        {socket, S},
                                        {peer, T:peername(S)},
                                        {helper, Helper},
+                                       {active, Active},
+                                       {deactivated, Deactivated},
                                        {expect_seq, ExpSeq},
                                        {acked_seq, AckedSeq},
                                        {pending, Pending}]},
@@ -90,7 +90,6 @@ handle_cast({ack, Ref, Seq}, State) ->
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
     {noreply, State}.
 
-
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, S}, State = #state{transport = T, socket = S, cont = Cont}) ->
@@ -107,7 +106,18 @@ handle_info({tcp_error, _S, Reason}, State= #state{transport = T, socket = S, co
     %%TODO: Add remote name somehow
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
                   [T:peername(S), Reason, size(Cont)]),
-    {stop, normal, State}.
+    {stop, normal, State};
+handle_info(reactivate_socket, State = #state{transport = T, socket = S,
+                                              max_pending = MaxPending}) ->
+    case pending(State) > MaxPending of
+        true ->
+            {noreply, schedule_reactivate_socket(State)};
+        _ ->
+            lager:debug("Realtime sink recovered - reactivating transport ~p socket ~p\n",
+                        [T, S]),
+            ok = T:setopts(S, [{active, true}]),
+            {noreply, State#state{active = true}}
+    end.
 
 terminate(_Reason, _State) ->
     %% TODO: Consider trying to do something graceful with poolboy?
@@ -129,13 +139,30 @@ recv(TcpBin, State) ->
     end.
 
 %% Note match on Seq
-do_write_objects(Seq, BinObjs, State = #state{helper = Helper, 
+do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
+                                              helper = Helper,
                                               seq_ref = Ref,
-                                              expect_seq = Seq}) ->
+                                              expect_seq = Seq,
+                                              acked_seq = AckedSeq}) ->
     Me = self(),
     DoneFun = fun() -> gen_server:cast(Me, {ack, Ref, Seq}) end,
     riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun),
-    update_seq(Seq, State);
+    State2 = case AckedSeq of
+                 undefined ->
+                     %% Handle first received sequence number
+                     State#state{acked_seq = Seq - 1, expect_seq = Seq + 1};
+                 _ ->
+                     State#state{expect_seq = Seq + 1}
+             end,
+    %% If the socket is too backed up, take a breather
+    %% by setting {active, false} then casting a message to ourselves
+    %% to enable it once under the limit
+    case pending(State2) > MaxPending of
+        true ->
+            schedule_reactivate_socket(State2);
+        _ ->
+            State2
+    end;
 do_write_objects(Seq, BinObjs, State = #state{seq_ref = OldSeqRef,
                                               expect_seq = ExpSeq}) ->
     %% Did not get expected sequence.
@@ -177,9 +204,29 @@ ack_to(Acked, [Seq | Completed2] = Completed) ->
             {Acked, Completed}
     end.
 
-update_seq(Seq, State = #state{acked_seq = undefined}) ->
-    %% Handle first sequence number
-    State#state{acked_seq = Seq - 1, expect_seq = Seq + 1};
-update_seq(Seq, State) ->
-    State#state{expect_seq = Seq + 1}.
+%% Work out how many requests are pending (not writted yet, may not
+%% have been acked)
+pending(#state{acked_seq = undefined}) ->
+    0; % nothing received yet
+pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
+               completed = Completed}) ->
+    ExpSeq - AckedSeq - length(Completed) - 1.
+    
 
+schedule_reactivate_socket(State = #state{transport = T,
+                                          socket = S,
+                                          active = Active,
+                                          deactivated = Deactivated}) ->
+    case Active of
+        true ->
+            lager:debug("Realtime sink overloaded - deactivating transport ~p socket ~p\n",
+                        [T, S]),
+            ok = T:setopts(S, [{active, false}]),
+            self() ! reactivate_socket,
+            State#state{active = false, deactivated = Deactivated + 1};
+        false ->
+            %% already deactivated, try again in 10ms
+            erlang:send_after(10, self(), reactivate_socket),
+            State
+    end.
+    
