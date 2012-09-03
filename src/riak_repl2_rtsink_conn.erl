@@ -1,8 +1,8 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl2_rtsink).
+-module(riak_repl2_rtsink_conn).
 
-%% @doc Realtime replication sink module
+%% @doc Realtime replication sink connection module
 %%
 %% High level responsibility...
 %%  consider moving out socket responsibilities to another process

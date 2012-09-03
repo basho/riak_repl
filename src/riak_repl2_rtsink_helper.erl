@@ -18,8 +18,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {parent,           %% Parent process
-                pool              %% Pid for worker pool
+-record(state, {parent           %% Parent process
                }).
 
 start_link(Parent) ->
@@ -34,19 +33,13 @@ write_objects(Pid, BinObjs, DoneFun) ->
 %% Callbacks
 init([Parent]) ->
     %% TODO: Share pool between all rtsinks to bound total RT work
-    MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
-    MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
-    {ok, PoolPid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},
-                                        {worker_args, []},
-                                        {size, MinPool}, {max_overflow, MaxPool}]),
-    {ok, #state{parent = Parent, pool = PoolPid}}.
+    {ok, #state{parent = Parent}}.
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
-handle_cast({write_objects, BinObjs, DoneFun},
-            State = #state{pool = Pool}) ->
-    do_write_objects(Pool, BinObjs, DoneFun),
+handle_cast({write_objects, BinObjs, DoneFun}, State) ->
+    do_write_objects(BinObjs, DoneFun),
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
@@ -65,7 +58,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Receive TCP data - decode framing and dispatch
-do_write_objects(Pool, BinObjs, DoneFun) ->
-    Worker = poolboy:checkout(Pool, true, infinity),
+do_write_objects(BinObjs, DoneFun) ->
+    Worker = poolboy:checkout(riak_repl2_rtsink_pool, true, infinity),
     monitor(process, Worker),
-    ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun, Pool).
+    ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun, riak_repl2_rtsink_pool).
