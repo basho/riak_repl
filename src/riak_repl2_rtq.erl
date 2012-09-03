@@ -85,13 +85,17 @@ init([]) ->
 
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                                           qseq = QSeq, cs = Cs}) ->
-    Status =
-        [{bytes, qbytes(QTab)},
-         {max_bytes, MaxBytes}] ++
+    Consumers =        
         [{Name, [{pending, QSeq - CSeq},  % items to be send
                  {unacked, CSeq - ASeq},  % sent items requiring ack
-                 {drops, Drops}]} 
-         || #c{name = Name, aseq = ASeq, cseq = CSeq, drops = Drops} <- Cs],
+                 {drops, Drops},          % number of dropped entries due to max bytes
+                 {errs, Errs}]}           % number of non-ok returns from deliver fun
+         || #c{name = Name, aseq = ASeq, cseq = CSeq, 
+               drops = Drops, errs = Errs} <- Cs],
+    Status =
+        [{bytes, qbytes(QTab)},
+         {max_bytes, MaxBytes},
+         {consumers, Consumers}],
     {reply, Status, State};
 handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     MinSeq = minseq(QTab, QSeq),
@@ -99,11 +103,12 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
         {value, C = #c{aseq = PrevASeq, drops = PrevDrops}, Cs2} ->
             %% Work out if anything should be considered dropped if
             %% unacknowledged.
-            Drops = max(0, MinSeq - PrevASeq),
+            Drops = max(0, MinSeq - PrevASeq - 1),
 
             %% Re-registering, send from the last acked sequence
             CSeq = C#c.aseq,
-            UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops} | Cs2];
+            UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops, 
+                         deliver = undefined} | Cs2];
         false ->
             %% New registration, start from the beginning
             CSeq = MinSeq,
@@ -241,13 +246,17 @@ trim_q(State = #state{max_bytes = undefined}) ->
 trim_q(State = #state{qtab = QTab, max_bytes = MaxBytes}) ->
     case qbytes(QTab) > MaxBytes of
         true ->
-            Cs2 = trim_q_entries(QTab, MaxBytes, State#state.cs, ets:first(QTab)),
+            Cs2 = trim_q_entries(QTab, MaxBytes, State#state.cs),
 
             %% Adjust the last sequence handed out number
-            MinSeq = minseq(QTab, State#state.qseq),
-            Cs3 = [case CSeq < MinSeq of
+            %% so that the next pull will retrieve the new minseq
+            %% number.  If that increases a consumers cseq,
+            %% reset the aseq too.  The drops have already been
+            %% accounted for.
+            NewCSeq = minseq(QTab, State#state.qseq) -1,
+            Cs3 = [case CSeq < NewCSeq of
                        true ->
-                           C#c{cseq = MinSeq};
+                           C#c{cseq = NewCSeq, aseq = NewCSeq};
                        _ ->
                            C
                    end || C = #c{cseq = CSeq} <- Cs2],
@@ -256,26 +265,29 @@ trim_q(State = #state{qtab = QTab, max_bytes = MaxBytes}) ->
             State
     end.
 
-trim_q_entries(_QTab, _MaxBytes, Cs, '$end_of_table') ->
-    Cs;
-trim_q_entries(QTab, MaxBytes, Cs, TrimSeq) ->
-    ets:delete(QTab, TrimSeq),
-    Cs2 = [case CSeq < TrimSeq of
-               true ->
-                   %% If the last sent qentry is before the trimseq
-                   %% it will never be sent, so count it as a drop.
-                   C#c{drops = C#c.drops + 1};
-               _ ->
-                   C
-           end || C = #c{cseq = CSeq} <- Cs],
-    %% Rinse and repeat until meet the target or the queue is empty
-    case qbytes(QTab) > MaxBytes of
-        true ->
-            trim_q_entries(QTab, MaxBytes, Cs2, TrimSeq + 1);
-        _ ->
-            Cs2
+trim_q_entries(QTab, MaxBytes, Cs) ->
+    case ets:first(QTab) of
+        '$end_of_table' ->
+            Cs;
+        TrimSeq ->
+            ets:delete(QTab, TrimSeq),
+            Cs2 = [case CSeq < TrimSeq of
+                       true ->
+                           %% If the last sent qentry is before the trimseq
+                           %% it will never be sent, so count it as a drop.
+                           C#c{drops = C#c.drops + 1};
+                       _ ->
+                           C
+                   end || C = #c{cseq = CSeq} <- Cs],
+            %% Rinse and repeat until meet the target or the queue is empty
+            case qbytes(QTab) > MaxBytes of
+                true ->
+                    trim_q_entries(QTab, MaxBytes, Cs2);
+                _ ->
+                    Cs2
+            end
     end.
-    
+
 qbytes(QTab) ->
     WordSize = erlang:system_info(wordsize),
     Words = ets:info(QTab, memory),
