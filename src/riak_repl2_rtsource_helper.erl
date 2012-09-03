@@ -39,13 +39,22 @@ status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
 init([Remote, Transport, Socket]) ->
+    riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
-    Deliver = fun(Result) -> gen_server:cast(Me, {pull, Result}) end,
+    Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}) end,
     State = #state{remote = Remote, transport = Transport, 
                    socket = Socket, deliver_fun = Deliver},
     async_pull(State),
     {ok, State}.
 
+handle_call({pull, {error, Reason}}, _From, State) ->
+    {stop, {queue_error, Reason}, State};
+handle_call({pull, {Seq, NumObjects, BinObjs}}, _From,
+            State = #state{transport = T, socket = S, objects = Objects}) ->
+    TcpBin = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
+    T:send(S, TcpBin),
+    async_pull(State),
+    {reply, ok, State#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(status, _From, State = 
@@ -54,15 +63,9 @@ handle_call(status, _From, State =
              {sent_seq, SentSeq},
              {objects, Objects}], State}.
 
-
-handle_cast({pull, {error, Reason}}, State) ->
-    {stop, {queue_error, Reason}, State};
-handle_cast({pull, {Seq, NumObjects, BinObjs}}, 
-            State = #state{transport = T, socket = S, objects = Objects}) ->
-    TcpBin = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
-    T:send(S, TcpBin),
-    async_pull(State),
-    {noreply, State#state{sent_seq = Seq, objects = Objects + NumObjects}}.
+handle_cast(_Msg, State) ->
+    %% TODO: Log unhandled message
+    {noreply, State}.
 
 handle_info(_Msg, State) ->
     %% TODO: Log unknown msg
