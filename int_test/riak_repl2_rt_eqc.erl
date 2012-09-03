@@ -64,7 +64,7 @@ initial_state() ->
     LocalNode = node_name(1),
     {ok, Client} = riak:client_connect(LocalNode),
     Remotes = orddict:from_list(
-                [{cluster_name(I), #remote{node = node_name(I)}} || I <- lists:seq(2, 6)]),
+                [{cluster_name(I), #remote{node = node_name(I)}} || I <- lists:seq(2, 3)]),
     #ts{client = Client,
         local = LocalNode,
         remotes = Remotes}.
