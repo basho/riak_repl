@@ -24,6 +24,7 @@
                 max_pending,      %% Maximum number of operations
                 active = true,    %% If socket is set active
                 deactivated = 0,  %% Count of times deactivated
+                source_drops = 0, %% Count of upstream drops
                 helper,           %% Helper PID
                 seq_ref,          %% Sequence reference for completed/acked
                 expect_seq = undefined,%% Next expected sequence number
@@ -55,6 +56,7 @@ init([Transport, Socket, Proto]) ->
 
 handle_call(status, _From, State = #state{transport = T, socket = S, helper = Helper,
                                           active = Active, deactivated = Deactivated,
+                                          source_drops = SourceDrops,
                                           expect_seq = ExpSeq, acked_seq = AckedSeq}) ->
     Pending = pending(State),    
     Status = {will_be_remote, self(), [{connected, true},
@@ -64,6 +66,7 @@ handle_call(status, _From, State = #state{transport = T, socket = S, helper = He
                                        {helper, Helper},
                                        {active, Active},
                                        {deactivated, Deactivated},
+                                       {source_drops, SourceDrops},
                                        {expect_seq, ExpSeq},
                                        {acked_seq, AckedSeq},
                                        {pending, Pending}]},
@@ -111,7 +114,7 @@ handle_info(reactivate_socket, State = #state{transport = T, socket = S,
                                               max_pending = MaxPending}) ->
     case pending(State) > MaxPending of
         true ->
-            {noreply, schedule_reactivate_socket(State)};
+            {noreply, schedule_reactivate_socket(State#state{active = false})};
         _ ->
             lager:debug("Realtime sink recovered - reactivating transport ~p socket ~p\n",
                         [T, S]),
@@ -163,8 +166,8 @@ do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
         _ ->
             State2
     end;
-do_write_objects(Seq, BinObjs, State = #state{seq_ref = OldSeqRef,
-                                              expect_seq = ExpSeq}) ->
+do_write_objects(Seq, BinObjs, State = #state{expect_seq = ExpSeq,
+                                              source_drops = SourceDrops}) ->
     %% Did not get expected sequence.
     %%
     %% If the source dropped (rtq consumer behind tail of queue), there
@@ -174,18 +177,17 @@ do_write_objects(Seq, BinObjs, State = #state{seq_ref = OldSeqRef,
     %% If the sequence number wrapped?  don't worry about acks, happens infrequently.
     %%
     NewSeqRef = make_ref(),
-    case OldSeqRef of
-        undefined -> % no need to tell user about first time through
-            ok;
-        _ ->
-            lager:info("Realtime replication sink detected sequence gap from ~p to ~p,"
-                       " ending sequence ref ~p starting ~p\n",
-                       [ExpSeq, Seq, OldSeqRef, NewSeqRef])
-    end,
+    SourceDrops2 = case ExpSeq of
+                       undefined -> % no need to tell user about first time through
+                           SourceDrops;
+                       _ ->
+                           SourceDrops + Seq - ExpSeq
+                  end,
     do_write_objects(Seq, BinObjs, State#state{seq_ref = NewSeqRef,
                                                expect_seq = Seq,
                                                acked_seq = Seq - 1,
-                                               completed = []}).
+                                               completed = [],
+                                               source_drops = SourceDrops2}).
                                                
     
     
@@ -227,6 +229,9 @@ schedule_reactivate_socket(State = #state{transport = T,
         false ->
             %% already deactivated, try again in 10ms
             erlang:send_after(10, self(), reactivate_socket),
+            State#state{active = {false, scheduled}};
+        {false, scheduled} ->
+            %% have a check scheduled already
             State
     end.
     
