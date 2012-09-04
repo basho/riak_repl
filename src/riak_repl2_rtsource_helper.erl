@@ -60,9 +60,8 @@ handle_call({pull, {Seq, NumObjects, BinObjs}}, _From,
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(status, _From, State = 
-                #state{remote = Remote, sent_seq = SentSeq, objects = Objects}) ->
-    {reply, [{remote, Remote},
-             {sent_seq, SentSeq},
+                #state{sent_seq = SentSeq, objects = Objects}) ->
+    {reply, [{sent_seq, SentSeq},
              {objects, Objects}], State}.
 
 handle_cast(_Msg, State) ->

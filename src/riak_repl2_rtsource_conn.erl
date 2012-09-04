@@ -92,10 +92,14 @@ handle_call(status, _From, State =
                      {address, A},
                      {transport, T},
                      {socket, S},
-                     {peer, T:peername(S)}]
+                     {peer, peername(State)},
+                     {helper_pid, H}]
             end,
     HelperProps = try
-                      riak_repl2_rtsource_helper:status(H)
+                      Timeout = app_helper:get_env(
+                                  riak_repl, status_helper_timeout,
+                                  app_helper:get_env(riak_repl, status_timeout, 5000) - 1000),
+                      riak_repl2_rtsource_helper:status(H, Timeout)
                   catch
                       _:{timeout, _} ->
                           [{helper, timeout}]
@@ -122,7 +126,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
          {site, Remote},
          {strategy, realtime}] ++
         QStats,
-    {reply, Status, State};
+    {reply, {status, Status}, State};
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From, 
             State = #state{remote = Remote}) ->
@@ -144,19 +148,19 @@ handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
     riak_repl_stats:server_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, _S}, 
-            State = #state{transport = T, socket = S, remote = Remote, cont = Cont}) ->
+            State = #state{remote = Remote, cont = Cont}) ->
     case size(Cont) of
         0 ->
             ok;
         NumBytes ->
             lager:warning("Realtime connection ~p to ~p closed with partial receive of ~b bytes\n",
-                          [T:peername(S), Remote, NumBytes])
+                          [peername(State), Remote, NumBytes])
     end,
     {stop, normal, State};
 handle_info({tcp_error, _S, Reason}, 
-            State = #state{transport = T, socket = S, remote = Remote, cont = Cont}) ->
+            State = #state{remote = Remote, cont = Cont}) ->
     lager:warning("Realtime connection ~p to ~p network error ~p - ~b bytes pending\n",
-                  [T:peername(S), Remote, Reason, size(Cont)]),
+                  [peername(State), Remote, Reason, size(Cont)]),
     {stop, normal, State}.
 
 
@@ -185,4 +189,12 @@ recv(TcpBin, State = #state{remote = Name}) ->
         {error, Reason} ->
             %% Something bad happened
             {stop, {framing_error, Reason}, State}
+    end.
+
+peername(#state{transport = T, socket = S}) ->
+    case T:peername(S) of
+        {ok, Res} ->
+            Res;
+        {error, Reason} ->
+            {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
