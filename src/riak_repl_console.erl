@@ -296,8 +296,9 @@ client_stats() ->
         end, Stats))}].
 
 client_stats_rpc() ->
+    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
-    [client_stats(P) || P <- Pids].
+    [client_stats(P) || P <- Pids] ++ RT2.
 
 server_stats() ->
     RT2 = [rt2_source_stats(P) || {_R,P} <- riak_repl2_rtsource_conn_sup:enabled()],
@@ -338,6 +339,16 @@ rt2_source_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
                 riak_repl2_rtsource_conn:legacy_status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+rt2_sink_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_rtsink_conn:legacy_status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy

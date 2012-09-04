@@ -12,13 +12,15 @@
 %% API
 -export([start_link/4,
          stop/1,
-         status/1]).
+         status/1, status/2,
+         legacy_status/1, legacy_status/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {transport,        %% Module for sending
+-record(state, {remote,           %% Remote site name
+                transport,        %% Module for sending
                 socket,           %% Socket
                 proto,            %% Protocol version negotiated
                 max_pending,      %% Maximum number of operations
@@ -45,6 +47,12 @@ status(Pid) ->
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
+legacy_status(Pid) ->
+    legacy_status(Pid, 5000).
+
+legacy_status(Pid, Timeout) ->
+    gen_server:call(Pid, legacy_status, Timeout).
+
 %% Callbacks
 init([Transport, Socket, Proto]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
@@ -54,23 +62,33 @@ init([Transport, Socket, Proto]) ->
     {ok, #state{transport = Transport, socket = Socket,
                 proto = Proto, max_pending = MaxPending, helper = Helper}}.
 
-handle_call(status, _From, State = #state{transport = T, socket = S, helper = Helper,
+handle_call(status, _From, State = #state{remote = Remote,
+                                          transport = T, socket = S, helper = Helper,
                                           active = Active, deactivated = Deactivated,
                                           source_drops = SourceDrops,
                                           expect_seq = ExpSeq, acked_seq = AckedSeq}) ->
     Pending = pending(State),    
-    Status = {will_be_remote, self(), [{connected, true},
-                                       {transport, T},
-                                       {socket, S},
-                                       {peer, T:peername(S)},
-                                       {helper, Helper},
-                                       {active, Active},
-                                       {deactivated, Deactivated},
-                                       {source_drops, SourceDrops},
-                                       {expect_seq, ExpSeq},
-                                       {acked_seq, AckedSeq},
-                                       {pending, Pending}]},
+    Status = {Remote, self(), [{connected, true},
+                               {transport, T},
+                               {socket, S},
+                               {peer, peername(State)},
+                               {helper, Helper},
+                               {active, Active},
+                               {deactivated, Deactivated},
+                               {source_drops, SourceDrops},
+                               {expect_seq, ExpSeq},
+                               {acked_seq, AckedSeq},
+                               {pending, Pending}]},
     {reply, Status, State};
+handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
+    {IPAddr, Port} = peername(State),
+    Pending = pending(State),
+    Status = [{node, node()},
+              {site, Remote},
+              {strategy, realtime},
+              {put_pool_size, Pending}, % close enough
+              {connected, IPAddr, Port}],
+    {reply, {status, Status}, State};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
@@ -100,20 +118,20 @@ handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
     %% TODO: break out socket stats collection/reporting to separate process
     riak_repl_stats:client_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
-handle_info({tcp_closed, S}, State = #state{transport = T, socket = S, cont = Cont}) ->
+handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
     case size(Cont) of
         0 ->
             ok;
         NumBytes ->
             %%TODO: Add remote name somehow
             lager:warning("Realtime connection from ~p closed with partial receive of ~b bytes\n",
-                          [T:peername(S), NumBytes])
+                          [peername(State), NumBytes])
     end,
     {stop, normal, State};
-handle_info({tcp_error, _S, Reason}, State= #state{transport = T, socket = S, cont = Cont}) ->
+handle_info({tcp_error, _S, Reason}, State= #state{cont = Cont}) ->
     %%TODO: Add remote name somehow
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
-                  [T:peername(S), Reason, size(Cont)]),
+                  [peername(State), Reason, size(Cont)]),
     {stop, normal, State};
 handle_info(reactivate_socket, State = #state{transport = T, socket = S,
                                               max_pending = MaxPending}) ->
@@ -219,6 +237,14 @@ pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
                completed = Completed}) ->
     ExpSeq - AckedSeq - length(Completed) - 1.
     
+peername(#state{transport = T, socket = S}) ->
+    case T:peername(S) of
+        {ok, Res} ->
+            Res;
+        {error, Reason} ->
+            {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
+    end.
+            
 
 schedule_reactivate_socket(State = #state{transport = T,
                                           socket = S,

@@ -6,7 +6,7 @@
 %%
 %% High level responsibility...
 %%
--export([start_link/0, status/0, register_sink/1]).
+-export([start_link/0, status/0, register_sink/1, get_sink_pids/0]).
 -export([enable/1, disable/1, enabled/0, start/1, stop/1, started/0]).
 -export([ensure_rt/2, postcommit/1]).
 
@@ -23,7 +23,7 @@ start_link() ->
 
 %% Status for the realtime repl subsystem
 status() ->
-    gen_server:call(?SERVER, status).
+    gen_server:call(?SERVER, status, infinity).
 
 %% Add realtime repliation to remote, do not enable yet
 enable(Remote) ->
@@ -123,6 +123,11 @@ ensure_rt(WantEnabled0, WantStarted0) ->
 register_sink(Pid) ->
     gen_server:call(?SERVER, {register_sink, Pid}).
 
+%% Get list of sink pids 
+%% TODO: Remove this once rtsink_sup is working right
+get_sink_pids() ->
+    gen_server:call(?SERVER, get_sink_pids).
+
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
@@ -140,14 +145,15 @@ init([]) ->
     {ok, #state{}}.
 
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     Sources = [try
-                   riak_repl2_rtsource_conn:status(Pid)
+                   riak_repl2_rtsource_conn:status(Pid, Timeout)
                catch
                    _:_ ->
                        {Remote, Pid, unavailable} 
                end || {Remote, Pid} <- riak_repl2_rtsource_conn_sup:enabled()],
     Sinks = [try
-                 riak_repl2_rtsink_conn:status(Pid)
+                 riak_repl2_rtsink_conn:status(Pid, Timeout)
              catch
                  _:_ ->
                      {will_be_remote_name, Pid, unavailable} 
@@ -161,7 +167,9 @@ handle_call(status, _From, State = #state{sinks = SinkPids}) ->
 handle_call({register_sink, SinkPid}, _From, State = #state{sinks = Sinks}) ->
     Sinks2 = [SinkPid | Sinks],
     monitor(process, SinkPid),
-    {reply, ok, State#state{sinks = Sinks2}}.
+    {reply, ok, State#state{sinks = Sinks2}};
+handle_call(get_sink_pids, _From, State = #state{sinks = Sinks}) ->
+    {reply, Sinks, State}.
 
 handle_cast(_Msg, State) ->
     %% TODO: log unknown message
@@ -171,7 +179,10 @@ handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
             State = #state{sinks = Sinks}) ->
     %%TODO: Check how ranch logs sink process death
     Sinks2 = Sinks -- [SinkPid],
-    {noreply, State#state{sinks = Sinks2}}.
+    {noreply, State#state{sinks = Sinks2}};
+handle_info(Msg, State) ->
+    %%TODO: Log unhandled message - e.g. timed out status result
+    {noreply, State}.
     
 terminate(_Reason, _State) ->
     ok.
