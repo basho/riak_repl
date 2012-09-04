@@ -36,8 +36,8 @@ start_link_test() ->
 
 set_peers_test() ->
     PeerNodeAddrs = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
-    riak_core_connection_mgr:set_peers(PeerNodeAddrs),
-    ?assert(PeerNodeAddrs == riak_core_connection_mgr:get_peers()).
+    riak_core_connection_mgr:set_peers(?REMOTE_CLUSTER_NAME, PeerNodeAddrs),
+    ?assert(PeerNodeAddrs == riak_core_connection_mgr:get_peers(?REMOTE_CLUSTER_NAME)).
 
 %% conn_mgr should start up paused
 is_paused_test() ->
