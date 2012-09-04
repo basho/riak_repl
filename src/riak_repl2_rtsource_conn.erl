@@ -11,7 +11,8 @@
 %% API
 -export([start_link/1,
          stop/1,
-         status/1, status/2]).
+         status/1, status/2,
+         legacy_status/1, legacy_status/2]).
 
 %% connection manager callbacks
 -export([connected/5,
@@ -39,10 +40,17 @@ stop(Pid) ->
 status(Pid) ->
     status(Pid, infinity).
 
-%% connection manager callbacks
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
+%% legacy status -- look like a riak_repl_tcp_server
+legacy_status(Pid) ->
+    legacy_status(Pid, infinity).
+
+legacy_status(Pid, Timeout) ->
+    gen_server:call(Pid, legacy_status, Timeout).
+
+%% connection manager callbacks
 connected(Socket, Transport, Endpoint, Proto, RtSourcePid) ->
     gen_server:call(RtSourcePid,
                     {connected, Socket, Transport, Endpoint, Proto}).
@@ -94,6 +102,27 @@ handle_call(status, _From, State =
                   end,
     Status = {R, self(), Props ++ HelperProps},
     {reply, Status, State};
+handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
+    RTQStatus = riak_repl2_rtq:status(),
+    QBS = proplists:get_value(bytes, RTQStatus),
+    Consumers = proplists:get_value(consumers, RTQStatus),
+    QStats = case proplists:get_value(Remote, Consumers) of
+                 undefined ->
+                     [];
+                 Consumer ->
+                     QL = proplists:get_value(pending, Consumer, 0) +
+                         proplists:get_value(unacked, Consumer, 0),
+                     DC = proplists:get_value(drops, Consumer),
+                     [{dropped_count, DC},
+                      {queue_length, QL},     % pending + unacknowledged for this conn
+                      {queue_byte_size, QBS}] % approximation, this it total q size
+             end,
+    Status = 
+        [{node, node()},
+         {site, Remote},
+         {strategy, realtime}] ++
+        QStats,
+    {reply, Status, State};
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From, 
             State = #state{remote = Remote}) ->
@@ -112,6 +141,7 @@ handle_cast({connect_failed, HelperPid, Reason}, State = #state{helper_pid = Hel
     {stop, {error, {connect_failed, Reason}}, State}.
     
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
+    riak_repl_stats:server_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, _S}, 
             State = #state{transport = T, socket = S, remote = Remote, cont = Cont}) ->
@@ -148,6 +178,8 @@ recv(TcpBin, State = #state{remote = Name}) ->
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
         {ok, {ack, Seq}, Cont} ->
+            %% TODO: report this better per-remote
+            riak_repl_stats:objects_sent(),
             ok = riak_repl2_rtq:ack(Name, Seq),
             recv(Cont, State);
         {error, Reason} ->
