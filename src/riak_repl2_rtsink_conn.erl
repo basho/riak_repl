@@ -49,7 +49,7 @@ status(Pid, Timeout) ->
 init([Transport, Socket, Proto]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
-    ok = Transport:setopts(Socket, [{active, true}]),
+    Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
     {ok, #state{transport = Transport, socket = Socket,
                 proto = Proto, max_pending = MaxPending, helper = Helper}}.
@@ -85,7 +85,10 @@ handle_cast({ack, Ref, Seq}, State = #state{transport = T, socket = S,
         {AckedTo, Completed2} ->
             {noreply, State#state{completed = Completed2}};
         {AckTo, Completed2}  ->
-            T:send(S, riak_repl2_rtframe:encode(ack, AckTo)),
+            TcpIOL = riak_repl2_rtframe:encode(ack, AckTo),
+            T:send(S, TcpIOL),
+            %% TODO: break out socket stats collection/reporting to separate process
+            riak_repl_stats:client_bytes_sent(iolist_size(TcpIOL)),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
     end;
 handle_cast({ack, Ref, Seq}, State) ->
@@ -94,6 +97,8 @@ handle_cast({ack, Ref, Seq}, State) ->
     {noreply, State}.
 
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
+    %% TODO: break out socket stats collection/reporting to separate process
+    riak_repl_stats:client_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, S}, State = #state{transport = T, socket = S, cont = Cont}) ->
     case size(Cont) of
@@ -118,7 +123,7 @@ handle_info(reactivate_socket, State = #state{transport = T, socket = S,
         _ ->
             lager:debug("Realtime sink recovered - reactivating transport ~p socket ~p\n",
                         [T, S]),
-            ok = T:setopts(S, [{active, true}]),
+            T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
             {noreply, State#state{active = true}}
     end.
 
@@ -223,7 +228,7 @@ schedule_reactivate_socket(State = #state{transport = T,
         true ->
             lager:debug("Realtime sink overloaded - deactivating transport ~p socket ~p\n",
                         [T, S]),
-            ok = T:setopts(S, [{active, false}]),
+            T:setopts(S, [{active, false}]),
             self() ! reactivate_socket,
             State#state{active = false, deactivated = Deactivated + 1};
         false ->

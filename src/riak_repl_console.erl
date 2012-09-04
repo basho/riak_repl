@@ -249,17 +249,18 @@ client_stats_rpc() ->
     [client_stats(P) || P <- Pids].
 
 server_stats() ->
+    RT2 = [rt2_source_stats(P) || {_R,P} <- riak_repl2_rtsource_conn_sup:enabled()],
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            [{server_stats, []}];
+            [{server_stats, RT2}];
         _ ->
-            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])}]
+            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])++RT2}]
     end.
 
 server_stats_rpc() ->
     [server_stats(P) || P <- server_pids()].
-
+    
 client_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
@@ -274,6 +275,16 @@ server_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
                 riak_repl_tcp_server:status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+rt2_source_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_rtsource_conn:legacy_status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy
