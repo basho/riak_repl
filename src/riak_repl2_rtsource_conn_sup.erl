@@ -22,7 +22,7 @@ disable(Remote) ->
     supervisor:delete_child(?MODULE, Remote).
 
 enabled() ->
-    [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE)].
+    [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].
 
 %% @private
 init([]) ->
