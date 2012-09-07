@@ -31,6 +31,7 @@ start(_Type, _StartArgs) ->
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
 
+
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
@@ -52,20 +53,8 @@ start(_Type, _StartArgs) ->
             %% cluster manager name locator function (which reads the ring).
             register_cluster_name_locator(),
 
-            %% TODO: Supervise this somewhere
-            %% Start connection manager listening
-            IP = "0.0.0.0",
-            Port = app_helper:get_env(riak_repl, conn_port, 9900),
-            MaxListeners = 5,
-            TcpOptions = [{keepalive, true},
-                          {nodelay, true},
-                          {packet, 4}, %% TODO: get rid of packet, 4
-                          {reuseaddr, true},
-                          {active, false}],
-            Args = [],
-            SubProtocols = [{{realtime,[{1,0}]}, riak_repl2_rtsink_conn, start_link, Args}],
-            {ok, _CMPid} = riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, 
-                                                                 TcpOptions, SubProtocols),
+            %% makes service manager start connection dispatcher
+            riak_repl2_rtsink_conn:register_service(),
 
             {ok, Pid};
         {error, Reason} ->

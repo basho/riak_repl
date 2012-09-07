@@ -24,6 +24,7 @@
 
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
+                connection_ref, % reference handed out by connection manager
                 transport, % transport module 
                 socket,    % socket to use with transport 
                 proto,     % protocol version negotiated
@@ -52,6 +53,8 @@ legacy_status(Pid, Timeout) ->
 
 %% connection manager callbacks
 connected(Socket, Transport, Endpoint, Proto, RtSourcePid) ->
+    Transport:controlling_process(Socket, RtSourcePid),
+    Transport:setopts(Socket, [{active, true}]),
     gen_server:call(RtSourcePid,
                     {connected, Socket, Transport, Endpoint, Proto}).
 
@@ -62,21 +65,18 @@ connect_failed(_ClientProto, Reason, RtSourcePid) ->
 
 %% Initialize
 init([Remote]) ->
-    %% TODO: Find a good way to get remote ports, for now just use appenv
-    %% {riak_repl, remotes, [{Site, {Ip, Port}}]}
-    Remotes = app_helper:get_env(riak_repl, remotes, []),
-    case lists:keyfind(Remote, 1, Remotes) of
-        {Remote, Address} ->
-                       %% TODO: switch back to conn_mgr when ready
-            TcpOptions = [{keepalive, true},
-                          {nodelay, true},
-                          {packet, 4}, %% TODO: get rid of packet, 4
-                          {reuseaddr, true},
-                          {active, false}],
-            riak_core_connection:connect(Address, {realtime,[{1,0}]}, TcpOptions, {?MODULE, self()}),
-            {ok, #state{remote = Remote}};
-        _ ->
-            {stop, {no_remote, Remote}}
+    TcpOptions = [{keepalive, true},
+                  {nodelay, true},
+                  {packet, 0},
+                  {active, false}],
+    ClientSpec = {{realtime,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
+
+    %% Todo: check for bad remote name
+    case riak_core_connection_mgr:connect({remote, Remote}, ClientSpec) of
+        {ok, Ref} ->
+            {ok, #state{remote = Remote, connection_ref = Ref}};
+        {error, Reason}->
+            {stop, Reason}
     end.
 
 handle_call(stop, _From, State) ->
@@ -95,14 +95,19 @@ handle_call(status, _From, State =
                      {peer, peername(State)},
                      {helper_pid, H}]
             end,
-    HelperProps = try
-                      Timeout = app_helper:get_env(
-                                  riak_repl, status_helper_timeout,
-                                  app_helper:get_env(riak_repl, status_timeout, 5000) - 1000),
-                      riak_repl2_rtsource_helper:status(H, Timeout)
-                  catch
-                      _:{timeout, _} ->
-                          [{helper, timeout}]
+    HelperProps = case H of
+                      undefined ->
+                          [];
+                      _ ->
+                          try
+                              Timeout = app_helper:get_env(
+                                          riak_repl, status_helper_timeout,
+                                          app_helper:get_env(riak_repl, status_timeout, 5000) - 1000),
+                              riak_repl2_rtsource_helper:status(H, Timeout)
+                          catch
+                              _:{timeout, _} ->
+                                  [{helper, timeout}]
+                          end
                   end,
     Status = {R, self(), Props ++ HelperProps},
     {reply, Status, State};
@@ -130,19 +135,28 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From, 
             State = #state{remote = Remote}) ->
-    ok = Transport:setopts(Socket, [{active, true}]),
-    {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
-    {reply, ok, State#state{transport = Transport, 
-                            socket = Socket,
-                            address = EndPoint,
-                            proto = Proto,
-                            helper_pid = HelperPid}}.
+    %% Check the socket is valid, may have been an error 
+    %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
+    case Transport:send(Socket, <<>>) of
+        ok ->
+            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
+            {reply, ok, State#state{transport = Transport, 
+                                    socket = Socket,
+                                    address = EndPoint,
+                                    proto = Proto,
+                                    helper_pid = HelperPid}};
+        ER ->
+            {reply, ER, State}
+    end.
 
 %% Connection manager failed to make connection
 %% TODO: Consider reissuing connect against another host - maybe that
 %%   functionality should be in the connection manager (I want a connection to site X)
-handle_cast({connect_failed, HelperPid, Reason}, State = #state{helper_pid = HelperPid}) ->
-    {stop, {error, {connect_failed, Reason}}, State}.
+handle_cast({connect_failed, HelperPid, Reason}, 
+            State = #state{remote = Remote, helper_pid = HelperPid}) ->
+    lager:info("Realtime replication connection to site ~p failed\n",
+               [Remote, Reason]),
+    {stop, normal, State}.
     
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
     riak_repl_stats:server_bytes_recv(size(TcpBin)),
@@ -156,6 +170,9 @@ handle_info({tcp_closed, _S},
             lager:warning("Realtime connection ~p to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
+    %% go to sleep for 1s so a sink that opens the connection ok but then 
+    %% dies will not make the server restart too fst.
+    timer:sleep(1000),
     {stop, normal, State};
 handle_info({tcp_error, _S, Reason}, 
             State = #state{remote = Remote, cont = Cont}) ->

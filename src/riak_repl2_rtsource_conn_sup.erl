@@ -26,6 +26,11 @@ enabled() ->
 
 %% @private
 init([]) ->
+    %% TODO: Move before riak_repl2_rt_sup start
+    %% once connmgr is started by core.  Must be started/registered
+    %% before sources are started.
+    riak_repl2_rt:register_remote_locator(),
+
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Remotes = riak_repl_ring:rt_started(Ring),
     Children = [make_remote(Remote) || Remote <- Remotes],

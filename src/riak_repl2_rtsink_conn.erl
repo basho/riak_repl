@@ -10,8 +10,10 @@
 %%
 
 %% API
+-export([register_service/0, start_service/4]).
 -export([start_link/4,
          stop/1,
+         set_socket/4,
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
@@ -35,11 +37,31 @@
                 cont = <<>>       %% Continuation from previous TCP buffer
                }).
 
+%% Register with service manager
+register_service() ->
+    ProtoPrefs = {realtime,[{1,0}]},
+    TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
+                  {packet, 0},
+                  {nodelay, true}],
+    HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
+    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+
+%% Callback from service manager
+start_service(Socket, Transport, Proto, _Args) ->
+    {ok, Pid} = riak_repl2_rtsink_conn_sup:start_child(Proto),
+    ok = Transport:controlling_process(Socket, Pid),
+    ok = set_socket(Pid, Socket, Transport, _Args),
+    {ok, Pid}.
+
 start_link(Socket, Transport, Proto, _Args) ->
     gen_server:start_link(?MODULE, [Transport, Socket, Proto], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, infinity).
+
+%% Call after control handed over to socket
+set_socket(Pid, Socket, Transport, Proto) ->
+    gen_server:call(Pid, {set_socket, Socket, Transport, Proto}, infinity).
 
 status(Pid) ->
     status(Pid, 5000).
@@ -133,7 +155,7 @@ handle_info({tcp_error, _S, Reason}, State= #state{cont = Cont}) ->
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Reason, size(Cont)]),
     {stop, normal, State};
-handle_info(reactivate_socket, State = #state{transport = T, socket = S,
+handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, socket = S,
                                               max_pending = MaxPending}) ->
     case pending(State) > MaxPending of
         true ->
@@ -141,8 +163,16 @@ handle_info(reactivate_socket, State = #state{transport = T, socket = S,
         _ ->
             lager:debug("Realtime sink recovered - reactivating transport ~p socket ~p\n",
                         [T, S]),
-            T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
-            {noreply, State#state{active = true}}
+            %% Check the socket is ok
+            case T:peername(S) of
+                {ok, _} ->
+                    T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
+                    {noreply, State#state{active = true}};
+                {error, Reason} ->
+                    lager:info("Realtime replication sink for ~p had socket error - ~p\n",
+                               [Remote, Reason]),
+                    {stop, normal, State}
+            end
     end.
 
 terminate(_Reason, _State) ->

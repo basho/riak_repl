@@ -20,6 +20,8 @@ init([]) ->
     Processes =
         [{riak_repl2_rtq, {riak_repl2_rtq, start_link, []},
           permanent, 50000, worker, [riak_repl2_rtq]},
+
          {riak_repl2_rtsource_conn_sup, {riak_repl2_rtsource_conn_sup, start_link, []},
           permanent, infinity, supervisor, [riak_repl2_rtsource_conn_sup]}],
+
     {ok, {{rest_for_one, 9, 10}, Processes}}.
