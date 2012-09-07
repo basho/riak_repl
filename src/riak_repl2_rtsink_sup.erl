@@ -23,9 +23,18 @@ init([]) ->
                 {worker_module, riak_repl_fullsync_worker},
                 {worker_args, []},
                 {size, MinPool}, {max_overflow, MaxPool}],
+    CMIP = app_helper:get_env(riak_repl, conn_address, "0.0.0.0"),
+    CMPort = app_helper:get_env(riak_repl, conn_port, 9900),
+    CMAddr = {CMIP, CMPort},
+    
     Processes =
-        [ {riak_repl2_rtsink_pool, {poolboy, start_link, [PoolArgs]},
+        [ %TODO: move to riakcore
+          {riak_core_service_mgr, {riak_core_service_mgr, start_link, [CMAddr]},
+           permanent, 5000, worker, [riak_core_service_mgr]},
+
+          {riak_repl2_rtsink_pool, {poolboy, start_link, [PoolArgs]},
            permanent, 5000, worker, [poolboy]},
+
           {riak_repl2_rtsink_conn_sup, {riak_repl2_rtsink_conn_sup, start_link, []},
            permanent, infinity, supervisor, [riak_repl2_rtsink_conn_sup]} ],
     {ok, {{rest_for_one, 9, 10}, Processes}}.
