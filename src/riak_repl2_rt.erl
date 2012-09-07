@@ -8,7 +8,7 @@
 %%
 -export([start_link/0, status/0, register_sink/1, get_sink_pids/0]).
 -export([enable/1, disable/1, enabled/0, start/1, stop/1, started/0]).
--export([ensure_rt/2, postcommit/1]).
+-export([ensure_rt/2, register_remote_locator/0, postcommit/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -118,6 +118,21 @@ ensure_rt(WantEnabled0, WantStarted0) ->
              {stopped, ToStop},
              {disabled, ToDisable}]
     end.
+
+register_remote_locator() ->
+    %% TODO: Once conn manager is in core, this can
+    %% Teach the connection manager how to find remote clusters
+    Remotes = orddict:from_list(app_helper:get_env(riak_repl, remotes, [])),
+    Locator = fun(Name, _Policy) ->
+                      case orddict:find(Name, Remotes) of
+                          false ->
+                              {error, {unknown, Name}};
+                          OKEndpoints ->
+                              OKEndpoints
+                      end
+              end,
+    ok = riak_core_connection_mgr:register_locator(remote, Locator).
+
 
 %% Register an active realtime sink (supervised under ranch)
 register_sink(Pid) ->
