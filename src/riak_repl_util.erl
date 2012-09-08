@@ -70,7 +70,7 @@ do_repl_put(Object) ->
     K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
-            ReqId = erlang:phash2(erlang:now()),
+            ReqId = erlang:phash2({self(), os:timestamp()}),
             B = riak_object:bucket(Object),
             K = riak_object:key(Object),
             Opts = [asis, disable_hooks, {update_last_modified, false}],
@@ -560,7 +560,7 @@ schedule_fullsync(Pid) ->
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
 elapsed_secs(Then) ->
-    CentiSecs = timer:now_diff(now(), Then) div 10000,
+    CentiSecs = timer:now_diff(os:timestamp(), Then) div 10000,
     CentiSecs / 100.0.
 
 shuffle_partitions(Partitions, Seed) ->

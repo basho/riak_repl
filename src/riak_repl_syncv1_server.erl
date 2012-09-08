@@ -135,7 +135,7 @@ merkle_send(timeout, State=#state{sitename=SiteName,
     file:delete(FileName), % make sure we get a clean copy
     lager:info("Full-sync with site ~p; hashing partition ~p data",
                           [SiteName, Partition]),
-    Now = now(),
+    Now = os:timestamp(),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
     {ok, Ref} = riak_repl_fullsync_helper:make_merkle(Pid, Partition, FileName),
     next_state(merkle_build, State#state{helper_pid = Pid, 
@@ -164,7 +164,7 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
                           " ~p data (built in ~p secs)",
                           [State#state.sitename, State#state.partition,
                            elapsed_secs(State#state.stage_start)]),
-    Now = now(),
+    Now = os:timestamp(),
     riak_repl_tcp_server:send(State#state.transport, State#state.socket,
         {merkle, FileSize, State#state.partition}),
     next_state(merkle_xfer, State#state{helper_pid = undefined,
@@ -196,7 +196,7 @@ merkle_xfer(timeout, State) ->
                                   " ~p diffs (sent in ~p secs)",
                                   [State#state.sitename, State#state.partition,
                                    elapsed_secs(State#state.stage_start)]),
-            Now = now(),
+            Now = os:timestamp(),
             next_state(merkle_wait_ack, State#state{merkle_fd = undefined,
                     stage_start = Now})
     end.
@@ -206,7 +206,7 @@ merkle_wait_ack(cancel_fullsync, State) ->
 merkle_wait_ack({ack,Partition,DiffVClocks}, 
                 State=#state{partition=Partition}) ->
     next_state(merkle_diff, State#state{diff_vclocks=DiffVClocks,
-                                        stage_start = now(),
+                                        stage_start = os:timestamp(),
                                         diff_sent = 0,
                                         diff_recv = 0,
                                         diff_errs = 0}).
@@ -362,7 +362,7 @@ do_start_fullsync(State) ->
                     %% randomly shuffle the partitions so that if we
                     %% restart, we have a good chance of not re-doing
                     %% partitions we already synced
-                    riak_repl_util:shuffle_partitions(Partitions0, now());
+                    riak_repl_util:shuffle_partitions(Partitions0, os:timestamp());
                 _ ->
                     Partitions0
             end
@@ -404,7 +404,7 @@ do_cancel_fullsync(State) ->  % already cancelled
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
 elapsed_secs(Then) ->
-    CentiSecs = timer:now_diff(now(), Then) div 10000,
+    CentiSecs = timer:now_diff(os:timestamp(), Then) div 10000,
     CentiSecs / 100.0.
 
 maybe_send(RObj, ClientVC, Transport, Socket, Client) ->
