@@ -162,7 +162,7 @@ wait_for_partition({partition, Partition}, State=#state{work_dir=WorkDir}) ->
                                                                  KeyListFn),
     {next_state, build_keylist, State#state{kl_pid=KeyListPid,
             kl_ref=KeyListRef, kl_fn=KeyListFn,
-            partition=Partition, partition_start=now(), stage_start=now(),
+            partition=Partition, partition_start=os:timestamp(), stage_start=os:timestamp(),
             pending_acks=0, generator_paused=false,
             their_kl_fn=TheirKeyListFn, their_kl_fh=undefined}};
 %% Unknown event (ignored)
@@ -190,7 +190,7 @@ build_keylist({Ref, keylist_built, Size},
     riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
     %% note that num_diffs is being assigned the number of keys, regardless of diffs,
     %% because we don't the number of diffs yet. See TODO: above redarding KEY_LIST_THRESHOLD
-    {next_state, wait_keylist, State#state{stage_start=now(), num_diffs=Size}};
+    {next_state, wait_keylist, State#state{stage_start=os:timestamp(), num_diffs=Size}};
 %% Error
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
@@ -287,7 +287,7 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
 
     lager:info("Full-sync with site ~p; using ~p for ~p",
                [State#state.sitename, NextState, State#state.partition]),
-    {next_state, NextState, State#state{diff_ref=Ref, bloom=Bloom, diff_pid=Pid, stage_start=now()}};
+    {next_state, NextState, State#state{diff_ref=Ref, bloom=Bloom, diff_pid=Pid, stage_start=os:timestamp()}};
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
         [State#state.sitename, Partition]),
