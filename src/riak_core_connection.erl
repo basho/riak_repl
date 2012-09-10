@@ -90,6 +90,8 @@ sync_connect({IP,Port}, ClientSpec) ->
 
 %% Returns true if the IP address given is a valid host IP address.
 %% stolen from riak_repl_util.erl
+valid_host_ip("0.0.0.0") ->
+    true;
 valid_host_ip(IP) ->     
     {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
@@ -156,11 +158,11 @@ sync_connect_status(Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}}
                     %% set client's requested Tcp options
                     ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
                     Transport:setopts(Socket, Options),
-                    %% transfer the socket to the process that requested the connection
-                    ok = Transport:controlling_process(Socket, Parent),
                     %% notify requester of connection and negotiated protocol from host
-                    Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args),
-                    ok;
+                    %% pass back returned value in case problem detected on connection
+                    %% by module.  requestor is responsible for transferring control
+                    %% of the socket.
+                    Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args);
                 {error, Reason} ->
                     ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
                     Module:connect_failed(ClientProtocol, {error, Reason}, Args),
@@ -201,13 +203,13 @@ start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
     ?TRACE(?debugFmt("Setting user options on service side; ~p", [Options])),
-    Transport:setopts(Socket, Options),
+    % Transport:setopts(Socket, Options),
     %% call service body function for matching protocol. The callee should start
     %% a process or gen_server or such, and return {ok, pid()}.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args) of
         {ok, Pid} ->
             %% transfer control of socket to new service process
-            ok = Transport:controlling_process(Socket, Pid),
+            %ok = Transport:controlling_process(Socket, Pid),
             {ok, Pid};
         {error, Reason} ->
             ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",

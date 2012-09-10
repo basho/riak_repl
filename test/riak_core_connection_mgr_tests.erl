@@ -5,26 +5,52 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%%-define(TRACE(Stmt),Stmt).
--define(TRACE(Stmt),ok).
+-define(TRACE(Stmt),Stmt).
+%%-define(TRACE(Stmt),ok).
 
 %% internal functions
 -export([testService/4,
          connected/5, connect_failed/3
         ]).
 
-%% my name and remote same because I need to talk to myself for testing
--define(MY_CLUSTER_NAME, "bob").
--define(REMOTE_CLUSTER_NAME, "bob").
+%% Locator selector types
+-define(REMOTE_LOCATOR_TYPE, remote).
+-define(ADDR_LOCATOR_TYPE, addr).
 
+%% My cluster
+-define(MY_CLUSTER_NAME, "bob").
+-define(MY_CLUSTER_ADDR, {"127.0.0.1", 4097}).
+
+%% Remote cluster
+-define(REMOTE_CLUSTER_NAME, "betty").
 -define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4096}).
--define(TEST_ADDR, {"127.0.0.1", 4097}).
+-define(REMOTE_ADDRS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003},
+                       ?REMOTE_CLUSTER_ADDR]).
+
 -define(MAX_CONS, 2).
 -define(TCP_OPTIONS, [{keepalive, true},
                       {nodelay, true},
                       {packet, 4},
                       {reuseaddr, true},
                       {active, false}]).
+
+%% Tell the connection manager how to find out "remote" end points.
+%% For testing, we just make up some local addresses.
+register_remote_locator() ->
+    Remotes = orddict:from_list([{?REMOTE_CLUSTER_NAME, ?REMOTE_ADDRS}]),
+    Locator = fun(Name, _Policy) ->
+                      case orddict:find(Name, Remotes) of
+                          false ->
+                              {error, {unknown, Name}};
+                          OKEndpoints ->
+                              OKEndpoints
+                      end
+              end,
+    ok = riak_core_connection_mgr:register_locator(?REMOTE_LOCATOR_TYPE, Locator).
+
+register_addr_locator() ->
+    Locator = fun(Name, _Policy) -> {ok, [Name]} end,
+    ok = riak_core_connection_mgr:register_locator(?ADDR_LOCATOR_TYPE, Locator).
 
 %% this test runs first and leaves the server running for other tests
 start_link_test() ->
@@ -34,10 +60,27 @@ start_link_test() ->
     {Ok, _Pid} = riak_core_connection_mgr:start_link(),
     ?assert(Ok == ok).
 
-set_peers_test() ->
-    PeerNodeAddrs = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
-    riak_core_connection_mgr:set_peers(?REMOTE_CLUSTER_NAME, PeerNodeAddrs),
-    ?assert(PeerNodeAddrs == riak_core_connection_mgr:get_peers(?REMOTE_CLUSTER_NAME)).
+register_locator_remote_test() ->
+    register_remote_locator(),
+    Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+    Strategy = default,
+    case riak_core_connection_mgr:apply_locator(Target, Strategy) of
+        {ok, Addrs} ->
+            ?assert(Addrs == ?REMOTE_ADDRS);
+        Error ->
+            ?assert(ok == Error)
+    end.
+
+register_locator_addr_test() ->
+    register_addr_locator(),
+    Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
+    Strategy = default,
+    case riak_core_connection_mgr:apply_locator(Target, Strategy) of
+        {ok, Addrs} ->
+            ?assert(Addrs == [?REMOTE_CLUSTER_ADDR]);
+        Error ->
+            ?assert(ok == Error)
+    end.
 
 %% conn_mgr should start up paused
 is_paused_test() ->
@@ -72,23 +115,32 @@ start_service() ->
     ExpectedRevs = [{1,0}, {1,0}],
     TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
     MaxListeners = 10,
-    riak_core_connection:start_dispatcher(?TEST_ADDR, MaxListeners, [TestProtocol]).
+    riak_core_connection:start_dispatcher(?REMOTE_CLUSTER_ADDR, MaxListeners, [TestProtocol]).
 
 client_connection_test() ->
+    ?debugMsg("Starting client_connection_test"),
     %% start a test service
     start_service(),
     %% do async connect via connection_mgr
     ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-    riak_core_connection_mgr:connect({addr, ?TEST_ADDR},
-                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+    Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
+    Strategy = default,
+    riak_core_connection_mgr:connect(Target,
+                                     {{testproto, [{1,0}]},
+                                      {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                     Strategy),
     timer:sleep(1000).
 
 client_connect_via_cluster_name_test() ->
     start_service(),
     %% do async connect via connection_mgr
     ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-    riak_core_connection_mgr:connect({name, ?REMOTE_CLUSTER_NAME},
-                               {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+    Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+    Strategy = default,
+    riak_core_connection_mgr:connect(Target,
+                                     {{testproto, [{1,0}]},
+                                      {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                     Strategy),
     timer:sleep(1000).
 
 client_retries_test() ->
@@ -98,8 +150,13 @@ client_retries_test() ->
 
     %% do async connect via connection_mgr
     ExpectedArgs = {retry_test, [{1,0}, {1,0}]},
-    riak_core_connection_mgr:connect({addr, ?TEST_ADDR},
-                                     {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+    Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+    Strategy = default,
+
+    riak_core_connection_mgr:connect(Target,
+                                     {{testproto, [{1,0}]},
+                                      {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                     Strategy),
     %% delay so the client will keep trying
     ?TRACE(?debugMsg(" ------ sleeping 3 sec")),
     timer:sleep(3000),
@@ -146,8 +203,8 @@ connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
         {retry_test, _Stuff} ->
             ?TRACE(?debugFmt("connect_failed: during retry test: ~p", [Reason])),
             ok;
-        _Other ->
-            ?TRACE(?debugFmt("connect_failed: ~p with args = ~p", [Reason, _Other])),
-            ?assert(false)
+        Other ->
+            ?TRACE(?debugFmt("connect_failed: ~p with args = ~p", [Reason, Other])),
+            ?assert(false == Other)
     end,
     timer:sleep(1000).
