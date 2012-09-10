@@ -34,6 +34,7 @@
 %% Client protocol spec
 -type(clientspec() :: {protoprefs(), {tcp_options(), module(),[any()]}}).
 
+
 %% Scheduler strategies tell the connection manager how distribute the load.
 %%
 %% Client scheduler strategies
