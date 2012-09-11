@@ -143,7 +143,6 @@ stop_service() ->
     riak_core_connection:stop_dispatcher(?REMOTE_CLUSTER_ADDR).
 
 client_connection_test() ->
-    ?debugMsg("Starting client_connection_test"),
     %% start a test service
     start_service(),
     %% do async connect via connection_mgr
@@ -247,13 +246,15 @@ connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
 
     case Args of
         expectedToFail ->
-            ?TRACE(?debugFmt("connect_failed: when expected to fail: ~p with ~p",
+            ?TRACE(?debugFmt("connect_failed: (EXPECTED) when expected to fail: ~p with ~p",
                              [Reason, Args])),
             ?assert(Reason == econnrefused);
         {retry_test, _Stuff} ->
-            ?TRACE(?debugFmt("connect_failed: during retry test: ~p", [Reason])),
+            ?TRACE(?debugFmt("connect_failed: (EXPECTED) during retry test: ~p",
+                             [Reason])),
             ok;
         Other ->
-            ?TRACE(?debugFmt("connect_failed: ~p with args = ~p", [Reason, Other])),
+            ?TRACE(?debugFmt("connect_failed: (UNEXPECTED) ~p with args = ~p",
+                             [Reason, Other])),
             ?assert(false == Other)
     end.

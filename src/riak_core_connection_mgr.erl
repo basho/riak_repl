@@ -203,7 +203,7 @@ handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
 
 handle_cast({trying_endpoint, Ref, Addr}, State = #state{pending=Pending}) ->
-    ?debugFmt("trying_endpoint: ~p", [Addr]),
+    ?TRACE(?debugFmt("trying_endpoint: ~p", [Addr])),
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
             %% TODO: should never happen
@@ -223,18 +223,7 @@ handle_cast({conmgr_no_endpoints, _Ref}, State) ->
 %% helper process says it failed to reach an address.
 handle_cast({endpoint_failed, Addr, Reason}, State) ->
     %% mark connection as black-listed and start timer for reset
-    {noreply, fail_endpoint(Addr, Reason, State)};
-
-%% helper process says the connection succeeded to this address
-handle_cast({endpoint_connected, Addr}, State) ->
-    ?debugFmt("endpoint_connected: for ~p", [Addr]),
-    {noreply, connect_endpoint(Addr, State)};
-
-%% message from the helper process. It ran out of endpoints to try.
-%% it terminated. start a new one.
-handle_cast({endpoints_exhausted, Ref}, State) ->
-    %% remove the exhausted helper process pid from our list of pending connections.
-    {noreply, schedule_retry(1000, Ref, State)}.
+    {noreply, fail_endpoint(Addr, Reason, State)}.
 
 %% it is time to remove Addr from the black-listed addresses
 handle_info({backoff_timer, Addr}, State = #state{endpoints = EPs}) ->
@@ -261,7 +250,6 @@ handle_info({retry_req, Ref}, State = #state{pending = Pending}) ->
 %% helper failed -> updates EP stats: failures++, backoff_delay++
 %% other Pid failed -> pass on linked error
 handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
-    ?debugFmt("handle_info: From=~p Reason=~p Pending=~p", [From, Reason, Pending]),
     %% Work out which endpoint it was
     case lists:keytake(From, #req.pid, Pending) of
         false ->
@@ -270,18 +258,16 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
         {value, Req = #req{cur = Cur, ref = Ref}, Pending2} ->
             case Reason of
                 ok -> % riak_core_connection set up and handlers called
-                    ?debugFmt("handle_info: EP connected. removed Ref ~p", [Ref]),
                     {noreply, connect_endpoint(Cur, State#state{pending = Pending2})};
                 
                 {error, endpoints_exhausted, Ref} ->
-                    %% tried all known endpoints. helper has already scheduled a retry.
+                    %% tried all known endpoints. schedule a retry.
                     %% reuse the existing request.
-                    ?debugFmt("handle_info: endpoints_exhausted Ref ~p", [Ref]),
-                    {noreply, State};
+                    {noreply, schedule_retry(1000, Ref, State)};
 
                 Reason -> % something bad happened to the connection, reuse the request
-                    ?debugFmt("handle_info: EP failed on ~p for ~p. removed Ref ~p",
-                              [Cur, Reason, Ref]),
+                    ?TRACE(?debugFmt("handle_info: EP failed on ~p for ~p. removed Ref ~p",
+                                     [Cur, Reason, Ref])),
                     State2 = fail_endpoint(Cur, Reason, State),
                     {noreply, schedule_retry(1000, Req, State2)}
             end
@@ -305,11 +291,8 @@ code_change(_OldVsn, State, _Extra) ->
 schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
-            ?debugFmt("schedule_retry: failed to find Ref ~p in Pending ~p",
-                      [Ref, Pending]),
             State;
         Req ->
-            ?debugFmt("schedule_retry: after ~p msec", [Interval]),
             erlang:send_after(Interval, self(), {retry_req, Ref}),
             State#state{pending = lists:keystore(Ref, #req.ref, Pending,
                                                  Req#req{cur = undefined})}
@@ -319,7 +302,6 @@ schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
 %% this connection attempt.
 start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strategy},
               State) ->
-    ?debugFmt("start_request: Ref ~p for Target ~p", [Ref, Target]),
     case locate_endpoints(Target, Strategy, State#state.locators) of
         {ok, []} ->
             %% locators provided no addresses
@@ -371,16 +353,12 @@ increase_backoff(Delay) ->
 %% all until exhausting the list.
 connection_helper(Ref, _Protocol, _Strategy, []) ->
     %% exhausted the list of endpoints. let server start new helper process
-    gen_server:cast(?SERVER, {endpoints_exhausted, Ref}),
     {error, endpoints_exhausted, Ref};
 connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
-    ?debugFmt("connection_helper trying ~p", [Addr]),
     gen_server:cast(?SERVER, {trying_endpoint, Ref, Addr}),
     case riak_core_connection:sync_connect(Addr, Protocol) of
         ok ->
-            ?debugFmt("connected! to ~p", [Addr]),
-            %% notify connection manager of success
-            gen_server:cast(?SERVER, {endpoint_connected, Addr});
+            ok;
         {error, Reason} ->
             %% notify connection manager this EP failed and try next one
             gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason}),
@@ -405,7 +383,6 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
 %% adjust a backoff timer so that we wait a while before
 %% trying this endpoint again.
 fail_endpoint(Addr, Reason, State) ->
-    ?debugFmt("fail_endpoint: ~p for ~p", [Addr, Reason]),
     Fun = fun(EP=#ep{backoff_delay = Backoff, failures = Failures}) ->
                   erlang:send_after(Backoff, self(), {backoff_timer, Addr}),
                   EP#ep{failures = orddict:update_counter(Reason, 1, Failures),
@@ -417,7 +394,6 @@ fail_endpoint(Addr, Reason, State) ->
     update_endpoint(Addr, Fun, State).
 
 connect_endpoint(Addr, State) ->
-    ?debugFmt("connect_endpoint succeeded for ~p", [Addr]),
     update_endpoint(Addr, fun(EP) ->
                                   EP#ep{is_black_listed = false,
                                         nb_success = EP#ep.nb_success + 1,
@@ -436,7 +412,6 @@ update_endpoint(Addr, Fun, State = #state{endpoints = EPs}) ->
 
 fail_request(Reason, #req{ref = Ref, spec = Spec},
              State = #state{pending = Pending}) ->
-    ?debugFmt("fail_request: Ref ~p for ~p", [Ref, Reason]),
     %% Tell the module it failed
     {Proto, {_TcpOptions, Module,Args}} = Spec,
     Module:connect_failed(Proto, {error, Reason}, Args),
@@ -450,7 +425,6 @@ update_endpoints(Addrs, Endpoints) ->
                        true -> EPs;
                        false ->
                            EP = #ep{addr=Addr},
-                           ?debugFmt("Adding new endpoint: ~p", [EP]),
                            orddict:store(Addr, EP, EPs)
                    end
            end),
