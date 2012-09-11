@@ -52,6 +52,10 @@ register_addr_locator() ->
     Locator = fun(Name, _Policy) -> {ok, [Name]} end,
     ok = riak_core_connection_mgr:register_locator(?ADDR_LOCATOR_TYPE, Locator).
 
+register_empty_locator() ->
+    Locator = fun(_Name, _Policy) -> {ok, []} end,
+    ok = riak_core_connection_mgr:register_locator(?REMOTE_LOCATOR_TYPE, Locator).
+
 %% this test runs first and leaves the server running for other tests
 start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
@@ -68,7 +72,8 @@ register_locator_remote_test() ->
         {ok, Addrs} ->
             ?assert(Addrs == ?REMOTE_ADDRS);
         Error ->
-            ?assert(ok == Error)
+            ?debugFmt("register_locator_remote_test: unexpected error ~p", [Error]),
+            ?assert(false)
     end.
 
 register_locator_addr_test() ->
@@ -79,7 +84,23 @@ register_locator_addr_test() ->
         {ok, Addrs} ->
             ?assert(Addrs == [?REMOTE_CLUSTER_ADDR]);
         Error ->
-            ?assert(ok == Error)
+            ?debugFmt("register_locator_addrs_test: unexpected error ~p", [Error]),
+            ?assert(false)
+    end.
+
+bad_locator_args_test() ->
+    register_addr_locator(),
+    Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR}, %% bad args for 'addr'
+    Strategy = default,
+    case riak_core_connection_mgr:apply_locator(Target, Strategy) of
+        {ok, Addrs} ->
+            ?debugFmt("bad_locator_args_test: unexpected match ~p", [Addrs]),
+            ?assert(false);
+        {error, {bad_target_name_args, remote, ?REMOTE_CLUSTER_ADDR}} ->
+            ?assert(true);
+        Error ->
+            ?debugFmt("bad_locator_args_test: unexpected error ~p", [Error]),
+            ?assert(false)
     end.
 
 %% conn_mgr should start up paused
@@ -117,6 +138,10 @@ start_service() ->
     MaxListeners = 10,
     riak_core_connection:start_dispatcher(?REMOTE_CLUSTER_ADDR, MaxListeners, [TestProtocol]).
 
+stop_service() ->
+    %% stop the dispatcher
+    riak_core_connection:stop_dispatcher(?REMOTE_CLUSTER_ADDR).
+
 client_connection_test() ->
     ?debugMsg("Starting client_connection_test"),
     %% start a test service
@@ -129,7 +154,8 @@ client_connection_test() ->
                                      {{testproto, [{1,0}]},
                                       {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
                                      Strategy),
-    timer:sleep(1000).
+    timer:sleep(1000),
+    stop_service().
 
 client_connect_via_cluster_name_test() ->
     start_service(),
@@ -141,7 +167,8 @@ client_connect_via_cluster_name_test() ->
                                      {{testproto, [{1,0}]},
                                       {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
                                      Strategy),
-    timer:sleep(1000).
+    timer:sleep(1000),
+    stop_service().
 
 client_retries_test() ->
     ?TRACE(?debugMsg(" --------------- retry test ------------- ")),
@@ -165,8 +192,29 @@ client_retries_test() ->
     start_service(),
     %% allow connection to setup
     ?TRACE(?debugMsg(" ------ sleeping 2 sec")),
-    timer:sleep(1000).
+    timer:sleep(1000),
+    stop_service().
     
+empty_locator_test() ->
+    ?TRACE(?debugMsg(" --------------- empty locator test ------------- ")),
+    register_empty_locator(), %% replace remote locator with one that returns empty list
+    start_service(),
+    %% do async connect via connection_mgr
+    ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
+    Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+    Strategy = default,
+    riak_core_connection_mgr:connect(Target,
+                                     {{testproto, [{1,0}]},
+                                      {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                     Strategy),
+    %% allow conn manager to try and schedule a few retries
+    timer:sleep(1000),
+    %% restore the remote locator that gives a good endpoint
+    register_locator_remote_test(),
+    %% allow enough time for retry mechanism to kick in
+    timer:sleep(2000),
+    %% we should get a connection
+    stop_service().
 
 cleanup_test() ->
     application:stop(ranch).
@@ -189,16 +237,18 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
 
 %% Client side protocol callbacks
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
-    ?TRACE(?debugMsg("testClient started")),
+    ?TRACE(?debugFmt("testClient started, connected to ~p:~p", [_IP,_Port])),
     {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
     ?assert(Proto == testproto),
     ?assert(ExpectedMyVer == MyVer),
-    ?assert(ExpectedRemoteVer == RemoteVer),
-    timer:sleep(2000).
+    ?assert(ExpectedRemoteVer == RemoteVer).
 
 connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
+
     case Args of
         expectedToFail ->
+            ?TRACE(?debugFmt("connect_failed: when expected to fail: ~p with ~p",
+                             [Reason, Args])),
             ?assert(Reason == econnrefused);
         {retry_test, _Stuff} ->
             ?TRACE(?debugFmt("connect_failed: during retry test: ~p", [Reason])),
@@ -206,5 +256,4 @@ connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
         Other ->
             ?TRACE(?debugFmt("connect_failed: ~p with args = ~p", [Reason, Other])),
             ?assert(false == Other)
-    end,
-    timer:sleep(1000).
+    end.
