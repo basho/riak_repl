@@ -14,7 +14,13 @@
 %% controls retry and backoff.
 -define(INITIAL_BACKOFF, 1 * 1000).  %% 1 second initial backoff per endpoint
 -define(MAX_BACKOFF, 5 * 60 * 1000). %% 5 minute maximum backoff per endpoint
--define(DEFAULT_RETRY_NO_ENDPOINTS, 2 * 1000). %% retry if locator returned empty list
+
+%% retry delay if locator returned empty list
+-ifdef(TEST).
+-define(DEFAULT_RETRY_NO_ENDPOINTS, 2 * 1000). %% short for testing to avoid timeout
+-else.
+-define(DEFAULT_RETRY_NO_ENDPOINTS, 5 * 1000). %% 5 seconds
+-endif.
 
 %%-define(TRACE(Stmt),Stmt).
 -define(TRACE(Stmt),ok).
@@ -61,8 +67,9 @@
               target,   % target to connect to {Type, Name}
               spec,     % client spec
               strategy, % connection strategy
-              cur       % current connection endpoint
-             }).   % ordered list to try and connect to
+              cur,      % current connection endpoint
+              status    % history of connection attempts
+             }).
               
 
 %% connection manager state:

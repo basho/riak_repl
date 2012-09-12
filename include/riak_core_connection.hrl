@@ -12,6 +12,14 @@
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
 -define(CM_CALL_TIMEOUT, 2000).
 
+%% Tcp options shared during the connection and negotiation phase
+-define(CONNECT_OPTIONS, [binary,
+                          {keepalive, true},
+                          {nodelay, true},
+                          {packet, 4},
+                          {reuseaddr, true},
+                          {active, false}]).
+
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
 -type(ip_addr() :: {ip_addr_str(), ip_portnum()}).
