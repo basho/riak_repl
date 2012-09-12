@@ -4,12 +4,22 @@
 
 -export([test1service/4, connected/5, connect_failed/3]).
 
+-define(TEST_ADDR, { "127.0.0.1", 4097}).
+-define(MAX_CONS, 2).
+-define(TCP_OPTIONS, [{keepalive, true},
+                      {nodelay, true},
+                      {packet, 4},
+                      {reuseaddr, true},
+                      {active, false}]).
+
 %% host service functions
 test1service(_Socket, _Transport, {error, Reason}, Args) ->
+    ?debugFmt("test1service failed with {error, ~p}", [Reason]),
     ?assert(Args == failed_host_args),
     ?assert(Reason == protocol_version_not_supported),
     {error, Reason};
 test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
+    ?debugFmt("test1service started with Args ~p", [Args]),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -26,64 +36,80 @@ connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
     timer:sleep(2000).
 
 connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
+    ?debugFmt("connect_failed: Reason = ~p Args = ~p", [Reason, Args]),
     ?assert(Args == failed_client_args),
     ?assert(Reason == protocol_version_not_supported),
     ?assert(Proto == test1protoFailed).
 
-setup_test() ->
-    %% start ranch as an application so that we have a supervision tree,
-    %% otherwise ranch will crash with a noproc in gen_server call.
-    application:start(ranch).
+%% this test runs first and leaves the server running for other tests
+start_link_test() ->
+    %% normally, ranch would be started as part of a supervisor tree, but we
+    %% need to start it here so that a supervision tree will be created.
+    application:start(ranch),
+    {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
+    ?assert(Ok == ok).
+
+%% conn_mgr should start up paused
+is_paused_test() ->
+    ?assert(riak_core_service_mgr:is_paused() == true).
+
+%% resume and check that it's not paused
+resume_test() ->
+    riak_core_service_mgr:resume(),
+    ?assert(riak_core_service_mgr:is_paused() == false).
+
+%% pause and check that it's paused
+pause_test() ->
+    riak_core_service_mgr:pause(),
+    ?assert(riak_core_service_mgr:is_paused() == true).
+
+%% register a service and confirm added
+register_service_test() ->
+    ExpectedRevs = [{1,0}, {1,1}],
+    ServiceProto = {test1proto, [{2,1}, {1,0}]},
+    ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
+    riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
+    ?assert(riak_core_service_mgr:is_registered(test1proto) == true).
+
+%% unregister and confirm removed
+unregister_service_test() ->
+    TestProtocolId = test1proto,
+    riak_core_service_mgr:unregister_service(TestProtocolId),
+    ?assert(riak_core_service_mgr:is_registered(TestProtocolId) == false).
 
 protocol_match_test() ->
-    %% local host
-    IP = "127.0.0.1",
-    Port = 10365,
-    %% Socket options set on both client and host.
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 4},
-                  {reuseaddr, true},
-                  {active, false}],
-    %% start dispatcher
-    MaxListeners = 10,
-    ServiceProto = {test1proto, [{2,1}, {1,0}]},
-    ServiceSpec = {ServiceProto, {TcpOptions, ?MODULE, test1service, [{1,0}, {1,1}]}},
-    ServiceProtocols = [ServiceSpec],
-    riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, ServiceProtocols),
-
+    %% pause and confirm paused
+    pause_test(),
+    %% re-register the test protocol and confirm registered
+    register_service_test(),
+    %% resume and confirm not paused, which should cause service to start
+    resume_test(),
     %% try to connect via a client that speaks 0.1 and 1.1
     ClientProtocol = {test1proto, [{0,1},{1,1}]},
-    ClientSpec = {ClientProtocol, {TcpOptions, ?MODULE, [{1,1},{1,0}]}},
-    riak_core_connection:connect({IP,Port}, ClientSpec),
+    ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, [{1,1},{1,0}]}},
+    riak_core_connection:connect(?TEST_ADDR, ClientSpec),
 
-    timer:sleep(2000),
-    ok.
+    timer:sleep(1000).
 
 %% test that a mismatch of client and host args will notify both host and client
 %% of a failed negotiation.
 failed_protocol_match_test() ->
-    %% local host
-    IP = "127.0.0.1",
-    Port = 10364,
     %% Socket options set on both client and host. Note: binary is mandatory.
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 4},
-                  {reuseaddr, true},
-                  {active, false}],
-    %% start dispatcher
-    MaxListeners = 10,
-    SubProtocols = [{{test1protoFailed, [{2,1}, {1,0}]},
-                     {TcpOptions, ?MODULE, test1service, failed_host_args}}],
-    riak_core_connection:start_dispatcher({IP,Port}, MaxListeners, SubProtocols),
+    pause_test(),
+    %% start service
+    SubProtocol = {{test1protoFailed, [{2,1}, {1,0}]},
+                   {?TCP_OPTIONS, ?MODULE, test1service, failed_host_args}},
+    riak_core_service_mgr:register_service(SubProtocol, {round_robin,?MAX_CONS}),
+    ?assert(riak_core_service_mgr:is_registered(test1protoFailed) == true),
+    riak_core_service_mgr:resume(),
 
     %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
     ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
-    ClientSpec = {ClientProtocol, {TcpOptions, ?MODULE, failed_client_args}},
-    riak_core_connection:connect({IP,Port}, ClientSpec),
+    ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, failed_client_args}},
+    riak_core_connection:connect(?TEST_ADDR, ClientSpec),
 
     timer:sleep(2000),
+    riak_core_service_mgr:pause(),
     ok.
 
 cleanup_test() ->

@@ -31,42 +31,40 @@ start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
     %% need to start it here so that a supervision tree will be created.
     application:start(ranch),
-    {Ok, _Pid} = riak_core_conn_mgr:start_link(?TEST_ADDR),
+    {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
     ?assert(Ok == ok).
 
 %% conn_mgr should start up paused
 is_paused_test() ->
-    ?assert(riak_core_conn_mgr:is_paused() == true).
+    ?assert(riak_core_service_mgr:is_paused() == true).
 
 %% resume and check that it's not paused
 resume_test() ->
-    riak_core_conn_mgr:resume(),
-    ?assert(riak_core_conn_mgr:is_paused() == false).
+    ?assert(ok == riak_core_service_mgr:resume()),
+    ?assert(riak_core_service_mgr:is_paused() == false).
+
+%% try resuming when it's already running
+failed_resume_test() ->
+    ?assert({error, already_resumed} == riak_core_service_mgr:resume()),
+    ?assert(riak_core_service_mgr:is_paused() == false).
 
 %% pause and check that it's paused
 pause_test() ->
-    riak_core_conn_mgr:pause(),
-    ?assert(riak_core_conn_mgr:is_paused() == true).
-
-%% set/get the cluster manager finding function
-set_get_finder_function_test() ->
-    FinderFun = fun() -> {ok, node()} end,
-    riak_core_conn_mgr:set_cluster_finder(FinderFun),
-    FoundFun = riak_core_conn_mgr:get_cluster_finder(),
-    ?assert(FinderFun == FoundFun).
+    ?assert(ok == riak_core_service_mgr:pause()),
+    ?assert(riak_core_service_mgr:is_paused() == true).
 
 %% register a service and confirm added
 register_service_test() ->
     ExpectedRevs = [{1,0}, {1,0}],
     TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
-    riak_core_conn_mgr:register_service(TestProtocol, {round_robin,?MAX_CONS}),
-    ?assert(riak_core_conn_mgr:is_registered(testproto) == true).
+    riak_core_service_mgr:register_service(TestProtocol, {round_robin,?MAX_CONS}),
+    ?assert(riak_core_service_mgr:is_registered(testproto) == true).
 
 %% unregister and confirm removed
 unregister_service_test() ->
     TestProtocolId = testproto,
-    riak_core_conn_mgr:unregister_service(TestProtocolId),
-    ?assert(riak_core_conn_mgr:is_registered(testproto) == false).
+    riak_core_service_mgr:unregister_service(TestProtocolId),
+    ?assert(riak_core_service_mgr:is_registered(testproto) == false).
 
 %% start a service via normal sequence
 start_service_test() ->
