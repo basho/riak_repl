@@ -64,10 +64,14 @@ get_known_clusters_when_empty_test() ->
 get_ipaddrs_of_cluster_unknown_name_test() ->
     ?assert([] == riak_core_cluster_mgr:get_ipaddrs_of_cluster("unknown")).
 
-get_add_remote_cluster_cant_resolve_test() ->
+get_add_remote_cluster_multiple_times_cant_resolve_test() ->
+    not_the_leader_test(),
+    %% adding multiple times should not cause multiple entries in unresolved list
     riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
-    Unresolved = riak_core_cluster_mgr:get_unresolved_clusters(),
-    ?assert(Unresolved == [?REMOTE_CLUSTER_ADDR]).
+    ?assert([?REMOTE_CLUSTER_ADDR] == riak_core_cluster_mgr:get_unresolved_clusters()),
+    riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
+    ?assert([?REMOTE_CLUSTER_ADDR] == riak_core_cluster_mgr:get_unresolved_clusters()),
+    ?assert([] == riak_core_cluster_mgr:get_known_clusters()).
 
 cleanup_test() ->
     application:stop(ranch).

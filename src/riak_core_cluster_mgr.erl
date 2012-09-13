@@ -219,14 +219,21 @@ handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
 
 handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
-    State2 = case lists:member(Addr, State#state.unresolved) of
+    State2 = case lists:keymember(Addr, #uip.addr, State#state.unresolved) of
                  false ->
                      %% fresh never-before-seen IP. Add it to our list of unresolved
                      %% addresses and kick off connections to any unresolved. Really,
                      %% should be just this one. If the IP is already in a cluster,
                      %% that will be detected when we talk to it's manager :-)
                      Uips = [#uip{addr=Addr} | State#state.unresolved],
-                     connect_to_all_unresolved_ips(State#state{unresolved=Uips});
+                     State3 = State#state{unresolved=Uips},
+                     case State#state.is_leader of
+                         true ->
+                             connect_to_all_unresolved_ips(State3);
+                         false ->
+                             %% we'll make connections when we become leader
+                             State3
+                     end;
                  true ->
                      %% already on the list. nothing to do.
                      State
@@ -360,14 +367,20 @@ connect_to_all_unresolved_ips(State) ->
     ok = riak_core_connection_mgr:register_locator(?CLUSTER_ADDR_LOCATOR_TYPE, Locator),
     % start a connection for each unresolved ip address 
     Uips = lists:map(
-             fun(Uip = #uip{addr = Addr}) ->
-                     Args = {addr, Addr}, % client is talking to unresolved cluster
-                     Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Addr},
-                     {ok,Ref} = riak_core_connection_mgr:connect(Target,
-                                                                 {{?CLUSTER_PROTO_ID, [{1,0}]},
-                                                                  {?CTRL_OPTIONS, ?MODULE, Args}},
-                                                                 default),
-                     Uip#uip{conn={pending, Ref}}
+             fun(Uip = #uip{addr = Addr, conn = Conn}) ->
+                     case Conn of
+                         down ->
+                             Args = {addr, Addr}, % client is talking to unresolved cluster
+                             Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Addr},
+                             {ok,Ref} = riak_core_connection_mgr:connect(Target,
+                                                                         {{?CLUSTER_PROTO_ID, [{1,0}]},
+                                                                          {?CTRL_OPTIONS, ?MODULE, Args}},
+                                                                         default),
+                             Uip#uip{conn={pending, Ref}};
+                         _Other ->
+                             %% already connected or connecting. don't start another
+                             Uip
+                     end
              end,
              State#state.unresolved),
     State#state{unresolved=Uips}.
