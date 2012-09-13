@@ -19,12 +19,23 @@
 %% If I am not the leader, I proxy all requests to the actual leader because I probably don't
 %% have the latest inforamtion. I don't make outbound connections either.
 %%
+%% The local cluster's members list is supplied by the members_fun in register_members_fun()
+%% API call. The cluster manager will call the registered function to get a list of the local
+%% cluster members; that function should return a list of {IP,Port} tuples in order of the least
+%% "busy" to most "busy". Busy is probably proportional to the number of connections it has for
+%% replication or handoff. The cluster manager will then hand out the full list to remote cluster
+%% managers when asked for its members, except that each time it hands our the list, it will
+%% rotate the list so that the fist "least busy" is moved to the end, and all others are pushed
+%% up the front of the list. This helps balance the load when the local connection manager
+%% asks the cluster manager for a list of IPs to connect for a single connection request. Thus,
+%% successive calls from the connection manager will appear to round-robin through the last
+%% known list of IPs from the remote cluster. The remote clusters are occasionaly polled to
+%% get a fresh list, which will also help balance the connection load on them.
+%%
 %% TODO:
 %% 1. should the service side do push notifications to the client when nodes are added/deleted?
-%% 2. if not [1], then the client should poll the remote cluster occasionaly to get a fresh list.
-%%    UPDATE: I added polling every 10 seconds
-%% 3. implement RPC calls from non-leaders to leaders in the local cluster.
-%% 4. add supervision of outbound connections? How do we know if one closes and how do we reconnect?
+%% 2. implement RPC calls from non-leaders to leaders in the local cluster.
+%% 3. add supervision of outbound connections? How do we know if one closes and how do we reconnect?
 
 
 -module(riak_core_cluster_mgr).
@@ -88,7 +99,8 @@
          register_member_fun/1,
          add_remote_cluster/1,
          get_known_clusters/0,
-         get_ipaddrs_of_cluster/1
+         get_ipaddrs_of_cluster/1,
+         get_unresolved_clusters/0
          ]).
 
 %% gen_server callbacks
@@ -144,7 +156,10 @@ get_known_clusters() ->
 %% Return a list of the known IP addresses of all nodes in the remote cluster.
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
-        gen_server:cast(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
+        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
+
+get_unresolved_clusters() ->
+        gen_server:call(?SERVER, get_unresolved_clusters).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -175,12 +190,16 @@ handle_call(get_known_clusters, _From, State) ->
     Remotes = [{Name,C#cluster.members} || {Name,C} <- orddict:to_list(State#state.clusters)],
     {reply, Remotes, State};
 
+handle_call(get_unresolved_clusters, _From, State) ->
+    Unresolved = [Uip#uip.addr || Uip <- State#state.unresolved],
+    {reply, Unresolved, State};
+
 %% Return possible IP addrs of nodes on the named remote cluster.
 handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) ->
     %% TODO: Should we get a fresh list from the remote cluster?
     Addrs = case orddict:find(ClusterName, State#state.clusters) of
-                false -> [];
-                C -> C#cluster.members
+                error -> [];
+                {ok,C} -> C#cluster.members
             end,
     {reply, Addrs, State}.
 
@@ -206,7 +225,7 @@ handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
                      %% addresses and kick off connections to any unresolved. Really,
                      %% should be just this one. If the IP is already in a cluster,
                      %% that will be detected when we talk to it's manager :-)
-                     Uips = [Addr | State#state.unresolved],
+                     Uips = [#uip{addr=Addr} | State#state.unresolved],
                      connect_to_all_unresolved_ips(State#state{unresolved=Uips});
                  true ->
                      %% already on the list. nothing to do.
@@ -341,9 +360,9 @@ connect_to_all_unresolved_ips(State) ->
     ok = riak_core_connection_mgr:register_locator(?CLUSTER_ADDR_LOCATOR_TYPE, Locator),
     % start a connection for each unresolved ip address 
     Uips = lists:map(
-             fun(Uip) ->
-                     Args = {addr, Uip#uip.addr}, % client is talking to unresolved cluster
-                     Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Uip#uip.addr},
+             fun(Uip = #uip{addr = Addr}) ->
+                     Args = {addr, Addr}, % client is talking to unresolved cluster
+                     Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Addr},
                      {ok,Ref} = riak_core_connection_mgr:connect(Target,
                                                                  {{?CLUSTER_PROTO_ID, [{1,0}]},
                                                                   {?CTRL_OPTIONS, ?MODULE, Args}},
