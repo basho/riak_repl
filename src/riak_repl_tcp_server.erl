@@ -25,8 +25,11 @@
 
 %% API
 -export([start_link/4, set_socket/2, send/3, status/1, status/2]).
--export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
-        resume_fullsync/1, handle_peerinfo/3, make_state/6]).
+-export([start_fullsync/1, start_fullsync/2,
+         cancel_fullsync/1, cancel_fullsync/2,
+         pause_fullsync/1, pause_fullsync/2,
+         resume_fullsync/1, resume_fullsync/2,
+         handle_peerinfo/3, make_state/6]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -64,15 +67,23 @@ set_socket(Pid, Socket) ->
 
 start_fullsync(Pid) ->
     gen_server:call(Pid, start_fullsync).
+start_fullsync(Pid, SiteName) ->
+    gen_server:call(Pid, {start_site_fullsync, SiteName}).
 
 cancel_fullsync(Pid) ->
     gen_server:call(Pid, cancel_fullsync).
+cancel_fullsync(Pid, SiteName) ->
+    gen_server:call(Pid, {cancel_site_fullsync, SiteName}).
 
 pause_fullsync(Pid) ->
     gen_server:call(Pid, pause_fullsync).
+pause_fullsync(Pid, SiteName) ->
+    gen_server:call(Pid, {pause_site_fullsync, SiteName}).
 
 resume_fullsync(Pid) ->
     gen_server:call(Pid, resume_fullsync).
+resume_fullsync(Pid, SiteName) ->
+    gen_server:call(Pid, {resume_site_fullsync, SiteName}).
 
 status(Pid) ->
     status(Pid, infinity).
@@ -88,17 +99,53 @@ handle_call(start_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
     Mod:start_fullsync(FSW),
     {reply, ok, State};
+handle_call({start_site_fullsync, ReqSiteName}, _From,
+            #state{fullsync_worker=FSW, fullsync_strategy=Mod,
+                   sitename=SiteName} = State) ->
+    case ReqSiteName == SiteName of
+        true -> Mod:start_fullsync(FSW);
+        false -> lager:info("Skipping start fullsync for site ~p",[SiteName])
+    end,
+    {reply, ok, State};
 handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
     Mod:cancel_fullsync(FSW),
+    {reply, ok, State};
+handle_call({cancel_site_fullsync, ReqSiteName}, _From,
+            #state{fullsync_worker=FSW,
+                   fullsync_strategy=Mod,
+                   sitename=SiteName
+                  } = State) ->
+    case ReqSiteName == SiteName of
+        true -> Mod:cancel_fullsync(FSW);
+        false -> lager:info("Skipping cancel fullsync for site ~p",[SiteName])
+    end,
     {reply, ok, State};
 handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
     Mod:pause_fullsync(FSW),
     {reply, ok, State};
+handle_call({pause_site_fullsync, ReqSiteName}, _From,
+            #state{fullsync_worker=FSW,
+        fullsync_strategy=Mod,
+                  sitename=SiteName} = State) ->
+    case ReqSiteName == SiteName of
+        true -> Mod:pause_fullsync(FSW);
+        false -> lager:info("Skipping pause fullsync for site ~p",[SiteName])
+    end,
+    {reply, ok, State};
 handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
         fullsync_strategy=Mod} = State) ->
     Mod:resume_fullsync(FSW),
+    {reply, ok, State};
+handle_call({resume_site_fullsync, ReqSiteName}, _From,
+            #state{fullsync_worker=FSW,
+                   fullsync_strategy=Mod,
+                   sitename=SiteName} = State) ->
+    case ReqSiteName == SiteName of
+        true -> Mod:resume_fullsync(FSW);
+        false -> lager:info("Skipping resume fullsync for site ~p",[SiteName])
+    end,
     {reply, ok, State};
 handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
     Res = case is_pid(FSW) of

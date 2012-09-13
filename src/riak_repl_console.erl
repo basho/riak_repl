@@ -108,18 +108,30 @@ status2(Verbose) ->
 
 start_fullsync([]) ->
     [riak_repl_tcp_server:start_fullsync(Pid) || Pid <- server_pids()],
+    ok;
+start_fullsync([SiteName]) ->
+    [riak_repl_tcp_server:start_fullsync(Pid, SiteName) || Pid <- server_pids()],
     ok.
 
 cancel_fullsync([]) ->
     [riak_repl_tcp_server:cancel_fullsync(Pid) || Pid <- server_pids()],
+    ok;
+cancel_fullsync([SiteName]) ->
+    [riak_repl_tcp_server:cancel_fullsync(Pid, SiteName) || Pid <- server_pids()],
     ok.
 
 pause_fullsync([]) ->
     [riak_repl_tcp_server:pause_fullsync(Pid) || Pid <- server_pids()],
+    ok;
+pause_fullsync([SiteName]) ->
+    [riak_repl_tcp_server:pause_fullsync(Pid, SiteName) || Pid <- server_pids()],
     ok.
 
 resume_fullsync([]) ->
     [riak_repl_tcp_server:resume_fullsync(Pid) || Pid <- server_pids()],
+    ok;
+resume_fullsync([SiteName]) ->
+    [riak_repl_tcp_server:resume_fullsync(Pid, SiteName) || Pid <- server_pids()],
     ok.
 
 %% helper functions
