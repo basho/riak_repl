@@ -201,7 +201,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 schedule_report_bw() ->
     BwHistoryInterval = app_helper:get_env(riak_repl, bw_history_interval, 60000),
-    timer:send_after(BwHistoryInterval, report_bw).
+    erlang:send_after(BwHistoryInterval, self(), report_bw).
 
 %% Convert two values in bytes to a kbits/sec
 bytes_to_kbits_per_sec(This, Last, Delta) ->
