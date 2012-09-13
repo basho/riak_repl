@@ -9,10 +9,11 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--endif.
-
-%%-define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),Stmt).
+%%-define(TRACE(Stmt),ok).
+-else.
 -define(TRACE(Stmt),ok).
+-endif.
 
 -define(SERVER, riak_core_service_manager).
 -define(MAX_LISTENERS, 100).

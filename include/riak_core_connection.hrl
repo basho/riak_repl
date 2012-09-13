@@ -5,8 +5,8 @@
 %% a connection to a telnet session by accident!
 -define(CTRL_HELLO, <<"riak-ctrl:hello">>).
 -define(CTRL_ACK, <<"riak-ctrl:ack">>).
--define(CTRL_GET_NAME, <<"riak-ctrl:get_name">>).
--define(CTRL_MY_NAME, <<"riak-ctrl:my_name">>).
+-define(CTRL_ASK_NAME, <<"riak-ctrl:ask_name">>).
+-define(CTRL_ASK_MEMBERS, <<"riak-ctrl:ask_members">>).
 
 -define(CLUSTER_MANAGER_SERVER, riak_core_cluster_manager).
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
