@@ -3,6 +3,8 @@
 
 -module(riak_core_cluster_mgr_tests).
 
+-include("riak_core_connection.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TRACE(Stmt),Stmt).
@@ -18,7 +20,7 @@
 %% Remote cluster
 -define(REMOTE_CLUSTER_NAME, "betty").
 -define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4096}).
--define(REMOTE_ADDRS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
+-define(REMOTE_MEMBERS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
 
 %% this test runs first and leaves the server running for other tests
 start_link_test() ->
@@ -49,6 +51,23 @@ leader_test() ->
 not_the_leader_test() ->
     riak_core_cluster_mgr:set_is_leader(false),
     ?assert(riak_core_cluster_mgr:get_is_leader() == false).
+
+register_member_fun_test() ->
+    MemberFun = fun() -> ?REMOTE_MEMBERS end,
+    riak_core_cluster_mgr:register_member_fun(MemberFun),
+    Members = gen_server:call(?CLUSTER_MANAGER_SERVER, get_my_members),
+    ?assert(Members == ?REMOTE_MEMBERS).
+
+get_known_clusters_when_empty_test() ->
+    ?assert([] == riak_core_cluster_mgr:get_known_clusters()).
+
+get_ipaddrs_of_cluster_unknown_name_test() ->
+    ?assert([] == riak_core_cluster_mgr:get_ipaddrs_of_cluster("unknown")).
+
+get_add_remote_cluster_cant_resolve_test() ->
+    riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
+    Unresolved = riak_core_cluster_mgr:get_unresolved_clusters(),
+    ?assert(Unresolved == [?REMOTE_CLUSTER_ADDR]).
 
 cleanup_test() ->
     application:stop(ranch).
