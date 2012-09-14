@@ -61,8 +61,8 @@ start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
     %% need to start it here so that a supervision tree will be created.
     application:start(ranch),
-    {Ok, _Pid} = riak_core_connection_mgr:start_link(),
-    ?assert(Ok == ok).
+    {ok, _Pid1} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
+    {ok, _Pid2} = riak_core_connection_mgr:start_link().
 
 register_locator_remote_test() ->
     register_remote_locator(),
@@ -103,19 +103,19 @@ bad_locator_args_test() ->
             ?assert(false)
     end.
 
-%% conn_mgr should start up paused
+%% conn_mgr should start up running!
 is_paused_test() ->
-    ?assert(riak_core_connection_mgr:is_paused() == true).
-
-%% resume and check that it's not paused
-resume_test() ->
-    riak_core_connection_mgr:resume(),
     ?assert(riak_core_connection_mgr:is_paused() == false).
 
 %% pause and check that it's paused
 pause_test() ->
     riak_core_connection_mgr:pause(),
     ?assert(riak_core_connection_mgr:is_paused() == true).
+
+%% resume and check that it's not paused
+resume_test() ->
+    riak_core_connection_mgr:resume(),
+    ?assert(riak_core_connection_mgr:is_paused() == false).
 
 %% set/get the cluster manager finding function
 set_get_finder_function_test() ->
@@ -124,23 +124,12 @@ set_get_finder_function_test() ->
     FoundFun = riak_core_connection_mgr:get_cluster_finder(),
     ?assert(FinderFun == FoundFun).
 
-start_cluster_manager_test() ->
-    %% start a local cluster manager
-    riak_core_cluster_mgr:start_link(),
-    riak_core_cluster_mgr:set_name(?MY_CLUSTER_NAME),
-    %% verify it's running
-    ?assert(?MY_CLUSTER_NAME == riak_core_cluster_mgr:get_name()).
-
 start_service() ->
     %% start dispatcher
     ExpectedRevs = [{1,0}, {1,0}],
     TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
-    MaxListeners = 10,
-    riak_core_connection:start_dispatcher(?REMOTE_CLUSTER_ADDR, MaxListeners, [TestProtocol]).
-
-stop_service() ->
-    %% stop the dispatcher
-    riak_core_connection:stop_dispatcher(?REMOTE_CLUSTER_ADDR).
+    riak_core_service_mgr:register_service(TestProtocol, {round_robin,10}),
+    ?assert(riak_core_service_mgr:is_registered(testproto) == true).
 
 client_connection_test() ->
     %% start a test service
@@ -153,8 +142,7 @@ client_connection_test() ->
                                      {{testproto, [{1,0}]},
                                       {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
                                      Strategy),
-    timer:sleep(1000),
-    stop_service().
+    timer:sleep(1000).
 
 client_connect_via_cluster_name_test() ->
     start_service(),
@@ -166,8 +154,7 @@ client_connect_via_cluster_name_test() ->
                                      {{testproto, [{1,0}]},
                                       {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
                                      Strategy),
-    timer:sleep(1000),
-    stop_service().
+    timer:sleep(1000).
 
 client_retries_test() ->
     ?TRACE(?debugMsg(" --------------- retry test ------------- ")),
@@ -191,8 +178,7 @@ client_retries_test() ->
     start_service(),
     %% allow connection to setup
     ?TRACE(?debugMsg(" ------ sleeping 2 sec")),
-    timer:sleep(1000),
-    stop_service().
+    timer:sleep(1000).
     
 empty_locator_test() ->
     ?TRACE(?debugMsg(" --------------- empty locator test ------------- ")),
@@ -211,9 +197,8 @@ empty_locator_test() ->
     %% restore the remote locator that gives a good endpoint
     register_locator_remote_test(),
     %% allow enough time for retry mechanism to kick in
-    timer:sleep(2000),
+    timer:sleep(2000).
     %% we should get a connection
-    stop_service().
 
 cleanup_test() ->
     application:stop(ranch).

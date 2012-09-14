@@ -34,24 +34,9 @@ start_link_test() ->
     {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
     ?assert(Ok == ok).
 
-%% conn_mgr should start up paused
-is_paused_test() ->
-    ?assert(riak_core_service_mgr:is_paused() == true).
-
-%% resume and check that it's not paused
-resume_test() ->
-    ?assert(ok == riak_core_service_mgr:resume()),
-    ?assert(riak_core_service_mgr:is_paused() == false).
-
-%% try resuming when it's already running
-failed_resume_test() ->
-    ?assert({error, already_resumed} == riak_core_service_mgr:resume()),
-    ?assert(riak_core_service_mgr:is_paused() == false).
-
-%% pause and check that it's paused
-pause_test() ->
-    ?assert(ok == riak_core_service_mgr:pause()),
-    ?assert(riak_core_service_mgr:is_paused() == true).
+get_services_test() ->
+    Services = gen_server:call(riak_core_service_manager, get_services),
+    ?assert([] == Services).
 
 %% register a service and confirm added
 register_service_test() ->
@@ -68,12 +53,8 @@ unregister_service_test() ->
 
 %% start a service via normal sequence
 start_service_test() ->
-    %% pause and confirm paused
-    pause_test(),
     %% re-register the test protocol and confirm registered
     register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
     %% try to connect via a client that speaks our test protocol
     ExpectedRevs = {expectedToPass, [{1,0}, {1,0}]},
     riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
@@ -82,9 +63,8 @@ start_service_test() ->
     timer:sleep(1000).
 
 pause_existing_services_test() ->
-    %% there should be services running now.
-    %% pause them and confirm paused.
-    pause_test(),
+    riak_core_service_mgr:stop(),
+    %% there should be no services running now.
     %% now start a client and confirm failure to connect
     ExpectedArgs = expectedToFail,
     riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},

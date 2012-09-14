@@ -19,19 +19,16 @@
 -define(MAX_LISTENERS, 100).
 
 %% services := registered protocols, key :: proto_id()
--record(state, {is_paused = true :: boolean(),
-                dispatch_addr = {"localhost", 9000} :: ip_addr(),
+-record(state, {dispatch_addr = {"localhost", 9000} :: ip_addr(),
                 services = orddict:new() :: orddict:orddict(),
                 dispatcher_pid = undefined :: pid()
                }).
 
 -export([start_link/1,
-         resume/0,
-         pause/0,
-         is_paused/0,
          register_service/2,
          unregister_service/1,
-         is_registered/1
+         is_registered/1,
+         stop/0
          ]).
 
 %% ranch callbacks
@@ -58,22 +55,6 @@ start_link({IP,Port}) ->
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
-%% resume() will begin/resume accepting and establishing new connections, in
-%% order to maintain the protocols that have been (or continue to be) registered
-%% and unregistered. pause() will not kill any existing connections, but will
-%% cease accepting new requests or retrying lost connections.
--spec(resume() -> ok | {error, term()}).
-resume() ->
-    gen_server:call(?SERVER, resume).
-
--spec(pause() -> ok).
-pause() ->
-    gen_server:call(?SERVER, pause).
-
-%% return paused state
-is_paused() ->
-    gen_server:call(?SERVER, is_paused).
-
 %% Once a protocol specification is registered, it will be kept available by the
 %% Service Manager.
 -spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
@@ -93,40 +74,39 @@ unregister_service(ProtocolId) ->
 is_registered(ProtocolId) ->
     gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
 
+%% abrubtly kill all connections and stop disptaching services
+stop() ->
+    gen_server:cast(?SERVER, stop).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init([IpAddr]) ->
-    process_flag(trap_exit, true),
-    {ok, #state{is_paused = true,
-                dispatch_addr = IpAddr
-               }}.
-
-handle_call(is_paused, _From, State) ->
-    {reply, State#state.is_paused, State};
+%%    process_flag(trap_exit, true),
+    {ok, Pid} = start_dispatcher(IpAddr, ?MAX_LISTENERS, []),
+    {ok, #state{dispatch_addr = IpAddr, dispatcher_pid=Pid}}.
 
 handle_call({is_registered, service, ProtocolId}, _From, State) ->
     Found = orddict:is_key(ProtocolId, State#state.services),
     {reply, Found, State};
 
-handle_call(resume, _From, State) ->
-    {Status, State2} = resume_services(State),
-    {reply, Status, State2};
-
-handle_call(pause, _From, State) ->
-    {Status, State2} = pause_services(State),
-    {reply, Status, State2};
+handle_call(get_services, _From, State) ->
+    {reply, orddict:to_list(State#state.services), State};
 
 handle_call(_Unhandled, _From, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
     {reply, {error, unhandled}, State}.
 
+handle_cast(stop, State) ->
+    ranch:stop_listener(State#state.dispatch_addr),
+    {noreply, State};
+
 handle_cast({register_service, Protocol, Strategy}, State) ->
     {{ProtocolId,_Revs},_Rest} = Protocol,
     NewDict = orddict:store(ProtocolId, {Protocol, Strategy}, State#state.services),
     {noreply, State#state{services=NewDict}};
-
+ 
 handle_cast({unregister_service, ProtocolId}, State) ->
     NewDict = orddict:erase(ProtocolId, State#state.services),
     {noreply, State#state{services=NewDict}};
@@ -158,15 +138,18 @@ start_link(Listener, Socket, Transport, SubProtocols) ->
 %% Body of the main dispatch loop. This is instantiated once for each connection
 %% we accept because it transforms itself into the SubProtocol once it receives
 %% the sub protocol and version, negotiated with the client.
-dispatch_service(Listener, Socket, Transport, SubProtocols) ->
-    ?TRACE(?debugFmt("started dispatch_service with protocols: ~p",
-                     [SubProtocols])),
+dispatch_service(Listener, Socket, Transport, _Args) ->
     %% tell ranch "we've got it. thanks pardner"
     ok = ranch:accept_ack(Listener),
     %% set some starting options for the channel; these should match the client
     ?TRACE(?debugFmt("setting system options on service side: ~p", [?CONNECT_OPTIONS])),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     ok = exchange_handshakes_with(client, Socket, Transport),
+    %% get latest set of registered services from gen_server and do negotiation
+    Services = gen_server:call(?SERVER, get_services),
+    SubProtocols = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
+    ?TRACE(?debugFmt("started dispatch_service with protocols: ~p",
+                     [SubProtocols])),
     Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
     ?TRACE(?debugFmt("negotiated = ~p", [Negotiated])),
     start_negotiated_service(Socket, Transport, Negotiated).
@@ -308,37 +291,4 @@ start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
         _ ->
             lager:error("Connection mananger: failed to start ranch listener "
                         "on ~s:~p - invalid address.", [IP, Port])
-    end.
-
-stop_dispatcher({IP,Port}) ->
-    ranch:stop_listener({IP,Port}).
-
-%% resume, start registered protocols
-resume_services(State) when State#state.is_paused == false ->
-    {{error, already_resumed}, State};
-resume_services(State) when State#state.is_paused == true ->
-    case orddict:size(State#state.services) of
-        0 ->
-            %% no registered protocols yet
-            ?TRACE(?debugMsg("resume_services: No Services to resume!")),
-            {ok, State#state{is_paused=false}};
-        _NotZero ->
-            Services = orddict:to_list(State#state.services),
-            IpAddr = State#state.dispatch_addr,
-            Protos = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
-            {ok, Pid} = start_dispatcher(IpAddr, ?MAX_LISTENERS, Protos),
-            {ok, State#state{is_paused=false, dispatcher_pid=Pid}}
-    end.
-
-%% kill existing service dispatcher if running
-pause_services(State) when State#state.is_paused == true ->
-    {ok, State};
-pause_services(State) ->
-    case State#state.dispatcher_pid of
-        undefined ->
-            {ok, State#state{is_paused=true}};
-        _Pid ->
-            IpAddr = State#state.dispatch_addr,
-            ok = stop_dispatcher(IpAddr),
-            {ok, State#state{is_paused=true, dispatcher_pid=undefined}}
     end.

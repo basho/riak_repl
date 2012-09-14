@@ -17,13 +17,14 @@
 
 %% retry delay if locator returned empty list
 -ifdef(TEST).
+-define(TRACE(Stmt),Stmt).
+%%-define(TRACE(Stmt),ok).
 -define(DEFAULT_RETRY_NO_ENDPOINTS, 2 * 1000). %% short for testing to avoid timeout
 -else.
+-define(TRACE(Stmt),ok).
 -define(DEFAULT_RETRY_NO_ENDPOINTS, 5 * 1000). %% 5 seconds
 -endif.
 
-%%-define(TRACE(Stmt),Stmt).
--define(TRACE(Stmt),ok).
 
 -define(SERVER, riak_core_connection_manager).
 -define(MAX_LISTENERS, 100).
@@ -165,7 +166,7 @@ connect(Target, ClientSpec, Strategy) ->
 
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, #state{is_paused = true}}.
+    {ok, #state{is_paused = false}}.
 
 handle_call(is_paused, _From, State) ->
     {reply, State#state.is_paused, State};
