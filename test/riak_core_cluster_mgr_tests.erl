@@ -88,10 +88,12 @@ add_remotes_while_leader_test() ->
 connect_to_remote_cluster_test() ->
     ?debugMsg("------- connect_to_remote_cluster_test ---------"),
     start_fake_remote_cluster_service(),
-    ?debugFmt("unresolved = ~p", [riak_core_cluster_mgr:get_unresolved_clusters()]),
     leader_test(),
     timer:sleep(2000),
-    ?assert([?REMOTE_CLUSTER_NAME] == riak_core_cluster_mgr:get_known_clusters()).
+    %% should have resolved the remote cluster by now
+    ?assert([] == riak_core_cluster_mgr:get_unresolved_clusters()),
+    ?assert([?REMOTE_CLUSTER_NAME] == riak_core_cluster_mgr:get_known_clusters()),
+    ?assert(?REMOTE_MEMBERS == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
 
 cleanup_test() ->
     application:stop(ranch).
@@ -111,9 +113,14 @@ start_fake_remote_cluster_service() ->
 %% control channel services EMULATION
 %%-----------------------------------
 
+%% Note: this service module matches on test_cluster_mgr, so it will fail with
+%% a function_clause error if the cluster manager isn't using our special test
+%% protocol-id. Of course, it did once or I wouldn't have written this note :-)
+
 ctrlService(_Socket, _Transport, {error, Reason}, _Args) ->
-    ?debugFmt("Failed to accept control channel connection: ~p", [Reason]);
-ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, Args) ->
+    ?TRACE(?debugFmt("Failed to accept control channel connection: ~p", [Reason]));
+ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args) ->
+    ?TRACE(?debugMsg("ctrlService: spawning service process...")),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
@@ -122,16 +129,15 @@ ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, Args) ->
 
 %% process instance for handling control channel requests from remote clusters.
 ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
-    ?debugMsg("Started control service emulation"),
     case Transport:recv(Socket, 0, infinity) of
         {ok, ?CTRL_ASK_NAME} ->
             %% remote wants my name
-            ?debugMsg("wants my name"),
+            ?TRACE(?debugMsg("wants my name")),
             MyName = ?REMOTE_CLUSTER_NAME,
             Transport:send(Socket, term_to_binary(MyName)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
         {ok, ?CTRL_ASK_MEMBERS} ->
-            ?debugMsg("wants my members"),
+            ?TRACE(?debugMsg("wants my members")),
             %% remote wants list of member machines in my cluster
             Members = ?REMOTE_MEMBERS,
             Transport:send(Socket, term_to_binary(Members)),

@@ -276,12 +276,15 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 Reason -> % something bad happened to the connection, reuse the request
                     ?TRACE(?debugFmt("handle_info: EP failed on ~p for ~p. removed Ref ~p",
                                      [Cur, Reason, Ref])),
+                    lager:error("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
+                                [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, State),
                     {noreply, schedule_retry(1000, Req, State2)}
             end
     end;
 handle_info(_Unhandled, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
+    lager:error("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
