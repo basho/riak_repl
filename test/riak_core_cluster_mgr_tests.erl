@@ -50,12 +50,13 @@ is_leader_test() ->
 
 %% become the leader
 leader_test() ->
-    riak_core_cluster_mgr:set_is_leader(true),
+    riak_core_cluster_mgr:set_leader(node()),
+    ?assert(node() == riak_core_cluster_mgr:get_leader()),
     ?assert(riak_core_cluster_mgr:get_is_leader() == true).
 
 %% become a proxy
 not_the_leader_test() ->
-    riak_core_cluster_mgr:set_is_leader(false),
+    riak_core_cluster_mgr:set_leader(undefined),
     ?assert(riak_core_cluster_mgr:get_is_leader() == false).
 
 register_member_fun_test() ->

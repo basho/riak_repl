@@ -6,10 +6,10 @@
 %% with protocol 'cluster_mgr'. The service will either answer queries (if it's the leader),
 %% or foward them to the leader (if it's not the leader).
 %%
-%% Every cluster manager instance (one per node in the cluster) is told when it's the leader
-%% by a call to set_is_leader(boolean()). An outside agent is responsible for determining
+%% Every cluster manager instance (one per node in the cluster) is told who the leader is
+%% when there is a leader change. An outside agent is responsible for determining
 %% which instance of cluster manager is the leader. For example, the riak_repl_leader server
-%% is probably a good place to do this from.
+%% is probably a good place to do this from. Call set_leader_node(node(), pid()).
 %%
 %% If I'm the leader, I answer local RPC requests from non-leader cluster managers.
 %% I also establish out-bound connections to any IP address added via add_remote_cluster(ip_addr()),
@@ -83,6 +83,7 @@
 %% remotes := orddict, key = ip_addr(), value = unresolved | clustername()
 
 -record(state, {is_leader = false :: boolean(),                % true when the buck stops here
+                leader_node = undefined :: undefined | node(),
                 my_name = "" :: string(),                      % my local cluster name
                 member_fun = fun() -> [] end,                  % return members of my cluster
                 clusters = orddict:new() :: orddict:orddict(), % resolved clusters by name
@@ -92,7 +93,8 @@
 -export([start_link/0,
          set_my_name/1,
          get_my_name/0,
-         set_is_leader/1,
+         set_leader/1,
+         get_leader/0,
          get_is_leader/0,
          register_member_fun/1,
          add_remote_cluster/1,
@@ -124,15 +126,19 @@ start_link() ->
 set_my_name(MyName) ->
     gen_server:cast(?SERVER, {set_my_name, MyName}).
 
+%% Called by riak_repl_leader whenever a leadership election
+%% takes place. Tells us who the leader is.
+set_leader(LeaderNode) ->
+    gen_server:call(?SERVER, {set_leader_node, LeaderNode}).
+
+%% Reply with the current leader node.
+get_leader() ->
+    gen_server:call(?SERVER, leader_node).
+
 %% Return my cluster name
 -spec(get_my_name() -> clustername()).
 get_my_name() ->
     gen_server:call(?SERVER, get_my_name).
-
-set_is_leader(true) ->
-    gen_server:cast(?SERVER, resume);
-set_is_leader(false) ->
-    gen_server:cast(?SERVER, pause).
 
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader).
@@ -184,6 +190,20 @@ handle_call(get_my_members, _From, State) ->
     MyMembers = MemberFun(),
     {reply, MyMembers, State};
 
+handle_call(leader_node, _From, State) ->
+    {reply, State#state.leader_node, State};
+
+handle_call({set_leader_node, LeaderNode}, _From, State) ->
+    State2 = State#state{leader_node = LeaderNode},
+    case node() of
+        LeaderNode ->
+            %% oh crap, it's me!
+            {reply, ok, become_leader(State2)};
+        _ ->
+            %% not me.
+            {reply, ok, become_proxy(State2)}
+    end;
+
 handle_call(get_known_clusters, _From, State) ->
     Remotes = [Name || {Name,_C} <- orddict:to_list(State#state.clusters)],
     {reply, Remotes, State};
@@ -200,14 +220,6 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
                 {ok,C} -> C#cluster.members
             end,
     {reply, Addrs, State}.
-
-handle_cast(resume, State) ->
-    NewState = resume_services(State),
-    {noreply, NewState};
-
-handle_cast(pause, State) ->
-    NewState = pause_services(State),
-    {noreply, NewState};
 
 handle_cast({set_my_name, MyName}, State) ->
     NewState = State#state{my_name = MyName},
@@ -396,24 +408,23 @@ connect_to_all_unresolved_ips(State) ->
     State#state{unresolved=Uips}.
 
 %% start being a cluster manager leader
-resume_services(State) when State#state.is_leader == false ->
+become_leader(State) when State#state.is_leader == false ->
     ?TRACE(?debugFmt("Becoming the leader: unresolved = ~p", [State#state.unresolved])),
     %% start leading
     %% Open a connection to each named cluster, using any of it's known ip addresses
-    State2 = connect_to_all_known_clusters(State),
+    State2 = connect_to_all_known_clusters(State#state{is_leader=true}),
     %% Open a connection to every un-resolved ip address to resolve it's cluster name
-    State3 = connect_to_all_unresolved_ips(State2),
-    State3#state{is_leader=true};
-resume_services(State) ->
+    connect_to_all_unresolved_ips(State2);
+become_leader(State) ->
     ?TRACE(?debugMsg("Already the leader")),
     State.
 
 %% stop being a cluster manager leader
-pause_services(State) when State#state.is_leader == false ->
+become_proxy(State) when State#state.is_leader == false ->
     %% still not the leader
     ?TRACE(?debugMsg("Already a proxy")),
     State;
-pause_services(State) ->
+become_proxy(State) ->
     ?TRACE(?debugMsg("Becoming a proxy")),
     %% stop leading
     %% close any outbound connections to remote clusters and mark as down.
