@@ -44,25 +44,23 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+%% For testing, we need to have two different cluster manager services running
+%% on the same node, which is normally not done. The remote cluster service is
+%% the one we're testing, so use a different protocol for the client connection
+%% during eunit testing, which will emulate a cluster manager from the test.
+-define(REMOTE_CLUSTER_PROTO_ID, test_cluster_mgr).
 -define(TRACE(Stmt),Stmt).
 %%-define(TRACE(Stmt),ok).
 -else.
+-define(REMOTE_CLUSTER_PROTO_ID, ?CLUSTER_PROTO_ID).
 -define(TRACE(Stmt),ok).
 -endif.
 
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
 -define(CLUSTER_NAME_LOCATOR_TYPE, cluster_by_name).
 -define(CLUSTER_ADDR_LOCATOR_TYPE, cluster_by_addr).
--define(CLUSTER_PROTO_ID, cluster_mgr).
 -define(MAX_CONS, 20).
 -define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
--define(CTRL_OPTIONS, [binary,
-                       {keepalive, true},
-                       {nodelay, true},
-                       {packet, 4},
-                       {reuseaddr, true},
-                       {active, false}]).
-
 -define(TEST_ADDRS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
 
 %%                                                        Reference, Socket, Transport
@@ -281,9 +279,13 @@ handle_cast(Unhandled, _State) ->
     {error, unhandled}. %% this will crash the server
 
 %% it is time to poll all clusters and get updated member lists
-handle_info(poll_clusters_timer, State = #state{clusters = Clusters}) ->
-    Clusters2 = poll_clusters(Clusters),
-    {noreply, State#state{clusters=Clusters2}};
+handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
+    Clusters = poll_clusters(State#state.clusters),
+    erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    {noreply, State#state{clusters=Clusters}};
+handle_info(poll_clusters_timer, State) ->
+    erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    {noreply, State};
 
 handle_info(Unhandled, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [Unhandled])),
@@ -321,6 +323,7 @@ poll_cluster(Cluster = #cluster{conn = Connection, name = Name}) ->
                     end.
 
 poll_clusters(Clusters) ->
+    ?TRACE(?debugMsg("Polling clusters")),
     orddict:map(fun(_Name,C) ->
                         poll_cluster(C)
                 end,
@@ -350,10 +353,11 @@ connect_to_all_known_clusters(State) ->
                  fun(ClusterName,C) ->
                          Args = {name, ClusterName}, % client is talking to a known cluster
                          Target = {?CLUSTER_NAME_LOCATOR_TYPE, ClusterName},
-                         {ok,Ref} = riak_core_connection_mgr:connect(Target,
-                                                                     {{?CLUSTER_PROTO_ID, [{1,0}]},
-                                                                      {?CTRL_OPTIONS, ?MODULE, Args}},
-                                                                     default),
+                         {ok,Ref} = riak_core_connection_mgr:connect(
+                                      Target,
+                                      {{?REMOTE_CLUSTER_PROTO_ID, [{1,0}]},
+                                       {?CTRL_OPTIONS, ?MODULE, Args}},
+                                      default),
                          C#cluster{conn={pending,Ref}}
                  end,
                  State#state.clusters),
@@ -365,19 +369,25 @@ connect_to_all_unresolved_ips(State) ->
     % Identity locator function just returns a list with single member Addr
     Locator = fun(Addr, _Policy) -> {ok, [Addr]} end,
     ok = riak_core_connection_mgr:register_locator(?CLUSTER_ADDR_LOCATOR_TYPE, Locator),
-    % start a connection for each unresolved ip address 
+    % start a connection for each unresolved ip address
+    ?TRACE(?debugMsg("connect_to_all_unresolved_ips")),
     Uips = lists:map(
              fun(Uip = #uip{addr = Addr, conn = Conn}) ->
                      case Conn of
                          down ->
+                             ?TRACE(?debugFmt("connect_to_all_unresolved_ips: connecting to ~p",
+                                              [Addr])),
                              Args = {addr, Addr}, % client is talking to unresolved cluster
                              Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Addr},
-                             {ok,Ref} = riak_core_connection_mgr:connect(Target,
-                                                                         {{?CLUSTER_PROTO_ID, [{1,0}]},
-                                                                          {?CTRL_OPTIONS, ?MODULE, Args}},
-                                                                         default),
+                             {ok,Ref} = riak_core_connection_mgr:connect(
+                                          Target,
+                                          {{?CLUSTER_PROTO_ID, [{1,0}]},
+                                           {?CTRL_OPTIONS, ?MODULE, Args}},
+                                          default),
                              Uip#uip{conn={pending, Ref}};
                          _Other ->
+                             ?TRACE(?debugFmt("connect_to_all_unresolved_ips: already connected to ~p",
+                                              [Addr])),
                              %% already connected or connecting. don't start another
                              Uip
                      end
@@ -385,19 +395,26 @@ connect_to_all_unresolved_ips(State) ->
              State#state.unresolved),
     State#state{unresolved=Uips}.
 
-%% resume cluster manager leader role
-resume_services(State) ->
+%% start being a cluster manager leader
+resume_services(State) when State#state.is_leader == false ->
+    ?TRACE(?debugFmt("Becoming the leader: unresolved = ~p", [State#state.unresolved])),
+    %% start leading
     %% Open a connection to each named cluster, using any of it's known ip addresses
     State2 = connect_to_all_known_clusters(State),
     %% Open a connection to every un-resolved ip address to resolve it's cluster name
     State3 = connect_to_all_unresolved_ips(State2),
-    State3#state{is_leader=true}.
+    State3#state{is_leader=true};
+resume_services(State) ->
+    ?TRACE(?debugMsg("Already the leader")),
+    State.
 
 %% stop being a cluster manager leader
 pause_services(State) when State#state.is_leader == false ->
     %% still not the leader
+    ?TRACE(?debugMsg("Already a proxy")),
     State;
 pause_services(State) ->
+    ?TRACE(?debugMsg("Becoming a proxy")),
     %% stop leading
     %% close any outbound connections to remote clusters and mark as down.
     %% keep the cluster info around in case we started up again and don't
@@ -424,7 +441,7 @@ ctrlService(_Socket, _Transport, {error, Reason}, _Args) ->
     lager:error("Failed to accept control channel connection: ~p", [Reason]);
 ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, Args) ->
     Pid = proc_lib:spawn_link(?MODULE,
-                              ctrlProcess,
+                              ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
     {ok, Pid}.
 

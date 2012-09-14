@@ -57,16 +57,20 @@ sync_connect({IP,Port}, ClientSpec) ->
 %% server -> client : Server-Hello
 exchange_handshakes_with(host, Socket, Transport) ->
     ?TRACE(?debugFmt("exchange_handshakes: sending ~p to host", [?CTRL_HELLO])),
-    ok = Transport:send(Socket, ?CTRL_HELLO),
-    ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK])),
-    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-        {ok, ?CTRL_ACK} ->
-            ?TRACE(?debugFmt("exchange_handshakes with host: got ~p", [?CTRL_ACK])),
-            ok;
-        {error, Reason} ->
-            ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
-            lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
-            {error, Reason}
+    case Transport:send(Socket, ?CTRL_HELLO) of
+        ok ->
+            ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK])),
+            case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+                {ok, ?CTRL_ACK} ->
+                    ?TRACE(?debugFmt("exchange_handshakes with host: got ~p", [?CTRL_ACK])),
+                    ok;
+                {error, Reason} ->
+                    ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
+                    lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
+                    {error, Reason}
+            end;
+        Error ->
+            Error
     end.
 
 async_connect_proc(Parent, {IP,Port}, ProtocolSpec) ->
@@ -83,22 +87,27 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
             ?TRACE(?debugFmt("Setting system options on client side: ~p", [?CONNECT_OPTIONS])),
             Transport:setopts(Socket, ?CONNECT_OPTIONS),
             %% handshake to make sure it's a riak sub-protocol dispatcher
-            ok = exchange_handshakes_with(host, Socket, Transport),
-            %% ask for protocol, see what host has
-            case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
-                {ok,HostProtocol} ->
-                    %% set client's requested Tcp options
-                    ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
-                    Transport:setopts(Socket, Options),
-                    %% notify requester of connection and negotiated protocol from host
-                    %% pass back returned value in case problem detected on connection
-                    %% by module.  requestor is responsible for transferring control
-                    %% of the socket.
-                    Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args);
-                {error, Reason} ->
-                    ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
-                    Module:connect_failed(ClientProtocol, {error, Reason}, Args),
-                    {error, Reason}
+            case exchange_handshakes_with(host, Socket, Transport) of
+                ok ->
+                    %% ask for protocol, see what host has
+                    case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
+                        {ok,HostProtocol} ->
+                            %% set client's requested Tcp options
+                            ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
+                            Transport:setopts(Socket, Options),
+                            %% notify requester of connection and negotiated protocol from host
+                            %% pass back returned value in case problem detected on connection
+                            %% by module.  requestor is responsible for transferring control
+                            %% of the socket.
+                            Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args);
+                        {error, Reason} ->
+                            ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
+                            Module:connect_failed(ClientProtocol, {error, Reason}, Args),
+                            {error, Reason}
+                    end;
+                Error ->
+                    %% failed to exchange handshakes, probably because the socket closed
+                    Error
             end;
         {error, Reason} ->
             Module:connect_failed(ClientProtocol, {error, Reason}, Args),

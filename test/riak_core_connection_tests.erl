@@ -49,20 +49,6 @@ start_link_test() ->
     {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
     ?assert(Ok == ok).
 
-%% conn_mgr should start up paused
-is_paused_test() ->
-    ?assert(riak_core_service_mgr:is_paused() == true).
-
-%% resume and check that it's not paused
-resume_test() ->
-    riak_core_service_mgr:resume(),
-    ?assert(riak_core_service_mgr:is_paused() == false).
-
-%% pause and check that it's paused
-pause_test() ->
-    riak_core_service_mgr:pause(),
-    ?assert(riak_core_service_mgr:is_paused() == true).
-
 %% register a service and confirm added
 register_service_test() ->
     ExpectedRevs = [{1,0}, {1,1}],
@@ -78,12 +64,8 @@ unregister_service_test() ->
     ?assert(riak_core_service_mgr:is_registered(TestProtocolId) == false).
 
 protocol_match_test() ->
-    %% pause and confirm paused
-    pause_test(),
     %% re-register the test protocol and confirm registered
     register_service_test(),
-    %% resume and confirm not paused, which should cause service to start
-    resume_test(),
     %% try to connect via a client that speaks 0.1 and 1.1
     ClientProtocol = {test1proto, [{0,1},{1,1}]},
     ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, [{1,1},{1,0}]}},
@@ -94,14 +76,11 @@ protocol_match_test() ->
 %% test that a mismatch of client and host args will notify both host and client
 %% of a failed negotiation.
 failed_protocol_match_test() ->
-    %% Socket options set on both client and host. Note: binary is mandatory.
-    pause_test(),
     %% start service
     SubProtocol = {{test1protoFailed, [{2,1}, {1,0}]},
                    {?TCP_OPTIONS, ?MODULE, test1service, failed_host_args}},
     riak_core_service_mgr:register_service(SubProtocol, {round_robin,?MAX_CONS}),
     ?assert(riak_core_service_mgr:is_registered(test1protoFailed) == true),
-    riak_core_service_mgr:resume(),
 
     %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
     ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
@@ -109,7 +88,6 @@ failed_protocol_match_test() ->
     riak_core_connection:connect(?TEST_ADDR, ClientSpec),
 
     timer:sleep(2000),
-    riak_core_service_mgr:pause(),
     ok.
 
 cleanup_test() ->

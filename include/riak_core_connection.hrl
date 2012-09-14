@@ -12,6 +12,14 @@
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
 -define(CM_CALL_TIMEOUT, 2000).
 
+-define(CLUSTER_PROTO_ID, cluster_mgr).
+-define(CTRL_OPTIONS, [binary,
+                       {keepalive, true},
+                       {nodelay, true},
+                       {packet, 4},
+                       {reuseaddr, true},
+                       {active, false}]).
+
 %% Tcp options shared during the connection and negotiation phase
 -define(CONNECT_OPTIONS, [binary,
                           {keepalive, true},
