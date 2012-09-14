@@ -170,10 +170,10 @@ start_negotiated_service(Socket, Transport,
             %% transfer control of socket to new service process
             %ok = Transport:controlling_process(Socket, Pid),
             {ok, Pid};
-        {error, Reason} ->
+        Error ->
             ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",
-                             [Module, Function, Reason])),
-            {error,Reason}
+                             [Module, Function, Error])),
+            Error
     end.
 
 %% Negotiate the highest common major protocol revisision with the connected client.

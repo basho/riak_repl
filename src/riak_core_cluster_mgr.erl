@@ -185,7 +185,7 @@ handle_call(get_my_members, _From, State) ->
     {reply, MyMembers, State};
 
 handle_call(get_known_clusters, _From, State) ->
-    Remotes = [{Name,C#cluster.members} || {Name,C} <- orddict:to_list(State#state.clusters)],
+    Remotes = [Name || {Name,_C} <- orddict:to_list(State#state.clusters)],
     {reply, Remotes, State};
 
 handle_call(get_unresolved_clusters, _From, State) ->
@@ -267,11 +267,11 @@ handle_cast({connected_to_remote, NameResp, Members, Socket, Transport, Addr, Ar
                                 %% nothing to do
                                 Clusters
                         end,
-            {reply, State#state{unresolved = Uips, clusters = Clusters2}};
+            {noreply, State#state{unresolved = Uips, clusters = Clusters2}};
         {error, Error} ->
             lager:error("Failed to receive name from remote cluster at ~p because ~p",
                         [Addr, Error]),
-            {reply, State} 
+            {noreply, State} 
     end;
 
 handle_cast(Unhandled, _State) ->
@@ -381,7 +381,7 @@ connect_to_all_unresolved_ips(State) ->
                              Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Addr},
                              {ok,Ref} = riak_core_connection_mgr:connect(
                                           Target,
-                                          {{?CLUSTER_PROTO_ID, [{1,0}]},
+                                          {{?REMOTE_CLUSTER_PROTO_ID, [{1,0}]},
                                            {?CTRL_OPTIONS, ?MODULE, Args}},
                                           default),
                              Uip#uip{conn={pending, Ref}};
@@ -486,21 +486,24 @@ ask_member_ips(Socket, Transport) ->
     Transport:send(Socket, ?CTRL_ASK_MEMBERS),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinMembers} ->
-            {ok, binary_to_term(BinMembers)};
-        {error, Reason} ->
-            {error, Reason}
+            binary_to_term(BinMembers);
+        Error ->
+            ?TRACE(?debugFmt("ask_member_ips: failed with error: ~p", [Error])),
+            lager:error("ask_member_ips: failed with error: ~p", [Error]),
+            []
     end.
 
-connected(Socket, Transport, Addr, {?CLUSTER_PROTO_ID, _MyVer, _RemoteVer}, Args) ->
+connected(Socket, Transport, Addr, {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer}, Args) ->
     %% when first connecting to a remote node, we ask it's and member list, even if
     %% it's a previously resolved cluster. Then we can sort everything out in the
     %% gen_server.
     Name = ask_cluster_name(Socket, Transport),
-    Members = ask_cluster_name(Socket, Transport),
+    Members = ask_member_ips(Socket, Transport),
     ?TRACE(?debugFmt("Connected to remote cluster ~p at ~p with members: ~p",
                      [Name, Addr, Members])),
     gen_server:cast(?SERVER,
-                    {connected_to_remote, Name, Members, Socket, Transport, Addr, Args}).
+                    {connected_to_remote, Name, Members, Socket, Transport, Addr, Args}),
+    ok.
 
 connect_failed({_Proto,_Vers}, {error, _Reason}, _Args) ->
     %% It's ok, the connection manager will keep trying.
