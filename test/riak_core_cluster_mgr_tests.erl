@@ -55,7 +55,7 @@ leader_test() ->
     ?assert(riak_core_cluster_mgr:get_is_leader() == true).
 
 %% become a proxy
-not_the_leader_test() ->
+no_leader_test() ->
     riak_core_cluster_mgr:set_leader(undefined),
     ?assert(riak_core_cluster_mgr:get_is_leader() == false).
 
