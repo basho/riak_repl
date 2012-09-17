@@ -99,8 +99,7 @@
          register_member_fun/1,
          add_remote_cluster/1,
          get_known_clusters/0,
-         get_ipaddrs_of_cluster/1,
-         get_unresolved_clusters/0
+         get_ipaddrs_of_cluster/1
          ]).
 
 %% gen_server callbacks
@@ -153,7 +152,7 @@ add_remote_cluster({IP,Port}) ->
     gen_server:cast(?SERVER, {add_remote_cluster, {IP,Port}}).
 
 %% Retrieve a list of known remote clusters that have been resolved (they responded).
--spec(get_known_clusters() -> [clustername()]).
+-spec(get_known_clusters() -> {ok,[clustername()]} | term()).
 get_known_clusters() ->
     gen_server:call(?SERVER, get_known_clusters).
 
@@ -161,9 +160,6 @@ get_known_clusters() ->
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
-
-get_unresolved_clusters() ->
-        gen_server:call(?SERVER, get_unresolved_clusters).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -204,22 +200,37 @@ handle_call({set_leader_node, LeaderNode}, _From, State) ->
             {reply, ok, become_proxy(State2)}
     end;
 
+%% Reply with list of resolved cluster names.
+%% If a leader has not been elected yet, return an empty list.
 handle_call(get_known_clusters, _From, State) ->
-    Remotes = [Name || {Name,_C} <- orddict:to_list(State#state.clusters)],
-    {reply, Remotes, State};
+    case State#state.is_leader of
+        true ->
+            Remotes = [Name || {Name,_C} <- orddict:to_list(State#state.clusters)],
+            {reply, {ok, Remotes}, State};
+        false ->
+            NoLeaderResult = {ok, []},
+            proxy_call(get_known_clusters, NoLeaderResult, State)
+    end;
+
+%% Return possible IP addrs of nodes on the named remote cluster.
+%% If a leader has not been elected yet, return an empty list.
+handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) ->
+    case State#state.is_leader of
+        true ->
+            Addrs = case orddict:find(ClusterName, State#state.clusters) of
+                        error -> [];
+                        {ok,C} -> C#cluster.members
+                    end,
+            {reply, {ok, Addrs}, State};
+        false ->
+            NoLeaderResult = {ok, []},
+            proxy_call({get_known_ipaddrs_of_cluster, {name, ClusterName}},
+                       NoLeaderResult, State)
+    end;
 
 handle_call(get_unresolved_clusters, _From, State) ->
     Unresolved = [Uip#uip.addr || Uip <- State#state.unresolved],
-    {reply, Unresolved, State};
-
-%% Return possible IP addrs of nodes on the named remote cluster.
-handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) ->
-    %% TODO: Should we get a fresh list from the remote cluster?
-    Addrs = case orddict:find(ClusterName, State#state.clusters) of
-                error -> [];
-                {ok,C} -> C#cluster.members
-            end,
-    {reply, Addrs, State}.
+    {reply, Unresolved, State}.
 
 handle_cast({set_my_name, MyName}, State) ->
     NewState = State#state{my_name = MyName},
@@ -312,6 +323,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Private
 %%%===================================================================
+
+proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
+    {reply, NoLeaderResult, State};
+proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
+    {reply, gen_server:call({?SERVER, Leader}, Call), State}.
 
 poll_cluster(Cluster = #cluster{conn = Connection, name = Name}) ->
                     case Connection of

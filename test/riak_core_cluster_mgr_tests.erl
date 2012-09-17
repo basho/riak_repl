@@ -66,19 +66,21 @@ register_member_fun_test() ->
     ?assert(Members == ?REMOTE_MEMBERS).
 
 get_known_clusters_when_empty_test() ->
-    ?assert([] == riak_core_cluster_mgr:get_known_clusters()).
+    Clusters = riak_core_cluster_mgr:get_known_clusters(),
+    ?debugFmt("get_known_clusters_when_empty_test(): ~p", [Clusters]),
+    ?assert({ok,[]} == Clusters).
 
 get_ipaddrs_of_cluster_unknown_name_test() ->
-    ?assert([] == riak_core_cluster_mgr:get_ipaddrs_of_cluster("unknown")).
+    ?assert({ok,[]} == riak_core_cluster_mgr:get_ipaddrs_of_cluster("unknown")).
 
 add_remote_cluster_multiple_times_cant_resolve_test() ->
     ?debugMsg("------- add_remote_cluster_multiple_times_cant_resolve_test ---------"),
     %% adding multiple times should not cause multiple entries in unresolved list
     riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
-    ?assert([?REMOTE_CLUSTER_ADDR] == riak_core_cluster_mgr:get_unresolved_clusters()),
+    ?assert([?REMOTE_CLUSTER_ADDR] == get_unresolved_clusters()),
     riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
-    ?assert([?REMOTE_CLUSTER_ADDR] == riak_core_cluster_mgr:get_unresolved_clusters()),
-    ?assert([] == riak_core_cluster_mgr:get_known_clusters()).
+    ?assert([?REMOTE_CLUSTER_ADDR] == get_unresolved_clusters()),
+    ?assert({ok,[]} == riak_core_cluster_mgr:get_known_clusters()).
 
 add_remotes_while_leader_test() ->
     ?debugMsg("------- add_remotes_while_leader_test ---------"),
@@ -92,9 +94,9 @@ connect_to_remote_cluster_test() ->
     leader_test(),
     timer:sleep(2000),
     %% should have resolved the remote cluster by now
-    ?assert([] == riak_core_cluster_mgr:get_unresolved_clusters()),
-    ?assert([?REMOTE_CLUSTER_NAME] == riak_core_cluster_mgr:get_known_clusters()),
-    ?assert(?REMOTE_MEMBERS == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
+    ?assert([] == get_unresolved_clusters()),
+    ?assert({ok,[?REMOTE_CLUSTER_NAME]} == riak_core_cluster_mgr:get_known_clusters()),
+    ?assert({ok,?REMOTE_MEMBERS} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
 
 cleanup_test() ->
     application:stop(ranch).
@@ -102,6 +104,9 @@ cleanup_test() ->
 %%--------------------------
 %% helper functions
 %%--------------------------
+
+get_unresolved_clusters() ->
+    gen_server:call(?CLUSTER_MANAGER_SERVER, get_unresolved_clusters).
 
 start_fake_remote_cluster_service() ->
     %% start our cluster_mgr service under a different protocol id,
