@@ -18,7 +18,14 @@
          get_listener/2,
          del_listener/2,
          del_nat_listener/2,
-         get_nat_listener/2]).
+         get_nat_listener/2,
+         fs_enable_trans/2,
+         fs_disable_trans/2,
+         fs_enabled/1,
+         fs_start_trans/2,
+         fs_stop_trans/2,
+         fs_started/1
+         ]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -234,6 +241,31 @@ get_nat_listener(Ring,Listener) ->
         error -> undefined
     end.
 
+%% Enable replication for the remote (queue will start building)
+fs_enable_trans(Ring, Remote) ->
+    add_list_trans(Remote, fs_enabled, Ring).
+
+%% Disable replication for the remote (queue will be cleaned up)
+fs_disable_trans(Ring, Remote) ->
+    del_list_trans(Remote, fs_enabled, Ring).
+
+%% Get list of RT enabled remotes
+fs_enabled(Ring) ->
+    get_list(fs_enabled, Ring).
+
+%% Start replication for the remote - make connection and send
+fs_start_trans(Ring, Remote) ->
+    add_list_trans(Remote, fs_started, Ring).
+
+%% Stop replication for the remote - break connection and queue
+fs_stop_trans(Ring, Remote) ->
+    del_list_trans(Remote, fs_started, Ring).
+
+%% Get list of RT enabled remotes
+fs_started(Ring) ->
+    get_list(fs_started, Ring).
+
+
 initial_config() ->
     dict:from_list(
       [{natlisteners, []},
@@ -241,6 +273,55 @@ initial_config() ->
        {sites, []},
        {version, ?REPL_VERSION}]
       ).
+
+add_list_trans(Item, ListName, Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    List = case dict:find(ListName, RC) of
+               {ok, List1} ->
+                   List1;
+               error ->
+                   []
+           end,
+    case lists:member(Item, List) of
+        false ->
+            NewList = lists:usort([Item|List]),
+            {new_ring, riak_core_ring:update_meta(
+                         ?MODULE,
+                         dict:store(ListName, NewList, RC),
+                         Ring)};
+        true ->
+            {ignore, {already_present, Item}}
+    end.
+
+del_list_trans(Item, ListName, Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    List = case dict:find(ListName, RC) of
+               {ok, List1} ->
+                   List1;
+               error ->
+                   []
+           end,
+    case lists:member(Item, List) of
+        true ->
+            NewList = List -- [Item],
+            {new_ring, riak_core_ring:update_meta(
+                         ?MODULE,
+                         dict:store(ListName, NewList, RC),
+                         Ring)};
+        false ->
+            {ignore, {not_present, Item}}
+    end.
+
+%% Lookup the list name in the repl config, return empty list if not found
+get_list(ListName, Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    case dict:find(ListName, RC) of
+        {ok, List}  ->
+            List;
+        error ->
+            []
+    end.
+
 
 %% unit tests
 
