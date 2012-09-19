@@ -35,8 +35,9 @@ start_link_test() ->
     %% we also need to start the other connection servers
     {ok, _Pid1} = riak_core_service_mgr:start_link(?MY_CLUSTER_ADDR),
     {ok, _Pid2} = riak_core_connection_mgr:start_link(),
+    {ok, _Pid3} = riak_core_cluster_conn_sup:start_link(),
     %% now start cluster manager
-    {ok, _Pid3 } = riak_core_cluster_mgr:start_link().
+    {ok, _Pid4 } = riak_core_cluster_mgr:start_link().
 
 %% set/get the local cluster's name
 set_get_name_test() ->
@@ -65,6 +66,11 @@ register_member_fun_test() ->
     Members = gen_server:call(?CLUSTER_MANAGER_SERVER, get_my_members),
     ?assert(Members == ?REMOTE_MEMBERS).
 
+register_sites_fun_test() ->
+    SitesFun = fun() -> [?REMOTE_CLUSTER_ADDR] end,
+    riak_core_cluster_mgr:register_sites_fun(SitesFun),
+    ok.
+
 get_known_clusters_when_empty_test() ->
     Clusters = riak_core_cluster_mgr:get_known_clusters(),
     ?debugFmt("get_known_clusters_when_empty_test(): ~p", [Clusters]),
@@ -77,9 +83,8 @@ add_remote_cluster_multiple_times_cant_resolve_test() ->
     ?debugMsg("------- add_remote_cluster_multiple_times_cant_resolve_test ---------"),
     %% adding multiple times should not cause multiple entries in unresolved list
     riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
-    ?assert([?REMOTE_CLUSTER_ADDR] == get_unresolved_clusters()),
+    ?assert({ok,[]} == riak_core_cluster_mgr:get_known_clusters()),
     riak_core_cluster_mgr:add_remote_cluster(?REMOTE_CLUSTER_ADDR),
-    ?assert([?REMOTE_CLUSTER_ADDR] == get_unresolved_clusters()),
     ?assert({ok,[]} == riak_core_cluster_mgr:get_known_clusters()).
 
 add_remotes_while_leader_test() ->
@@ -94,7 +99,6 @@ connect_to_remote_cluster_test() ->
     leader_test(),
     timer:sleep(2000),
     %% should have resolved the remote cluster by now
-    ?assert([] == get_unresolved_clusters()),
     ?assert({ok,[?REMOTE_CLUSTER_NAME]} == riak_core_cluster_mgr:get_known_clusters()),
     ?assert({ok,?REMOTE_MEMBERS} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
 
@@ -104,9 +108,6 @@ cleanup_test() ->
 %%--------------------------
 %% helper functions
 %%--------------------------
-
-get_unresolved_clusters() ->
-    gen_server:call(?CLUSTER_MANAGER_SERVER, get_unresolved_clusters).
 
 start_fake_remote_cluster_service() ->
     %% start our cluster_mgr service under a different protocol id,

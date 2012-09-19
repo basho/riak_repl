@@ -159,16 +159,16 @@ start_negotiated_service(_Socket, _Transport, {error, Reason}) ->
     ?TRACE(?debugFmt("service dispatch failed with ~p", [{error, Reason}])),
     {error, Reason};
 start_negotiated_service(Socket, Transport,
-                         {NegotiatedProtocols, {_Options, Module, Function, Args}}) ->
+                         {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
-    ?TRACE(?debugFmt("Setting user options on service side; ~p", [_Options])),
-    % Transport:setopts(Socket, Options),
+    ?TRACE(?debugFmt("Setting user options on service side; ~p", [Options])),
+    Transport:setopts(Socket, Options),
     %% call service body function for matching protocol. The callee should start
     %% a process or gen_server or such, and return {ok, pid()}.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args) of
         {ok, Pid} ->
             %% transfer control of socket to new service process
-            %ok = Transport:controlling_process(Socket, Pid),
+            ok = Transport:controlling_process(Socket, Pid),
             {ok, Pid};
         Error ->
             ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",
