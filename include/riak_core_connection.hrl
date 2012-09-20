@@ -9,6 +9,7 @@
 -define(CTRL_ASK_MEMBERS, <<"riak-ctrl:ask_members">>).
 
 -define(CLUSTER_MANAGER_SERVER, riak_core_cluster_manager).
+-define(CLUSTER_MGR_SERVICE_ADDR, {"0.0.0.0", 9085}).
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
 -define(CM_CALL_TIMEOUT, 2000).
 
