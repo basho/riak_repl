@@ -162,6 +162,7 @@ get_ipaddrs_of_cluster(ClusterName) ->
 %%%===================================================================
 
 init([]) ->
+    lager:info("Cluster Manager: starting"),
     register_cluster_locator(),
     %% start our cluster_mgr service
     ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
@@ -248,10 +249,14 @@ handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
     {noreply, State};
 
 %% The client connection recived (or polled for) an update from the remote cluster
-handle_cast({cluster_updated, Name, Members, _Remote}, State) ->
+handle_cast({cluster_updated, Name, Members, Remote}, State) ->
+    lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
+               [Remote, Name, Members]),
     State#state{clusters=add_ips_to_cluster(Name, Members, State#state.clusters)};
 
-handle_cast({connected_to_remote, Name, Members, _IpAddr, _Remote}, State) ->
+handle_cast({connected_to_remote, Name, Members, _IpAddr, Remote}, State) ->
+    lager:info("Cluster Manager: resolved remote ~p named ~p with members: ~p",
+               [Remote, Name, Members]),
     %% Remove all Members from all clusters.
     Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
     %% Add Members to Name'd cluster.
@@ -349,6 +354,7 @@ connect_to_ips(IPs) ->
 %% start being a cluster manager leader
 become_leader(State) when State#state.is_leader == false ->
     ?TRACE(?debugMsg("Becoming the leader")),
+    lager:info("Becoming the leader"),
     %% start leading
     %% Open a connection to all registered IP addresses
     SitesFun = State#state.sites_fun,
@@ -366,6 +372,7 @@ become_proxy(State) when State#state.is_leader == false ->
     State;
 become_proxy(State) ->
     ?TRACE(?debugMsg("Becoming a proxy")),
+    lager:info("Becoming a proxy"),
     %% stop leading
     %% remove all outbound connections
     Connections = riak_core_cluster_conn_sup:connected(),
@@ -379,6 +386,8 @@ become_proxy(State) ->
 ctrlService(_Socket, _Transport, {error, Reason}, _Args) ->
     lager:error("Failed to accept control channel connection: ~p", [Reason]);
 ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, Args) ->
+    {ok, ClientAddr} = inet:peername(Socket),
+    lager:info("Cluster Manager: accepted connection from cluster at ~p", [ClientAddr]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),

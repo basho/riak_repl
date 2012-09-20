@@ -18,13 +18,16 @@ start_link() ->
 %% @doc supervisor callback.
 init([]) ->
     Processes = [
-        {riak_repl_client_sup,
-            {riak_repl_client_sup, start_link, []},
-            permanent, infinity, supervisor, [riak_repl_client_sup]},
-        {riak_repl_server_sup,
-            {riak_repl_server_sup, start_link, []},
-            permanent, infinity, supervisor, [riak_repl_server_sup]},
-        {riak_repl_leader,
-            {riak_repl_leader, start_link, []},
-            permanent, 5000, worker, [riak_repl_leader]}],
+                 {riak_repl_client_sup, {riak_repl_client_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl_client_sup]},
+
+                 {riak_repl_server_sup, {riak_repl_server_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl_server_sup]},
+
+                 {riak_core_cluster_mgr_sup, {riak_core_cluster_mgr_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_cluster_mgr_sup]},
+
+                 {riak_repl_leader, {riak_repl_leader, start_link, []},
+                  permanent, 5000, worker, [riak_repl_leader]}
+                ],
     {ok, {{one_for_one, 9, 10}, Processes}}.

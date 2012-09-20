@@ -24,7 +24,7 @@
                 dispatcher_pid = undefined :: pid()
                }).
 
--export([start_link/1,
+-export([start_link/0, start_link/1,
          register_service/2,
          unregister_service/1,
          is_registered/1,
@@ -45,12 +45,20 @@
 %%% API
 %%%===================================================================
 
+%% start the Service Manager on the default/configured Ip Address and Port.
+%% All sub-protocols will be dispatched from there.
+-spec(start_link() -> {ok, pid()}).
+start_link() ->
+    %% TODO: get this from the configuration env
+    ServiceAddr = ?CLUSTER_MGR_SERVICE_ADDR,
+    start_link(ServiceAddr).
 
 %% start the Service Manager on the given Ip Address and Port.
 %% All sub-protocols will be dispatched from there.
 -spec(start_link(ip_addr()) -> {ok, pid()}).
 start_link({IP,Port}) ->
-    ?TRACE(?debugFmt("start_link/1 with ~p", [{IP,Port}])),
+    ?TRACE(?debugFmt("start_link/1 on ~p", [{IP,Port}])),
+    lager:info("start_link/1 on ~p", [{IP,Port}]),
     Args = [{IP,Port}],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
