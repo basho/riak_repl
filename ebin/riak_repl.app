@@ -9,7 +9,6 @@
                   'couch_file',
                   'couch_merkle',
                   'gen_leader',
-                  'riak_repl2_fssource_sup',
                   'riak_repl',
                   'riak_repl_app',
                   'riak_repl_cinfo',
