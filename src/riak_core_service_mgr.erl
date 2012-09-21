@@ -84,7 +84,7 @@ is_registered(ProtocolId) ->
 
 %% abrubtly kill all connections and stop disptaching services
 stop() ->
-    gen_server:cast(?SERVER, stop).
+    gen_server:call(?SERVER, stop).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -101,13 +101,13 @@ handle_call({is_registered, service, ProtocolId}, _From, State) ->
 handle_call(get_services, _From, State) ->
     {reply, orddict:to_list(State#state.services), State};
 
+handle_call(stop, _From, State) ->
+    ranch:stop_listener(State#state.dispatch_addr),
+    {stop, normal, ok, State};
+
 handle_call(_Unhandled, _From, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
     {reply, {error, unhandled}, State}.
-
-handle_cast(stop, State) ->
-    ranch:stop_listener(State#state.dispatch_addr),
-    {noreply, State};
 
 handle_cast({register_service, Protocol, Strategy}, State) ->
     {{ProtocolId,_Revs},_Rest} = Protocol,

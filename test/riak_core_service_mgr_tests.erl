@@ -30,7 +30,7 @@
 start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
     %% need to start it here so that a supervision tree will be created.
-    application:start(ranch),
+    ok = application:start(ranch),
     {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
     ?assert(Ok == ok).
 
@@ -73,6 +73,7 @@ pause_existing_services_test() ->
     timer:sleep(1000).
 
 cleanup_test() ->
+    %riak_core_service_mgr:stop(),
     application:stop(ranch).
 
 %%------------------------

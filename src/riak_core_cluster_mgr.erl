@@ -39,6 +39,7 @@
 
 
 -module(riak_core_cluster_mgr).
+-behaviour(gen_server).
 
 -include("riak_core_connection.hrl").
 
@@ -83,7 +84,8 @@
          register_sites_fun/1,
          add_remote_cluster/1,
          get_known_clusters/0,
-         get_ipaddrs_of_cluster/1
+         get_ipaddrs_of_cluster/1,
+         stop/0
          ]).
 
 %% gen_server callbacks
@@ -157,6 +159,9 @@ get_known_clusters() ->
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
 
+stop() ->
+    gen_server:call(?SERVER, stop).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -197,6 +202,9 @@ handle_call({set_leader_node, LeaderNode}, _From, State) ->
             %% not me.
             {reply, ok, become_proxy(State2)}
     end;
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
 
 %% Reply with list of resolved cluster names.
 %% If a leader has not been elected yet, return an empty list.
