@@ -137,6 +137,8 @@ get_my_name() ->
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader).
 
+%% Register a function that will get called to get out local riak node member's IP addrs.
+%% MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
@@ -183,10 +185,10 @@ handle_call(get_is_leader, _From, State) ->
 handle_call(get_my_name, _From, State) ->
     {reply, State#state.my_name, State};
 
-handle_call(get_my_members, _From, State) ->
+handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to RPC to the leader.
     MemberFun = State#state.member_fun,
-    MyMembers = MemberFun(),
+    MyMembers = MemberFun(MyAddr),
     {reply, MyMembers, State};
 
 handle_call(leader_node, _From, State) ->
@@ -393,27 +395,41 @@ become_proxy(State) ->
 
 ctrlService(_Socket, _Transport, {error, Reason}, _Args) ->
     lager:error("Failed to accept control channel connection: ~p", [Reason]);
-ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, Args) ->
+ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args) ->
     {ok, ClientAddr} = inet:peername(Socket),
     lager:info("Cluster Manager: accepted connection from cluster at ~p", [ClientAddr]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
-                              [Socket, Transport, MyVer, RemoteVer, Args]),
+                              [Socket, Transport, MyVer, RemoteVer, ClientAddr]),
     {ok, Pid}.
 
+read_ip_address(Socket, Transport, Remote) ->
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+        {ok, BinAddr} ->
+            MyAddr = binary_to_term(BinAddr),
+            ?TRACE(?debugFmt("Cluster Manager: remote thinks my addr is ~p", [MyAddr])),
+            lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
+            MyAddr;
+        Error ->
+            lager:error("Cluster mgr: failed to receive ip addr from remote ~p: ~p",
+                        [Remote, Error]),
+            undefined
+    end.
+
 %% process instance for handling control channel requests from remote clusters.
-ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
+ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, ?CTRL_ASK_NAME} ->
             %% remote wants my name
             MyName = gen_server:call(?SERVER, get_my_name),
             Transport:send(Socket, term_to_binary(MyName)),
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {ok, ?CTRL_ASK_MEMBERS} ->
             %% remote wants list of member machines in my cluster
-            Members = gen_server:call(?SERVER, get_my_members),
+            MyAddr = read_ip_address(Socket, Transport, ClientAddr),
+            Members = gen_server:call(?SERVER, {get_my_members, MyAddr}),
             Transport:send(Socket, term_to_binary(Members)),
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, Reason} ->
             lager:error("Failed recv on control channel. Error = ~p", [Reason]),
             % nothing to do now but die
@@ -422,5 +438,5 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
             lager:error("Recv'd unknown message on cluster control channel: ~p",
                         [Other]),
             % ignore and keep trying to be a nice service
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args)
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
     end.
