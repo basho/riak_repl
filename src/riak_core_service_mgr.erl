@@ -57,8 +57,8 @@ start_link() ->
 %% All sub-protocols will be dispatched from there.
 -spec(start_link(ip_addr()) -> {ok, pid()}).
 start_link({IP,Port}) ->
-    ?TRACE(?debugFmt("start_link/1 on ~p", [{IP,Port}])),
-    lager:info("start_link/1 on ~p", [{IP,Port}]),
+    ?TRACE(?debugFmt("Starting Core Service Manager at ~p", [{IP,Port}])),
+    lager:info("Starting Core Service Manager at ~p", [{IP,Port}]),
     Args = [{IP,Port}],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
@@ -91,7 +91,6 @@ stop() ->
 %%%===================================================================
 
 init([IpAddr]) ->
-%%    process_flag(trap_exit, true),
     {ok, Pid} = start_dispatcher(IpAddr, ?MAX_LISTENERS, []),
     {ok, #state{dispatch_addr = IpAddr, dispatcher_pid=Pid}}.
 
@@ -165,6 +164,7 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
 %% start user's module:function and transfer socket to it's process.
 start_negotiated_service(_Socket, _Transport, {error, Reason}) ->
     ?TRACE(?debugFmt("service dispatch failed with ~p", [{error, Reason}])),
+    lager:error("service dispatch failed with ~p", [{error, Reason}]),
     {error, Reason};
 start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
@@ -181,6 +181,8 @@ start_negotiated_service(Socket, Transport,
         Error ->
             ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",
                              [Module, Function, Error])),
+            lager:error("service dispatch of ~p:~p failed with ~p",
+                        [Module, Function, Error]),
             Error
     end.
 
@@ -291,12 +293,13 @@ normalize_ip(IP) when is_tuple(IP) ->
 start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
     case valid_host_ip(IP) of
         true ->
-            ?TRACE(?debugFmt("Service manager: starting listener on ~s:~p with ~p",
-                             [IP, Port, SubProtocols])),
             {ok, RawAddress} = inet_parse:address(IP),
-            ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
-                [{ip, RawAddress}, {port, Port}], ?MODULE, SubProtocols);
+            {ok, Pid} = ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
+                                      [{ip, RawAddress}, {port, Port}],
+                                      ?MODULE, SubProtocols),
+            lager:info("Service manager: listening on ~s:~p", [IP, Port]),
+            {ok, Pid};
         _ ->
-            lager:error("Connection mananger: failed to start ranch listener "
-                        "on ~s:~p - invalid address.", [IP, Port])
+            lager:error("Service Mananger: failed to start on ~s:~p - invalid address.",
+                        [IP, Port])
     end.

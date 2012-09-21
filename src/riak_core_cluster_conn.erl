@@ -51,6 +51,7 @@ start_link(Remote) ->
 %% is ok; we'll get restarted by a supervisor.
 ctrlClientProcess(Remote, unconnected) ->
     ?TRACE(?debugFmt("cluster_conn: starting managed connection to ~p", [Remote])),
+    lager:info("cluster_conn: starting managed connection to ~p", [Remote]),
     Args = {Remote, self()},
     {ok,_Ref} = riak_core_connection_mgr:connect(
                   Remote,
@@ -62,6 +63,8 @@ ctrlClientProcess(Remote, unconnected) ->
         {_From, {connected_to_remote, Socket, Transport, Addr}} ->
             ?TRACE(?debugFmt("cluster_conn: connected_to_remote ~p at ~p",
                              [Remote, Addr])),
+            lager:info("cluster_conn: connected_to_remote ~p at ~p",
+                             [Remote, Addr]),
             %% when first connecting to a remote node, we ask it's
             %% and member list, even if it's a previously resolved
             %% cluster. Then we can sort everything out in the
@@ -79,6 +82,7 @@ ctrlClientProcess(Remote, unconnected) ->
         after ?CONNECTION_SETUP_TIMEOUT ->
                 %% die with error
                 ?TRACE(?debugFmt("cluster_conn: timed out waiting for ~p", [Remote])),
+                lager:info("cluster_conn: timed out waiting for ~p", [Remote]),
                 {error, timed_out_waiting_for_connection}
         end;
 ctrlClientProcess(Remote, {Name, Socket, Transport}) ->
@@ -129,6 +133,7 @@ ask_member_ips(Socket, Transport, Remote) ->
 
 connected(Socket, Transport, Addr, {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer}, {_Remote,Client}) ->
     ?TRACE(?debugFmt("cluster_conn: ~p connected to ~p", [Client, Addr])),
+    lager:info("cluster_conn: ~p connected to ~p", [Client, Addr]),
     %% give control over the socket to the Client process
     Transport:controlling_process(Socket, Client),
     Client ! {self(), {connected_to_remote, Socket, Transport, Addr}},
@@ -137,6 +142,7 @@ connected(Socket, Transport, Addr, {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer
 connect_failed({_Proto,_Vers}, {error, _Reason}, _Args) ->
     ?TRACE(?debugFmt("cluster_conn: connect_failed to ~p because ~p",
                      [_Args, _Reason])),
+    lager:info("cluster_conn: connect_failed to ~p because ~p", [_Args, _Reason]),
     %% It's ok, the connection manager will keep trying.
     %% TODO: mark this addr/cluster as having connection issues.
     ok.

@@ -169,6 +169,9 @@ handle_call(is_leader, _From, State) ->
     {reply, State#state.i_am_leader, State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
+    %% Inform the cluster manager which node is now the leader.
+    %% TODO: move this somewhere else when we move cluster mgr to core.
+    riak_core_cluster_mgr:set_leader(LeaderNode),
     case node() of
         LeaderNode ->
             {reply, ok, become_leader(LeaderNode, State)};
