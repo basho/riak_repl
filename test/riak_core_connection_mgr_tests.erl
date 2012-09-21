@@ -60,7 +60,7 @@ register_empty_locator() ->
 start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
     %% need to start it here so that a supervision tree will be created.
-    application:start(ranch),
+    ok = application:start(ranch),
     {ok, _Pid1} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
     {ok, _Pid2} = riak_core_connection_mgr:start_link().
 
@@ -201,6 +201,8 @@ empty_locator_test() ->
     %% we should get a connection
 
 cleanup_test() ->
+    riak_core_service_mgr:stop(),
+    riak_core_connection_mgr:stop(),
     application:stop(ranch).
 
 %%------------------------

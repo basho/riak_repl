@@ -45,7 +45,7 @@ connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
 start_link_test() ->
     %% normally, ranch would be started as part of a supervisor tree, but we
     %% need to start it here so that a supervision tree will be created.
-    application:start(ranch),
+    ok = application:start(ranch),
     {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
     ?assert(Ok == ok).
 
@@ -91,4 +91,5 @@ failed_protocol_match_test() ->
     ok.
 
 cleanup_test() ->
+    riak_core_service_mgr:stop(),
     application:stop(ranch).

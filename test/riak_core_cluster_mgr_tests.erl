@@ -31,11 +31,12 @@
 %% this test runs first and leaves the server running for other tests
 start_link_test() ->
     %% need to start it here so that a supervision tree will be created.
-    application:start(ranch),
+    ok = application:start(ranch),
     %% we also need to start the other connection servers
     {ok, _Pid1} = riak_core_service_mgr:start_link(?MY_CLUSTER_ADDR),
     {ok, _Pid2} = riak_core_connection_mgr:start_link(),
-    {ok, _Pid3} = riak_core_cluster_conn_sup:start_link(),
+    {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
+    unlink(Pid3),
     %% now start cluster manager
     {ok, _Pid4 } = riak_core_cluster_mgr:start_link().
 
@@ -103,6 +104,11 @@ connect_to_remote_cluster_test() ->
     ?assert({ok,?REMOTE_MEMBERS} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
 
 cleanup_test() ->
+    riak_core_service_mgr:stop(),
+    riak_core_connection_mgr:stop(),
+    %% tough to stop a supervisor
+    exit(whereis(riak_core_cluster_conn_sup), kill),
+    riak_core_cluster_mgr:stop(),
     application:stop(ranch).
 
 %%--------------------------
@@ -131,7 +137,6 @@ ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args)
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
-    Transport:controlling_process(Socket, Pid),
     {ok, Pid}.
 
 %% process instance for handling control channel requests from remote clusters.

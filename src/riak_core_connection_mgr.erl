@@ -93,7 +93,8 @@
          get_cluster_finder/0,
          connect/2, connect/3,
          register_locator/2,
-         apply_locator/2
+         apply_locator/2,
+         stop/0
          ]).
 
 %% gen_server callbacks
@@ -160,6 +161,9 @@ connect(Target, ClientSpec) ->
 connect(Target, ClientSpec, Strategy) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
 
+stop() ->
+    gen_server:call(?SERVER, stop).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -196,6 +200,10 @@ handle_call({apply_locator, Target, Strategy}, _From,
             State = #state{locators = Locators}) ->
     AddrsOrError = locate_endpoints(Target, Strategy, Locators),
     {reply, AddrsOrError, State};
+
+handle_call(stop, _From, State) ->
+    %% TODO do we need to cleanup helper pids here?
+    {stop, normal, ok, State};
 
 handle_call(_Unhandled, _From, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
