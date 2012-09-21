@@ -4,6 +4,7 @@
 %% handshake messages to safely initiate a connection. Let's not accept
 %% a connection to a telnet session by accident!
 -define(CTRL_HELLO, <<"riak-ctrl:hello">>).
+-define(CTRL_TELL_IP_ADDR, <<"riak-ctrl:ip_addr">>).
 -define(CTRL_ACK, <<"riak-ctrl:ack">>).
 -define(CTRL_ASK_NAME, <<"riak-ctrl:ask_name">>).
 -define(CTRL_ASK_MEMBERS, <<"riak-ctrl:ask_members">>).

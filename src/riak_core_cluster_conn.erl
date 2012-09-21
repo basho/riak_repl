@@ -65,16 +65,15 @@ ctrlClientProcess(Remote, unconnected) ->
                              [Remote, Addr])),
             lager:info("cluster_conn: connected_to_remote ~p at ~p",
                              [Remote, Addr]),
-            %% when first connecting to a remote node, we ask it's
-            %% and member list, even if it's a previously resolved
-            %% cluster. Then we can sort everything out in the
+            %% ask it's name and member list, even if it's a previously
+            %% resolved cluster. Then we can sort everything out in the
             %% gen_server. If the name or members fails, these matches
             %% will fail and the connection will get restarted.
             {ok, Name} = ask_cluster_name(Socket, Transport, Remote),
-            {ok, Members} = ask_member_ips(Socket, Transport, Remote),
+            {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
                             {connected_to_remote, Name, Members, Addr, Remote}),
-            ctrlClientProcess(Remote, {Name, Socket, Transport});
+            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr});
         Other ->
             ?TRACE(?debugFmt("cluster_conn: unexpected recv from remote: ~p, ~p",
                              [Remote, Other])),
@@ -85,13 +84,13 @@ ctrlClientProcess(Remote, unconnected) ->
                 lager:info("cluster_conn: timed out waiting for ~p", [Remote]),
                 {error, timed_out_waiting_for_connection}
         end;
-ctrlClientProcess(Remote, {Name, Socket, Transport}) ->
+ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
     %% trade our time between checking for updates from the remote cluster
     %% and commands from our local cluster manager.
     receive
         %% cluster manager asking us to poll the remove cluster
         {_From, poll_cluster} ->
-            {ok, Members} = ask_member_ips(Socket, Transport, Remote),
+            {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
                             {cluster_updated, Name, Members, Remote})
     after 250 ->
@@ -107,7 +106,7 @@ ctrlClientProcess(Remote, {Name, Socket, Transport}) ->
                       lager:error("Error recv'ing from remote: ~p, ~p", [Remote, Reason])
               end
     end,
-    ctrlClientProcess(Remote, {Name, Socket, Transport}).
+    ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}).
 
 ask_cluster_name(Socket, Transport, Remote) ->
     Transport:send(Socket, ?CTRL_ASK_NAME),
@@ -120,8 +119,9 @@ ask_cluster_name(Socket, Transport, Remote) ->
             Error
     end.
 
-ask_member_ips(Socket, Transport, Remote) ->
+ask_member_ips(Socket, Transport, Addr, Remote) ->
     Transport:send(Socket, ?CTRL_ASK_MEMBERS),
+    Transport:send(Socket, term_to_binary(Addr)),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinMembers} ->
             {ok, binary_to_term(BinMembers)};

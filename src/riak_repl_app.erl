@@ -31,7 +31,7 @@ start(_Type, _StartArgs) ->
             %% register functions for cluster manager to find it's own
             %% nodes' ip addrs and existing remote replication sites.
             riak_core_cluster_mgr:register_member_fun(cluster_mgr_member_fun),
-            riak_core_cluster_mgr:register_sites_fun(cluster_mtr_sites_fun),
+            riak_core_cluster_mgr:register_sites_fun(cluster_mgr_sites_fun),
 
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
@@ -83,13 +83,9 @@ prune_old_workdirs(WorkRoot) ->
     end.
 
 %% Get the list of nodes of our ring
-cluster_mgr_member_fun() ->
+cluster_mgr_member_fun(_MyAddr) ->
     [].
 
 %% TODO: fetch saved list of remote sites from the ring
-cluster_mtr_sites_fun() ->
+cluster_mgr_sites_fun() ->
     [].
-
-
-
-

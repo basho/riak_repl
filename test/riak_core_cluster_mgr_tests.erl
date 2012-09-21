@@ -61,9 +61,9 @@ no_leader_test() ->
     ?assert(riak_core_cluster_mgr:get_is_leader() == false).
 
 register_member_fun_test() ->
-    MemberFun = fun() -> ?REMOTE_MEMBERS end,
+    MemberFun = fun(_Addr) -> ?REMOTE_MEMBERS end,
     riak_core_cluster_mgr:register_member_fun(MemberFun),
-    Members = gen_server:call(?CLUSTER_MANAGER_SERVER, get_my_members),
+    Members = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, ?MY_CLUSTER_ADDR}),
     ?assert(Members == ?REMOTE_MEMBERS).
 
 register_sites_fun_test() ->
@@ -131,8 +131,20 @@ ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args)
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
-    Transport:controlling_process(Socket, Pid),
     {ok, Pid}.
+
+read_ip_address(Socket, Transport, Remote) ->
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+        {ok, BinAddr} ->
+            MyAddr = binary_to_term(BinAddr),
+            ?TRACE(?debugFmt("Cluster Manager: remote thinks my addr is ~p", [MyAddr])),
+            lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
+            MyAddr;
+        Error ->
+            lager:error("Cluster mgr: failed to receive ip addr from remote ~p: ~p",
+                        [Remote, Error]),
+            undefined
+    end.
 
 %% process instance for handling control channel requests from remote clusters.
 ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
@@ -146,6 +158,8 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
         {ok, ?CTRL_ASK_MEMBERS} ->
             ?TRACE(?debugMsg("wants my members")),
             %% remote wants list of member machines in my cluster
+            MyAddr = read_ip_address(Socket, Transport, ?MY_CLUSTER_ADDR),
+            ?TRACE(?debugFmt("  client thinks my Addr is ~p", [MyAddr])),
             Members = ?REMOTE_MEMBERS,
             Transport:send(Socket, term_to_binary(Members)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
@@ -156,6 +170,5 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
         Other ->
             ?debugFmt("Recv'd unknown message on cluster control channel: ~p",
                       [Other]),
-            % ignore and keep trying to be a nice service
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args)
+            {error, bad_cluster_mgr_message}
     end.
