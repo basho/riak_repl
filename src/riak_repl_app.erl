@@ -4,6 +4,7 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(application).
 -export([start/2,stop/1]).
+-export([get_matching_address/2]).
 
 %% @spec start(Type :: term(), StartArgs :: term()) ->
 %%          {ok,Pid} | ignore | {error,Error}
@@ -46,8 +47,10 @@ start(_Type, _StartArgs) ->
         {ok, Pid} ->
             %% register functions for cluster manager to find it's own
             %% nodes' ip addrs and existing remote replication sites.
-            riak_core_cluster_mgr:register_member_fun(cluster_mgr_member_fun),
-            riak_core_cluster_mgr:register_sites_fun(cluster_mgr_sites_fun),
+            riak_core_cluster_mgr:register_member_fun(
+                fun cluster_mgr_member_fun/1),
+            riak_core_cluster_mgr:register_sites_fun(
+                fun cluster_mgr_sites_fun/0),
 
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
@@ -99,8 +102,114 @@ prune_old_workdirs(WorkRoot) ->
     end.
 
 %% Get the list of nodes of our ring
-cluster_mgr_member_fun(_MyAddr) ->
-    [].
+cluster_mgr_member_fun({IP, _Port}) ->
+    %% find the subnet for the interface we connected to
+    {ok, MyIPs} = inet:getifaddrs(),
+    {ok, NormIP} = riak_repl_util:normalize_ip(IP),
+    lager:info("normIP is ~p", [NormIP]),
+    MyMask = lists:foldl(fun({_IF, Attrs}, Acc) ->
+                case lists:member({addr, NormIP}, Attrs) of
+                    true ->
+                        NetMask = lists:foldl(fun({netmask, NM = {_, _, _, _}}, _) ->
+                                    NM;
+                                (_, Acc2) ->
+                                    Acc2
+                            end, undefined, Attrs),
+                        %% convert the netmask to CIDR
+                        CIDR = cidr(list_to_binary(tuple_to_list(NetMask)),0),
+                        lager:info("~p is ~p in CIDR", [NetMask, CIDR]),
+                        CIDR;
+                    false ->
+                        Acc
+                end
+        end, undefined, MyIPs),
+    lager:notice("Mask is ~p", [MyMask]),
+    AddressMask = mask_address(NormIP, MyMask),
+    lager:notice("address mask is ~p", [AddressMask]),
+    Nodes = riak_core_node_watcher:nodes(riak_kv),
+    {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
+        get_matching_address, [NormIP, AddressMask]),
+    Results.
+
+%% count the number of 1s in netmask to get the CIDR
+%% Maybe there's a better way....?
+cidr(<<>>, Acc) ->
+    Acc;
+cidr(<<X:1/bits, Rest/bits>>, Acc) ->
+    case X of
+        <<1:1>> ->
+            cidr(Rest, Acc + 1);
+        _ ->
+            cidr(Rest, Acc)
+    end.
+
+%% get the subnet mask as an integer, stolen from an old post on
+%% erlang-questions
+mask_address(Addr={_, _, _, _}, Maskbits) ->
+    B = list_to_binary(tuple_to_list(Addr)),
+    lager:info("address as binary: ~p ~p", [B,Maskbits]),
+    <<Subnet:Maskbits, _Host/bitstring>> = B,
+    Subnet;
+mask_address(_, _) ->
+    %% presumably ipv6, don't have a function for that one yet
+    undefined.
+
+rfc1918({10, _, _, _}) ->
+    true;
+rfc1918({192.168, _, _}) ->
+    true;
+rfc1918(IP={172, _, _, _}) ->
+    %% this one is a /12, not so simple
+    mask_address({172, 16, 0, 0}, 12) == mask_address(IP, 12);
+rfc1918(_) ->
+    false.
+
+%% find the right address to serve given the IP the node connected to
+get_matching_address(IP, Mask) ->
+    {RawListenIP, Port} = app_helper:get_env(riak_core, cluster_mgr),
+    {ok, ListenIP} = riak_repl_util:normalize_ip(RawListenIP),
+    case ListenIP of
+        {0, 0, 0, 0} ->
+            {ok, MyIPs} = inet:getifaddrs(),
+            lists:foldl(fun({_IF, Attrs}, Acc) ->
+                        V4Attrs = lists:filter(fun({addr, {_, _, _, _}}) ->
+                                    true;
+                                ({netmask, {_, _, _, _}}) ->
+                                    true;
+                                (_) ->
+                                    false
+                            end, Attrs),
+                        case V4Attrs of
+                            [] ->
+                                Acc;
+                            _ ->
+                                MyIP = proplists:get_value(addr, V4Attrs),
+                                NetMask = proplists:get_value(netmask, V4Attrs),
+                                CIDR = cidr(list_to_binary(tuple_to_list(NetMask)), 0),
+                                case mask_address(MyIP, CIDR) of
+                                    Mask ->
+                                        {MyIP, Port};
+                                    Other ->
+                                        lager:info("IP ~p with CIDR ~p masked as ~p",
+                                            [MyIP, CIDR, Other]),
+                                        Acc
+                                end
+                        end
+                end, undefined, MyIPs); %% TODO if result is undefined, check NAT
+            _ ->
+                case rfc1918(IP) == rfc1918(ListenIP) of
+                    true ->
+                        %% Both addresses are either internal or external.
+                        %% We'll have to assume the user knows what they're
+                        %% doing
+                        lager:info("returning speific listen IP ~p",
+                            [ListenIP]),
+                        {ListenIP, Port};
+                    false ->
+                        lager:warning("NAT detected?"),
+                        undefined
+                end
+        end.
 
 %% TODO: fetch saved list of remote sites from the ring
 cluster_mgr_sites_fun() ->
