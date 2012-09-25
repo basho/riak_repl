@@ -262,7 +262,8 @@ handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
 handle_cast({cluster_updated, Name, Members, Remote}, State) ->
     lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
                [Remote, Name, Members]),
-    State#state{clusters=add_ips_to_cluster(Name, Members, State#state.clusters)};
+    {noreply, State#state{clusters=add_ips_to_cluster(Name, Members,
+                                                      State#state.clusters)}};
 
 handle_cast({connected_to_remote, Name, Members, _IpAddr, Remote}, State) ->
     lager:info("Cluster Manager: resolved remote ~p named ~p with members: ~p",
@@ -429,6 +430,9 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             MyAddr = read_ip_address(Socket, Transport, ClientAddr),
             Members = gen_server:call(?SERVER, {get_my_members, MyAddr}),
             Transport:send(Socket, term_to_binary(Members)),
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+        {error, timeout} ->
+            %% timeouts are OK, I think.
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, Reason} ->
             lager:error("Failed recv on control channel. Error = ~p", [Reason]),
