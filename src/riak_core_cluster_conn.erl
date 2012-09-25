@@ -102,6 +102,9 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
                                       {cluster_updated, Members, Remote});
                   {ok, Other} ->
                       lager:error("Unexpected recv from remote: ~p, ~p", [Remote, Other]);
+                  {error, timeout} ->
+                      %% timeouts are ok; we'll just go round and try again
+                      ok;
                   {error, Reason} ->
                       lager:error("Error recv'ing from remote: ~p, ~p", [Remote, Reason])
               end

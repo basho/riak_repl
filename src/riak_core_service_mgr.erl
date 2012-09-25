@@ -49,8 +49,7 @@
 %% All sub-protocols will be dispatched from there.
 -spec(start_link() -> {ok, pid()}).
 start_link() ->
-    %% TODO: get this from the configuration env
-    ServiceAddr = ?CLUSTER_MGR_SERVICE_ADDR,
+    {ok, ServiceAddr} = application:get_env(riak_core, cluster_mgr),
     start_link(ServiceAddr).
 
 %% start the Service Manager on the given Ip Address and Port.
