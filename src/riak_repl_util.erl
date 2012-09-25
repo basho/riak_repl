@@ -17,6 +17,7 @@
          merkle_filename/3,
          keylist_filename/3,
          valid_host_ip/1,
+         normalize_ip/1,
          format_socketaddrs/2,
          maybe_use_ssl/0,
          upgrade_client_to_ssl/1,
