@@ -34,8 +34,10 @@
 %% start a connection with a locator type, either {cluster_by_name, clustername()}
 %% or {cluster_by_addr, ip_addr()}. This is asynchronous. If it dies, the connection
 %% supervisior will restart it.
--spec(start_link(term()) -> ok).
+-spec(start_link(term()) -> {ok,pid()}).
 start_link(Remote) ->
+    lager:info("cluster_conn: client starting client connection to ~p",
+               [Remote]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlClientProcess,
                               [Remote, unconnected]),
@@ -50,8 +52,6 @@ start_link(Remote) ->
 %% "connected_to_remote", which we forward to the cluster manager. Dying
 %% is ok; we'll get restarted by a supervisor.
 ctrlClientProcess(Remote, unconnected) ->
-    ?TRACE(?debugFmt("cluster_conn: starting managed connection to ~p", [Remote])),
-    lager:info("cluster_conn: starting managed connection to ~p", [Remote]),
     Args = {Remote, self()},
     {ok,_Ref} = riak_core_connection_mgr:connect(
                   Remote,
@@ -60,11 +60,13 @@ ctrlClientProcess(Remote, unconnected) ->
                   default),
     %% wait a long-ish time for the connection to establish
     receive
+        {_From, {connect_failed, Error}} ->
+            lager:info("cluster_conn: client connect_failed to ~p because ~p",
+                       [Remote, Error]),
+            Error;
         {_From, {connected_to_remote, Socket, Transport, Addr}} ->
-            ?TRACE(?debugFmt("cluster_conn: connected_to_remote ~p at ~p",
-                             [Remote, Addr])),
-            lager:info("cluster_conn: connected_to_remote ~p at ~p",
-                             [Remote, Addr]),
+            lager:info("cluster_conn: client connected to remote ~p at ~p",
+                       [Remote, Addr]),
             %% ask it's name and member list, even if it's a previously
             %% resolved cluster. Then we can sort everything out in the
             %% gen_server. If the name or members fails, these matches
@@ -74,16 +76,18 @@ ctrlClientProcess(Remote, unconnected) ->
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
                             {connected_to_remote, Name, Members, Addr, Remote}),
             ctrlClientProcess(Remote, {Name, Socket, Transport, Addr});
+        {_From, poll_cluster} ->
+            %% cluster manager doesn't know we haven't connected yet.
+            %% just ignore this while we're waiting to connect or fail
+            ctrlClientProcess(Remote, unconnected);
         Other ->
-            ?TRACE(?debugFmt("cluster_conn: unexpected recv from remote: ~p, ~p",
-                             [Remote, Other])),
-            lager:error("Unexpected recv from remote: ~p, ~p", [Remote, Other])
-        after ?CONNECTION_SETUP_TIMEOUT ->
-                %% die with error
-                ?TRACE(?debugFmt("cluster_conn: timed out waiting for ~p", [Remote])),
-                lager:info("cluster_conn: timed out waiting for ~p", [Remote]),
-                {error, timed_out_waiting_for_connection}
-        end;
+            lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
+                        [Remote, Other])
+    after ?CONNECTION_SETUP_TIMEOUT ->
+            %% die with error
+            lager:info("cluster_conn: client timed out waiting for ~p", [Remote]),
+            {error, timed_out_waiting_for_connection}
+    end;
 ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
     %% trade our time between checking for updates from the remote cluster
     %% and commands from our local cluster manager.
@@ -101,12 +105,17 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
                       gen_server:cast(?CLUSTER_MANAGER_SERVER,
                                       {cluster_updated, Members, Remote});
                   {ok, Other} ->
-                      lager:error("Unexpected recv from remote: ~p, ~p", [Remote, Other]);
+                      lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
+                                  [Remote, Other]);
                   {error, timeout} ->
                       %% timeouts are ok; we'll just go round and try again
                       ok;
+                  {error, closed} ->
+                      erlang:exit(connection_closed);
                   {error, Reason} ->
-                      lager:error("Error recv'ing from remote: ~p, ~p", [Remote, Reason])
+                      lager:error("cluster_conn: client got error from remote: ~p, ~p",
+                                  [Remote, Reason]),
+                      {error, Reason}
               end
     end,
     ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}).
@@ -117,7 +126,7 @@ ask_cluster_name(Socket, Transport, Remote) ->
         {ok, BinName} ->
             {ok, binary_to_term(BinName)};
         Error ->
-            lager:error("Failed to receive name from remote cluster at ~p because ~p",
+            lager:error("cluster_conn: failed to recv name from remote cluster at ~p because ~p",
                         [Remote, Error]),
             Error
     end.
@@ -129,23 +138,19 @@ ask_member_ips(Socket, Transport, Addr, Remote) ->
         {ok, BinMembers} ->
             {ok, binary_to_term(BinMembers)};
         Error ->
-            lager:error("Failed to receive members from remote cluster at ~p because ~p",
+            lager:error("cluster_conn: failed to recv members from remote cluster at ~p because ~p",
                         [Remote, Error]),
             Error
     end.
 
 connected(Socket, Transport, Addr, {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer}, {_Remote,Client}) ->
-    ?TRACE(?debugFmt("cluster_conn: ~p connected to ~p", [Client, Addr])),
-    lager:info("cluster_conn: ~p connected to ~p", [Client, Addr]),
-    %% give control over the socket to the Client process
+    %% give control over the socket to the Client process.
+    %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
     Client ! {self(), {connected_to_remote, Socket, Transport, Addr}},
     ok.
 
-connect_failed({_Proto,_Vers}, {error, _Reason}, _Args) ->
-    ?TRACE(?debugFmt("cluster_conn: connect_failed to ~p because ~p",
-                     [_Args, _Reason])),
-    lager:info("cluster_conn: connect_failed to ~p because ~p", [_Args, _Reason]),
-    %% It's ok, the connection manager will keep trying.
-    %% TODO: mark this addr/cluster as having connection issues.
+connect_failed({_Proto,_Vers}, {error, _Reason}=Error, {Remote,Client}) ->
+    %% tell client we bombed and why
+    Client ! {self(), {connect_failed, Error}},
     ok.
