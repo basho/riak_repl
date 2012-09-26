@@ -90,7 +90,8 @@ ctrlClientProcess(Remote, unconnected) ->
     end;
 ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
     %% trade our time between checking for updates from the remote cluster
-    %% and commands from our local cluster manager.
+    %% and commands from our local cluster manager. TODO: what if the name
+    %% of the remote cluster changes?
     receive
         %% cluster manager asking us to poll the remove cluster
         {_From, poll_cluster} ->
@@ -103,7 +104,7 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
                   {ok, {cluster_members_changed, BinMembers}} ->
                       Members = {ok, binary_to_term(BinMembers)},
                       gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                                      {cluster_updated, Members, Remote});
+                                      {cluster_updated, Name, Members, Remote});
                   {ok, Other} ->
                       lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
                                   [Remote, Other]);

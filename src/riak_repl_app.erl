@@ -6,6 +6,9 @@
 -export([start/2,stop/1]).
 -export([get_matching_address/2]).
 
+-define(TRACE(_Stmt),ok).
+%%-define(TRACE(Stmt),Stmt).
+
 %% @spec start(Type :: term(), StartArgs :: term()) ->
 %%          {ok,Pid} | ignore | {error,Error}
 %% @doc The application:start callback for riak_repl.
@@ -51,6 +54,7 @@ start(_Type, _StartArgs) ->
                 fun cluster_mgr_member_fun/1),
             riak_core_cluster_mgr:register_sites_fun(
                 fun cluster_mgr_sites_fun/0),
+            name_this_cluster(),
 
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
@@ -106,7 +110,7 @@ cluster_mgr_member_fun({IP, Port}) ->
     %% find the subnet for the interface we connected to
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
-    lager:info("normIP is ~p", [NormIP]),
+    ?TRACE(lager:info("normIP is ~p", [NormIP])),
     MyMask = lists:foldl(fun({_IF, Attrs}, Acc) ->
                 case lists:member({addr, NormIP}, Attrs) of
                     true ->
@@ -117,7 +121,7 @@ cluster_mgr_member_fun({IP, Port}) ->
                             end, undefined, Attrs),
                         %% convert the netmask to CIDR
                         CIDR = cidr(list_to_binary(tuple_to_list(NetMask)),0),
-                        lager:info("~p is ~p in CIDR", [NetMask, CIDR]),
+                        ?TRACE(lager:info("~p is ~p in CIDR", [NetMask, CIDR])),
                         CIDR;
                     false ->
                         Acc
@@ -125,13 +129,14 @@ cluster_mgr_member_fun({IP, Port}) ->
         end, undefined, MyIPs),
     case MyMask of
         undefined ->
-            lager:warning("Connected IP not present locally, must be NAT"),
+            lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
+                         [{IP,Port}]),
             %% might as well return the one IP we know will work
             [{IP, Port}];
         _ ->
-            lager:notice("Mask is ~p", [MyMask]),
+            ?TRACE(lager:notice("Mask is ~p", [MyMask])),
             AddressMask = mask_address(NormIP, MyMask),
-            lager:notice("address mask is ~p", [AddressMask]),
+            ?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
                 get_matching_address, [NormIP, AddressMask]),
@@ -154,7 +159,7 @@ cidr(<<X:1/bits, Rest/bits>>, Acc) ->
 %% erlang-questions
 mask_address(Addr={_, _, _, _}, Maskbits) ->
     B = list_to_binary(tuple_to_list(Addr)),
-    lager:info("address as binary: ~p ~p", [B,Maskbits]),
+    ?TRACE(lager:info("address as binary: ~p ~p", [B,Maskbits])),
     <<Subnet:Maskbits, _Host/bitstring>> = B,
     Subnet;
 mask_address(_, _) ->
@@ -197,8 +202,8 @@ get_matching_address(IP, Mask) ->
                                     Mask ->
                                         {MyIP, Port};
                                     Other ->
-                                        lager:info("IP ~p with CIDR ~p masked as ~p",
-                                            [MyIP, CIDR, Other]),
+                                        ?TRACE(lager:info("IP ~p with CIDR ~p masked as ~p",
+                                                          [MyIP, CIDR, Other])),
                                         Acc
                                 end
                         end
@@ -209,8 +214,8 @@ get_matching_address(IP, Mask) ->
                         %% Both addresses are either internal or external.
                         %% We'll have to assume the user knows what they're
                         %% doing
-                        lager:info("returning speific listen IP ~p",
-                            [ListenIP]),
+                        ?TRACE(lager:info("returning speific listen IP ~p",
+                                          [ListenIP])),
                         {ListenIP, Port};
                     false ->
                         lager:warning("NAT detected?"),
@@ -221,3 +226,10 @@ get_matching_address(IP, Mask) ->
 %% TODO: fetch saved list of remote sites from the ring
 cluster_mgr_sites_fun() ->
     [].
+
+%% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
+name_this_cluster() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterName = lists:flatten(
+                    io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+    riak_core_cluster_mgr:set_my_name(ClusterName).
