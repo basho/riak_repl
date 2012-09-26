@@ -86,7 +86,7 @@ prune_old_workdirs(WorkRoot) ->
     end.
 
 %% Get the list of nodes of our ring
-cluster_mgr_member_fun({IP, _Port}) ->
+cluster_mgr_member_fun({IP, Port}) ->
     %% find the subnet for the interface we connected to
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
@@ -107,13 +107,20 @@ cluster_mgr_member_fun({IP, _Port}) ->
                         Acc
                 end
         end, undefined, MyIPs),
-    lager:notice("Mask is ~p", [MyMask]),
-    AddressMask = mask_address(NormIP, MyMask),
-    lager:notice("address mask is ~p", [AddressMask]),
-    Nodes = riak_core_node_watcher:nodes(riak_kv),
-    {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
-        get_matching_address, [NormIP, AddressMask]),
-    Results.
+    case MyMask of
+        undefined ->
+            lager:warning("Connected IP not present locally, must be NAT"),
+            %% might as well return the one IP we know will work
+            [{IP, Port}];
+        _ ->
+            lager:notice("Mask is ~p", [MyMask]),
+            AddressMask = mask_address(NormIP, MyMask),
+            lager:notice("address mask is ~p", [AddressMask]),
+            Nodes = riak_core_node_watcher:nodes(riak_kv),
+            {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
+                get_matching_address, [NormIP, AddressMask]),
+            Results
+    end.
 
 %% count the number of 1s in netmask to get the CIDR
 %% Maybe there's a better way....?
