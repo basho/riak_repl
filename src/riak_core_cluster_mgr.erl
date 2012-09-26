@@ -68,7 +68,7 @@
 -record(state, {is_leader = false :: boolean(),                % true when the buck stops here
                 leader_node = undefined :: undefined | node(),
                 my_name = "" :: string(),                      % my local cluster name
-                member_fun = fun() -> [] end,                  % return members of my cluster
+                member_fun = fun(_Addr) -> [] end,             % return members of my cluster
                 sites_fun = fun() -> [] end,                   % return all remote site IPs
                 clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
                }).
@@ -412,7 +412,7 @@ read_ip_address(Socket, Transport, Remote) ->
             lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             MyAddr;
         Error ->
-            lager:error("Cluster mgr: failed to receive ip addr from remote ~p: ~p",
+            lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
                         [Remote, Error]),
             undefined
     end.
@@ -423,24 +423,26 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
         {ok, ?CTRL_ASK_NAME} ->
             %% remote wants my name
             MyName = gen_server:call(?SERVER, get_my_name),
-            Transport:send(Socket, term_to_binary(MyName)),
+            ok = Transport:send(Socket, term_to_binary(MyName)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {ok, ?CTRL_ASK_MEMBERS} ->
             %% remote wants list of member machines in my cluster
             MyAddr = read_ip_address(Socket, Transport, ClientAddr),
             Members = gen_server:call(?SERVER, {get_my_members, MyAddr}),
-            Transport:send(Socket, term_to_binary(Members)),
+            lager:info("Cluster Manager: service sending my members: ~p", [Members]),
+            ok = Transport:send(Socket, term_to_binary(Members)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->
             %% timeouts are OK, I think.
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, Reason} ->
-            lager:error("Failed recv on control channel. Error = ~p", [Reason]),
+            lager:error("Cluster Manager: serice ~p failed recv on control channel. Error = ~p",
+                        [self(), Reason]),
             % nothing to do now but die
             {error, Reason};
         Other ->
-            lager:error("Recv'd unknown message on cluster control channel: ~p",
-                        [Other]),
+            lager:error("Cluster Manger: service ~p recv'd unknown message on cluster control channel: ~p",
+                        [self(), Other]),
             % ignore and keep trying to be a nice service
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
     end.

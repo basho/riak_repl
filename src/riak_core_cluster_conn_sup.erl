@@ -22,10 +22,6 @@
         ]).
 -export([init/1]).
 
--define(TEST_ADDRS, [{?CLUSTER_ADDR_LOCATOR_TYPE,{"127.0.0.1",5001}},
-                     {?CLUSTER_ADDR_LOCATOR_TYPE,{"127.0.0.1",5002}},
-                     {?CLUSTER_ADDR_LOCATOR_TYPE,{"127.0.0.1",5003}}]).
-
 -define(SHUTDOWN, 5000). % how long to give cluster_conn processes to shutdown
 
 start_link() ->
@@ -58,8 +54,7 @@ init([]) ->
     %% riak_core_cluster_mgr:register_cluster_locator(),
 
     %% %% TODO: remote list of test addresses.
-    %% %% get list of initial clusters or ip addrs from ring
-    %% Remotes = ?TEST_ADDRS,
+    %% Remotes = initial clusters or ip addrs from ring
     %% Children = [make_remote(Remote) || Remote <- Remotes],
     Children = [],
     {ok, {{one_for_one, 10, 10}, Children}}.
