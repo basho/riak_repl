@@ -82,7 +82,7 @@
          register_cluster_locator/0,
          register_member_fun/1,
          register_sites_fun/1,
-         add_remote_cluster/1,
+         add_remote_cluster/1, remove_remote_cluster/1,
          get_known_clusters/0,
          get_ipaddrs_of_cluster/1,
          stop/0
@@ -151,6 +151,11 @@ register_sites_fun(SitesFun) ->
 add_remote_cluster({IP,Port}) ->
     gen_server:cast(?SERVER, {add_remote_cluster, {IP,Port}}).
 
+%% Remove a remote cluster by name
+-spec(remove_remote_cluster(ip_addr() | string()) -> ok).
+remove_remote_cluster(Cluster) ->
+    gen_server:cast(?SERVER, {remove_remote_cluster, Cluster}).
+
 %% Retrieve a list of known remote clusters that have been resolved (they responded).
 -spec(get_known_clusters() -> {ok,[clustername()]} | term()).
 get_known_clusters() ->
@@ -188,7 +193,7 @@ handle_call(get_my_name, _From, State) ->
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to RPC to the leader.
     MemberFun = State#state.member_fun,
-    MyMembers = MemberFun(MyAddr),
+    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr)],
     {reply, MyMembers, State};
 
 handle_call(leader_node, _From, State) ->
@@ -225,10 +230,7 @@ handle_call(get_known_clusters, _From, State) ->
 handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) ->
     case State#state.is_leader of
         true ->
-            Addrs = case orddict:find(ClusterName, State#state.clusters) of
-                        error -> [];
-                        {ok,C} -> C#cluster.members
-                    end,
+            Addrs = members_of_cluster(ClusterName, State),
             {reply, {ok, Addrs}, State};
         false ->
             NoLeaderResult = {ok, []},
@@ -258,10 +260,44 @@ handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
     end,
     {noreply, State};
 
+%% remove a connection if one already exists, by name or by addr.
+%% This is usefull if you accidentally add a bogus cluster address or
+%% just want to disconnect from one.
+handle_cast({remove_remote_cluster, Cluster}, State) ->
+    State2 =
+        case State#state.is_leader of
+            false ->
+                %% forward request to leader manager
+                proxy_cast({remove_remote_cluster, Cluster}, State),
+                State;
+            true ->
+                case Cluster of
+                    {IP, Port} ->
+                        Remote = {?CLUSTER_ADDR_LOCATOR_TYPE, {IP, Port}},
+                        remove_remote_connection(Remote),
+                        State;
+                    ClusterName ->
+                        %% reverse map from clustername to remote ip
+                        MemberAddrs = [{?CLUSTER_ADDR_LOCATOR_TYPE, Addr}
+                                       || Addr <- members_of_cluster(ClusterName, State)],
+                        AllConnections = riak_core_cluster_conn_sup:connected(),
+                        [remove_remote_connection(Remote)
+                         || {Remote, _Pid} <- AllConnections, lists:member(Remote,MemberAddrs)],
+                        UpdatedClusters = orddict:erase(ClusterName, State#state.clusters),
+                        State#state{clusters = UpdatedClusters}
+                end
+        end,
+    {noreply, State2};
+
 %% The client connection recived (or polled for) an update from the remote cluster
 handle_cast({cluster_updated, Name, Members, Remote}, State) ->
-    lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
-               [Remote, Name, Members]),
+    case members_of_cluster(Name, State) == Members of
+        true ->
+            ok;
+        false ->
+            lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
+                       [Remote, Name, Members])
+    end,
     {noreply, State#state{clusters=add_ips_to_cluster(Name, Members,
                                                       State#state.clusters)}};
 
@@ -274,8 +310,8 @@ handle_cast({connected_to_remote, Name, Members, _IpAddr, Remote}, State) ->
     Clusters2 = add_ips_to_cluster(Name, Members, Clusters1),
     {noreply, State#state{clusters = Clusters2}};
 
-handle_cast(Unhandled, _State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [Unhandled])),
+handle_cast(_Unhandled, _State) ->
+    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
     {error, unhandled}. %% this will crash the server
 
 %% it is time to poll all clusters and get updated member lists
@@ -288,8 +324,8 @@ handle_info(poll_clusters_timer, State) ->
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     {noreply, State};
 
-handle_info(Unhandled, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [Unhandled])),
+handle_info(_Unhandled, State) ->
+    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -302,11 +338,31 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private
 %%%===================================================================
 
+%% Convert an inet:address to a string if needed.
+string_of_ip(IP) when is_tuple(IP) ->    
+    inet_parse:ntoa(IP);
+string_of_ip(IP) ->
+    IP.
+
+members_of_cluster(ClusterName, State) ->
+    case orddict:find(ClusterName, State#state.clusters) of
+        error -> [];
+        {ok,C} -> C#cluster.members
+    end.
+
 ensure_remote_connection(Remote) ->
     case riak_core_cluster_conn_sup:is_connected(Remote) of
         false ->
             riak_core_cluster_conn_sup:add_remote_connection(Remote);
         true ->
+            ok
+    end.
+
+remove_remote_connection(Remote) ->
+    case riak_core_cluster_conn_sup:is_connected(Remote) of
+        true ->
+            riak_core_cluster_conn_sup:remove_remote_connection(Remote);
+        _ ->
             ok
     end.
 
@@ -409,7 +465,7 @@ read_ip_address(Socket, Transport, Remote) ->
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
             ?TRACE(?debugFmt("Cluster Manager: remote thinks my addr is ~p", [MyAddr])),
-            lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
+%%          lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             MyAddr;
         Error ->
             lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
@@ -429,7 +485,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             %% remote wants list of member machines in my cluster
             MyAddr = read_ip_address(Socket, Transport, ClientAddr),
             Members = gen_server:call(?SERVER, {get_my_members, MyAddr}),
-            lager:info("Cluster Manager: service sending my members: ~p", [Members]),
+%%            lager:info("Cluster Manager: service sending my members: ~p", [Members]),
             ok = Transport:send(Socket, term_to_binary(Members)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->
