@@ -52,13 +52,13 @@ is_leader_test() ->
 
 %% become the leader
 leader_test() ->
-    riak_core_cluster_mgr:set_leader(node()),
+    riak_core_cluster_mgr:set_leader(node(), self()),
     ?assert(node() == riak_core_cluster_mgr:get_leader()),
     ?assert(riak_core_cluster_mgr:get_is_leader() == true).
 
 %% become a proxy
 no_leader_test() ->
-    riak_core_cluster_mgr:set_leader(undefined),
+    riak_core_cluster_mgr:set_leader(undefined, self()),
     ?assert(riak_core_cluster_mgr:get_is_leader() == false).
 
 register_member_fun_test() ->
@@ -100,8 +100,15 @@ connect_to_remote_cluster_test() ->
     leader_test(),
     timer:sleep(2000),
     %% should have resolved the remote cluster by now
-    ?assert({ok,[?REMOTE_CLUSTER_NAME]} == riak_core_cluster_mgr:get_known_clusters()),
-    ?assert({ok,?REMOTE_MEMBERS} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
+    ?assert({ok,[?REMOTE_CLUSTER_NAME]} == riak_core_cluster_mgr:get_known_clusters()).
+
+get_ipaddrs_of_cluster_test() ->
+    Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
+    Rotated1 = [{"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
+    Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
+    ?assert({ok,Original} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
+    ?assert({ok,Rotated1} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
+    ?assert({ok,Rotated2} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)).
 
 cleanup_test() ->
     riak_core_service_mgr:stop(),
