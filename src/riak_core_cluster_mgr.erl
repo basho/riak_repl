@@ -70,13 +70,14 @@
                 my_name = "" :: string(),                      % my local cluster name
                 member_fun = fun(_Addr) -> [] end,             % return members of my cluster
                 sites_fun = fun() -> [] end,                   % return all remote site IPs
+                balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
                 clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
                }).
 
 -export([start_link/0,
          set_my_name/1,
          get_my_name/0,
-         set_leader/1,
+         set_leader/2,
          get_leader/0,
          get_is_leader/0,
          register_cluster_locator/0,
@@ -93,7 +94,7 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([ctrlService/4, ctrlServiceProcess/5]).
+-export([ctrlService/4, ctrlServiceProcess/5, round_robin_balancer/1]).
 
 %%%===================================================================
 %%% API
@@ -122,7 +123,7 @@ set_my_name(MyName) ->
 
 %% Called by riak_repl_leader whenever a leadership election
 %% takes place. Tells us who the leader is.
-set_leader(LeaderNode) ->
+set_leader(LeaderNode, _LeaderPid) ->
     gen_server:call(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
@@ -182,7 +183,8 @@ init([]) ->
     riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
-    {ok, #state{is_leader = false}}.
+    BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
+    {ok, #state{is_leader=false, balancer_fun=BalancerFun}}.
 
 handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
@@ -227,15 +229,30 @@ handle_call(get_known_clusters, _From, State) ->
 
 %% Return possible IP addrs of nodes on the named remote cluster.
 %% If a leader has not been elected yet, return an empty list.
+%% This list will get rotated or randomized depending on the balancer
+%% function installed. Every time we poll the remote cluster or it
+%% pushes an update, the list will get reset to whatever the remote
+%% thinks is the best order. The first call here will return the most
+%% recently updated list and then it will rebalance and save for next time.
+%% So, if no updates come from the remote, we'll just keep cycling through
+%% the list of known members according to the balancer fun.
 handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) ->
     case State#state.is_leader of
         true ->
-            Addrs = members_of_cluster(ClusterName, State),
-            {reply, {ok, Addrs}, State};
+            %% Call a balancer function that will rotate or randomize
+            %% the list. Return original members and save reblanced ones
+            %% for next iteration.
+            Members = members_of_cluster(ClusterName, State),
+            BalancerFun = State#state.balancer_fun,
+            RebalancedMembers = BalancerFun(Members),
+            {reply, {ok, Members},
+             State#state{clusters=add_ips_to_cluster(ClusterName, RebalancedMembers,
+                                                     State#state.clusters)}};
         false ->
             NoLeaderResult = {ok, []},
             proxy_call({get_known_ipaddrs_of_cluster, {name, ClusterName}},
-                       NoLeaderResult, State)
+                       NoLeaderResult,
+                       State)
     end.
 
 handle_cast({set_my_name, MyName}, State) ->
@@ -289,15 +306,18 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
         end,
     {noreply, State2};
 
-%% The client connection recived (or polled for) an update from the remote cluster
+%% The client connection recived (or polled for) an update from the remote cluster.
+%% Note that here, the Members are sorted in least connected order. Preserve that.
 handle_cast({cluster_updated, Name, Members, Remote}, State) ->
-    case members_of_cluster(Name, State) == Members of
+    OldMembers = lists:sort(members_of_cluster(Name, State)),
+    case OldMembers == lists:sort(Members) of
         true ->
             ok;
         false ->
             lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
                        [Remote, Name, Members])
     end,
+    %% save latest rebalanced members
     {noreply, State#state{clusters=add_ips_to_cluster(Name, Members,
                                                       State#state.clusters)}};
 
@@ -337,6 +357,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Private
 %%%===================================================================
+
+%% Simple Round Robin Balancer moves head to tail each time called.
+round_robin_balancer([]) ->
+    [];
+round_robin_balancer([Addr|Addrs]) ->
+    Addrs ++ [Addr].
 
 %% Convert an inet:address to a string if needed.
 string_of_ip(IP) when is_tuple(IP) ->    
@@ -391,10 +417,10 @@ remove_ips_from_all_clusters(Addrs, Clusters) ->
                 Clusters).
 
 %% Add Members to Name'd cluster. Returns revised clusters orddict.
-add_ips_to_cluster(Name, Addrs, Clusters) ->
+add_ips_to_cluster(Name, RebalancedMembers, Clusters) ->
     orddict:store(Name,
                   #cluster{name = Name,
-                           members = Addrs,
+                           members = RebalancedMembers,
                            last_conn = erlang:now()},
                   Clusters).
 
@@ -484,9 +510,9 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
         {ok, ?CTRL_ASK_MEMBERS} ->
             %% remote wants list of member machines in my cluster
             MyAddr = read_ip_address(Socket, Transport, ClientAddr),
-            Members = gen_server:call(?SERVER, {get_my_members, MyAddr}),
-%%            lager:info("Cluster Manager: service sending my members: ~p", [Members]),
-            ok = Transport:send(Socket, term_to_binary(Members)),
+            BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
+%%            lager:info("Cluster Manager: service sending my members: ~p", [BalancedMembers]),
+            ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->
             %% timeouts are OK, I think.
