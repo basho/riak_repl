@@ -28,6 +28,10 @@ init([]) ->
                   permanent, infinity, supervisor, [riak_cluster_mgr_sup]},
 
                  {riak_repl_leader, {riak_repl_leader, start_link, []},
-                  permanent, 5000, worker, [riak_repl_leader]}
+                  permanent, 5000, worker, [riak_repl_leader]},
+
+                 {riak_repl2_leader, {riak_repl2_leader, start_link, []},
+                  permanent, 5000, worker, [riak_repl2_leader]}
+
                 ],
     {ok, {{one_for_one, 9, 10}, Processes}}.

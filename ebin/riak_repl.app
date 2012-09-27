@@ -22,6 +22,7 @@
                   'riak_repl_console',
                   'riak_repl_fsm_common',
                   'riak_repl_fullsync_helper',
+                  'riak_repl2_leader',
                   'riak_repl_leader',
                   'riak_repl_leader_helper',
                   'riak_repl_listener_sup',

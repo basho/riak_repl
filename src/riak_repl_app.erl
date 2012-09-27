@@ -38,6 +38,9 @@ start(_Type, _StartArgs) ->
                 fun cluster_mgr_member_fun/1),
             riak_core_cluster_mgr:register_sites_fun(
                 fun cluster_mgr_sites_fun/0),
+            %% cluster manager leader will follow repl leader
+            riak_repl2_leader:register_notify_fun(
+              fun riak_core_cluster_mgr:set_leader/2),
             name_this_cluster(),
 
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
@@ -185,9 +188,9 @@ get_matching_address(IP, Mask) ->
                                 case mask_address(MyIP, CIDR) of
                                     Mask ->
                                         {MyIP, Port};
-                                    Other ->
+                                    _Other ->
                                         ?TRACE(lager:info("IP ~p with CIDR ~p masked as ~p",
-                                                          [MyIP, CIDR, Other])),
+                                                          [MyIP, CIDR, _Other])),
                                         Acc
                                 end
                         end

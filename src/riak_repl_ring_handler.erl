@@ -100,6 +100,7 @@ update_ring(ReplConfig) ->
 %%
 update_leader(Ring) ->
     AllNodes = riak_core_ring:all_members(Ring),
+    riak_repl2_leader:set_candidates(AllNodes, []),
     case riak_repl_ring:get_repl_config(Ring) of
         undefined ->
             ok;
