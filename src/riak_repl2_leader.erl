@@ -37,6 +37,7 @@
 -record(state, {helper_pid,  % pid of riak_repl_leader_helper
                 i_am_leader=false :: boolean(), % true if the leader
                 leader_node=undefined :: undefined | node(), % current leader
+                leader_pid=undefined :: undefined | pid(), % current leader Pid
                 leader_mref=undefined :: undefined | reference(), % monitor
                 notify_funs=[],                 % registered notification callbacks
                 candidates=[] :: [node()],      % candidate nodes for leader
@@ -102,11 +103,12 @@ handle_call(is_leader, _From, State) ->
     {reply, State#state.i_am_leader, State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
+    State1 = State#state{leader_pid = LeaderPid},
     Reply = case node() of
                 LeaderNode ->
-                    {reply, ok, become_leader(LeaderNode, State)};
+                    {reply, ok, become_leader(LeaderNode, State1)};
                 _ ->
-                    {reply, ok, new_leader(LeaderNode, LeaderPid, State)}
+                    {reply, ok, new_leader(LeaderNode, LeaderPid, State1)}
             end,
     %% notify all registered parties of the current leader node.
     [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- State#state.notify_funs],
@@ -116,6 +118,9 @@ handle_call(helper_pid, _From, State) ->
     {reply, State#state.helper_pid, State}.
 
 handle_cast({register_notify_fun, Fun}, State) ->
+    %% Notify the interested party immediately, in case leader election
+    %% has already occured.
+    Fun(State#state.leader_node, State#state.leader_pid),
     {noreply, State#state{notify_funs=[Fun | State#state.notify_funs]}};
 
 handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
