@@ -132,6 +132,8 @@ clustername([]) ->
     MyName = riak_core_cluster_mgr:get_my_name(),
     io:format("~s~n", [MyName]);
 clustername([ClusterName]) ->
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clustername/2,
+        ClusterName),
     riak_core_cluster_mgr:set_my_name(ClusterName).
 
 clusters([]) ->
