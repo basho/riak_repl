@@ -420,7 +420,7 @@ proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leade
     {reply, NoLeaderResult, State};
 proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
     ?TRACE(?debugFmt("proxy_call: forwarding to leader: ~p", [Call])),
-    {reply, gen_server:cast({?SERVER, Leader}, Call), State}.
+    {reply, gen_server:call({?SERVER, Leader}, Call), State}.
 
 %% Remove given IP Addresses from all clusters. Returns revised clusters orddict.
 remove_ips_from_all_clusters(Addrs, Clusters) ->
