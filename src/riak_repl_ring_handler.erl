@@ -33,6 +33,7 @@ handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
 handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     %% Ring has changed.
     FinalRing = init_repl_config(OldRing, NewRing),
+    update_cluster_name(FinalRing),
     update_leader(FinalRing),
     riak_repl_listener_sup:ensure_listeners(FinalRing),
     case riak_repl_leader:is_leader() of
@@ -148,3 +149,11 @@ has_listeners(ReplConfig) ->
 listener_nodes(ReplConfig) ->
     Listeners = dict:fetch(listeners, ReplConfig),
     lists:usort([L#repl_listener.nodename || L <- Listeners]).
+
+update_cluster_name(Ring) ->
+    case riak_repl_ring:get_clustername(Ring) of
+        undefined ->
+            ok;
+        Name ->
+            riak_core_cluster_mgr:set_my_name(Name)
+    end.

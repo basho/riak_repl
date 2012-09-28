@@ -233,6 +233,11 @@ cluster_mgr_sites_fun() ->
 %% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
 name_this_cluster() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    ClusterName = lists:flatten(
-                    io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+    ClusterName = case riak_repl_ring:get_clustername(Ring) of
+        undefined ->
+            lists:flatten(
+                io_lib:format("~p", [riak_core_ring:cluster_name(Ring)]));
+        Name ->
+            Name
+    end,
     riak_core_cluster_mgr:set_my_name(ClusterName).
