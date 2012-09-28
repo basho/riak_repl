@@ -159,9 +159,24 @@ del_sink([IP, PortStr]) ->
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).
 
 realtime([Cmd, Remote]) ->
-    io:format("TODO: implement realtime ~s ~s~n", [Cmd, Remote]);
+    case Cmd of
+        "enable" ->
+            riak_repl2_rt:enable(Remote);
+        "disable" ->
+            riak_repl2_rt:disable(Remote);
+        "start" ->
+            riak_repl2_rt:start(Remote);
+        "stop" ->
+            riak_repl2_rt:stop(Remote)
+    end;
 realtime([Cmd]) ->
-    io:format("TODO: implement realtime ~s~n", [Cmd]).
+    Remotes = riak_repl2_rt:enabled(),
+    case Cmd of
+        "start" ->
+            [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+        "stop" ->
+            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+    end.
 
 fullsync([Cmd, Remote]) ->
     io:format("TODO: implement fullsync ~s ~s~n", [Cmd, Remote]);

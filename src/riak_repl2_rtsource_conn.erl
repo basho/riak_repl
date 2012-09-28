@@ -72,10 +72,13 @@ init([Remote]) ->
     ClientSpec = {{realtime,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
 
     %% Todo: check for bad remote name
-    case riak_core_connection_mgr:connect({remote, Remote}, ClientSpec) of
+    lager:info("connecting to remote ~p", [Remote]),
+    case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec) of
         {ok, Ref} ->
+            lager:info("connection ref ~p", [Ref]),
             {ok, #state{remote = Remote, connection_ref = Ref}};
         {error, Reason}->
+            lager:warning("Error connecting to remote"),
             {stop, Reason}
     end.
 
