@@ -9,6 +9,8 @@
          pause_fullsync/1, resume_fullsync/1]).
 -export([client_stats_rpc/0, server_stats_rpc/0]).
 
+-export([clustername/1, remotes/1, add_sink/1, del_sink/1, realtime/1, fullsync/1]).
+
 -export([get_config/0,
          leader_stats/0,
          client_stats/0,
@@ -121,6 +123,37 @@ pause_fullsync([]) ->
 resume_fullsync([]) ->
     [riak_repl_tcp_server:resume_fullsync(Pid) || Pid <- server_pids()],
     ok.
+
+%%
+%% Repl2 commands
+%%
+
+clustername([]) ->
+    {ok, MyName} = riak_core_cluster_mgr:get_my_name(),
+    io:format("~p~n", [MyName]);
+clustername([ClusterName]) ->
+    riak_core_cluster_mgr:set_my_name(ClusterName).
+
+remotes([]) ->
+    {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
+    io:format("~p~n", [Clusters]).
+
+add_sink([IP, Port]) ->
+    riak_core_cluster_mgr:add_remote_cluster({IP, Port}).
+
+del_sink([IP, Port]) ->
+    riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).
+
+realtime([Cmd, Remote]) ->
+    io:format("TODO: implement realtime ~p ~p~n", [Cmd, Remote]);
+realtime([Cmd]) ->
+    io:format("TODO: implement realtime ~p~n", [Cmd]).
+
+fullsync([Cmd, Remote]) ->
+    io:format("TODO: implement fullsync ~p ~p~n", [Cmd, Remote]);
+fullsync([Cmd]) ->
+    io:format("TODO: implement fullsync ~p~n", [Cmd]).
+
 
 %% helper functions
 
