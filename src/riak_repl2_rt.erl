@@ -120,18 +120,10 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     end.
 
 register_remote_locator() ->
-    %% TODO: Once conn manager is in core, this can
-    %% Teach the connection manager how to find remote clusters
-    Remotes = orddict:from_list(app_helper:get_env(riak_repl, remotes, [])),
     Locator = fun(Name, _Policy) ->
-                      case orddict:find(Name, Remotes) of
-                          false ->
-                              {error, {unknown, Name}};
-                          OKEndpoints ->
-                              OKEndpoints
-                      end
-              end,
-    ok = riak_core_connection_mgr:register_locator(remote, Locator).
+            riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
+    end,
+    ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
 
 
 %% Register an active realtime sink (supervised under ranch)

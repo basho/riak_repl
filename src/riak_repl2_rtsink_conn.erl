@@ -11,9 +11,9 @@
 
 %% API
 -export([register_service/0, start_service/4]).
--export([start_link/4,
+-export([start_link/1,
          stop/1,
-         set_socket/4,
+         set_socket/3,
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
@@ -50,18 +50,18 @@ register_service() ->
 start_service(Socket, Transport, Proto, _Args) ->
     {ok, Pid} = riak_repl2_rtsink_conn_sup:start_child(Proto),
     ok = Transport:controlling_process(Socket, Pid),
-    ok = set_socket(Pid, Socket, Transport, _Args),
+    ok = set_socket(Pid, Socket, Transport),
     {ok, Pid}.
 
-start_link(Socket, Transport, Proto, _Args) ->
-    gen_server:start_link(?MODULE, [Transport, Socket, Proto], []).
+start_link(Proto) ->
+    gen_server:start_link(?MODULE, [Proto], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, infinity).
 
 %% Call after control handed over to socket
-set_socket(Pid, Socket, Transport, Proto) ->
-    gen_server:call(Pid, {set_socket, Socket, Transport, Proto}, infinity).
+set_socket(Pid, Socket, Transport) ->
+    gen_server:call(Pid, {set_socket, Socket, Transport}, infinity).
 
 status(Pid) ->
     status(Pid, 5000).
@@ -76,13 +76,11 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 %% Callbacks
-init([Transport, Socket, Proto]) ->
+init([Proto]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
-    Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
-    {ok, #state{transport = Transport, socket = Socket,
-                proto = Proto, max_pending = MaxPending, helper = Helper}}.
+    {ok, #state{proto = Proto, max_pending = MaxPending, helper = Helper}}.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = S, helper = Helper,
@@ -111,6 +109,10 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
               {put_pool_size, Pending}, % close enough
               {connected, IPAddr, Port}],
     {reply, {status, Status}, State};
+handle_call({set_socket, Socket, Transport}, _From, State) ->
+    Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
+    lager:info("Starting realtime connection"),
+    {reply, ok, State#state{socket=Socket, transport=Transport}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
