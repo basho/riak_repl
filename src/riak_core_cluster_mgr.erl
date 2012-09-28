@@ -85,6 +85,7 @@
          register_sites_fun/1,
          add_remote_cluster/1, remove_remote_cluster/1,
          get_known_clusters/0,
+         get_connections/0,
          get_ipaddrs_of_cluster/1,
          stop/0
          ]).
@@ -162,6 +163,10 @@ remove_remote_cluster(Cluster) ->
 get_known_clusters() ->
     gen_server:call(?SERVER, get_known_clusters).
 
+%% Retrieve a list of IP,Port tuples we are connected to or trying to connect to
+get_connections() ->
+    gen_server:call(?SERVER, get_connections).
+
 %% Return a list of the known IP addresses of all nodes in the remote cluster.
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
@@ -226,6 +231,17 @@ handle_call(get_known_clusters, _From, State) ->
             NoLeaderResult = {ok, []},
             proxy_call(get_known_clusters, NoLeaderResult, State)
     end;
+
+handle_call(get_connections, _From, State) ->
+    case State#state.is_leader of
+        true ->
+            Conns = [Remote || {Remote, _Pid} <- riak_core_cluster_conn_sup:connected()],
+            {reply, {ok, Conns}, State};
+        false ->
+            NoLeaderResult = {ok, []},
+            proxy_call(get_connections, NoLeaderResult, State)
+    end;
+    
 
 %% Return possible IP addrs of nodes on the named remote cluster.
 %% If a leader has not been elected yet, return an empty list.
