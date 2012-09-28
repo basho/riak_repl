@@ -102,14 +102,15 @@ handle_call(is_leader, _From, State) ->
     {reply, State#state.i_am_leader, State};
 
 handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
+    Reply = case node() of
+                LeaderNode ->
+                    {reply, ok, become_leader(LeaderNode, State)};
+                _ ->
+                    {reply, ok, new_leader(LeaderNode, LeaderPid, State)}
+            end,
     %% notify all registered parties of the current leader node.
     [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- State#state.notify_funs],
-    case node() of
-        LeaderNode ->
-            {reply, ok, become_leader(LeaderNode, State)};
-        _ ->
-            {reply, ok, new_leader(LeaderNode, LeaderPid, State)}
-    end;
+    Reply;
 
 handle_call(helper_pid, _From, State) ->
     {reply, State#state.helper_pid, State}.
@@ -128,13 +129,12 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             UpdState2 = UpdState1#state{candidates=Candidates, 
                                         workers=Workers,
                                         leader_node=undefined},
-            leader_change(State#state.i_am_leader, false),
             {noreply, restart_helper(UpdState2)}
     end.
 
 handle_info(update_leader, State) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    riak_repl_ring_handler:update_leader(Ring),
+    %% {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    %% riak_repl_ring_handler:update_leader(Ring),
     {noreply, State};
 handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
             #state{leader_mref=Mref}=State) ->
@@ -196,36 +196,20 @@ code_change(_OldVsn, State, _Extra) ->
 become_leader(Leader, State) ->
     case State#state.leader_node of
         Leader ->
+            %% already the leader
             NewState = State,
             %% we can get here if a non-leader node goes down
             %% so we want to make sure any missing clients are started
-            lager:info("LeaderII: re-elected as replication leader");
+            lager:info("LeaderII: ~p re-elected as replication leader", [Leader]);
         _ ->
-            riak_repl_stats:elections_elected(),
-            riak_repl_stats:elections_leader_changed(),
-            leader_change(State#state.i_am_leader, true),
+            %% newly the leader
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
-            lager:info("Leader II: elected as replication leader")
+            lager:info("Leader2: ~p elected as replication leader", [Leader])
     end,
     NewState.
 
 new_leader(Leader, LeaderPid, State) ->
-    This = node(),
-    case State#state.leader_node of
-        This ->
-            %% this node is surrendering leadership
-            leader_change(State#state.i_am_leader, false), % will close connections
-            riak_repl_stats:elections_leader_changed(),
-            lager:info("Leader2: replication leadership surrendered to ~p", [Leader]);
-        Leader ->
-            lager:info("Leader2: eplication leader kept as ~p", [Leader]),
-            ok;
-        _NewLeader ->
-            riak_repl_stats:elections_leader_changed(),
-            lager:info("Replication leader set to ~p", [Leader]),
-            ok
-    end,
     %% Set up a monitor on the new leader so we can make the helper
     %% check the elected node if it ever goes away.  This handles
     %% the case where all candidate nodes are down and only workers
@@ -274,61 +258,5 @@ maybe_start_helper(State) ->
     end,
     State#state{helper_pid = Pid}.
 
-leader_change(A, A) ->
-    %% nothing changed
-    ok;
-leader_change(false, true) ->
-    %% we've become the leader, notify interested servers.
-    ok;
-    %% RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-    %% [riak_repl_client_sup:stop_site(SiteName) || 
-    %%     {SiteName, _Pid} <- RunningSiteProcs];
-leader_change(true, false) ->
-    %% we've lost the leadership, close any local listeners
-    ok.
-    %% riak_repl_listener_sup:close_all_connections().
-
 %% @private
 %%
-
--ifdef(TEST).
-
--ifdef(EQC).
-
-node_gen() ->
-    elements([node1, node2, node3, node4, node5, node6]).
-
-site() ->
-    elements([site1, site2, site3, site4, site5, site6, site7, site8, site9,
-            site10]).
-
-site_pid() ->
-    {site(), self()}.
-
-site_config() ->
-    {node_gen(), ?LET(Sites, list(site_pid()), lists:usort(Sites))}.
-
-configured_sites() ->
-    ?LET(CC, list(site()), lists:usort(CC)).
-
-unique_config(Config) ->
-    {_, Result} = lists:foldl(fun({Node, Sites}, {Seen, Output}) ->
-                case lists:member(Node, Seen) of
-                    true ->
-                        {Seen, Output};
-                    _ ->
-                        {[Node|Seen], [{Node, Sites}|Output]}
-                end
-        end, {[], []}, Config),
-    Result.
-
-current_config() ->
-    ?LET(Config, ?SUCHTHAT(C, list(site_config()), length(C) > 0), unique_config(Config)).
-
-%% eunit wrapper
-eqc_test() ->
-    ?assert(eqc:quickcheck(eqc:testing_time(4, prop_balance()))).
-
--endif.
-
--endif.
