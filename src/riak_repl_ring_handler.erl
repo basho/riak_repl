@@ -21,7 +21,10 @@
 %% ===================================================================
 
 init([]) ->
+    %% Give the leader the intial set of candidates
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    AllNodes = riak_core_ring:all_members(Ring),
+    riak_repl2_leader:set_candidates(AllNodes, []),
     {ok, #state{ring=Ring}}.
 
 handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
@@ -96,7 +99,7 @@ update_ring(ReplConfig) ->
 
 
 %%
-%% Pass updated configuration settings the the leader
+%% Pass updated configuration settings to the leader
 %%
 update_leader(Ring) ->
     AllNodes = riak_core_ring:all_members(Ring),
