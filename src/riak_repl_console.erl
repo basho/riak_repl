@@ -142,10 +142,12 @@ sinks([]) ->
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
     io:format("~p~n", [Conns]).
 
-add_sink([IP, Port]) ->
+add_sink([IP, PortStr]) ->
+    {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:add_remote_cluster({IP, Port}).
 
-del_sink([IP, Port]) ->
+del_sink([IP, PortStr]) ->
+    {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).
 
 realtime([Cmd, Remote]) ->
