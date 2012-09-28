@@ -136,11 +136,17 @@ clustername([ClusterName]) ->
 
 clusters([]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
-    io:format("~p~n", [Clusters]).
+    lists:foreach(
+      fun(ClusterName) ->
+              {ok,IPs} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
+              io:format("~s: ~p~n", [ClusterName, IPs])
+      end,
+      Clusters).
 
 sinks([]) ->
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
-    io:format("~p~n", [Conns]).
+    Sinks = [Remote || {_Locator,Remote} <- Conns],
+    io:format("~p~n", [Sinks]).
 
 add_sink([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
