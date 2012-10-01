@@ -8,7 +8,7 @@
 %%
 %% Every cluster manager instance (one per node in the cluster) is told who the leader is
 %% when there is a leader change. An outside agent is responsible for determining
-%% which instance of cluster manager is the leader. For example, the riak_repl_leader server
+%% which instance of cluster manager is the leader. For example, the riak_repl2_leader server
 %% is probably a good place to do this from. Call set_leader_node(node(), pid()).
 %%
 %% If I'm the leader, I answer local RPC requests from non-leader cluster managers.
@@ -34,8 +34,6 @@
 %%
 %% TODO:
 %% 1. should the service side do push notifications to the client when nodes are added/deleted?
-%% 2. implement RPC calls from non-leaders to leaders in the local cluster.
-%% 3. add supervision of outbound connections? How do we know if one closes and how do we reconnect?
 
 
 -module(riak_core_cluster_mgr).
@@ -52,8 +50,6 @@
 -endif.
 
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
--define(CLUSTER_NAME_LOCATOR_TYPE, cluster_by_name).
--define(CLUSTER_ADDR_LOCATOR_TYPE, cluster_by_addr).
 -define(MAX_CONS, 20).
 -define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
 
@@ -68,8 +64,9 @@
 -record(state, {is_leader = false :: boolean(),                % true when the buck stops here
                 leader_node = undefined :: undefined | node(),
                 my_name = "" :: string(),                      % my local cluster name
-                member_fun = fun(_Addr) -> [] end,             % return members of my cluster
-                sites_fun = fun() -> [] end,                   % return all remote site IPs
+                member_fun = fun(_Addr) -> [] end,             % return members of local cluster
+                restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
+                save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
                 balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
                 clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
                }).
@@ -82,7 +79,8 @@
          get_is_leader/0,
          register_cluster_locator/0,
          register_member_fun/1,
-         register_sites_fun/1,
+         register_restore_cluster_targets_fun/1,
+         register_save_cluster_members_fun/1,
          add_remote_cluster/1, remove_remote_cluster/1,
          get_known_clusters/0,
          get_connections/0,
@@ -95,7 +93,7 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([ctrlService/4, ctrlServiceProcess/5, round_robin_balancer/1]).
+-export([ctrlService/4, ctrlServiceProcess/5, round_robin_balancer/1, cluster_mgr_sites_fun/0]).
 
 %%%===================================================================
 %%% API
@@ -114,7 +112,6 @@ start_link() ->
 %% can kick off some initial connections if some remotes are already known (in the
 %% ring) from previous additions.
 register_cluster_locator() ->
-    register_cluster_name_locator(),
     register_cluster_addr_locator().
 
 %% Set my cluster name
@@ -144,8 +141,11 @@ get_is_leader() ->
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
-register_sites_fun(SitesFun) ->
-    gen_server:cast(?SERVER, {register_sites_fun, SitesFun}).
+register_restore_cluster_targets_fun(ReadClusterFun) ->
+    gen_server:cast(?SERVER, {register_restore_cluster_targets_fun, ReadClusterFun}).
+
+register_save_cluster_members_fun(WriteClusterFun) ->
+    gen_server:cast(?SERVER, {register_save_cluster_members_fun, WriteClusterFun}).
 
 %% Specify how to reach a remote cluster, it's name is
 %% retrieved by asking it via the control channel.
@@ -189,7 +189,9 @@ init([]) ->
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
-    {ok, #state{is_leader=false, balancer_fun=BalancerFun}}.
+    {ok, #state{is_leader=false,
+                balancer_fun=BalancerFun
+               }}.
 
 handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
@@ -278,8 +280,15 @@ handle_cast({set_my_name, MyName}, State) ->
 handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
 
-handle_cast({register_sites_fun, Fun}, State) ->
-    {noreply, State#state{sites_fun=Fun}};
+handle_cast({register_save_cluster_members_fun, Fun}, State) ->
+    {noreply, State#state{save_members_fun=Fun}};
+
+handle_cast({register_restore_cluster_targets_fun, Fun}, State) ->
+    %% If we are already the leader, connect to known clusters after some delay.
+    %% TODO: 5 seconds is arbitrary. It's enough time for the ring to be stable
+    %% so that the call into the repl_ring handler won't crash. Fix this.
+    erlang:send_after(5000, self(), connect_to_clusters),
+    {noreply, State#state{restore_targets_fun=Fun}};
 
 handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
     case State#state.is_leader of
@@ -324,12 +333,15 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
 
 %% The client connection recived (or polled for) an update from the remote cluster.
 %% Note that here, the Members are sorted in least connected order. Preserve that.
+%% TODO: we really want to keep all nodes we have every seen, except remove nodes
+%% that explicitly leave the cluster or show up in other clusters.
 handle_cast({cluster_updated, Name, Members, Remote}, State) ->
     OldMembers = lists:sort(members_of_cluster(Name, State)),
     case OldMembers == lists:sort(Members) of
         true ->
             ok;
         false ->
+            persist_members_to_ring(State, Name, Members),
             lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
                        [Remote, Name, Members])
     end,
@@ -344,6 +356,7 @@ handle_cast({connected_to_remote, Name, Members, _IpAddr, Remote}, State) ->
     Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
     %% Add Members to Name'd cluster.
     Clusters2 = add_ips_to_cluster(Name, Members, Clusters1),
+    persist_members_to_ring(State, Name, Members),
     {noreply, State#state{clusters = Clusters2}};
 
 handle_cast(_Unhandled, _State) ->
@@ -358,6 +371,20 @@ handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
     {noreply, State};
 handle_info(poll_clusters_timer, State) ->
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    {noreply, State};
+
+handle_info(connect_to_clusters, State) ->
+    %% Open a connection to all known (persisted) clusters
+    case State#state.is_leader of
+        true ->
+            Fun = State#state.restore_targets_fun,
+            ClusterTargets = Fun(),
+            lager:info("connect_to_clusters: connect to ~p", [ClusterTargets]),
+            connect_to_targets(ClusterTargets);
+        _ ->
+            lager:info("connect_to_clusters: not the leader"),
+            ok
+    end,
     {noreply, State};
 
 handle_info(_Unhandled, State) ->
@@ -440,35 +467,26 @@ add_ips_to_cluster(Name, RebalancedMembers, Clusters) ->
                            last_conn = erlang:now()},
                   Clusters).
 
-register_cluster_name_locator() ->
-    Locator = fun(ClusterName, _Policy) ->
-                      get_ipaddrs_of_cluster(ClusterName)
-              end,
-    ok = riak_core_connection_mgr:register_locator(?CLUSTER_NAME_LOCATOR_TYPE, Locator).
-
 %% register a locator that just uses the address passed to it.
+%% This is a way to boot strap a connection to a cluster by IP address.
 register_cluster_addr_locator() ->
     % Identity locator function just returns a list with single member Addr
     Locator = fun(Addr, _Policy) -> {ok, [Addr]} end,
     ok = riak_core_connection_mgr:register_locator(?CLUSTER_ADDR_LOCATOR_TYPE, Locator).
 
-%% Setup a connection to all given IP addresses
-connect_to_ips(IPs) ->
-    lists:foreach(fun(Addr) ->
-                          Target = {?CLUSTER_ADDR_LOCATOR_TYPE, Addr},
-                          ensure_remote_connection(Target)
-                  end,
-                  IPs).
+%% Setup a connection to all given cluster targets
+connect_to_targets(Targets) ->
+    lists:foreach(fun(Target) -> ensure_remote_connection(Target) end,
+                  Targets).
 
 %% start being a cluster manager leader
 become_leader(State) when State#state.is_leader == false ->
     ?TRACE(?debugMsg("Becoming the leader")),
-    lager:info("Becoming the leader"),
-    %% start leading
-    %% Open a connection to all registered IP addresses
-    SitesFun = State#state.sites_fun,
-    IPs = SitesFun(),
-    connect_to_ips(IPs),
+    lager:info("Becoming the leader..."),
+    %% start leading and tell ourself to connect to known clusters in a bit.
+    %% TODO: 5 seconds is arbitrary. It's enough time for the ring to be stable
+    %% so that the call into the repl_ring handler won't crash. Fix this.
+    erlang:send_after(5000, self(), connect_to_clusters),
     State#state{is_leader = true};
 become_leader(State) ->
     ?TRACE(?debugMsg("Already the leader")),
@@ -487,6 +505,18 @@ become_proxy(State) ->
     Connections = riak_core_cluster_conn_sup:connected(),
     [riak_core_cluster_conn_sup:remove_remote_connection(Remote) || {Remote, _Pid} <- Connections],
     State#state{is_leader = false}.
+
+persist_members_to_ring(State, ClusterName, Members) ->
+    SaveFun = State#state.save_members_fun,
+    SaveFun(ClusterName, Members).
+
+%% Return a list of locators, in our case, we'll use cluster names
+%% that were saved in the ring
+cluster_mgr_sites_fun() ->
+    %% get cluster names from cluster manager
+    Ring = riak_core_ring_manager:get_my_ring(),
+    Clusters = riak_repl_ring:get_clusters(Ring),
+    [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].    
 
 %%-------------------------
 %% control channel services

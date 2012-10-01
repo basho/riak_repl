@@ -6,6 +6,8 @@
 -export([start/2,stop/1]).
 -export([get_matching_address/2]).
 
+-include("riak_core_connection.hrl").
+
 -define(TRACE(_Stmt),ok).
 %%-define(TRACE(Stmt),Stmt).
 
@@ -49,11 +51,9 @@ start(_Type, _StartArgs) ->
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
             %% register functions for cluster manager to find it's own
-            %% nodes' ip addrs and existing remote replication sites.
+            %% nodes' ip addrs
             riak_core_cluster_mgr:register_member_fun(
                 fun cluster_mgr_member_fun/1),
-            riak_core_cluster_mgr:register_sites_fun(
-                fun cluster_mgr_sites_fun/0),
             %% cluster manager leader will follow repl leader
             riak_repl2_leader:register_notify_fun(
               fun riak_core_cluster_mgr:set_leader/2),
@@ -64,6 +64,9 @@ start(_Type, _StartArgs) ->
             %% Add routes to webmachine
             [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
+            %% Now that we have registered the ring handler, we can register the
+            %% cluster manager name locator function (which reads the ring).
+            register_cluster_name_locator(),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
@@ -226,10 +229,6 @@ get_matching_address(IP, Mask) ->
                 end
         end.
 
-%% TODO: fetch saved list of remote sites from the ring
-cluster_mgr_sites_fun() ->
-    [].
-
 %% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
 name_this_cluster() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -241,3 +240,38 @@ name_this_cluster() ->
             Name
     end,
     riak_core_cluster_mgr:set_my_name(ClusterName).
+
+%% Persist the named cluster and it's members to the repl ring metadata.
+cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->
+    lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, Members]),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clusterIpAddrs/2,
+                                      {ClusterName, Members}).
+
+%% Return a list of cluster targets by cluster name.
+%% These will then be resolved by calls back to our registered
+%% locator function, registered below.
+cluster_mgr_read_cluster_targets_from_ring() ->
+    %% get cluster names from cluster manager
+    Ring = get_ring(),
+    Clusters = riak_repl_ring:get_clusters(Ring),
+    [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].
+
+%% Register a locator for cluster names. MUST do this BEFORE we
+%% register the save/restore functions because the restore function
+%% is going to immediately try and locate functions if the cluster
+%% manager is already the leader.
+register_cluster_name_locator() ->
+    Locator = fun(ClusterName, _Policy) ->
+                      Ring = get_ring(),
+                      {ok,riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName)}
+              end,
+    ok = riak_core_connection_mgr:register_locator(?CLUSTER_NAME_LOCATOR_TYPE, Locator),
+    %% Register functions to save/restore cluster names and their members
+    riak_core_cluster_mgr:register_save_cluster_members_fun(
+      fun cluster_mgr_write_cluster_members_to_ring/2),
+    riak_core_cluster_mgr:register_restore_cluster_targets_fun(
+      fun cluster_mgr_read_cluster_targets_from_ring/0).
+
+get_ring() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_ring:ensure_config(Ring).

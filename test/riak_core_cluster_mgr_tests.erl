@@ -67,9 +67,14 @@ register_member_fun_test() ->
     Members = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, ?MY_CLUSTER_ADDR}),
     ?assert(Members == ?REMOTE_MEMBERS).
 
-register_sites_fun_test() ->
-    SitesFun = fun() -> [?REMOTE_CLUSTER_ADDR] end,
-    riak_core_cluster_mgr:register_sites_fun(SitesFun),
+register_save_cluster_members_fun_test() ->
+    Fun = fun(_C,_M) -> ok end,
+    riak_core_cluster_mgr:register_save_cluster_members_fun(Fun),
+    ok.
+
+register_restore_cluster_targets_fun_test() ->
+    Fun = fun() -> [{test_name_locator,?REMOTE_CLUSTER_ADDR}] end,
+    riak_core_cluster_mgr:register_restore_cluster_targets_fun(Fun),
     ok.
 
 get_known_clusters_when_empty_test() ->
@@ -114,7 +119,10 @@ cleanup_test() ->
     riak_core_service_mgr:stop(),
     riak_core_connection_mgr:stop(),
     %% tough to stop a supervisor
-    exit(whereis(riak_core_cluster_conn_sup), kill),
+    case whereis(riak_core_cluster_conn_sup) of
+        undefined -> ok;
+        Sup -> exit(Sup, kill)
+    end,
     riak_core_cluster_mgr:stop(),
     application:stop(ranch).
 
