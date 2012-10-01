@@ -24,7 +24,8 @@
          schedule_fullsync/0,
          schedule_fullsync/1,
          elapsed_secs/1,
-         shuffle_partitions/2
+         shuffle_partitions/2,
+         log_dropped_realtime_obj/1
      ]).
 
 make_peer_info() ->
@@ -357,4 +358,10 @@ parse_vsn(Str) ->
                 I
             end || T <- Toks],
     list_to_tuple(Vsns).
+
+log_dropped_realtime_obj(Obj) ->
+    DroppedKey = riak_object:key(Obj),
+    DroppedBucket = riak_object:bucket(Obj),
+    lager:info("REPL dropped object: ~p ~p",[ DroppedBucket,
+                                             DroppedKey]).
 

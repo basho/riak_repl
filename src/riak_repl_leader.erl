@@ -152,6 +152,7 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
 handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     case State#state.receivers of
         [] ->
+            riak_repl_util:log_dropped_realtime_obj(Msg),
             riak_repl_stats:objects_dropped_no_clients();
         Receivers ->
             [P ! {repl, Msg} || {_Mref, P} <- Receivers],
@@ -162,8 +163,9 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
     gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
     riak_repl_stats:objects_forwarded(),
     {noreply, State};
-handle_cast({repl, _Msg}, State) ->
+handle_cast({repl, Msg}, State) ->
     %% No leader currently defined - cannot do anything
+    riak_repl_util:log_dropped_realtime_obj(Msg),
     riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State}.
 

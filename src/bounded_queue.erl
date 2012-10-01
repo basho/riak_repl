@@ -24,10 +24,10 @@
 -module(bounded_queue).
 -author('Andy Gross <andy@basho.com>').
 
--export([new/1, 
-         in/2, 
-         out/1, 
-         byte_size/1, 
+-export([new/1,
+         in/2,
+         out/1,
+         byte_size/1,
          len/1,
          dropped_count/1]).
 
@@ -49,12 +49,15 @@
 -spec new(non_neg_integer()) -> bounded_queue().
 new(MaxSize) when is_integer(MaxSize) -> #bq{m=MaxSize, s=0, q=queue:new()}.
 
-%% @doc  Add an item to the queue.  
+%% @doc  Add an item to the queue.
 -spec in(bounded_queue(), bounded_queue_element()) -> bounded_queue().
 in(BQ=#bq{m=Max, q=Q, d=D}, Item) when is_binary(Item) ->
     ItemSize = element_size(Item),
     case ItemSize > Max of
         true ->
+            DroppedObjs = queue:to_list(Q),
+            [ riak_repl_utils:log_dropped_realtime(DroppedObj) ||
+                DroppedObj <- DroppedObjs ],
             BQ#bq{q=queue:from_list([Item]),s=ItemSize,d=queue:len(Q)+D};
         false ->
             make_fit(BQ, Item, ItemSize)
@@ -63,10 +66,14 @@ in(BQ=#bq{m=Max, q=Q, d=D}, [H|_T] = Items) when is_binary(H) ->
     ItemSize = element_size(Items),
     case ItemSize > Max of
         true ->
+            DroppedObjs = queue:to_list(Q),
+            [ riak_repl_util:log_dropped_realtime_obj(DroppedObj) 
+             || DroppedObj <- DroppedObjs ],
             BQ#bq{q=queue:from_list([Items]),s=ItemSize,d=queue:len(Q)+D};
         false ->
             make_fit(BQ, Items, ItemSize)
     end.
+
 
 %% @doc  Remove an item from the queue.
 -spec out(bounded_queue()) -> {{'value',bounded_queue_element()}|'empty', bounded_queue()}.
@@ -91,10 +98,11 @@ len(#bq{q=Q}) -> queue:len(Q).
 %% @doc  The number of items dropped from the queue due to the size bound.
 -spec dropped_count(bounded_queue()) -> non_neg_integer().
 dropped_count(#bq{d=D}) -> D.
-    
+
 
 make_fit(BQ=#bq{s=Size,m=Max,d=D}, Item, ItemSize) when (ItemSize+Size>Max) -> 
-    {_, NewQ} = out(BQ),
+    {DroppedItem, NewQ} = out(BQ),
+    riak_repl_util:log_dropped_realtime_obj(DroppedItem),
     make_fit(NewQ#bq{d=D+1}, Item, ItemSize);
 make_fit(BQ=#bq{q=Q, s=Size}, Item, ItemSize) ->
     BQ#bq{q=queue:in(Item, Q), s=Size+ItemSize}.
@@ -107,7 +115,7 @@ element_size(Element) when is_binary(Element) ->
     erlang:byte_size(Element).
 
 
-   
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
