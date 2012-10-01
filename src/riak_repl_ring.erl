@@ -21,6 +21,9 @@
          get_nat_listener/2,
          set_clustername/2,
          get_clustername/1,
+         set_clusterIpAddrs/2,
+         get_clusterIpAddrs/2,
+         get_clusters/1,
          fs_enable_trans/2,
          fs_disable_trans/2,
          fs_enabled/1,
@@ -264,6 +267,48 @@ get_clustername(Ring) ->
             Name;
         error ->
             undefined
+    end.
+
+%% set or replace the list of Addrs associated with ClusterName in the ring
+set_clusterIpAddrs(Ring, {ClusterName, Addrs}) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    OldClusters = get_list(clusters, Ring),
+    %% replace Cluster in the list of Clusters
+    Cluster = {ClusterName, Addrs},
+    Clusters = case lists:keymember(ClusterName, 1, OldClusters) of
+                   true ->
+                       lists:keyreplace(ClusterName, 1, OldClusters, Cluster);
+                   _ ->
+                       [Cluster | OldClusters]
+               end,
+    %% replace Clusters in ring
+    RC2 = dict:store(clusters, Clusters, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                    ?MODULE,
+                    RC2,
+                    Ring)}
+    end.
+
+%% get list of Addrs associated with ClusterName in the ring
+get_clusterIpAddrs(Ring, ClusterName) ->
+    Clusters = get_clusters(Ring),
+    case lists:keyfind(ClusterName, 1, Clusters) of
+        false -> [];
+        {_Name,Addrs} -> Addrs
+    end.
+
+get_clusters(Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    case dict:find(clusters, RC) of
+        {ok, Clusters} ->
+            Clusters;
+        error ->
+            []
     end.
 
 %% Enable replication for the remote (queue will start building)

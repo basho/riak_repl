@@ -14,6 +14,9 @@
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
 -define(CM_CALL_TIMEOUT, 2000).
 
+-define(CLUSTER_NAME_LOCATOR_TYPE, cluster_by_name).
+-define(CLUSTER_ADDR_LOCATOR_TYPE, cluster_by_addr).
+
 -define(CLUSTER_PROTO_ID, cluster_mgr).
 -define(CTRL_OPTIONS, [binary,
                        {keepalive, true},
