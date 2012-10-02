@@ -64,6 +64,8 @@ start_link({IP,Port}) ->
 
 %% Once a protocol specification is registered, it will be kept available by the
 %% Service Manager.
+%% Note that the callee is responsible for taking ownership of the socket via
+%% Transport:controlling_process(Socket, Pid)
 -spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
 register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
@@ -165,6 +167,8 @@ start_negotiated_service(_Socket, _Transport, {error, Reason}) ->
     ?TRACE(?debugFmt("service dispatch failed with ~p", [{error, Reason}])),
     lager:error("service dispatch failed with ~p", [{error, Reason}]),
     {error, Reason};
+%% Note that the callee is responsible for taking ownership of the socket via
+%% Transport:controlling_process(Socket, Pid),
 start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
@@ -174,8 +178,6 @@ start_negotiated_service(Socket, Transport,
     %% a process or gen_server or such, and return {ok, pid()}.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args) of
         {ok, Pid} ->
-            %% transfer control of socket to new service process
-            ok = Transport:controlling_process(Socket, Pid),
             {ok, Pid};
         Error ->
             ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",
