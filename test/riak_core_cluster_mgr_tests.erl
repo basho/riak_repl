@@ -152,6 +152,7 @@ ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args)
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
+    Transport:controlling_process(Socket, Pid),
     {ok, Pid}.
 
 read_ip_address(Socket, Transport, Remote) ->
