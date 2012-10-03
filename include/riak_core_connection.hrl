@@ -75,3 +75,7 @@
 -type(max_nb_cons() :: non_neg_integer()).
 -type(client_scheduler_strategy() :: default | askme).
 -type(service_scheduler_strategy() :: {round_robin, max_nb_cons()} | custom).
+
+%% service manager statistics, can maybe get shared by other layers too
+-record(stats, {open_connections = 0 : non_negative_integer()
+                }).
