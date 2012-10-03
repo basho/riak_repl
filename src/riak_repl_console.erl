@@ -159,9 +159,24 @@ del_sink([IP, PortStr]) ->
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).
 
 realtime([Cmd, Remote]) ->
-    io:format("TODO: implement realtime ~s ~s~n", [Cmd, Remote]);
+    case Cmd of
+        "enable" ->
+            riak_repl2_rt:enable(Remote);
+        "disable" ->
+            riak_repl2_rt:disable(Remote);
+        "start" ->
+            riak_repl2_rt:start(Remote);
+        "stop" ->
+            riak_repl2_rt:stop(Remote)
+    end;
 realtime([Cmd]) ->
-    io:format("TODO: implement realtime ~s~n", [Cmd]).
+    Remotes = riak_repl2_rt:enabled(),
+    case Cmd of
+        "start" ->
+            [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+        "stop" ->
+            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+    end.
 
 fullsync([Cmd, Remote]) ->
     io:format("TODO: implement fullsync ~s ~s~n", [Cmd, Remote]);
@@ -292,21 +307,23 @@ client_stats() ->
         end, Stats))}].
 
 client_stats_rpc() ->
+    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
-    [client_stats(P) || P <- Pids].
+    [client_stats(P) || P <- Pids] ++ RT2.
 
 server_stats() ->
+    RT2 = [rt2_source_stats(P) || {_R,P} <- riak_repl2_rtsource_conn_sup:enabled()],
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            [{server_stats, []}];
+            [{server_stats, RT2}];
         _ ->
-            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])}]
+            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])++RT2}]
     end.
 
 server_stats_rpc() ->
     [server_stats(P) || P <- server_pids()].
-
+    
 client_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
@@ -321,6 +338,26 @@ server_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
                 riak_repl_tcp_server:status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+rt2_source_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_rtsource_conn:legacy_status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+rt2_sink_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_rtsink_conn:legacy_status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy

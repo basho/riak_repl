@@ -31,6 +31,7 @@ start(_Type, _StartArgs) ->
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
 
+
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
@@ -51,6 +52,10 @@ start(_Type, _StartArgs) ->
             %% Now that we have registered the ring handler, we can register the
             %% cluster manager name locator function (which reads the ring).
             register_cluster_name_locator(),
+
+            %% makes service manager start connection dispatcher
+            riak_repl2_rtsink_conn:register_service(),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

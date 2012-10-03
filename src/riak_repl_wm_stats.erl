@@ -106,6 +106,9 @@ jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
+jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Port) ->
+    jsonify_stats(T, [{S,
+                       iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
     
