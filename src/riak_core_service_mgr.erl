@@ -21,13 +21,18 @@
 %% services := registered protocols, key :: proto_id()
 -record(state, {dispatch_addr = {"localhost", 9000} :: ip_addr(),
                 services = orddict:new() :: orddict:orddict(),
-                dispatcher_pid = undefined :: pid()
+                dispatcher_pid = undefined :: pid(),
+                status_notifiers = [],
+                service_stats = orddict:new() :: orddict:orddict(), % proto-id -> stats()
+                refs = []
                }).
 
 -export([start_link/0, start_link/1,
          register_service/2,
          unregister_service/1,
          is_registered/1,
+         register_stats_fun/1,
+         get_stats/0,
          stop/0
          ]).
 
@@ -83,6 +88,20 @@ unregister_service(ProtocolId) ->
 is_registered(ProtocolId) ->
     gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
 
+%% Register a callback function that will get called periodically or
+%% when the connection status of services changes. The function will
+%% receive a list of tuples: {<protocol-id>, <stats>} where stats
+%% holds the number of open connections that have been accepted  for that
+%% protocol type. This can be used to report load, in the form of
+%% connected-ness, for each protocol type, to remote clusters, e.g.,
+%% making it possible for schedulers to balance the number of
+%% connections across a cluster.
+register_stats_fun(Fun) ->
+    gen_server:cast(?SERVER, {register_stats_fun, Fun}).
+
+get_stats() ->
+    gen_server:call(?SERVER, get_stats).
+
 %% abrubtly kill all connections and stop disptaching services
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -106,6 +125,11 @@ handle_call(stop, _From, State) ->
     ranch:stop_listener(State#state.dispatch_addr),
     {stop, normal, ok, State};
 
+handle_call(get_stats, _From, State) ->
+    Stats = orddict:to_list(State#state.service_stats),
+    PStats = [{Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
+    {reply, PStats, State};
+
 handle_call(_Unhandled, _From, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
     {reply, {error, unhandled}, State}.
@@ -119,9 +143,53 @@ handle_cast({unregister_service, ProtocolId}, State) ->
     NewDict = orddict:erase(ProtocolId, State#state.services),
     {noreply, State#state{services=NewDict}};
 
+handle_cast({register_stats_fun, Fun}, State) ->
+    Notifiers = [Fun | State#state.status_notifiers],
+    erlang:send_after(500, self(), status_update_timer),
+    {noreply, State#state{status_notifiers=Notifiers}};
+
+%% TODO: unregister support for notifiers?
+%% handle_cast({unregister_node_status_fun, Fun}, State) ->
+%%     Notifiers = [Fun | State#state.notifiers],
+%%     {noreply, State#state{status_notifiers=Notifiers}};
+
+handle_cast({service_up_event, Pid, ProtocolId}, State) ->
+    ?TRACE(?debugFmt("Service up event: ~p", [ProtocolId])),
+    erlang:send_after(500, self(), status_update_timer),
+    Ref = erlang:monitor(process, Pid), %% arrange for us to receive 'DOWN' when Pid terminates
+    ServiceStats = incr_count_for_protocol_id(ProtocolId, 1, State#state.service_stats),
+    Refs = [{Ref,ProtocolId} | State#state.refs],
+    {noreply, State#state{service_stats=ServiceStats, refs=Refs}};
+
+handle_cast({service_down_event, _Pid, ProtocolId}, State) ->
+    ?TRACE(?debugFmt("Service down event: ~p", [ProtocolId])),
+    erlang:send_after(500, self(), status_update_timer),
+    ServiceStats = incr_count_for_protocol_id(ProtocolId, -1, State#state.service_stats),
+    {noreply, State#state{service_stats = ServiceStats}};
+
 handle_cast(_Unhandled, _State) ->
     ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
     {error, unhandled}. %% this will crash the server
+
+handle_info(status_update_timer, State) ->
+    %% notify all registered parties of this node's services counts
+    Stats = orddict:to_list(State#state.service_stats),
+    PStats = [ {Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
+    [NotifyFun(PStats) || NotifyFun <- State#state.status_notifiers],
+    {noreply, State};
+
+%% Get notified of a service that went down.
+%% Remove it's Ref and pass the event on to get counted by ProtocolId
+handle_info({'DOWN', Ref, process, Pid, _Reason}, State) ->
+    Refs = State#state.refs,
+    Refs2 = case lists:keytake(Ref, 1, Refs) of
+                {value, {Ref, ProtocolId}, Rest} ->
+                    gen_server:cast(?SERVER, {service_down_event, Pid, ProtocolId}),
+                    Rest;
+                error ->
+                    Refs
+            end,
+    {noreply, State#state{refs=Refs2}};
 
 handle_info(_Unhandled, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
@@ -136,6 +204,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Private
 %%%===================================================================
+
+incr_count_for_protocol_id(ProtocolId, Incr, ServiceStatus) ->
+    Stats2 = case orddict:find(ProtocolId, ServiceStatus) of
+                 {ok, Stats} ->
+                     Count = Stats#stats.open_connections,
+                     Stats#stats{open_connections = Count + Incr};
+                 error ->
+                     #stats{open_connections = Incr}
+             end,
+    orddict:store(ProtocolId, Stats2, ServiceStatus).
 
 %% Host callback function, called by ranch for each accepted connection by way of
 %% of the ranch:start_listener() call above, specifying this module.
@@ -173,11 +251,14 @@ start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
     ?TRACE(?debugFmt("Setting user options on service side; ~p", [Options])),
+    ?TRACE(?debugFmt("negotiated protocols: ~p", [NegotiatedProtocols])),
     Transport:setopts(Socket, Options),
     %% call service body function for matching protocol. The callee should start
     %% a process or gen_server or such, and return {ok, pid()}.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args) of
         {ok, Pid} ->
+            {ok,{ClientProto,_Client,_Host}} = NegotiatedProtocols,
+            gen_server:cast(?SERVER, {service_up_event, Pid, ClientProto}),
             {ok, Pid};
         Error ->
             ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",

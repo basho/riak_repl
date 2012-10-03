@@ -51,6 +51,11 @@ unregister_service_test() ->
     riak_core_service_mgr:unregister_service(TestProtocolId),
     ?assert(riak_core_service_mgr:is_registered(testproto) == false).
 
+register_stats_fun_test() ->
+    Fun = fun(Stats) ->
+                  ?assert(Stats == [{testproto,0}]) end,
+    riak_core_service_mgr:register_stats_fun(Fun).
+
 %% start a service via normal sequence
 start_service_test() ->
     %% re-register the test protocol and confirm registered
@@ -60,7 +65,9 @@ start_service_test() ->
     riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
                                               {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
     %% allow client and server to connect and make assertions of success/failure
-    timer:sleep(1000).
+    timer:sleep(1000),
+    Stats = riak_core_service_mgr:get_stats(),
+    ?assert(Stats == [{testproto,0}]).
 
 pause_existing_services_test() ->
     riak_core_service_mgr:stop(),
@@ -89,7 +96,7 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
     ?assert(Proto == testproto),
-    timer:sleep(2000),
+%%    timer:sleep(2000),
     {ok, self()}.
 
 %% Client side protocol callbacks
