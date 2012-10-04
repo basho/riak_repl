@@ -29,7 +29,10 @@
          rt_enabled/1,
          rt_start_trans/2,
          rt_stop_trans/2,
-         rt_started/1
+         rt_started/1,
+         fs_enable_trans/2,
+         fs_disable_trans/2,
+         fs_enabled/1
          ]).
 
 -ifdef(TEST).
@@ -334,6 +337,18 @@ rt_stop_trans(Ring, Remote) ->
 %% Get list of RT enabled remotes
 rt_started(Ring) ->
     get_list(rt_started, Ring).
+
+%% Enable replication for the remote (queue will start building)
+fs_enable_trans(Ring, Remote) ->
+    add_list_trans(Remote, fs_enabled, Ring).
+
+%% Disable replication for the remote (queue will be cleaned up)
+fs_disable_trans(Ring, Remote) ->
+    del_list_trans(Remote, fs_enabled, Ring).
+
+%% Get list of RT enabled remotes
+fs_enabled(Ring) ->
+    get_list(fs_enabled, Ring).
 
 initial_config() ->
     dict:from_list(
