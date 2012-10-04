@@ -68,7 +68,12 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto}, _From,
     %% strategy is hardcoded
     {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
         Transport, Socket, WorkDir, Client),
-    riak_repl_keylist_server:start_fullsync(FullsyncWorker),
+    case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
+        true ->
+            riak_repl_keylist_server:start_fullsync(FullsyncWorker);
+        _ ->
+            ok
+    end,
     {reply, ok, State#state{transport=Transport, socket=Socket,
             fullsync_worker=FullsyncWorker, work_dir=WorkDir}};
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
