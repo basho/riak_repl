@@ -254,10 +254,44 @@ realtime([Cmd]) ->
     end.
 
 fullsync([Cmd, Remote]) ->
-    io:format("TODO: implement fullsync ~s ~s~n", [Cmd, Remote]);
+    Leader = riak_core_cluster_mgr:get_leader(),
+    case Cmd of
+        "enable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:fs_enable_trans/2, Remote),
+            riak_repl2_fssource_sup:enable(Leader, Remote);
+        "disable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:fs_disable_trans/2, Remote),
+            riak_repl2_fssource_sup:disable(Leader, Remote);
+        "start" ->
+            Fullsyncs = riak_repl2_fssource_sup:enabled(Leader),
+            case proplists:get_value(Remote, Fullsyncs) of
+                undefined ->
+                    io:format("No fullsync process for cluster ~p", [Remote]);
+                Pid ->
+                    riak_repl2_fssource:start_fullsync(Pid)
+            end;
+        "stop" ->
+            Fullsyncs = riak_repl2_fssource_sup:enabled(Leader),
+            case proplists:get_value(Remote, Fullsyncs) of
+                undefined ->
+                    io:format("No fullsync process for cluster ~p", [Remote]);
+                Pid ->
+                    riak_repl2_fssource:stop_fullsync(Pid)
+            end
+    end;
 fullsync([Cmd]) ->
-    io:format("TODO: implement fullsync ~s~n", [Cmd]).
-
+    Leader = riak_core_cluster_mgr:get_leader(),
+    Fullsyncs = riak_repl2_fssource_sup:enabled(Leader),
+    case Cmd of
+        "start" ->
+            [riak_repl2_fssource:start_fullsync(Pid) || {_, Pid} <-
+                Fullsyncs];
+        "stop" ->
+            [riak_repl2_fssource:stop_fullsync(Pid) || {_, Pid} <-
+                Fullsyncs]
+    end.
 
 %% helper functions
 
@@ -382,13 +416,15 @@ client_stats() ->
         end, Stats))}].
 
 client_stats_rpc() ->
-    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()],
+    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
+          [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
     [client_stats(P) || P <- Pids] ++ RT2.
 
 server_stats() ->
-    RT2 = [rt2_source_stats(P) || {_R,P} <- riak_repl2_rtsource_conn_sup:enabled()],
-
+    RT2 = [rt2_source_stats(P) || {_R,P} <-
+        riak_repl2_rtsource_conn_sup:enabled()] ++ 
+        [fs2_source_stats(P) || {_R,P} <- riak_repl2_fssource_sup:enabled()],
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
@@ -452,3 +488,22 @@ rt2_sink_stats(Pid) ->
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
+fs2_source_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_fssource:legacy_status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+fs2_sink_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_fssink:legacy_status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.

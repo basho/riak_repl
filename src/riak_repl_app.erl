@@ -58,6 +58,9 @@ start(_Type, _StartArgs) ->
             %% cluster manager leader will follow repl leader
             riak_repl2_leader:register_notify_fun(
               fun riak_core_cluster_mgr:set_leader/2),
+            %% fullsync will follow repl leader
+            riak_repl2_leader:register_notify_fun(
+              fun riak_repl2_fssource_sup:set_leader/2),
             name_this_cluster(),
 
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
@@ -71,6 +74,7 @@ start(_Type, _StartArgs) ->
 
             %% makes service manager start connection dispatcher
             riak_repl2_rtsink_conn:register_service(),
+            riak_repl2_fssink:register_service(),
 
             {ok, Pid};
         {error, Reason} ->
