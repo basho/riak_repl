@@ -25,7 +25,8 @@
          schedule_fullsync/1,
          elapsed_secs/1,
          shuffle_partitions/2,
-         log_dropped_realtime_obj/1
+         log_dropped_realtime_obj/1,
+         dropped_realtime_hook/1
      ]).
 
 make_peer_info() ->
@@ -329,6 +330,7 @@ configure_socket(Socket) ->
 schedule_fullsync() ->
     schedule_fullsync(self()).
 
+
 schedule_fullsync(Pid) ->
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
@@ -359,9 +361,17 @@ parse_vsn(Str) ->
             end || T <- Toks],
     list_to_tuple(Vsns).
 
-log_dropped_realtime_obj(Obj) ->
+dropped_realtime_hook(Obj) ->
     DroppedKey = riak_object:key(Obj),
     DroppedBucket = riak_object:bucket(Obj),
-    lager:info("REPL dropped object: ~p ~p",[ DroppedBucket,
-                                             DroppedKey]).
+    lager:info("REPL dropped object: ~p ~p",
+               [ DroppedBucket, DroppedKey]).
+
+log_dropped_realtime_obj(Obj) ->
+    Hook = app_helper:get_env(riak_repl, dropped_hook),
+    case Hook of
+        {Mod, Fun} ->
+                Mod:Fun(Obj);
+        _ -> pass
+    end.
 
