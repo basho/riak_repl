@@ -56,7 +56,7 @@ in(BQ=#bq{m=Max, q=Q, d=D}, Item) when is_binary(Item) ->
     case ItemSize > Max of
         true ->
             DroppedObjs = queue:to_list(Q),
-            [ riak_repl_utils:log_dropped_realtime(DroppedObj) ||
+            [ riak_repl_util:dropped_realtime_hook(DroppedObj) ||
                 DroppedObj <- DroppedObjs ],
             BQ#bq{q=queue:from_list([Item]),s=ItemSize,d=queue:len(Q)+D};
         false ->
@@ -67,7 +67,7 @@ in(BQ=#bq{m=Max, q=Q, d=D}, [H|_T] = Items) when is_binary(H) ->
     case ItemSize > Max of
         true ->
             DroppedObjs = queue:to_list(Q),
-            [ riak_repl_util:log_dropped_realtime_obj(DroppedObj) 
+            [ riak_repl_util:dropped_realtime_hook(DroppedObj) 
              || DroppedObj <- DroppedObjs ],
             BQ#bq{q=queue:from_list([Items]),s=ItemSize,d=queue:len(Q)+D};
         false ->
@@ -102,7 +102,7 @@ dropped_count(#bq{d=D}) -> D.
 
 make_fit(BQ=#bq{s=Size,m=Max,d=D}, Item, ItemSize) when (ItemSize+Size>Max) -> 
     {DroppedItem, NewQ} = out(BQ),
-    riak_repl_util:log_dropped_realtime_obj(DroppedItem),
+    riak_repl_util:dropped_realtime_hook(DroppedItem),
     make_fit(NewQ#bq{d=D+1}, Item, ItemSize);
 make_fit(BQ=#bq{q=Q, s=Size}, Item, ItemSize) ->
     BQ#bq{q=queue:in(Item, Q), s=Size+ItemSize}.

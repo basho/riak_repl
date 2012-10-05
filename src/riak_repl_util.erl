@@ -361,13 +361,13 @@ parse_vsn(Str) ->
             end || T <- Toks],
     list_to_tuple(Vsns).
 
-dropped_realtime_hook(Obj) ->
+log_dropped_realtime_obj(Obj) ->
     DroppedKey = riak_object:key(Obj),
     DroppedBucket = riak_object:bucket(Obj),
     lager:info("REPL dropped object: ~p ~p",
                [ DroppedBucket, DroppedKey]).
 
-log_dropped_realtime_obj(Obj) ->
+dropped_realtime_hook(Obj) ->
     Hook = app_helper:get_env(riak_repl, dropped_hook),
     case Hook of
         {Mod, Fun} ->
