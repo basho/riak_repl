@@ -255,7 +255,7 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
             riak_repl_stats:objects_dropped_no_clients()
     end,        
     {noreply, State};
-handle_cast({repl, _Msg}, State) ->
+handle_cast({repl, Msg}, State) ->
     %% No leader currently defined - cannot do anything
     riak_repl_util:dropped_realtime_hook(Msg),
     riak_repl_stats:objects_dropped_no_leader(),

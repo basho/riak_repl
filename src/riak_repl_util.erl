@@ -29,7 +29,9 @@
          schedule_fullsync/1,
          elapsed_secs/1,
          shuffle_partitions/2,
-         proxy_get_active/0
+         proxy_get_active/0,
+         log_dropped_realtime_obj/1,
+         dropped_realtime_hook/1
      ]).
 
 make_peer_info() ->
