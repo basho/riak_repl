@@ -204,6 +204,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     %% timer:sleep(1),
     case State#state.receivers of
         [] ->
+            riak_repl_util:dropped_realtime_hook(Msg),
             riak_repl_stats:objects_dropped_no_clients(),
             {noreply, State};
         Receivers ->
@@ -250,11 +251,13 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
             %% D = definitely drop
             %% io:format("D"),
             %% TODO: create a new stat rather than abusing this counter.
+            riak_repl_util:dropped_realtime_hook(Msg),
             riak_repl_stats:objects_dropped_no_clients()
     end,        
     {noreply, State};
 handle_cast({repl, _Msg}, State) ->
     %% No leader currently defined - cannot do anything
+    riak_repl_util:dropped_realtime_hook(Msg),
     riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State};
 handle_cast(ensure_sites, State) ->
