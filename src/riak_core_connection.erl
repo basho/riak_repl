@@ -21,6 +21,42 @@
 %% internal functions
 -export([async_connect_proc/3]).
 
+%%TODO: move to riak_ring_core...symbolic cluster naming
+-export([set_symbolic_clustername/2, set_symbolic_clustername/1,
+         symbolic_clustername/1, symbolic_clustername/0]).
+
+%% @doc Sets the symbolic, human readable, name of this cluster.
+set_symbolic_clustername(Ring, ClusterName) ->
+    {new_ring,
+     riak_core_ring:update_meta(symbolic_clustername, ClusterName, Ring)}.
+
+set_symbolic_clustername(ClusterName) when is_list(ClusterName) ->
+    {error, "argument is not a string"};
+set_symbolic_clustername(ClusterName) ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, _Ring} ->
+            riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
+                                              ClusterName);
+        {error, Reason} ->
+            lager:error("Can't set symbolic clustername because: ~p", [Reason])
+    end.
+
+symbolic_clustername(Ring) ->
+    case riak_core_ring:get_meta(symbolic_clustername, Ring) of
+        {ok, Name} -> Name;
+        undefined -> "undefined"
+    end.
+
+%% @doc Returns the symbolic, human readable, name of this cluster.
+symbolic_clustername() ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            symbolic_clustername(Ring);
+        {error, Reason} ->
+            lager:error("Can't read symbolic clustername because: ~p", [Reason]),
+            "undefined"
+    end.
+
 %% Make async connection request. The connection manager is responsible for retry/backoff
 %% and calls your module's functions on success or error (asynchrously):
 %%   Module:connected(Socket, TransportModule, {IpAddress, Port}, {Proto, MyVer, RemoteVer}, Args)
@@ -53,17 +89,19 @@ sync_connect({IP,Port}, ClientSpec) ->
 %% @private
 
 %% exchange brief handshake with client to ensure that we're supporting sub-protocols.
-%% client -> server : Client-Hello
-%% server -> client : Server-Hello
+%% client -> server : Hello <clustername>
+%% server -> client : Ack <clustername>
 exchange_handshakes_with(host, Socket, Transport) ->
-    ?TRACE(?debugFmt("exchange_handshakes: sending ~p to host", [?CTRL_HELLO])),
-    case Transport:send(Socket, ?CTRL_HELLO) of
+    MyName = symbolic_clustername(),
+    Hello = term_to_binary({?CTRL_HELLO, MyName}),
+    case Transport:send(Socket, Hello) of
         ok ->
             ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK])),
             case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-                {ok, ?CTRL_ACK} ->
-                    ?TRACE(?debugFmt("exchange_handshakes with host: got ~p", [?CTRL_ACK])),
-                    ok;
+                {ok, Ack} ->
+                    ?TRACE(?debugFmt("exchange_handshakes with host: got ~p", [?Ack])),
+                    {?CTRL_ACK, TheirName} = binary_to_term(Ack),
+                    {ok,TheirName};
                 {error, Reason} ->
                     ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
                     lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
@@ -88,7 +126,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
             Transport:setopts(Socket, ?CONNECT_OPTIONS),
             %% handshake to make sure it's a riak sub-protocol dispatcher
             case exchange_handshakes_with(host, Socket, Transport) of
-                ok ->
+                {ok,TheirName} ->
                     %% ask for protocol, see what host has
                     case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
                         {ok,HostProtocol} ->
@@ -99,7 +137,8 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                             %% pass back returned value in case problem detected on connection
                             %% by module.  requestor is responsible for transferring control
                             %% of the socket.
-                            Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args);
+                            Props = [{clustername, TheirName}],
+                            Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args, Props);
                         {error, Reason} ->
                             ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
                             Module:connect_failed(ClientProtocol, {error, Reason}, Args),

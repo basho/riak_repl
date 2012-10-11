@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([test1service/4, connected/5, connect_failed/3]).
+-export([test1service/5, connected/6, connect_failed/3]).
 
 -define(TEST_ADDR, { "127.0.0.1", 4097}).
 -define(MAX_CONS, 2).
@@ -13,14 +13,16 @@
                       {active, false}]).
 
 %% host service functions
-test1service(_Socket, _Transport, {error, Reason}, Args) ->
+test1service(_Socket, _Transport, {error, Reason}, Args, _Props) ->
     ?debugFmt("test1service failed with {error, ~p}", [Reason]),
     ?assert(Args == failed_host_args),
     ?assert(Reason == protocol_version_not_supported),
     {error, Reason};
-test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
-    ?debugFmt("test1service started with Args ~p", [Args]),
+test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, Props) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
+    RemoteClusterName = proplists:get_value(clustername, Props),
+    ?debugFmt("test1service started with Args ~p Props ~p", [Args, Props]),
+    ?assert(RemoteClusterName == "undefined"),
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
     ?assert(Proto == test1proto),
@@ -28,8 +30,11 @@ test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
     {ok, self()}.
 
 %% client connection callbacks
-connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
+connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, Props) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
+    RemoteClusterName = proplists:get_value(clustername, Props),
+    ?debugFmt("connected with Args ~p Props ~p", [Args, Props]),
+    ?assert(RemoteClusterName == "undefined"),
     ?assert(Proto == test1proto),
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -48,6 +53,12 @@ start_link_test() ->
     ok = application:start(ranch),
     {Ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
     ?assert(Ok == ok).
+
+%% set/get the local cluster's name
+set_get_name_test() ->
+    riak_core_connection:set_symbolic_clustername("undefined"),
+    MyName = riak_core_connection:symbolic_clustername(),
+    ?assert("undefined" == MyName).
 
 %% register a service and confirm added
 register_service_test() ->

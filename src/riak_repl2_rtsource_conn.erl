@@ -15,7 +15,7 @@
          legacy_status/1, legacy_status/2]).
 
 %% connection manager callbacks
--export([connected/5,
+-export([connected/6,
          connect_failed/3]).
 
 %% gen_server callbacks
@@ -52,7 +52,8 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 %% connection manager callbacks
-connected(Socket, Transport, Endpoint, Proto, RtSourcePid) ->
+connected(Socket, Transport, Endpoint, Proto, RtSourcePid, Props) ->
+    _RemoteClusterName = proplists:get_value(clustername, Props),
     Transport:controlling_process(Socket, RtSourcePid),
     Transport:setopts(Socket, [{active, true}]),
     gen_server:call(RtSourcePid,

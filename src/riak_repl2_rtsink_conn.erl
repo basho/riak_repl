@@ -10,7 +10,7 @@
 %%
 
 %% API
--export([register_service/0, start_service/4]).
+-export([register_service/0, start_service/5]).
 -export([start_link/1,
          stop/1,
          set_socket/3,
@@ -47,7 +47,8 @@ register_service() ->
     riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
 
 %% Callback from service manager
-start_service(Socket, Transport, Proto, _Args) ->
+start_service(Socket, Transport, Proto, _Args, Props) ->
+    _RemoteClusterName = proplists:get_value(clustername, Props),
     {ok, Pid} = riak_repl2_rtsink_conn_sup:start_child(Proto),
     ok = Transport:controlling_process(Socket, Pid),
     ok = set_socket(Pid, Socket, Transport),

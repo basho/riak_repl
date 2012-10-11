@@ -132,13 +132,14 @@ resume_fullsync([]) ->
 %% Repl2 commands
 %%
 
+%% TODO: cluster naming belongs in riak_core_ring, not in riak_core_connection, but
+%% not until we move all of the connection stuff to core.
 clustername([]) ->
-    MyName = riak_core_cluster_mgr:get_my_name(),
+    MyName = riak_core_connection:symbolic_clustername(),
     io:format("~s~n", [MyName]);
 clustername([ClusterName]) ->
-    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clustername/2,
-        ClusterName),
-    riak_core_cluster_mgr:set_my_name(ClusterName).
+    riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
+        ClusterName).
 
 clusters([]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),

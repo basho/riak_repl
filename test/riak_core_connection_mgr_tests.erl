@@ -9,8 +9,8 @@
 %%-define(TRACE(Stmt),ok).
 
 %% internal functions
--export([testService/4,
-         connected/5, connect_failed/3
+-export([testService/5,
+         connected/6, connect_failed/3
         ]).
 
 %% Locator selector types
@@ -210,9 +210,9 @@ cleanup_test() ->
 %%------------------------
 
 %% Protocol Service functions
-testService(_Socket, _Transport, {error, _Reason}, _Args) ->
+testService(_Socket, _Transport, {error, _Reason}, _Args, _Props) ->
     ?assert(false);
-testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
+testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) ->
     ?TRACE(?debugMsg("testService started")),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
@@ -222,7 +222,7 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args) ->
     {ok, self()}.
 
 %% Client side protocol callbacks
-connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args) ->
+connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props) ->
     ?TRACE(?debugFmt("testClient started, connected to ~p:~p", [_IP,_Port])),
     {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
     ?assert(Proto == testproto),

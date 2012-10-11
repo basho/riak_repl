@@ -236,15 +236,15 @@ get_matching_address(IP, Mask) ->
 
 %% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
 name_this_cluster() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    ClusterName = case riak_repl_ring:get_clustername(Ring) of
-        undefined ->
-            lists:flatten(
-                io_lib:format("~p", [riak_core_ring:cluster_name(Ring)]));
-        Name ->
-            Name
-    end,
-    riak_core_cluster_mgr:set_my_name(ClusterName).
+    ClusterName = case riak_core_connection:symbolic_clustername() of
+                      "undefined" ->
+                          {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                          lists:flatten(
+                            io_lib:format("~p", [riak_core_ring:cluster_name(Ring)]));
+                      Name ->
+                          Name
+                  end,
+    riak_core_connection:set_symbolic_clustername(ClusterName).
 
 %% Persist the named cluster and it's members to the repl ring metadata.
 cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->

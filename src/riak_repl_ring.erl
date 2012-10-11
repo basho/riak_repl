@@ -19,8 +19,6 @@
          del_listener/2,
          del_nat_listener/2,
          get_nat_listener/2,
-         set_clustername/2,
-         get_clustername/1,
          set_clusterIpAddrs/2,
          get_clusterIpAddrs/2,
          get_clusters/1,
@@ -244,29 +242,6 @@ get_nat_listener(Ring,Listener) ->
                 [] -> undefined
             end;
         error -> undefined
-    end.
-
-set_clustername(Ring, Name) ->
-    RC = get_repl_config(ensure_config(Ring)),
-    RC2 = dict:store(clustername, Name, RC),
-    case RC == RC2 of
-        true ->
-            %% nothing changed
-            {ignore, {not_changed, clustername}};
-        false ->
-            {new_ring, riak_core_ring:update_meta(
-                    ?MODULE,
-                    RC2,
-                    Ring)}
-    end.
-
-get_clustername(Ring) ->
-    RC = get_repl_config(ensure_config(Ring)),
-    case dict:find(clustername, RC) of
-        {ok, Name} ->
-            Name;
-        error ->
-            undefined
     end.
 
 %% set or replace the list of Addrs associated with ClusterName in the ring

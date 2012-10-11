@@ -25,7 +25,7 @@
 
 -export([start_link/1]).
 
--export([connected/5, connect_failed/3, ctrlClientProcess/2]).
+-export([connected/6, connect_failed/3, ctrlClientProcess/2]).
 
 %%%===================================================================
 %%% API
@@ -64,9 +64,10 @@ ctrlClientProcess(Remote, unconnected) ->
             lager:info("cluster_conn: client connect_failed to ~p because ~p",
                        [Remote, Error]),
             Error;
-        {_From, {connected_to_remote, Socket, Transport, Addr}} ->
-            lager:info("cluster_conn: client connected to remote ~p at ~p",
-                       [Remote, Addr]),
+        {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
+            RemoteName = proplists:get_value(clustername, Props),
+            lager:info("cluster_conn: client connected to remote ~p at ~p named ~p",
+                       [Remote, Addr, RemoteName]),
             %% ask it's name and member list, even if it's a previously
             %% resolved cluster. Then we can sort everything out in the
             %% gen_server. If the name or members fails, these matches
@@ -144,11 +145,14 @@ ask_member_ips(Socket, Transport, Addr, Remote) ->
             Error
     end.
 
-connected(Socket, Transport, Addr, {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer}, {_Remote,Client}) ->
+connected(Socket, Transport, Addr,
+          {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer},
+          {_Remote,Client},
+          Props) ->
     %% give control over the socket to the Client process.
     %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
-    Client ! {self(), {connected_to_remote, Socket, Transport, Addr}},
+    Client ! {self(), {connected_to_remote, Socket, Transport, Addr, Props}},
     ok.
 
 connect_failed({_Proto,_Vers}, {error, _Reason}=Error, {Remote,Client}) ->
