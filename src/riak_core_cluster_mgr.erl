@@ -63,7 +63,6 @@
 
 -record(state, {is_leader = false :: boolean(),                % true when the buck stops here
                 leader_node = undefined :: undefined | node(),
-                my_name = "" :: string(),                      % my local cluster name
                 member_fun = fun(_Addr) -> [] end,             % return members of local cluster
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
@@ -72,8 +71,6 @@
                }).
 
 -export([start_link/0,
-         set_my_name/1,
-         get_my_name/0,
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
@@ -93,7 +90,7 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([ctrlService/4, ctrlServiceProcess/5, round_robin_balancer/1, cluster_mgr_sites_fun/0]).
+-export([ctrlService/5, ctrlServiceProcess/5, round_robin_balancer/1, cluster_mgr_sites_fun/0]).
 
 %%%===================================================================
 %%% API
@@ -114,11 +111,6 @@ start_link() ->
 register_cluster_locator() ->
     register_cluster_addr_locator().
 
-%% Set my cluster name
--spec(set_my_name(clustername()) -> ok).
-set_my_name(MyName) ->
-    gen_server:cast(?SERVER, {set_my_name, MyName}).
-
 %% Called by riak_repl_leader whenever a leadership election
 %% takes place. Tells us who the leader is.
 set_leader(LeaderNode, _LeaderPid) ->
@@ -127,11 +119,6 @@ set_leader(LeaderNode, _LeaderPid) ->
 %% Reply with the current leader node.
 get_leader() ->
     gen_server:call(?SERVER, leader_node).
-
-%% Return my cluster name
--spec(get_my_name() -> clustername()).
-get_my_name() ->
-    gen_server:call(?SERVER, get_my_name).
 
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader).
@@ -195,9 +182,6 @@ init([]) ->
 
 handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
-
-handle_call(get_my_name, _From, State) ->
-    {reply, State#state.my_name, State};
 
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to RPC to the leader.
@@ -272,10 +256,6 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
                        NoLeaderResult,
                        State)
     end.
-
-handle_cast({set_my_name, MyName}, State) ->
-    NewState = State#state{my_name = MyName},
-    {noreply, NewState};
 
 handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
@@ -522,11 +502,13 @@ cluster_mgr_sites_fun() ->
 %% control channel services
 %%-------------------------
 
-ctrlService(_Socket, _Transport, {error, Reason}, _Args) ->
+ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
     lager:error("Failed to accept control channel connection: ~p", [Reason]);
-ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args) ->
+ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args, Props) ->
     {ok, ClientAddr} = inet:peername(Socket),
-    lager:info("Cluster Manager: accepted connection from cluster at ~p", [ClientAddr]),
+    RemoteClusterName = proplists:get_value(clustername, Props),
+    lager:info("Cluster Manager: accepted connection from cluster at ~p namded ~p",
+               [ClientAddr, RemoteClusterName]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, ClientAddr]),
@@ -551,7 +533,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, ?CTRL_ASK_NAME} ->
             %% remote wants my name
-            MyName = gen_server:call(?SERVER, get_my_name),
+            MyName = riak_core_connection:symbolic_clustername(),
             ok = Transport:send(Socket, term_to_binary(MyName)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {ok, ?CTRL_ASK_MEMBERS} ->

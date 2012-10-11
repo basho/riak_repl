@@ -11,7 +11,7 @@
 %%-define(TRACE(Stmt),ok).
 
 %% internal functions
--export([ctrlService/4, ctrlServiceProcess/5]).
+-export([ctrlService/5, ctrlServiceProcess/5]).
 
 %% For testing, both clusters have to look like they are on the same machine
 %% and both have the same port number for offered sub-protocols. "my cluster"
@@ -39,12 +39,6 @@ start_link_test() ->
     unlink(Pid3),
     %% now start cluster manager
     {ok, _Pid4 } = riak_core_cluster_mgr:start_link().
-
-%% set/get the local cluster's name
-set_get_name_test() ->
-    riak_core_cluster_mgr:set_my_name(?MY_CLUSTER_NAME),
-    MyName = riak_core_cluster_mgr:get_my_name(),
-    ?assert(?MY_CLUSTER_NAME == MyName).
 
 %% conn_mgr should start up not as the leader
 is_leader_test() ->
@@ -145,10 +139,11 @@ start_fake_remote_cluster_service() ->
 %% a function_clause error if the cluster manager isn't using our special test
 %% protocol-id. Of course, it did once or I wouldn't have written this note :-)
 
-ctrlService(_Socket, _Transport, {error, Reason}, _Args) ->
+ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
     ?TRACE(?debugFmt("Failed to accept control channel connection: ~p", [Reason]));
-ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args) ->
-    ?TRACE(?debugMsg("ctrlService: spawning service process...")),
+ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args, Props) ->
+    RemoteClusterName = proplists:get_value(clustername, Props),
+    ?TRACE(?debugFmt("ctrlService: received connection from cluster: ~p", [RemoteClusterName])),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),

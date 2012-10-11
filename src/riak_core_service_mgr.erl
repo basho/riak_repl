@@ -230,7 +230,7 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     %% set some starting options for the channel; these should match the client
     ?TRACE(?debugFmt("setting system options on service side: ~p", [?CONNECT_OPTIONS])),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
-    ok = exchange_handshakes_with(client, Socket, Transport),
+    {ok,TheirName} = exchange_handshakes_with(client, Socket, Transport),
     %% get latest set of registered services from gen_server and do negotiation
     Services = gen_server:call(?SERVER, get_services),
     SubProtocols = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
@@ -238,24 +238,26 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
                      [SubProtocols])),
     Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
     ?TRACE(?debugFmt("negotiated = ~p", [Negotiated])),
-    start_negotiated_service(Socket, Transport, Negotiated).
+    Props = [{clustername, TheirName}],
+    start_negotiated_service(Socket, Transport, Negotiated, Props).
 
 %% start user's module:function and transfer socket to it's process.
-start_negotiated_service(_Socket, _Transport, {error, Reason}) ->
+start_negotiated_service(_Socket, _Transport, {error, Reason}, _Props) ->
     ?TRACE(?debugFmt("service dispatch failed with ~p", [{error, Reason}])),
     lager:error("service dispatch failed with ~p", [{error, Reason}]),
     {error, Reason};
 %% Note that the callee is responsible for taking ownership of the socket via
 %% Transport:controlling_process(Socket, Pid),
 start_negotiated_service(Socket, Transport,
-                         {NegotiatedProtocols, {Options, Module, Function, Args}}) ->
+                         {NegotiatedProtocols, {Options, Module, Function, Args}},
+                         Props) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
     ?TRACE(?debugFmt("Setting user options on service side; ~p", [Options])),
     ?TRACE(?debugFmt("negotiated protocols: ~p", [NegotiatedProtocols])),
     Transport:setopts(Socket, Options),
     %% call service body function for matching protocol. The callee should start
     %% a process or gen_server or such, and return {ok, pid()}.
-    case Module:Function(Socket, Transport, NegotiatedProtocols, Args) of
+    case Module:Function(Socket, Transport, NegotiatedProtocols, Args, Props) of
         {ok, Pid} ->
             {ok,{ClientProto,_Client,_Host}} = NegotiatedProtocols,
             gen_server:cast(?SERVER, {service_up_event, Pid, ClientProto}),
@@ -330,13 +332,17 @@ choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
     end.
 
 %% exchange brief handshake with client to ensure that we're supporting sub-protocols.
-%% client -> server : Client-Hello
-%% server -> client : Server-Hello
+%% client -> server : Hello clustername
+%% server -> client : Ack clustername
 exchange_handshakes_with(client, Socket, Transport) ->
+    MyName = riak_core_connection:symbolic_clustername(),
     ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO])),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-        {ok, ?CTRL_HELLO} ->
-            Transport:send(Socket, ?CTRL_ACK);
+        {ok, Hello} ->
+            {?CTRL_HELLO, TheirName} = binary_to_term(Hello),
+            Ack = term_to_binary({?CTRL_ACK, MyName}),
+            Transport:send(Socket, Ack),
+            {ok, TheirName};
         {error, Reason} ->
             lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
             {error, Reason}
