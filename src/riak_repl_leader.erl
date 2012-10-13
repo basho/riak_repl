@@ -422,6 +422,14 @@ leader_change(false, true) ->
         {SiteName, _Pid} <- RunningSiteProcs];
 leader_change(true, false) ->
     %% we've lost the leadership, close any local listeners
+    case app_helper:get_env(riak_repl, inverse_connection) of
+        true ->
+            %% in the inverted case need to stop sites
+            RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+            [riak_repl_client_sup:stop_site(SiteName) ||
+                {SiteName, _Pid} <- RunningSiteProcs];
+        _ -> ok
+    end,
     riak_repl_listener_sup:close_all_connections().
 
 %% Inspect the cluster and determine if we can balance clients between
