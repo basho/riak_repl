@@ -116,7 +116,7 @@ async_connect_proc(Parent, {IP,Port}, ProtocolSpec) ->
 
 %% connect synchronously to remote addr/port and return status
 sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}}) ->
-    Timeout = 15000,
+    Timeout = ?CONNECTION_SETUP_TIMEOUT,
     Transport = ranch_tcp,
     %%   connect to host's {IP,Port}
     ?TRACE(?debugFmt("sync_connect: connect to ~p", [{IP,Port}])),

@@ -25,7 +25,7 @@
 
 -export([start_link/1]).
 
--export([connected/6, connect_failed/3, ctrlClientProcess/2]).
+-export([connected/6, connect_failed/3, ctrlClientProcess/3]).
 
 %%%===================================================================
 %%% API
@@ -36,11 +36,12 @@
 %% supervisior will restart it.
 -spec(start_link(term()) -> {ok,pid()}).
 start_link(Remote) ->
-    lager:info("cluster_conn: client starting client connection to ~p",
+    lager:info("cluster_conn: client starting connection to ~p",
                [Remote]),
+    Members = [],
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlClientProcess,
-                              [Remote, unconnected]),
+                              [Remote, unconnected, Members]),
     {ok, Pid}.
 
 %%%===================================================================
@@ -51,19 +52,29 @@ start_link(Remote) ->
 %% module's "connected" function will be called, which sends a message
 %% "connected_to_remote", which we forward to the cluster manager. Dying
 %% is ok; we'll get restarted by a supervisor.
-ctrlClientProcess(Remote, unconnected) ->
+ctrlClientProcess(Remote, unconnected, Members0) ->
     Args = {Remote, self()},
     {ok,_Ref} = riak_core_connection_mgr:connect(
                   Remote,
                   {{?REMOTE_CLUSTER_PROTO_ID, [{1,0}]},
                    {?CTRL_OPTIONS, ?MODULE, Args}},
                   default),
+    ctrlClientProcess(Remote, connecting, Members0);
+%% We're trying to connect via the connection manager now
+ctrlClientProcess(Remote, connecting, Members0) ->
     %% wait a long-ish time for the connection to establish
     receive
+        {From, status} ->
+            %% someone wants our status. Don't do anything that blocks!
+            From ! {self(), connecting, Remote};
         {_From, {connect_failed, Error}} ->
             lager:info("cluster_conn: client connect_failed to ~p because ~p",
                        [Remote, Error]),
-            Error;
+            %% This is not fatal! We are being supervised by conn_sup and if we
+            %% die, it will restart us. But we don't want to die because the
+            %% connection manager is trying lots of different IP/Port combos
+            %% for us. So, go round and try again.
+            ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
             lager:info("cluster_conn: client connected to remote ~p at ~p named ~p",
@@ -76,51 +87,66 @@ ctrlClientProcess(Remote, unconnected) ->
             {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
                             {connected_to_remote, Name, Members, Addr, Remote}),
-            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr});
+            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
         {_From, poll_cluster} ->
             %% cluster manager doesn't know we haven't connected yet.
             %% just ignore this while we're waiting to connect or fail
-            ctrlClientProcess(Remote, unconnected);
+            ctrlClientProcess(Remote, connecting, Members0);
         Other ->
             lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
-                        [Remote, Other])
-    after ?CONNECTION_SETUP_TIMEOUT ->
-            %% die with error
+                        [Remote, Other]),
+            ctrlClientProcess(Remote, connecting, Members0)
+    after (?CONNECTION_SETUP_TIMEOUT + 5000) ->
+            %% die with error once we've passed the timeout period that the
+            %% core_connection module will expire. Go round and let the connection
+            %% manager keep trying.
             lager:info("cluster_conn: client timed out waiting for ~p", [Remote]),
-            {error, timed_out_waiting_for_connection}
+            ctrlClientProcess(Remote, connecting, Members0)
     end;
-ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}) ->
+ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
     %% trade our time between checking for updates from the remote cluster
     %% and commands from our local cluster manager. TODO: what if the name
     %% of the remote cluster changes?
     receive
         %% cluster manager asking us to poll the remove cluster
         {_From, poll_cluster} ->
+            {ok, Name1} = ask_cluster_name(Socket, Transport, Remote),
             {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                            {cluster_updated, Name, Members, Remote})
-    after 250 ->
-          %% check for push notifications from remote cluster about member changes
-              case Transport:recv(Socket, 0, 250) of
-                  {ok, {cluster_members_changed, BinMembers}} ->
-                      Members = {ok, binary_to_term(BinMembers)},
-                      gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                                      {cluster_updated, Name, Members, Remote});
-                  {ok, Other} ->
-                      lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
-                                  [Remote, Other]);
-                  {error, timeout} ->
-                      %% timeouts are ok; we'll just go round and try again
-                      ok;
-                  {error, closed} ->
-                      erlang:exit(connection_closed);
-                  {error, Reason} ->
-                      lager:error("cluster_conn: client got error from remote: ~p, ~p",
-                                  [Remote, Reason]),
-                      {error, Reason}
-              end
-    end,
-    ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}).
+                            {cluster_updated, Name1, Members, Remote}),
+            ctrlClientProcess(Remote, {Name1, Socket, Transport, Addr}, Members);
+        %% request for our connection status
+        {From, status} ->
+            %% don't try talking to the remote cluster; we don't want to stall our status
+            Status = {Addr, Transport, Name, Members0},
+            From ! {self(), status, Status},
+            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0)
+    after 1000 ->
+            %% check for push notifications from remote cluster about member changes
+            Members1 =
+                case Transport:recv(Socket, 0, 250) of
+                    {ok, {cluster_members_changed, BinMembers}} ->
+                        Members = {ok, binary_to_term(BinMembers)},
+                        gen_server:cast(?CLUSTER_MANAGER_SERVER,
+                                        {cluster_updated, Name, Members, Remote}),
+                        Members;
+                    {ok, Other} ->
+                        lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
+                                    [Remote, Other]),
+                        Members0;
+                    {error, timeout} ->
+                        %% timeouts are ok; we'll just go round and try again
+                        Members0;
+                    {error, closed} ->
+                        erlang:exit(connection_closed),
+                        Members0;
+                    {error, Reason} ->
+                        lager:error("cluster_conn: client got error from remote: ~p, ~p",
+                                    [Remote, Reason]),
+                        {error, Reason}
+                end,
+            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members1)
+    end.
 
 ask_cluster_name(Socket, Transport, Remote) ->
     Transport:send(Socket, ?CTRL_ASK_NAME),
@@ -155,7 +181,7 @@ connected(Socket, Transport, Addr,
     Client ! {self(), {connected_to_remote, Socket, Transport, Addr, Props}},
     ok.
 
-connect_failed({_Proto,_Vers}, {error, _Reason}=Error, {Remote,Client}) ->
+connect_failed({_Proto,_Vers}, {error, _Reason}=Error, {_Remote,Client}) ->
     %% tell client we bombed and why
     Client ! {self(), {connect_failed, Error}},
     ok.

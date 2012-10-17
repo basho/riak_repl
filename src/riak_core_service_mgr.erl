@@ -298,7 +298,7 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
         {error, Reason} ->
             lager:error("Failed to receive protocol request from client. Error = ~p",
                         [Reason]),
-            connection_failed
+            {error, connection_failed}
     end.
 
 choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->

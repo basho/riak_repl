@@ -52,6 +52,7 @@
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
 -define(MAX_CONS, 20).
 -define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
+-define(PROXY_CALL_TIMEOUT, 30 * 1000).
 
 %% State of a resolved remote cluster
 -record(cluster, {name :: string(),     % obtained from the remote cluster by ask_name()
@@ -221,7 +222,7 @@ handle_call(get_known_clusters, _From, State) ->
 handle_call(get_connections, _From, State) ->
     case State#state.is_leader of
         true ->
-            Conns = [Remote || {Remote, _Pid} <- riak_core_cluster_conn_sup:connected()],
+            Conns = riak_core_cluster_conn_sup:connections(),
             {reply, {ok, Conns}, State};
         false ->
             NoLeaderResult = {ok, []},
@@ -302,7 +303,7 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
                         %% reverse map from clustername to remote ip
                         MemberAddrs = [{?CLUSTER_ADDR_LOCATOR_TYPE, Addr}
                                        || Addr <- members_of_cluster(ClusterName, State)],
-                        AllConnections = riak_core_cluster_conn_sup:connected(),
+                        AllConnections = riak_core_cluster_conn_sup:connections(),
                         [remove_remote_connection(Remote)
                          || {Remote, _Pid} <- AllConnections, lists:member(Remote,MemberAddrs)],
                         UpdatedClusters = orddict:erase(ClusterName, State#state.clusters),
@@ -345,7 +346,7 @@ handle_cast(_Unhandled, _State) ->
 
 %% it is time to poll all clusters and get updated member lists
 handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
-    Connections = riak_core_cluster_conn_sup:connected(),
+    Connections = riak_core_cluster_conn_sup:connections(),
     [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     {noreply, State};
@@ -427,7 +428,9 @@ proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leade
     {reply, NoLeaderResult, State};
 proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
     ?TRACE(?debugFmt("proxy_call: forwarding to leader: ~p", [Call])),
-    {reply, gen_server:call({?SERVER, Leader}, Call), State}.
+    Reply = gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT),
+    %% TODO: what if this times out?
+    {reply, Reply, State}.
 
 %% Remove given IP Addresses from all clusters. Returns revised clusters orddict.
 remove_ips_from_all_clusters(Addrs, Clusters) ->
@@ -482,7 +485,7 @@ become_proxy(State) ->
     lager:info("Becoming a proxy"),
     %% stop leading
     %% remove all outbound connections
-    Connections = riak_core_cluster_conn_sup:connected(),
+    Connections = riak_core_cluster_conn_sup:connections(),
     [riak_core_cluster_conn_sup:remove_remote_connection(Remote) || {Remote, _Pid} <- Connections],
     State#state{is_leader = false}.
 
