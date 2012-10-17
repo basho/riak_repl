@@ -29,7 +29,9 @@
          schedule_fullsync/1,
          elapsed_secs/1,
          shuffle_partitions/2,
-         proxy_get_active/0
+         proxy_get_active/0,
+         log_dropped_realtime_obj/1,
+         dropped_realtime_hook/1
      ]).
 
 make_peer_info() ->
@@ -586,3 +588,19 @@ proxy_get_active() ->
         {ok, enabled} -> true;
         _ -> false
     end.
+
+
+log_dropped_realtime_obj(Obj) ->
+    DroppedKey = riak_object:key(Obj),
+    DroppedBucket = riak_object:bucket(Obj),
+    lager:info("REPL dropped object: ~p ~p",
+               [ DroppedBucket, DroppedKey]).
+
+dropped_realtime_hook(Obj) ->
+    Hook = app_helper:get_env(riak_repl, dropped_hook),
+    case Hook of
+        {Mod, Fun} ->
+                Mod:Fun(Obj);
+        _ -> pass
+    end.
+
