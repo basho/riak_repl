@@ -143,17 +143,58 @@ clustername([ClusterName]) ->
 
 clusters([]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
+    %% TODO: include our own cluster in the listing
+    %% MyAddr = ???
+    %% MyMembers = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, MyAddr}),
+    %% io:format("~-20s ~-15s ~p~n", [string_of_ipaddr(MyAddr), " ", MyMembers]),
     lists:foreach(
       fun(ClusterName) ->
-              {ok,IPs} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
+              {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
+              IPs = [string_of_ipaddr(Addr) || Addr <- Members],
               io:format("~s: ~p~n", [ClusterName, IPs])
       end,
       Clusters).
 
+string_of_ipaddr({IP, Port}) ->
+    lists:flatten(io_lib:format("~s:~p", [IP, Port])).
+
+choose_best_addr({cluster_by_addr, {IP,Port}}, _ClientAddr) ->
+    string_of_ipaddr({IP,Port});
+choose_best_addr({cluster_by_name, _}, ClientAddr) ->
+    string_of_ipaddr(ClientAddr).
+
+string_of_remote({cluster_by_addr, {IP,Port}}) ->
+    string_of_ipaddr({IP,Port});
+string_of_remote({cluster_by_name, ClusterName}) ->
+    ClusterName.
+
+%% Print info about this sink
+%% Remote :: {ip,port} | ClusterName
+showSink({Remote,Pid}) ->
+    NicName = string_of_remote(Remote),
+    PidStr = io_lib:format("~p", [Pid]),
+    %% try to get status from Pid of cluster control channel.
+    %% if we haven't connected successfully yet, it will time out, which we will fail
+    %% fast for since it's a local process, not a remote one.
+    Pid ! {self(), status},
+    receive
+        {Pid, connecting, SRemote} ->
+            io:format("~-20s ~-15s (connecting to ~p)~n", [NicName,PidStr, string_of_remote(SRemote)]);
+        {Pid, status, {ClientAddr, _Transport, Name, Members}} ->
+            IPs = [string_of_ipaddr(Addr) || Addr <- Members],
+            CAddr = choose_best_addr(Remote, ClientAddr),
+            io:format("~-20s ~-15s ~p (via ~s)~n", [Name,PidStr,IPs, CAddr])
+    after 2 ->
+            io:format("~-20s ~-15s (status timed out)~n", [NicName,PidStr])
+    end.
+
 sinks([]) ->
+    %% get cluster manager's outbound connections to other "remote" clusters,
+    %% which for now, are all the "sinks".
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
-    Sinks = [Remote || {_Locator,Remote} <- Conns],
-    io:format("~p~n", [Sinks]).
+    io:format("~-20s ~-15s [Members]~n", ["Sink", "<Ctrl-Pid>"]),
+    io:format("~-20s ~-15s ---------~n", ["----", "----------"]),
+    [showSink(Conn) || Conn <- Conns].
 
 add_sink([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),

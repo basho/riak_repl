@@ -94,6 +94,7 @@
          connect/2, connect/3,
          register_locator/2,
          apply_locator/2,
+         reset_backoff/0,
          stop/0
          ]).
 
@@ -129,6 +130,10 @@ pause() ->
 %% return paused state
 is_paused() ->
     gen_server:call(?SERVER, is_paused).
+
+%% reset all backoff delays to zero
+reset_backoff() ->
+    gen_server:cast(?SERVER, reset_backoff).
 
 %% Specify a function that will return the IP/Port of our Cluster Manager.
 %% Connection Manager will call this function each time it wants to find the
@@ -192,6 +197,9 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
                                                   Request)},
     {reply, {ok, Reference}, start_request(Request, State2)};
 
+handle_call({get_endpoint_backoff, Addr}, _From, State) ->
+    {reply, {ok, get_endpoint_backoff(Addr, State#state.endpoints)}, State};
+
 handle_call({register_locator, Type, Fun}, _From,
             State = #state{locators = Locators}) ->
     {reply, ok, State#state{locators = orddict:store(Type, Fun, Locators)}};
@@ -215,11 +223,17 @@ handle_cast(pause, State) ->
 handle_cast(resume, State) ->
     {noreply, State#state{is_paused = false}};
 
+%% reset all backoff delays to zero.
+%% TODO: restart stalled connections.
+handle_cast(reset_backoff, State) ->
+    NewEps = reset_backoff(State#state.endpoints),
+    {noreply, State#state{endpoints = NewEps}};
+
 handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
 
 handle_cast({trying_endpoint, Ref, Addr}, State = #state{pending=Pending}) ->
-    ?TRACE(?debugFmt("trying_endpoint: ~p", [Addr])),
+    lager:info("Trying connection to: ~p", [Addr]),
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
             %% TODO: should never happen
@@ -287,7 +301,9 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                     lager:error("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
                                 [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, State),
-                    {noreply, schedule_retry(1000, Req, State2)}
+                    %% the connection helper will retry
+                    {noreply, State}
+%%                  {noreply, schedule_retry(1000, Req, State2)}
             end
     end;
 handle_info(_Unhandled, State) ->
@@ -345,6 +361,10 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             fail_request(Reason, Req, State)
     end.
 
+%% reset the backoff delay to zero for all endpoints
+reset_backoff(Endpoints) ->
+    orddict:map(fun(_Addr,EP) -> EP#ep{backoff_delay = 0} end,Endpoints).
+
 %% increase the backoff delay, but cap at a maximum
 increase_backoff(0) ->
     ?INITIAL_BACKOFF;
@@ -369,11 +389,16 @@ increase_backoff(Delay) ->
 %%     end.
 
 %% A spawned process that will walk down the list of endpoints and try them
-%% all until exhausting the list.
+%% all until exhausting the list. This process is responsible for waiting for
+%% the backoff delay for each endpoint.
 connection_helper(Ref, _Protocol, _Strategy, []) ->
     %% exhausted the list of endpoints. let server start new helper process
     {error, endpoints_exhausted, Ref};
 connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
+    %% delay by the backoff_delay for this endpoint.
+    {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
+    lager:info("Holding off ~p seconds before connecting to ~p", [(BackoffDelay/1000), Addr]),
+    timer:sleep(BackoffDelay),
     gen_server:cast(?SERVER, {trying_endpoint, Ref, Addr}),
     case riak_core_connection:sync_connect(Addr, Protocol) of
         ok ->
@@ -416,8 +441,19 @@ connect_endpoint(Addr, State) ->
     update_endpoint(Addr, fun(EP) ->
                                   EP#ep{is_black_listed = false,
                                         nb_success = EP#ep.nb_success + 1,
-                                        backoff_delay = ?INITIAL_BACKOFF}
+                                        backoff_delay = 0}
                           end, State).
+
+%% Return the current backoff delay for the named Address,
+%% or if we can't find that address in the endpoints - the
+%% initial backoff.
+get_endpoint_backoff(Addr, EPs) ->
+    case orddict:find(Addr, EPs) of
+        error ->
+            0;
+        {ok, EP} ->
+            EP#ep.backoff_delay
+    end.
 
 update_endpoint(Addr, Fun, State = #state{endpoints = EPs}) ->
     case orddict:find(Addr, EPs) of

@@ -248,7 +248,7 @@ name_this_cluster() ->
 
 %% Persist the named cluster and it's members to the repl ring metadata.
 cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->
-    lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, Members]),
+    ?TRACE(lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, Members])),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clusterIpAddrs/2,
                                       {ClusterName, Members}).
 
