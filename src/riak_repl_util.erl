@@ -32,7 +32,8 @@
          shuffle_partitions/2,
          proxy_get_active/0,
          log_dropped_realtime_obj/1,
-         dropped_realtime_hook/1
+         dropped_realtime_hook/1,
+         generate_socket_tag/2
      ]).
 
 make_peer_info() ->
@@ -241,20 +242,20 @@ binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) ->
 
 
 merkle_filename(WorkDir, Partition, Type) ->
-    case Type of
+    Ext = case Type of
         ours ->
-            Ext=".merkle";
+            ".merkle";
         theirs ->
-            Ext=".theirs"
+            ".theirs"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 keylist_filename(WorkDir, Partition, Type) ->
-    case Type of
+    Ext = case Type of
         ours ->
-            Ext=".ours.sterm";
+            ".ours.sterm";
         theirs ->
-            Ext=".theirs.sterm"
+            ".theirs.sterm"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
@@ -605,3 +606,12 @@ dropped_realtime_hook(Obj) ->
         _ -> pass
     end.
 
+%% generate a unique ID for a socket to log stats against
+generate_socket_tag(Prefix, Socket) ->
+    {ok, {{O1, O2, O3, O4}, PeerPort}} = inet:peername(Socket),
+    {ok, Portnum} = inet:port(Socket),
+    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
+                Prefix,
+                Portnum,
+                O1, O2, O3, O4,
+                PeerPort])).
