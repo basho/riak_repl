@@ -101,7 +101,8 @@ status2(Verbose) ->
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
-    All = Config++Stats1++LeaderStats++ClientStats++ServerStats,
+    SocketStats = riak_repl_tcp_mon:status(),
+    All = Config++Stats1++LeaderStats++ClientStats++ServerStats++SocketStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -400,6 +401,15 @@ server_stats_rpc() ->
     [server_stats(P) ||
         P <- riak_repl_listener_sup:server_pids()].
 
+%%socket_stats(Pid) ->
+%%    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+%%    State = try
+%%                riak_repl_tcp_mon:status(Pid, Timeout)
+%%            catch
+%%                _:_ ->
+%%                    too_busy
+%%            end,
+%%    {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 client_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),

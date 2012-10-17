@@ -1,8 +1,8 @@
 %% TCP Connection Monitor
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_core_tcp_mon).
+-module(riak_repl_tcp_mon).
 
--export([start_link/0, start_link/1, monitor/2, status/0, format/0, format/2]).
+-export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2]).
 
 %% gen_server callbacks
@@ -52,6 +52,9 @@ monitor(Socket, Tag) ->
 
 status() ->
     gen_server:call(?MODULE, status).
+
+status(Timeout) ->
+    gen_server:call(?MODULE, status, Timeout).
 
 format() ->
     Status = status(),
@@ -187,6 +190,7 @@ handle_info({clear, Socket}, State = #state{conns = Conns}) ->
     {noreply, State#state{conns = gb_trees:delete(Socket, Conns)}}.
 
 terminate(_Reason, _State) ->
+    lager:info("Shutting down TCP Monitor"),
     %% TODO: Consider trying to do something graceful with poolboy?
     ok.
 
