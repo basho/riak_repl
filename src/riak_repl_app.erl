@@ -246,7 +246,9 @@ name_this_cluster() ->
                   end,
     riak_core_connection:set_symbolic_clustername(ClusterName).
 
+
 %% Persist the named cluster and it's members to the repl ring metadata.
+%% TODO: an empty Members list means "delete this cluster name"
 cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->
     ?TRACE(lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, Members])),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clusterIpAddrs/2,

@@ -52,6 +52,7 @@
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
 -define(MAX_CONS, 20).
 -define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
+-define(GC_INTERVAL, 60 * 1000).
 -define(PROXY_CALL_TIMEOUT, 30 * 1000).
 
 %% State of a resolved remote cluster
@@ -176,6 +177,8 @@ init([]) ->
     riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    %% schedule a timer to garbage collect old cluster and endpoint data
+    erlang:send_after(?GC_INTERVAL, self(), garbage_collection_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
     {ok, #state{is_leader=false,
                 balancer_fun=BalancerFun
@@ -294,21 +297,7 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
                 proxy_cast({remove_remote_cluster, Cluster}, State),
                 State;
             true ->
-                case Cluster of
-                    {IP, Port} ->
-                        Remote = {?CLUSTER_ADDR_LOCATOR_TYPE, {IP, Port}},
-                        remove_remote_connection(Remote),
-                        State;
-                    ClusterName ->
-                        %% reverse map from clustername to remote ip
-                        MemberAddrs = [{?CLUSTER_ADDR_LOCATOR_TYPE, Addr}
-                                       || Addr <- members_of_cluster(ClusterName, State)],
-                        AllConnections = riak_core_cluster_conn_sup:connections(),
-                        [remove_remote_connection(Remote)
-                         || {Remote, _Pid} <- AllConnections, lists:member(Remote,MemberAddrs)],
-                        UpdatedClusters = orddict:erase(ClusterName, State#state.clusters),
-                        State#state{clusters = UpdatedClusters}
-                end
+                remove_remote(Cluster, State)
         end,
     {noreply, State2};
 
@@ -316,19 +305,23 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
 %% Note that here, the Members are sorted in least connected order. Preserve that.
 %% TODO: we really want to keep all nodes we have every seen, except remove nodes
 %% that explicitly leave the cluster or show up in other clusters.
-handle_cast({cluster_updated, Name, Members, Remote}, State) ->
+handle_cast({cluster_updated, Name, Members, Addr, Remote}, State) ->
     OldMembers = lists:sort(members_of_cluster(Name, State)),
     case OldMembers == lists:sort(Members) of
         true ->
             ok;
         false ->
             persist_members_to_ring(State, Name, Members),
-            lager:info("Cluster Manager: updated by remote ~p named ~p with members: ~p",
-                       [Remote, Name, Members])
+            lager:info("Cluster Manager: updated by remote ~p at ~p named ~p with members: ~p",
+                       [Remote, Addr, Name, Members])
     end,
+    %% clean out IPs from other clusters in case of membership movement or
+    %% cluster name changes.
+    Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
+    %% Ensure we have as few connections to a cluster as possible
+    remove_connection_if_aliased(Remote, Name),
     %% save latest rebalanced members
-    {noreply, State#state{clusters=add_ips_to_cluster(Name, Members,
-                                                      State#state.clusters)}};
+    {noreply, State#state{clusters=add_ips_to_cluster(Name, Members, Clusters1)}};
 
 handle_cast({connected_to_remote, Name, Members, _IpAddr, Remote}, State) ->
     lager:info("Cluster Manager: resolved remote ~p named ~p with members: ~p",
@@ -352,6 +345,15 @@ handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
     {noreply, State};
 handle_info(poll_clusters_timer, State) ->
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
+    {noreply, State};
+
+%% Remove old clusters that no longer have any IP addresses associated with them.
+%% They are probably old cluster names that no longer exist. If we don't have an IP,
+%% then we can't connect to it anyhow.
+handle_info(garbage_collection_timer, State0) ->
+    lager:info("Cluster Manager: GC'ing."),
+    State = collect_garbage(State0),
+    erlang:send_after(?GC_INTERVAL, self(), garbage_collection_timer),
     {noreply, State};
 
 handle_info(connect_to_clusters, State) ->
@@ -381,6 +383,55 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Private
 %%%===================================================================
+
+%% if the cluster name is not the same as the initial remote we connected to,
+%% then remove this connection and ensure that we have one to the actual cluster
+%% name. This should reduce the number of connections to a single one per
+%% remote cluster.
+remove_connection_if_aliased({cluster_by_name, CName}=Remote, Name) when CName =/= Name ->
+    lager:info("Removing sink alias ~p named ~p", [CName, Name]),
+    remove_remote_connection(Remote),
+    ensure_remote_connection({cluster_by_name,Name});
+remove_connection_if_aliased({cluster_by_addr, Addr}=Remote, Name) ->
+    lager:info("Replacing remote sink ~p with ~p", [Addr, Name]),
+    remove_remote_connection(Remote),
+    ensure_remote_connection({cluster_by_name,Name});
+remove_connection_if_aliased(_,_) ->
+    ok.
+
+collect_garbage(State0) ->
+    %% remove clusters that have no member IP addrs from our view
+    State1 = orddict:fold(fun(Name, Cluster, State) ->
+                                  case Cluster#cluster.members of
+                                      [] ->
+                                          remove_remote(Name, State);
+                                      _ ->
+                                          State
+                                  end
+                          end,
+                          State0,
+                          State0#state.clusters),
+    State1.
+
+%% Remove the given "remote" from all state and persisted ring and connections.
+remove_remote(RemoteName, State) ->
+    case RemoteName of
+        {IP, Port} ->
+            Remote = {?CLUSTER_ADDR_LOCATOR_TYPE, {IP, Port}},
+            remove_remote_connection(Remote),
+            State;
+        ClusterName ->
+            %% reverse map from clustername to remote ip
+            MemberAddrs = [{?CLUSTER_ADDR_LOCATOR_TYPE, Addr}
+                           || Addr <- members_of_cluster(ClusterName, State)],
+            AllConnections = riak_core_cluster_conn_sup:connections(),
+            [remove_remote_connection(Remote)
+             || {Remote, _Pid} <- AllConnections, lists:member(Remote,MemberAddrs)],
+            UpdatedClusters = orddict:erase(ClusterName, State#state.clusters),
+            %% remove cluster from ring, which is done by saving an empty member list
+            persist_members_to_ring(State, ClusterName, []),
+            State#state{clusters = UpdatedClusters}
+    end.
 
 %% Simple Round Robin Balancer moves head to tail each time called.
 round_robin_balancer([]) ->
