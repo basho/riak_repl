@@ -13,7 +13,7 @@
 
 %% controls retry and backoff.
 -define(INITIAL_BACKOFF, 1 * 1000).  %% 1 second initial backoff per endpoint
--define(MAX_BACKOFF, 5 * 60 * 1000). %% 5 minute maximum backoff per endpoint
+-define(MAX_BACKOFF, 1 * 60 * 1000). %% 1 minute maximum backoff per endpoint
 
 %% retry delay if locator returned empty list
 -ifdef(TEST).

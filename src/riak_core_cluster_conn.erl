@@ -86,7 +86,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             {ok, Name} = ask_cluster_name(Socket, Transport, Remote),
             {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                            {connected_to_remote, Name, Members, Addr, Remote}),
+                            {cluster_updated, Name, Members, Addr, Remote}),
             ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
         {_From, poll_cluster} ->
             %% cluster manager doesn't know we haven't connected yet.
@@ -113,7 +113,7 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
             {ok, Name1} = ask_cluster_name(Socket, Transport, Remote),
             {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
             gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                            {cluster_updated, Name1, Members, Remote}),
+                            {cluster_updated, Name1, Members, Addr, Remote}),
             ctrlClientProcess(Remote, {Name1, Socket, Transport, Addr}, Members);
         %% request for our connection status
         {From, status} ->
@@ -128,7 +128,7 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
                     {ok, {cluster_members_changed, BinMembers}} ->
                         Members = {ok, binary_to_term(BinMembers)},
                         gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                                        {cluster_updated, Name, Members, Remote}),
+                                        {cluster_updated, Name, Members, Addr, Remote}),
                         Members;
                     {ok, Other} ->
                         lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
