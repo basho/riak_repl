@@ -323,16 +323,6 @@ handle_cast({cluster_updated, Name, Members, Addr, Remote}, State) ->
     %% save latest rebalanced members
     {noreply, State#state{clusters=add_ips_to_cluster(Name, Members, Clusters1)}};
 
-handle_cast({connected_to_remote, Name, Members, _IpAddr, Remote}, State) ->
-    lager:info("Cluster Manager: resolved remote ~p named ~p with members: ~p",
-               [Remote, Name, Members]),
-    %% Remove all Members from all clusters.
-    Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
-    %% Add Members to Name'd cluster.
-    Clusters2 = add_ips_to_cluster(Name, Members, Clusters1),
-    persist_members_to_ring(State, Name, Members),
-    {noreply, State#state{clusters = Clusters2}};
-
 handle_cast(_Unhandled, _State) ->
     ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
     {error, unhandled}. %% this will crash the server
@@ -421,12 +411,8 @@ remove_remote(RemoteName, State) ->
             remove_remote_connection(Remote),
             State;
         ClusterName ->
-            %% reverse map from clustername to remote ip
-            MemberAddrs = [{?CLUSTER_ADDR_LOCATOR_TYPE, Addr}
-                           || Addr <- members_of_cluster(ClusterName, State)],
-            AllConnections = riak_core_cluster_conn_sup:connections(),
-            [remove_remote_connection(Remote)
-             || {Remote, _Pid} <- AllConnections, lists:member(Remote,MemberAddrs)],
+            Remote = {?CLUSTER_NAME_LOCATOR_TYPE, ClusterName},
+            remove_remote_connection(Remote),
             UpdatedClusters = orddict:erase(ClusterName, State#state.clusters),
             %% remove cluster from ring, which is done by saving an empty member list
             persist_members_to_ring(State, ClusterName, []),
@@ -452,16 +438,15 @@ members_of_cluster(ClusterName, State) ->
     end.
 
 ensure_remote_connection(Remote) ->
-    case riak_core_cluster_conn_sup:is_connected(Remote) of
-        false ->
-            riak_core_cluster_conn_sup:add_remote_connection(Remote);
-        true ->
-            ok
-    end.
+    %% add will make sure there is only one connection per remote
+    riak_core_cluster_conn_sup:add_remote_connection(Remote).
 
+%% Drop our connection to the remote cluster.
 remove_remote_connection(Remote) ->
+    lager:info("Disconnecting from remote cluster at: ~p", [Remote]),
     case riak_core_cluster_conn_sup:is_connected(Remote) of
         true ->
+            lager:info("Disconnecting from remote cluster at: ~p", [Remote]),
             riak_core_cluster_conn_sup:remove_remote_connection(Remote);
         _ ->
             ok
