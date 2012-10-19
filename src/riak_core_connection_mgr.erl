@@ -163,6 +163,20 @@ apply_locator(Name, Strategy) ->
 %% Establish a connection to the remote destination. be persistent about it,
 %% but not too annoying to the remote end. Connect by name of cluster or
 %% IP address. Use default strategy to find "best" peer for connection.
+%%
+%% Targets are found by applying a registered locator for it.
+%% The identity locator is pre-installed, so if you want to connect to a list
+%% of IP and Port addresses, supply a Target like this: {identity, [{IP, Port},...]},
+%% where IP::string() and Port::integer(). You can also pass {identity, {IP, Port}}
+%% and the locator will use just that one IP. With a list, it will rotate
+%% trying them all until a connection is established.
+%%
+%% Other locator types must be registered with this connection manager
+%% before calling connect().
+%%
+%% Supervision must be done by the calling process if desired. No supervision
+%% is done here.
+%%
 connect(Target, ClientSpec) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
 
@@ -181,7 +195,11 @@ stop() ->
 
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, #state{is_paused = false}}.
+    %% install default "identity" locator
+    Locator = fun identity_locator/2,
+    {ok, #state{is_paused = false,
+                locators = orddict:store(identity, Locator, orddict:new())
+               }}.
 
 handle_call(is_paused, _From, State) ->
     {reply, State#state.is_paused, State};
@@ -301,6 +319,8 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
     case lists:keytake(From, #req.pid, Pending) of
         false ->
             %% Must have been something we were linked to, or linked to us
+            lager:error("Connection Manager exiting because linked process ~p exited for reason: ~p",
+                        [From, Reason]),
             exit({linked, From, Reason});
         {value, #req{cur = Cur, ref = Ref}=Req, Pending2} ->
             case Reason of
@@ -348,6 +368,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private
 %%%===================================================================
 
+identity_locator({IP,Port}, _Policy) ->
+    {ok, [{IP,Port}]};
+identity_locator([Ips], _Policy) ->
+    {ok, Ips}.
+
 %% close the pending connection and cancel the request
 disconnect_from_target(Target, State = #state{pending = Pending}) ->
     lager:info("Disconnecting from: ~p", [Target]),
@@ -384,7 +409,7 @@ schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
 
 %% Start process to make connection to available endpoints. Return a reference for
 %% this connection attempt.
-start_request(#req{target=Target, state=cancelled}, State) ->
+start_request(#req{state=cancelled}, State) ->
     State;
 start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strategy},
               State) ->
@@ -447,8 +472,9 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason}),
                     connection_helper(Ref, Protocol, Strategy, Addrs)
             end;
-        false ->
+        _ ->
             %% connection request has been cancelled
+            lager:info("Ignoring connection to: ~p because it was cancelled", [Addr]),
             {ok, cancelled}
     end.
 
