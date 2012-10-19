@@ -441,10 +441,8 @@ ensure_remote_connection(Remote) ->
 
 %% Drop our connection to the remote cluster.
 remove_remote_connection(Remote) ->
-    lager:info("Disconnecting from remote cluster at: ~p", [Remote]),
     case riak_core_cluster_conn_sup:is_connected(Remote) of
         true ->
-            lager:info("Disconnecting from remote cluster at: ~p", [Remote]),
             riak_core_cluster_conn_sup:remove_remote_connection(Remote);
         _ ->
             ok
