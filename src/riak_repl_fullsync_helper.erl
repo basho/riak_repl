@@ -343,7 +343,9 @@ handle_info({'DOWN', _Mref, process, Pid, Exit}, State=#state{merkle_pid = Pid})
     gen_fsm:send_event(State#state.owner_fsm, Msg),        
     {stop, normal, State#state{buf = [], size = 0}}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
+    %% close file handles, in case they're open
+    catch(file:close(State#state.kl_fp)),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -408,7 +410,10 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
             DiffState;
         {Ref, diff_resume} ->
             %% Resuming the diff stream generation
-            diff_keys(R, L, DiffState#diff_state{replies=Count})
+            diff_keys(R, L, DiffState#diff_state{replies=Count});
+        {'EXIT', FSM, _Reason} ->
+            %% fullsync process exited, follow suit
+            DiffState
     end;
 diff_keys({{Key, Hash}, RNext}, {{Key, Hash}, LNext}, DiffState) ->
     %% Remote and local keys/hashes match

@@ -72,7 +72,7 @@ wait_for_fullsync(Command, State)
                             %% randomly shuffle the partitions so that if we
                             %% restart, we have a good chance of not re-doing
                             %% partitions we already synced
-                            riak_repl_util:shuffle_partitions(Partitions0, now());
+                            riak_repl_util:shuffle_partitions(Partitions0, os:timestamp());
                         _ ->
                             Partitions0
                     end;
@@ -125,7 +125,7 @@ request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=So
                                                                  KeyListFn),
     {next_state, request_partition, State#state{kl_fn=KeyListFn,
             our_kl_ready=false, their_kl_ready=false,
-            partition_start=now(), stage_start=now(), skipping=false,
+            partition_start=os:timestamp(), stage_start=os:timestamp(), skipping=false,
             kl_pid=KeyListPid, kl_ref=KeyListRef, partition=P, partitions=T}};
 %% @plu client <- key-lister
 request_partition({Ref, keylist_built, _Size}, State=#state{kl_ref = Ref}) ->
@@ -135,7 +135,7 @@ request_partition({Ref, keylist_built, _Size}, State=#state{kl_ref = Ref}) ->
     case State#state.their_kl_ready of
         true ->
             gen_fsm:send_event(self(), continue),
-            {next_state, send_keylist, State#state{stage_start=now(),
+            {next_state, send_keylist, State#state{stage_start=os:timestamp(),
                     kl_counter=State#state.kl_ack_freq}};
         _ ->
             {next_state, request_partition, State#state{our_kl_ready=true,
@@ -147,7 +147,7 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
             %% @plu client -> client: continue
             gen_fsm:send_event(self(), continue),
             %% @plu note over client: (send_keylist)
-            {next_state, send_keylist, State#state{stage_start=now(),
+            {next_state, send_keylist, State#state{stage_start=os:timestamp(),
                     kl_counter=State#state.kl_ack_freq}};
         _ ->
             {next_state, request_partition, State#state{their_kl_ready=true}}
@@ -236,7 +236,7 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
             lager:info("Full-sync with site ~p; exchanging differences for ~p",
                 [State#state.sitename, State#state.partition]),
             {next_state, wait_ack, State#state{kl_fh=undefined,
-                    stage_start=now()}}
+                    stage_start=os:timestamp()}}
     end.
 
 wait_ack(Command, #state{sitename=SiteName} = State)
@@ -294,7 +294,8 @@ handle_sync_event(_Event,_F,StateName,State) ->
 handle_info(_I, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, State) -> 
+terminate(_Reason, _StateName, State) ->
+    catch(file:close(State#state.kl_fh)),
     %% Clean up the working directory on crash/exit
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
     os:cmd(Cmd).

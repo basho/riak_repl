@@ -60,7 +60,7 @@
                 workers=[node()] :: [node()],   % workers
                 receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
                 check_tref :: timer:tref(),     % check mailbox timer
-                elected_mbox_size :: integer(), % elected leader box size
+                elected_mbox_size = 0 :: integer(), % elected leader box size
                 lastpoll = {0, 0, 0}
                }).
      
@@ -345,27 +345,30 @@ become_leader(Leader, State) ->
     end,
     NewState.
 
-new_leader(Leader, LeaderPid, State) ->
+new_leader(Leader, LeaderPid, State0) ->
     This = node(),
-    case State#state.leader_node of
+    State = State0#state{i_am_leader = false, leader_node = Leader},
+    NewState = case State#state.leader_node of
         This ->
             %% this node is surrendering leadership
             leader_change(State#state.i_am_leader, false), % will close connections
             riak_repl_stats:elections_leader_changed(),
-            lager:info("Replication leadership surrendered to ~p", [Leader]);
+            lager:info("Replication leadership surrendered to ~p", [Leader]),
+            %% reset the mailbox size to 0 until we poll it again
+            State#state{elected_mbox_size = 0};
         Leader ->
             lager:info("Replication leader kept as ~p", [Leader]),
-            ok;
+            State;
         _NewLeader ->
             riak_repl_stats:elections_leader_changed(),
             lager:info("Replication leader set to ~p", [Leader]),
-            ok
+            %% reset the mailbox size to 0 until we poll it again
+            State#state{elected_mbox_size = 0}
     end,
     %% Set up a monitor on the new leader so we can make the helper
     %% check the elected node if it ever goes away.  This handles
     %% the case where all candidate nodes are down and only workers
     %% remain.
-    NewState = State#state{i_am_leader = false, leader_node = Leader},
     remonitor_leader(LeaderPid, NewState).
 
 remonitor_leader(LeaderPid, State) ->
