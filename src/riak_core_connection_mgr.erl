@@ -14,6 +14,7 @@
 %% controls retry and backoff.
 -define(INITIAL_BACKOFF, 1 * 1000).  %% 1 second initial backoff per endpoint
 -define(MAX_BACKOFF, 1 * 60 * 1000). %% 1 minute maximum backoff per endpoint
+-define(EXHAUSTED_ENDPOINTS_RETRY_INTERVAL, 10 * 1000). %% 10 seconds until retrying the list again
 
 %% retry delay if locator returned empty list
 -ifdef(TEST).
@@ -69,6 +70,7 @@
               spec,     % client spec
               strategy, % connection strategy
               cur,      % current connection endpoint
+              state = init,  % init | connecting | connected | cancelled
               status    % history of connection attempts
              }).
               
@@ -92,6 +94,7 @@
          set_cluster_finder/1,
          get_cluster_finder/0,
          connect/2, connect/3,
+         disconnect/1,
          register_locator/2,
          apply_locator/2,
          reset_backoff/0,
@@ -166,6 +169,9 @@ connect(Target, ClientSpec) ->
 connect(Target, ClientSpec, Strategy) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
 
+disconnect(Target) ->
+    gen_server:cast(?SERVER, {disconnect, Target}).
+
 stop() ->
     gen_server:call(?SERVER, stop).
 
@@ -190,6 +196,7 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
                    target = Target,
                    pid = undefined,
                    spec = ClientSpec,
+                   state = init,
                    strategy = Strategy},
     %% add request to pending queue so it may be found in restarts
     State2 = State#state{pending = lists:keystore(Reference, #req.ref,
@@ -213,6 +220,25 @@ handle_call(stop, _From, State) ->
     %% TODO do we need to cleanup helper pids here?
     {stop, normal, ok, State};
 
+handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pending}) ->
+    case lists:keyfind(Ref, #req.ref, Pending) of
+        false ->
+            %% This should never happen
+            {reply, false, State};
+        Req ->
+            {Answer, ReqState} =
+                case Req#req.state of
+                    cancelled ->
+                        %% helper process hasn't cancelled itself yet.
+                        {false, cancelled};
+                    _ ->
+                        {true, connecting}
+                end,
+            {reply, Answer, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
+                                                                 Req#req{cur = Addr,
+                                                                         state = ReqState})}}
+    end;
+
 handle_call(_Unhandled, _From, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
     {reply, {error, unhandled}, State}.
@@ -223,6 +249,9 @@ handle_cast(pause, State) ->
 handle_cast(resume, State) ->
     {noreply, State#state{is_paused = false}};
 
+handle_cast({disconnect, Target}, State) ->
+    {noreply, disconnect_from_target(Target, State)};
+
 %% reset all backoff delays to zero.
 %% TODO: restart stalled connections.
 handle_cast(reset_backoff, State) ->
@@ -231,18 +260,6 @@ handle_cast(reset_backoff, State) ->
 
 handle_cast({set_cluster_finder, FinderFun}, State) ->
     {noreply, State#state{cluster_finder=FinderFun}};
-
-handle_cast({trying_endpoint, Ref, Addr}, State = #state{pending=Pending}) ->
-    lager:info("Trying connection to: ~p", [Addr]),
-    case lists:keyfind(Ref, #req.ref, Pending) of
-        false ->
-            %% TODO: should never happen
-            {noreply, State};
-        Req ->
-            {noreply,
-             State#state{pending = lists:keystore(Ref, #req.ref, Pending,
-                                                  Req#req{cur = Addr})}}
-    end;
 
 %% helper process says no endpoints were returned by the locators.
 %% helper process will schedule a retry.
@@ -285,15 +302,26 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
         false ->
             %% Must have been something we were linked to, or linked to us
             exit({linked, From, Reason});
-        {value, Req = #req{cur = Cur, ref = Ref}, Pending2} ->
+        {value, #req{cur = Cur, ref = Ref}=Req, Pending2} ->
             case Reason of
                 ok -> % riak_core_connection set up and handlers called
                     {noreply, connect_endpoint(Cur, State#state{pending = Pending2})};
+
+                {ok, cancelled} ->
+                    %% helper process has been cancelled and has exited nicely. nothing to do
+                    %% except toss out the cancelled request from pending.
+                    {noreply, State#state{pending = Pending2}};
                 
                 {error, endpoints_exhausted, Ref} ->
                     %% tried all known endpoints. schedule a retry.
-                    %% reuse the existing request.
-                    {noreply, schedule_retry(1000, Ref, State)};
+                    %% reuse the existing request Reference, Ref.
+                    case Req#req.state of
+                        cancelled ->
+                            %% oops. that request was cancelled. No retry
+                            {noreply, State#state{pending = Pending2}};
+                        _ ->
+                            {noreply, schedule_retry(?EXHAUSTED_ENDPOINTS_RETRY_INTERVAL, Ref, State)}
+                    end;
 
                 Reason -> % something bad happened to the connection, reuse the request
                     ?TRACE(?debugFmt("handle_info: EP failed on ~p for ~p. removed Ref ~p",
@@ -302,8 +330,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                                 [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, State),
                     %% the connection helper will retry
-                    {noreply, State}
-%%                  {noreply, schedule_retry(1000, Req, State2)}
+                    {noreply, State2}
             end
     end;
 handle_info(_Unhandled, State) ->
@@ -321,20 +348,44 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private
 %%%===================================================================
 
+%% close the pending connection and cancel the request
+disconnect_from_target(Target, State = #state{pending = Pending}) ->
+    lager:info("Disconnecting from: ~p", [Target]),
+    case lists:keyfind(Target, #req.target, Pending) of
+        false ->
+            %% already gone!
+            State;
+        Req ->
+            %% The helper process will discover the cancellation when it asks if it
+            %% should connect to an endpoint.
+            State#state{pending = lists:keystore(Req#req.ref, #req.ref, Pending,
+                                                 Req#req{state = cancelled})}
+    end.
+
 %% schedule a retry to occur after Interval milliseconds.
 %% do not clear the pid from pending. the exit handler will do that.
 schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
+            %% this should never happen
             State;
         Req ->
-            erlang:send_after(Interval, self(), {retry_req, Ref}),
-            State#state{pending = lists:keystore(Ref, #req.ref, Pending,
-                                                 Req#req{cur = undefined})}
+            case Req#req.state of
+                cancelled ->
+                    %% the request was cancelled, so no rescheduling wanted.
+                    State;
+                _ ->
+                    %% reschedule request to happen in the future
+                    erlang:send_after(Interval, self(), {retry_req, Ref}),
+                    State#state{pending = lists:keystore(Req#req.ref, #req.ref, Pending,
+                                                         Req#req{cur = undefined})}
+            end
     end.
 
 %% Start process to make connection to available endpoints. Return a reference for
 %% this connection attempt.
+start_request(#req{target=Target, state=cancelled}, State) ->
+    State;
 start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strategy},
               State) ->
     case locate_endpoints(Target, Strategy, State#state.locators) of
@@ -356,6 +407,7 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             State#state{endpoints = AllEps,
                         pending = lists:keystore(Ref, #req.ref, State#state.pending,
                                                  Req#req{pid = Pid,
+                                                         state = connecting,
                                                          cur = undefined})};
         {error, Reason} ->
             fail_request(Reason, Req, State)
@@ -373,21 +425,6 @@ increase_backoff(Delay) when Delay > ?MAX_BACKOFF ->
 increase_backoff(Delay) ->
     2 * Delay.
 
-%% least_connected_eps(ClusterName, State) ->
-%%     case orddict:find(ClusterName, State#state.peer_addrs) of
-%%         {ok, Addrs} ->
-%%             AllEPs = orddict:to_list(State#state.endpoints),
-%%             EPs = [X || {{_T,Addr},EP}=X <- AllEPs,      %% all endpoints where
-%%                         lists:member(Addr,Addrs),        %%  Addr is in remote cluster
-%%                         EP#ep.is_black_listed == false], %%  and not black-listed
-%%             lists:sort(fun({_A,A},{_B,B}) -> A#ep.nb_curr_connections > B#ep.nb_curr_connections end,
-%%                        EPs);
-%%         error ->
-%%             %% nothing found for this cluster :-(
-%%             lager:error("No known end points for cluster: ~p", [ClusterName]),
-%%             []
-%%     end.
-
 %% A spawned process that will walk down the list of endpoints and try them
 %% all until exhausting the list. This process is responsible for waiting for
 %% the backoff delay for each endpoint.
@@ -397,16 +434,22 @@ connection_helper(Ref, _Protocol, _Strategy, []) ->
 connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
-    lager:info("Holding off ~p seconds before connecting to ~p", [(BackoffDelay/1000), Addr]),
+    lager:info("Holding off ~p seconds before trying ~p", [(BackoffDelay/1000), Addr]),
     timer:sleep(BackoffDelay),
-    gen_server:cast(?SERVER, {trying_endpoint, Ref, Addr}),
-    case riak_core_connection:sync_connect(Addr, Protocol) of
-        ok ->
-            ok;
-        {error, Reason} ->
-            %% notify connection manager this EP failed and try next one
-            gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason}),
-            connection_helper(Ref, Protocol, Strategy, Addrs)
+    case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
+        true ->
+            lager:info("Trying connection to: ~p", [Addr]),
+            case riak_core_connection:sync_connect(Addr, Protocol) of
+                ok ->
+                    ok;
+                {error, Reason} ->
+                    %% notify connection manager this EP failed and try next one
+                    gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason}),
+                    connection_helper(Ref, Protocol, Strategy, Addrs)
+            end;
+        false ->
+            %% connection request has been cancelled
+            {ok, cancelled}
     end.
 
 locate_endpoints({Type, Name}, Strategy, Locators) ->

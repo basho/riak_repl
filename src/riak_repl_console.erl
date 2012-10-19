@@ -199,10 +199,36 @@ sinks([]) ->
     io:format("~-20s ~-20s ~-15s ---------~n", ["----", "------------", "----------"]),
     [showSink(Conn) || Conn <- Conns].
 
+add_sink([Address]) ->
+    NWords = string:words(Address, $:),
+    case NWords of
+        2 ->
+            IP = string:sub_word(Address, 1, $:),
+            PortStr = string:sub_word(Address, 2, $:),
+            add_sink([IP, PortStr]);
+        _ ->
+            {error, {badarg, Address}}
+    end;
 add_sink([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:add_remote_cluster({IP, Port}).
 
+%% remote a remote sink by clustername or by IP/Port address:
+%% clustername
+%% | ip:port
+%% | ip port
+del_sink([Address]) ->
+    NWords = string:words(Address, $:),
+    case NWords of
+        1 ->
+            riak_core_cluster_mgr:remove_remote_cluster(Address);
+        2 ->
+            IP = string:sub_word(Address, 1, $:),
+            PortStr = string:sub_word(Address, 2, $:),
+            del_sink([IP, PortStr]);
+        _ ->
+            {error, {badarg, Address}}
+    end;
 del_sink([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).

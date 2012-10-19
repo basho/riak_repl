@@ -27,17 +27,27 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+%% a remote connection if we don't already have one
 add_remote_connection(Remote) ->
-    ?TRACE(?debugFmt("cluster_conn_sup: Connecting to remote cluster: ~p", [Remote])),
-    lager:info("Connecting to remote cluster: ~p", [Remote]),
-    ChildSpec = make_remote(Remote),
-    supervisor:start_child(?MODULE, ChildSpec).
+    case is_connected(Remote) of
+        false ->
+            lager:info("Connecting to remote cluster: ~p", [Remote]),
+            ChildSpec = make_remote(Remote),
+            supervisor:start_child(?MODULE, ChildSpec);
+        _ ->
+            ok
+    end.
 
 remove_remote_connection(Remote) ->
-    ?TRACE(?debugFmt("cluster_conn_sup: Disconnecting from remote cluster: ~p", [Remote])),
-    lager:info("Disconnecting from remote cluster: ~p", [Remote]),
+    lager:info("Disconnecting from remote cluster at: ~p", [Remote]),
+    %% remove supervised cluster connection
     supervisor:terminate_child(?MODULE, Remote),
-    supervisor:delete_child(?MODULE, Remote).
+    supervisor:delete_child(?MODULE, Remote),
+    %% This seems hacky, but someone has to tell the connection manager to stop
+    %% trying to reach this target if it hasn't connected yet. It's the supervised
+    %% cluster connection that requests the connection, but it's going to die, so
+    %% it can't un-connect itself.
+    riak_core_connection_mgr:disconnect(Remote).
 
 connections() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].
