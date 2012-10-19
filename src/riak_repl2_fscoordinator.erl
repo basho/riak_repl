@@ -14,7 +14,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/1, leader_changed/2]).
+-export([start_link/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -30,37 +30,30 @@
 start_link(Cluster) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, Cluster, []).
 
-leader_changed(Node, Pid) ->
-    gen_server:cast(?SERVER, {leader_changed, Node, Pid}).
-
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
 init(Cluster) ->
-    riak_repl2_leader:register_notify_fun(fun ?MODULE:leader_changed/2),
+    process_flag(trap_exit, true),
+    gen_server:cast(?SERVER, start),
     {ok, #state{other_cluster = Cluster}}.
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({leader_changed, Node, Pid}, State) ->
-    State2 = State#state{leader_node = Node, leader_pid = Pid},
-    case node() of
-        Node ->
-            Ring = riak_core_ring_manager:get_my_ring(),
-            N = largest_n(Ring),
-            Partitions = sort_partitions(Ring),
-            % TODO kick off the replication
-            % for each P in partitions, , reach out to the physical node
-            % it lives on, tell it to connect to remote, and start syncing
-            {ok, #state{other_cluster = Cluster} = State};
-        _ ->
-            % TODO stop coordination fullsyncs.
-            % stop fullsyncs in progress?
-            {ok, State2}
-    end;
-            
+handle_cast(start, State) ->
+    #state{other_cluster = Remote} = State,
+    Ring = riak_core_ring_manager:get_my_ring(),
+    N = largest_n(Ring),
+    Partitions = sort_partitions(Ring),
+    % TODO kick off the replication
+    % for each P in partitions, , reach out to the physical node
+    % it lives on, tell it to connect to remote, and start syncing
+    % link to the fssources, so they when this does,
+    % and so this can handle exits fo them.
+    {noreply, State};
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

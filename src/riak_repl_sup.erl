@@ -36,6 +36,9 @@ init([]) ->
                  {riak_repl2_rt_sup, {riak_repl2_rt_sup, start_link, []},
                   permanent, infinity, supervisor, [riak_repl2_rt_sup]},
 
+                 {riak_repl2_fscoordinator_sup, {riak_repl2_fscoordinator_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fscoordinator_sup]},
+
                  {riak_repl2_fssource_sup, {riak_repl2_fssource_sup, start_link, []},
                   permanent, infinity, supervisor, [riak_repl2_fssource_sup]},
 
