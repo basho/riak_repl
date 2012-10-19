@@ -341,7 +341,6 @@ handle_info(poll_clusters_timer, State) ->
 %% They are probably old cluster names that no longer exist. If we don't have an IP,
 %% then we can't connect to it anyhow.
 handle_info(garbage_collection_timer, State0) ->
-    lager:info("Cluster Manager: GC'ing."),
     State = collect_garbage(State0),
     erlang:send_after(?GC_INTERVAL, self(), garbage_collection_timer),
     {noreply, State};
@@ -352,10 +351,9 @@ handle_info(connect_to_clusters, State) ->
         true ->
             Fun = State#state.restore_targets_fun,
             ClusterTargets = Fun(),
-            lager:info("connect_to_clusters: connect to ~p", [ClusterTargets]),
+            lager:info("Cluster Manager will connect to clusters: ~p", [ClusterTargets]),
             connect_to_targets(ClusterTargets);
         _ ->
-            lager:info("connect_to_clusters: not the leader"),
             ok
     end,
     {noreply, State};
@@ -558,8 +556,6 @@ read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
-            ?TRACE(?debugFmt("Cluster Manager: remote thinks my addr is ~p", [MyAddr])),
-%%          lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             MyAddr;
         Error ->
             lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
@@ -579,7 +575,6 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             %% remote wants list of member machines in my cluster
             MyAddr = read_ip_address(Socket, Transport, ClientAddr),
             BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
-%%            lager:info("Cluster Manager: service sending my members: ~p", [BalancedMembers]),
             ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->

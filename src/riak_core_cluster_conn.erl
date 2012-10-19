@@ -36,8 +36,6 @@
 %% supervisior will restart it.
 -spec(start_link(term()) -> {ok,pid()}).
 start_link(Remote) ->
-    lager:info("cluster_conn: client starting connection to ~p",
-               [Remote]),
     Members = [],
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlClientProcess,
@@ -66,7 +64,8 @@ ctrlClientProcess(Remote, connecting, Members0) ->
     receive
         {From, status} ->
             %% someone wants our status. Don't do anything that blocks!
-            From ! {self(), connecting, Remote};
+            From ! {self(), connecting, Remote},
+            ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connect_failed, Error}} ->
             lager:info("cluster_conn: client connect_failed to ~p because ~p",
                        [Remote, Error]),
@@ -77,7 +76,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
-            lager:info("cluster_conn: client connected to remote ~p at ~p named ~p",
+            lager:info("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
                        [Remote, Addr, RemoteName]),
             %% ask it's name and member list, even if it's a previously
             %% resolved cluster. Then we can sort everything out in the
@@ -138,8 +137,8 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
                         %% timeouts are ok; we'll just go round and try again
                         Members0;
                     {error, closed} ->
-                        erlang:exit(connection_closed),
-                        Members0;
+                        %%erlang:exit(connection_closed);
+                        {error, connection_closed};
                     {error, Reason} ->
                         lager:error("cluster_conn: client got error from remote: ~p, ~p",
                                     [Remote, Reason]),
