@@ -50,7 +50,7 @@ register_service() ->
 start_service(Socket, Transport, Proto, _Args, Props) ->
     SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Socket),
     lager:info("Keeping stats for " ++ SocketTag),
-    riak_repl_tcp_mon:monitor(Socket, SocketTag),
+    riak_core_tcp_mon:monitor(Socket, "repl", SocketTag),
     _RemoteClusterName = proplists:get_value(clustername, Props),
     {ok, Pid} = riak_repl2_rtsink_conn_sup:start_child(Proto),
     ok = Transport:controlling_process(Socket, Pid),

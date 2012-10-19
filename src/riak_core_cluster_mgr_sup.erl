@@ -32,7 +32,7 @@ init([]) ->
          %% Cluster Manager
          {riak_repl_cluster_mgr, {riak_core_cluster_mgr, start_link, []},
           permanent, 5000, worker, [riak_core_cluster_mgr]},
-         {riak_repl_tcp_mon, {riak_repl_tcp_mon, start_link, []},
-          permanent, 5000, worker, [riak_repl_tcp_mon]}
+         {riak_core_tcp_mon, {riak_core_tcp_mon, start_link, []},
+          permanent, 5000, worker, [riak_core_tcp_mon]}
         ],
     {ok, {{rest_for_one, 9, 10}, Processes}}.
