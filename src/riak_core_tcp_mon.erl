@@ -1,8 +1,8 @@
 %% TCP Connection Monitor
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl_tcp_mon).
+-module(riak_core_tcp_mon).
 
--export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
+-export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2]).
 
 %% gen_server callbacks
@@ -35,7 +35,10 @@
                 opts  = ?INET_OPTS,            % Opts to read
                 status_funs = dict:from_list(default_status_funs())  % Status reporting functions
                 }).
--record(conn, {tag,               %% Tag used to find socket
+
+-record(conn, {
+               app,               %% App name used to group socket tags
+               tag,               %% Tag used to find socket
                type,              %% Type - normal, dist, error
                ts_hist = [],      %% History of timestamps for readings
                hist = []}).       %% History of readings
@@ -47,8 +50,8 @@ start_link() ->
 start_link(Props) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Props, []).
 
-monitor(Socket, Tag) ->
-    gen_server:call(?MODULE, {monitor, Socket, Tag}).
+monitor(Socket, App, Tag) ->
+    gen_server:call(?MODULE, {monitor, Socket, App, Tag}).
 
 status() ->
     gen_server:call(?MODULE, status).
@@ -69,15 +72,16 @@ format_header(Stat) ->
     io_lib:format("~40w Value\n", [Stat]).
 
 format_entry({_Socket, Status}, Stat) ->
+    App = proplists:get_value(app, Status),
     Tag = proplists:get_value(tag, Status),
     Value = proplists:get_value(Stat, Status),
     case Value of
         Value when is_list(Value) ->
-            [io_lib:format("~40w [", [Tag]),
+            [io_lib:format("~40w.~w [", [App, Tag]),
              [string:join([format_value(Item) || Item <- Value], ", ")],
              "]\n"];
         _ ->
-            [io_lib:format("~40w ", [Tag]),
+            [io_lib:format("~40w.~w ", [App, Tag]),
              format_value(Value),
              "\n"]
     end.
@@ -113,7 +117,7 @@ kbps(TS, Hist) ->
 
 %% Work out the rate of something per second
 rate(TS, Hist) ->
-    RevTS = lists:reverse(TS),     %% 
+    RevTS = lists:reverse(TS),
     RevHist = lists:reverse(Hist),
     rate(RevTS, RevHist, []).
 
@@ -140,8 +144,8 @@ handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
     {reply, [{P, conn_status(Conn, StatusFuns)} || 
                 {P,Conn} <- gb_trees:to_list(Conns)], State};
-handle_call({monitor, Socket, Tag}, _From, State) ->
-    {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal}, State)}.
+handle_call({monitor, Socket, App, Tag}, _From, State) ->
+    {reply, ok,  add_conn(Socket, #conn{app = App, tag = Tag, type = normal}, State)}.
 
 handle_cast(_Msg, State) ->
     %% TODO: Log unknown message
@@ -222,7 +226,8 @@ update_hist(Readings, Limit, Histories) ->
 prepend_trunc(Val, List, Limit) ->
     lists:sublist([Val | List], Limit).
 
-conn_status(#conn{tag = Tag, type = Type, ts_hist = TsHist, hist = Histories}, StatusFuns) ->
+conn_status(#conn{app = App, tag = Tag, type = Type,
+                  ts_hist = TsHist, hist = Histories}, StatusFuns) ->
     Fun = fun({Stat, Hist}, Acc) ->
                          case dict:find(Stat, StatusFuns) of
                              {ok, {Alias, StatusFun}} ->
@@ -234,7 +239,7 @@ conn_status(#conn{tag = Tag, type = Type, ts_hist = TsHist, hist = Histories}, S
                          end
                       end, 
     Stats = lists:sort(lists:foldl(Fun, [], Histories)),
-    [{tag, Tag}, {type, Type} | Stats].
+    [{app, App}, {tag, Tag}, {type, Type} | Stats].
 
 schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),

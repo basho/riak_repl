@@ -15,7 +15,7 @@
          leader_stats/0,
          client_stats/0,
          server_stats/0]).
-         
+
 add_listener(Params) ->
     Ring = get_ring(),
     case add_listener_internal(Ring,Params) of
@@ -101,7 +101,7 @@ status2(Verbose) ->
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
-    SocketStats = riak_repl_tcp_mon:status(),
+    SocketStats = riak_core_tcp_mon:status(),
     All = Config++Stats1++LeaderStats++ClientStats++ServerStats++SocketStats,
     if Verbose ->
             format_counter_stats(All);
