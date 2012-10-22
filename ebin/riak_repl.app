@@ -25,6 +25,8 @@
                   'riak_repl_fullsync_helper',
                   'riak_repl2_fscoordinator',
                   'riak_repl2_fscoordinator_sup',
+                  'riak_repl2_fscoordinator_serv',
+                  'riak_repl2_fscoordinator_serv_sup',
                   'riak_repl2_fssource',
                   'riak_repl2_fssource_sup',
                   'riak_repl2_fssink',
