@@ -9,7 +9,7 @@
          pause_fullsync/1, resume_fullsync/1]).
 -export([client_stats_rpc/0, server_stats_rpc/0]).
 
--export([clustername/1, sinks/1, clusters/1, add_sink/1, del_sink/1, realtime/1, fullsync/1]).
+-export([clustername/1, connections/1, clusters/1, connect/1, disconnect/1, realtime/1, fullsync/1]).
 
 -export([get_config/0,
          leader_stats/0,
@@ -187,7 +187,7 @@ showSink({Remote,Pid}) ->
                       [SinkName, "", PidStr])
     end.
 
-sinks([]) ->
+connections([]) ->
     %% get cluster manager's outbound connections to other "remote" clusters,
     %% which for now, are all the "sinks".
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
@@ -195,25 +195,25 @@ sinks([]) ->
     io:format("~-20s ~-20s ~-15s ---------~n", ["----", "------------", "----------"]),
     [showSink(Conn) || Conn <- Conns].
 
-add_sink([Address]) ->
+connect([Address]) ->
     NWords = string:words(Address, $:),
     case NWords of
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            add_sink([IP, PortStr]);
+            connect([IP, PortStr]);
         _ ->
             {error, {badarg, Address}}
     end;
-add_sink([IP, PortStr]) ->
+connect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:add_remote_cluster({IP, Port}).
 
-%% remote a remote sink by clustername or by IP/Port address:
+%% remove a remote connection by clustername or by IP/Port address:
 %% clustername
 %% | ip:port
 %% | ip port
-del_sink([Address]) ->
+disconnect([Address]) ->
     NWords = string:words(Address, $:),
     case NWords of
         1 ->
@@ -221,11 +221,11 @@ del_sink([Address]) ->
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            del_sink([IP, PortStr]);
+            disconnect([IP, PortStr]);
         _ ->
             {error, {badarg, Address}}
     end;
-del_sink([IP, PortStr]) ->
+disconnect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).
 

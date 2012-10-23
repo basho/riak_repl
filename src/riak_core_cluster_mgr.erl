@@ -11,7 +11,7 @@
 %% which instance of cluster manager is the leader. For example, the riak_repl2_leader server
 %% is probably a good place to do this from. Call set_leader_node(node(), pid()).
 %%
-%% If I'm the leader, I answer local RPC requests from non-leader cluster managers.
+%% If I'm the leader, I answer local gen_server:call requests from non-leader cluster managers.
 %% I also establish out-bound connections to any IP address added via add_remote_cluster(ip_addr()),
 %% in order to resolve the name of the remote cluster and to collect any additional member addresses
 %% of that cluster. I keep a database of members per named cluster.
@@ -188,7 +188,7 @@ handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
 
 handle_call({get_my_members, MyAddr}, _From, State) ->
-    %% This doesn't need to RPC to the leader.
+    %% This doesn't need to call the leader.
     MemberFun = State#state.member_fun,
     MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr)],
     {reply, MyMembers, State};
@@ -455,13 +455,14 @@ proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
     ?TRACE(?debugFmt("proxy_cast: forwarding to leader: ~p", [Cast])),
     gen_server:cast({?SERVER, Leader}, Cast).
 
+%% Make a proxy call to the leader. If there is no leader elected or the request fails,
+%% it will return the NoLeaderResult supplied.
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
     ?TRACE(?debugFmt("proxy_call: dropping because leader is undefined: ~p", [_Call])),
     {reply, NoLeaderResult, State};
 proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
     ?TRACE(?debugFmt("proxy_call: forwarding to leader: ~p", [Call])),
     Reply = gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT),
-    %% TODO: what if this times out?
     {reply, Reply, State}.
 
 %% Remove given IP Addresses from all clusters. Returns revised clusters orddict.
