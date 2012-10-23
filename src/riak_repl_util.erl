@@ -30,7 +30,9 @@
          schedule_fullsync/1,
          elapsed_secs/1,
          shuffle_partitions/2,
-         generate_socket_tag/2
+         generate_socket_tag/2,
+         source_socket_stats/0,
+         sink_socket_stats/0
      ]).
 
 make_peer_info() ->
@@ -589,4 +591,25 @@ generate_socket_tag(Prefix, Socket) ->
                 Portnum,
                 O1, O2, O3, O4,
                 PeerPort])).
+
+remove_unwanted_stats(Stats) ->
+    UnwantedProps = [sndbuf, recbuf, buffer, active,
+                     type, send_max, send_avg, snd_cnt],
+    lists:foldl(fun(K, Acc) -> proplists:delete(K, Acc) end, Stats, UnwantedProps).
+
+source_socket_stats() ->
+    AllStats = riak_core_tcp_mon:status(),
+    [ remove_unwanted_stats(SocketStats) ||
+        SocketStats <- AllStats,
+        proplists:is_defined(tag, SocketStats),
+        {repl_rt, source, _} <- [proplists:get_value(tag, SocketStats)] ].
+
+sink_socket_stats() ->
+    %% It doesn't seem like it's possible to pass in "source" below as a
+    %% param
+    AllStats = riak_core_tcp_mon:status(),
+    [ remove_unwanted_stats(SocketStats) ||
+        SocketStats <- AllStats,
+        proplists:is_defined(tag, SocketStats),
+        {repl_rt, sink, _} <- [proplists:get_value(tag, SocketStats)] ].
 

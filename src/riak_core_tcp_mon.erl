@@ -2,7 +2,7 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_tcp_mon).
 
--export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
+-export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2]).
 
 %% gen_server callbacks
@@ -36,9 +36,7 @@
                 status_funs = dict:from_list(default_status_funs())  % Status reporting functions
                 }).
 
--record(conn, {
-               app,               %% App name used to group socket tags
-               tag,               %% Tag used to find socket
+-record(conn, {tag,               %% Tag used to find socket
                type,              %% Type - normal, dist, error
                ts_hist = [],      %% History of timestamps for readings
                hist = []}).       %% History of readings
@@ -50,8 +48,8 @@ start_link() ->
 start_link(Props) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Props, []).
 
-monitor(Socket, App, Tag) ->
-    gen_server:call(?MODULE, {monitor, Socket, App, Tag}).
+monitor(Socket, Tag) ->
+    gen_server:call(?MODULE, {monitor, Socket, Tag}).
 
 status() ->
     gen_server:call(?MODULE, status).
@@ -72,16 +70,15 @@ format_header(Stat) ->
     io_lib:format("~40w Value\n", [Stat]).
 
 format_entry({_Socket, Status}, Stat) ->
-    App = proplists:get_value(app, Status),
     Tag = proplists:get_value(tag, Status),
     Value = proplists:get_value(Stat, Status),
     case Value of
         Value when is_list(Value) ->
-            [io_lib:format("~40w.~w [", [App, Tag]),
+            [io_lib:format("~40s [", [Tag]),
              [string:join([format_value(Item) || Item <- Value], ", ")],
              "]\n"];
         _ ->
-            [io_lib:format("~40w.~w ", [App, Tag]),
+            [io_lib:format("~40s", [Tag]),
              format_value(Value),
              "\n"]
     end.
@@ -142,21 +139,20 @@ init(Props) ->
 
 handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
-    {reply, [{P, conn_status(Conn, StatusFuns)} || 
-                {P,Conn} <- gb_trees:to_list(Conns)], State};
-handle_call({monitor, Socket, App, Tag}, _From, State) ->
-    {reply, ok,  add_conn(Socket, #conn{app = App, tag = Tag, type = normal}, State)}.
+    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)] || {P,Conn} <- gb_trees:to_list(Conns)], State};
 
-handle_cast(_Msg, State) ->
-    %% TODO: Log unknown message
+handle_call({monitor, Socket, Tag}, _From, State) ->
+    {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal}, State)}.
+
+handle_cast(Msg, State) ->
+    lager:warning("unknown message received: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({nodeup, Node, _InfoList}, State) ->
     DistCtrl = erlang:system_info(dist_ctrl),
     case proplists:get_value(Node, DistCtrl) of
         undefined ->
-            %% TODO: Make lager
-            io:format("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
+            lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
             {noreply, add_dist_conn(Port, Node, State)}
@@ -186,9 +182,9 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
                                             {clear, Socket}),
                           Conn#conn{type = error}
                   end;
-             (_Socket, Conn) -> % 
+             (_Socket, Conn) ->
                   Conn
-          end,    
+          end,
     {noreply, State#state{conns = gb_trees:map(Fun, Conns)}};
 handle_info({clear, Socket}, State = #state{conns = Conns}) ->
     {noreply, State#state{conns = gb_trees:delete(Socket, Conns)}}.
@@ -226,7 +222,7 @@ update_hist(Readings, Limit, Histories) ->
 prepend_trunc(Val, List, Limit) ->
     lists:sublist([Val | List], Limit).
 
-conn_status(#conn{app = App, tag = Tag, type = Type,
+conn_status(#conn{tag = Tag, type = Type,
                   ts_hist = TsHist, hist = Histories}, StatusFuns) ->
     Fun = fun({Stat, Hist}, Acc) ->
                          case dict:find(Stat, StatusFuns) of
@@ -239,7 +235,7 @@ conn_status(#conn{app = App, tag = Tag, type = Type,
                          end
                       end, 
     Stats = lists:sort(lists:foldl(Fun, [], Histories)),
-    [{app, App}, {tag, Tag}, {type, Type} | Stats].
+    [{tag, Tag}, {type, Type} | Stats].
 
 schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),

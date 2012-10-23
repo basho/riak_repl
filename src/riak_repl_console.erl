@@ -101,8 +101,7 @@ status2(Verbose) ->
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
-    SocketStats = riak_core_tcp_mon:status(),
-    All = Config++Stats1++LeaderStats++ClientStats++ServerStats++SocketStats,
+    All = Config++Stats1++LeaderStats++ClientStats++ServerStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -385,12 +384,14 @@ client_stats_rpc() ->
 
 server_stats() ->
     RT2 = [rt2_source_stats(P) || {_R,P} <- riak_repl2_rtsource_conn_sup:enabled()],
+
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
             [{server_stats, RT2}];
         _ ->
-            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])++RT2}]
+            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
+                                     [])++RT2}]
     end.
 
 server_stats_rpc() ->
