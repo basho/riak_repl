@@ -8,6 +8,8 @@
 %%
 
 -behaviour(gen_server).
+-include("riak_repl.hrl").
+
 %% API
 -export([start_link/1,
          stop/1,
@@ -130,10 +132,11 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
                       {queue_length, QL},     % pending + unacknowledged for this conn
                       {queue_byte_size, QBS}] % approximation, this it total q size
              end,
-    Status = 
+    Status =
         [{node, node()},
          {site, Remote},
-         {strategy, realtime}] ++
+         {strategy, realtime},
+         {socket_stats, riak_repl_util:source_socket_stats()}],
         QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
@@ -144,6 +147,9 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
     case Transport:send(Socket, <<>>) of
         ok ->
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
+            SocketTag = riak_repl_util:generate_socket_tag("rt_source", Socket),
+            lager:info("Keeping stats for " ++ SocketTag),
+            riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source, SocketTag}),
             {reply, ok, State#state{transport = Transport, 
                                     socket = Socket,
                                     address = EndPoint,

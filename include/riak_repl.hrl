@@ -18,6 +18,8 @@
 -define(KEEPALIVE_TIME, 60000).
 -define(PEERINFO_TIMEOUT, 60000).
 -define(ELECTION_TIMEOUT, 60000).
+-define(TCP_MON_RT_APP, repl_rt).
+-define(TCP_MON_FULLSYNC_APP, repl_fullsync).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
