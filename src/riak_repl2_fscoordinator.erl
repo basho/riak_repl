@@ -8,8 +8,15 @@
     leader_node :: 'undefined' | node(),
     leader_pid :: 'undefined' | node(),
     other_cluster,
+    socket,
+    transport,
+    largest_n,
+    owners = [],
     sources = [],
-    connection_ref
+    connection_ref,
+    waiting_partitions = [],
+    delayed_partitions = [],
+    in_progress_partitions = []
 }).
 
 %% ------------------------------------------------------------------
@@ -48,7 +55,7 @@ start_link(Cluster) ->
 
 connected(Socket, Transport, Endpoint, Proto, Pid) ->
     Transport:controlling_process(Socket, Pid),
-    gen_server:call(Pid, {connected, Socket, Transport, Endpoint, Proto}).
+    gen_server:cast(Pid, {connected, Socket, Transport, Endpoint, Proto}).
 
 connect_failed(_ClientProto, Reason, SourcePid) ->
     gen_server:cast(SourcePid, {connect_failed, self(), Reason}).
@@ -74,12 +81,18 @@ init(Cluster) ->
             {stop, Error}
     end.
 
-handle_call({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
+handle_call(_Request, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
     #state{other_cluster = Remote} = State,
     Ring = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
-    Partitions = sort_partitions(Ring),
-    
+    [P1 | _] = Partitions = sort_partitions(Ring),
+    Owners = riak_core_ring:all_owners(Ring),
+    State2 = State#state{ owners = Owners, waiting_partitions = Partitions,
+        largest_n = N, socket = Socket, transport = Transport},
+    riak_repl_tcp_server:send(Transport, Socket, {whereis, P1}),
     % TODO kick off the replication
     % for each P in partition, 
     %   ask local pnode if therea new worker can be started.
@@ -94,29 +107,17 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
     % it lives on, tell it to connect to remote, and start syncing
     % link to the fssources, so they when this does,
     % and so this can handle exits fo them.
-    Owners = riak_core_ring:all_owners(Ring),
-    FsSourcePids = start_fssources(Partitions, State#state.other_cluster, Ring),
-    {reply, ok, State};
-    
-handle_call(_Request, _From, State) ->
-    {reply, ok, State}.
-
-handle_cast(start, State) ->
-    #state{other_cluster = Remote} = State,
-    Ring = riak_core_ring_manager:get_my_ring(),
-    N = largest_n(Ring),
-    Partitions = sort_partitions(Ring),
-    % TODO kick off the replication
-    % for each P in partitions, , reach out to the physical node
-    % it lives on, tell it to connect to remote, and start syncing
-    % link to the fssources, so they when this does,
-    % and so this can handle exits fo them.
-    Owners = riak_core_ring:all_owners(Ring),
-    FsSourcePids = start_fssources(Partitions, State#state.other_cluster, Ring),
-    {noreply, State};
+    {noreply, State2}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+handle_info({Proto, Socket, Data}, #state{socket = Socket} = State) ->
+    #state{transport = Transport} = State,
+    Transport:setopts(Socket, [{active, once}]),
+    Data1 = binary_to_term(Data),
+    State2 = handle_socket_msg(Data1, State),
+    {noreply, State2};
 
 %handle_info({'EXIT', Pid, Cause}, State) ->
     % TODO: handle when a partition fs exploderizes
@@ -139,37 +140,33 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-start_fssources(Partitions, Cluster, Ring) ->
-    Owners = riak_core_ring:all_owners(Ring),
-    start_fssources(Partitions, Cluster, Owners, [], []).
+handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{waiting_partitions = [Partition | Tail]} = State) ->
+    State2 = start_fssource(Partition, Node, Ip, Port, State#state{waiting_partitions = Tail}),
+    case Tail of
+        [] ->
+            State2;
+        [P1 | _] ->
+            #state{socket = Socket, transport = Transport} = State2,
+            riak_repl_tcp_server:send(Transport, Socket, {whereis, P1}),
+            State2
+    end.
 
-start_fssources([], _Cluster, Owners, InProgress, Delayed) ->
-    {ordsets:from_list(InProgress), ordsets:from_list(Delayed)};
-
-start_fssources([Partition | Tail], Cluster, Owners, InProgress, Delayed) ->
-    Node = proplists:get_value(Partition, Owners),
-    {InProg1, Delayed1} = case start_fssource(Node, Cluster, Partition) of
-        {ok, Pid} ->
-            link(Pid),
-            erlang:put(Pid, Partition),
-            {[Partition| InProgress], Delayed};
-        {error, max_syncs} ->
-            {InProgress, [Partition | Delayed]};
-        Else ->
-            lager:warning("Could not start partion full sync:  ~p", [Else]),
-            {InProgress, [Partition | Delayed]}
-    end,
-    start_fssources(Tail, Cluster, Owners, InProg1, Delayed1).
-
-start_fssource(Node, Cluster, Partition) ->
-    Counts = supervisor:count_children({riak_repl2_fssource_sup, Node}),
+start_fssource(Partition, RemoteNode, Ip, Port, State) ->
+    #state{owners = Owners, other_cluster = Cluster} = State,
+    LocalNode = proplists:get_value(Partition, Owners),
+    Counts = supervisor:count_children({riak_repl2_fssource_sup, LocalNode}),
     Active = proplists:get_value(active, Counts),
-    Max = app_helper:get_env(riak_repl, max_fssource, 5),
+    Max = app_healper:get_env(riak_repl, max_fssource, 5),
     if
         Active < Max ->
-            supervisor:start_child({riak_repl2_fssource_sup, Node}, [Cluster, Partition]);
+            {ok, Pid} = supervisor:start_child({riak_repl2_fssource_sup, LocalNode},
+                [Cluster, Partition, RemoteNode, Ip, Port]),
+            link(Pid),
+            erlang:put(Pid, Partition),
+            State;
         true ->
-            {error, max_syncs}
+            Delayed = State#state.delayed_partitions ++ [Partition],
+            State#state{delayed_partitions = Delayed}
     end.
 
 largest_n(Ring) ->
