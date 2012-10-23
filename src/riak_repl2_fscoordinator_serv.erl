@@ -93,7 +93,16 @@ code_change(_OldVsn, State, _Extra) ->
 
 handle_protocol_msg({whereis, Partition}, State) ->
     #state{transport = Transport, socket = Socket} = State,
-    %% TODO determine node location
-    Outbound = {location, Partition, {undefined, undefined}},
+    Ring = riak_core_ring_manager:get_my_ring(),
+    Owners = riak_core_ring:all_owners(Ring),
+    Node = proplists:get_value(Partition, Owners),
+    {IP, Port} = case node() of
+        Node ->
+            {ok, ServiceAddr} = application:get_env(riak_core, cluster_mgr),            ServiceAddr;
+        _ ->
+            gen_server:call({?MODULE, Node}, get_service_addr)
+    end,
+    % TODO And if the IP is a hostname, like "localhost"?
+    Outbound = {location, Partition, {Node, IP, Port}},
     riak_repl_tcp_server:send(Transport, Socket, Outbound),
     State.
