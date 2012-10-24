@@ -12,11 +12,9 @@
     transport,
     largest_n,
     owners = [],
-    sources = [],
     connection_ref,
-    waiting_partitions = queue:new(),
-    delayed_partitions = queue:new(),
-    in_progress_partitions = []
+    partition_queue = queue:new(),
+    whereis_waiting = []
 }).
 
 %% ------------------------------------------------------------------
@@ -84,16 +82,22 @@ init(Cluster) ->
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
-    #state{other_cluster = Remote} = State,
+handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     Ring = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
-    [P1 | _] = Partitions = sort_partitions(Ring),
-    Owners = riak_core_ring:all_owners(Ring),
-    {PeerIP, PeerPort} = inet:peername(Socket),
-    State2 = State#state{ owners = Owners, waiting_partitions = Partitions,
-        largest_n = N, socket = Socket, transport = Transport},
-    riak_repl_tcp_server:send(Transport, Socket, {whereis, P1, PeerIP, PeerPort}),
+    Partitions = sort_partitions(Ring),
+    FirstN = length(Partitions) div N,
+    
+    State2 = State#state{
+        socket = Socket,
+        transport = Transport,
+        largest_n = N,
+        owners = riak_core_ring:all_owners(Ring),
+        partition_queue = queue:from_list(Partitions)
+    },
+    State3 = send_whereis_reqs(State2, FirstN),
+    {noreply, State3};
+
     % TODO kick off the replication
     % for each P in partition, 
     %   ask local pnode if therea new worker can be started.
@@ -108,42 +112,47 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
     % it lives on, tell it to connect to remote, and start syncing
     % link to the fssources, so they when this does,
     % and so this can handle exits fo them.
-    {noreply, State2}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'EXIT', Pid, Cause}, State) ->
+handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdown ->
     Partition = erlang:erase(Pid),
-    State2 = case {Cause, Partition} of
-        {normal, _} ->
-            State;
-        {_, undefined} ->
-            State;
-        {_, _} ->
-            Delayed = State#state.delayed_partitions,
-            State#state{delayed_partitions = queue:in_r(Delayed, Partition)}
-    end,
-    {Next, Q} = queue:out(State2#state.delayed_partitions),
-    case {Next, State2#state.waiting_partitions} of
-        {empty, []} ->
-            % TODO not sure if this is the right thing to do,
-            % but if all partitions successfully synced, it is done.
-            {stop, normal, State2#state{delayed_partitions = Q}};
-        {empty, _} ->
-            {noreply, State2#state{delayed_partitions = Q}};
-        {{value, P}, []} ->
-            % there are no outstanding 'whereis' requests
-            State3 = State2#state{waiting_partitions = [P]},
-            #state{socket = Socket, transport = Transport} = State3,
-            riak_repl_tcp_server:send(Transport, Socket, {whereis, P}),
-            {noreply, State3};
-        {{value, P}, _} ->
-            % there are outstnading 'whereis' requests
-            {noreply, State2}
+    case Partition of
+        undefined ->
+            {noreply, State};
+        _ ->
+            % are we done?
+            PDict =  erlang:get() == [],
+            QEmpty = queue:is_empty(State#state.partition_queue),
+            Waiting = State#state.whereis_waiting,
+            case {PDict, QEmpty, Waiting} of
+                {[], true, []} ->
+                    % nothing outstanding, so we can exit.
+                    {stop, normal, State};
+                _ ->
+                    % there's something waiting for a response.
+                    State2 = send_next_whereis_req(State),
+                    {noreply, State2}
+            end
     end;
 
-handle_info({Proto, Socket, Data}, #state{socket = Socket} = State) ->
+handle_info({'EXIT', Pid, _Cause}, State) ->
+    lager:warning("fssource ~p exited abnormally", [Pid]),
+    Partition = erlang:erase(Pid),
+    case Partition of
+        undefined ->
+            {noreply, State};
+        _ ->
+            % TODO putting in the back of the queue a good idea?
+            #state{partition_queue = PQueue} = State,
+            PQueue2 = queue:in(Partition, PQueue),
+            State2 = State#state{partition_queue = PQueue2},
+            State3 = send_next_whereis_req(State2),
+            {noreply, State3}
+    end;
+
+handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
     #state{transport = Transport} = State,
     Transport:setopts(Socket, [{active, once}]),
     Data1 = binary_to_term(Data),
@@ -171,34 +180,55 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{waiting_partitions = [Partition | Tail]} = State) ->
-    State2 = start_fssource(Partition, Node, Ip, Port, State#state{waiting_partitions = Tail}),
-    case Tail of
-        [] ->
-            State2;
-        [P1 | _] ->
-            #state{socket = Socket, transport = Transport} = State2,
-            riak_repl_tcp_server:send(Transport, Socket, {whereis, P1}),
-            State2
+handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
+    case proplists:get_value(Partition, Waiting) of
+        undefined ->
+            State;
+        N ->
+            Waiting2 = proplists:delete(Partition, Waiting),
+            State2 = State#state{whereis_waiting = Waiting2},
+            Partition2 = {Partition, N},
+            State3 = start_fssource(Partition2, Ip, Port, State2),
+            send_next_whereis_req(State3)
     end.
 
-start_fssource(Partition, RemoteNode, Ip, Port, State) ->
-    #state{owners = Owners, other_cluster = Cluster} = State,
-    LocalNode = proplists:get_value(Partition, Owners),
-    Counts = supervisor:count_children({riak_repl2_fssource_sup, LocalNode}),
-    Active = proplists:get_value(active, Counts),
-    Max = app_healper:get_env(riak_repl, max_fssource, 5),
-    if
-        Active < Max ->
-            {ok, Pid} = supervisor:start_child({riak_repl2_fssource_sup, LocalNode},
-                [Cluster, Partition, RemoteNode, Ip, Port]),
-            link(Pid),
-            erlang:put(Pid, Partition),
-            State;
-        true ->
-            Delayed = State#state.delayed_partitions ++ [Partition],
-            State#state{delayed_partitions = Delayed}
+send_whereis_reqs(State, 0) ->
+    State;
+send_whereis_reqs(State, N) ->
+    State2 = send_next_whereis_req(State),
+    send_whereis_reqs(State2, N - 1).
+
+send_next_whereis_req(State) ->
+    #state{transport = Transport, socket = Socket, partition_queue = PQueue, whereis_waiting = Waiting} = State,
+    case queue:out(PQueue) of
+        {empty, Q} ->
+            State#state{partition_queue = Q};
+        {{value, P}, Q} ->
+            case node_available(P, State) of
+                false ->
+                    State;
+                true ->
+                    Waiting2 = [P | Waiting],
+                    {PeerIP, PeerPort} = inet:peername(Socket),
+                    riak_repl_tcp_server:send(Transport, Socket, {whereis, element(1, P), PeerIP, PeerPort}),
+                    State#state{partition_queue = Q, whereis_waiting = Waiting2}
+            end
     end.
+
+node_available({Partition,_}, State) ->
+    #state{owners = Owners} = State,
+    LocalNode = proplists:get_value(Partition, Owners),
+    Max = app_helper:get_env(riak_repl, max_fssource, 5),
+    RunningList = riak_repl2_fssource_sup:enabled(LocalNode),
+    length(RunningList) < Max.
+
+start_fssource({Partition,_}, Ip, Port, State) ->
+    #state{owners = Owners} = State,
+    LocalNode = proplists:get_value(Partition, Owners),
+    {ok, Pid} = riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}),
+    link(Pid),
+    erlang:put(Pid, Partition),
+    State.
 
 largest_n(Ring) ->
     Defaults = app_helper:get_env(riak_core, default_bucket_props, []),
@@ -227,15 +257,3 @@ sort_partitions(In, N, Acc) ->
     Split = min(length(In), N) - 1,
     {A, [P|B]} = lists:split(Split, In),
     sort_partitions(B++A, N, [P|Acc]).
-
-lists_pos(Needle, Haystack) ->
-    lists_pos(Needle, Haystack, 1).
-
-lists_pos(_Needle, [], _N) ->
-    not_found;
-
-lists_pos(Needle, [Needle | _Haystack], N) ->
-    N;
-
-lists_pos(Needle, [_NotNeedle | Haystack], N) ->
-    lists_pos(Needle, Haystack, N + 1).
