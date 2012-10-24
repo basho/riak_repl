@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/1, connected/5, connect_failed/3, start_fullsync/1,
+-export([start_link/2, connected/6, connect_failed/3, start_fullsync/1,
          stop_fullsync/1, legacy_status/2]).
 
 %% gen_server callbacks
@@ -12,20 +12,22 @@
 -record(state, {
         transport,
         socket,
+        ip,
+        partition,
         cluster,
         connection_ref,
         fullsync_worker,
         work_dir
     }).
 
-start_link(Cluster) ->
-    gen_server:start_link(?MODULE, [Cluster], []).
+start_link(Partition, IP) ->
+    gen_server:start_link(?MODULE, [Partition, IP], []).
 
 %% connection manager callbacks
-connected(Socket, Transport, Endpoint, Proto, Pid) ->
+connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
     Transport:controlling_process(Socket, Pid),
     gen_server:call(Pid,
-        {connected, Socket, Transport, Endpoint, Proto}).
+        {connected, Socket, Transport, Endpoint, Proto, Props}).
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
     gen_server:cast(RtSourcePid, {connect_failed, self(), Reason}).
@@ -41,7 +43,7 @@ legacy_status(Pid, Timeout) ->
 
 %% gen server
 
-init([Cluster]) ->
+init([Partition, IP]) ->
     TcpOptions = [{keepalive, true},
                   {nodelay, true},
                   {packet, 4},
@@ -49,32 +51,29 @@ init([Cluster]) ->
     ClientSpec = {{fullsync,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
 
     %% TODO: check for bad remote name
-    lager:info("connecting to remote ~p", [Cluster]),
-    case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
+    lager:info("connecting to remote ~p", [IP]),
+    case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
             lager:info("connection ref ~p", [Ref]),
-            {ok, #state{cluster = Cluster, connection_ref = Ref}};
+            {ok, #state{ip = IP, connection_ref = Ref, partition=Partition}};
         {error, Reason}->
             lager:warning("Error connecting to remote"),
             {stop, Reason}
     end.
 
-handle_call({connected, Socket, Transport, _Endpoint, _Proto}, _From,
-        State=#state{cluster=Cluster}) ->
-    lager:info("fullsync connection to ~p",[Cluster]),
+handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
+        State=#state{ip=IP, partition=Partition}) ->
+    Cluster = proplists:get_value(clustername, Props),
+    lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
     Transport:setopts(Socket, [{active, once}]),
     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
     {ok, Client} = riak:local_client(),
     %% strategy is hardcoded
     {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
         Transport, Socket, WorkDir, Client),
-    case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
-        true ->
-            riak_repl_keylist_server:start_fullsync(FullsyncWorker);
-        _ ->
-            ok
-    end,
+    riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
     {reply, ok, State#state{transport=Transport, socket=Socket,
+            cluster=Cluster,
             fullsync_worker=FullsyncWorker, work_dir=WorkDir}};
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
     riak_repl_keylist_server:start_fullsync(FSW),
