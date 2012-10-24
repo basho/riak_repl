@@ -532,7 +532,7 @@ handle_sync_event(_Event,_F,StateName,State) ->
 handle_info(start_fullsync, wait_for_partition, State) ->
     gen_fsm:send_event(self(), start_fullsync),
     {next_state, wait_for_partition, State};
-handle_info(start_fullsync, {wait_for_partition, Partitions}, State) ->
+handle_info({start_fullsync, Partitions}, wait_for_partition, State) ->
     gen_fsm:send_event(self(), {start_fullsync, Partitions}),
     {next_state, wait_for_partition, State};
 handle_info(_I, StateName, State) ->
