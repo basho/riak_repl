@@ -30,7 +30,8 @@ fixup(_Bucket, BucketProps) ->
     case proplists:get_value(repl, BucketProps) of
         Val when (Val==true orelse Val==realtime orelse Val==both),
                  RTEnabled == true  ->
-            UpdPostcommit = CleanPostcommit ++ [?REPL_HOOK],
+            lager:debug("Hooks for repl modes = ~p", [riak_repl_util:get_hooks_for_modes()]),
+            UpdPostcommit = CleanPostcommit ++ riak_repl_util:get_hooks_for_modes(),
 
             {ok, lists:keystore(postcommit, 1, BucketProps, 
                     {postcommit, UpdPostcommit})};
@@ -51,7 +52,6 @@ strip_postcommit(BucketProps) ->
         {struct, _}=X ->
             CurrentPostcommit=[X]
     end,
-    
     %% Add repl hook - make sure there are not duplicate entries
-    CurrentPostcommit -- [?REPL_HOOK].
+    CurrentPostcommit -- riak_repl_util:get_hooks_for_modes().
 

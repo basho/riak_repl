@@ -29,7 +29,9 @@
          schedule_fullsync/0,
          schedule_fullsync/1,
          elapsed_secs/1,
-         shuffle_partitions/2
+         shuffle_partitions/2,
+         get_peer_repl_nodes/0,
+         get_hooks_for_modes/0
      ]).
 
 make_peer_info() ->
@@ -578,4 +580,17 @@ parse_vsn(Str) ->
                 I
             end || T <- Toks],
     list_to_tuple(Vsns).
+
+%% get other riak_apps across the cluster
+get_peer_repl_nodes() ->
+     [Node || Node <- riak_core_node_watcher:nodes(riak_repl),
+            Node =/= node()].
+
+%% get bucket hooks for current repl mode
+%% This allows V1.2 and BNW to coexist.
+get_hooks_for_modes() ->
+    Modes = riak_repl_console:get_modes(),
+    [ proplists:get_value(K,?REPL_MODES)
+     || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
+
 
