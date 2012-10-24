@@ -19,6 +19,7 @@
 -define(ELECTION_TIMEOUT, 60000).
 -define(TCP_MON_RT_APP, repl_rt).
 -define(TCP_MON_FULLSYNC_APP, repl_fullsync).
+-define(DEFAULT_REPL_MODE, mode_repl12).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
@@ -67,6 +68,14 @@
           nat_addr :: repl_addr()     %% ip/port that nat bind/listens to
          }).
 
--define(REPL_HOOK, {struct, 
+-define(REPL_HOOK_BNW, {struct,
                     [{<<"mod">>, <<"riak_repl2_rt">>},
                      {<<"fun">>, <<"postcommit">>}]}).
+
+-define(REPL_HOOK12, {struct,
+                    [{<<"mod">>, <<"riak_repl_leader">>},
+                     {<<"fun">>, <<"postcommit">>}]}).
+
+-define(REPL_MODES, [{mode_repl12,?REPL_HOOK12}, {mode_repl13,?REPL_HOOK_BNW}]).
+
+

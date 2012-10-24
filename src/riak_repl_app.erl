@@ -3,7 +3,7 @@
 -module(riak_repl_app).
 -author('Andy Gross <andy@basho.com>').
 -behaviour(application).
--export([start/2,stop/1]).
+-export([start/2,prep_stop/1,stop/1]).
 -export([get_matching_address/2, determine_netmask/2, mask_address/2]).
 
 -include("riak_core_connection.hrl").
@@ -64,7 +64,7 @@ start(_Type, _StartArgs) ->
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
             name_this_cluster(),
-
+            riak_core_node_watcher:service_up(riak_repl, Pid),
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
             %% Add routes to webmachine
@@ -86,7 +86,9 @@ start(_Type, _StartArgs) ->
 
 %% @spec stop(State :: term()) -> ok
 %% @doc The application:stop callback for riak_repl.
-stop(_State) -> ok.
+stop(_State) -> 
+    lager:info("Stopped application riak_repl"),
+    ok.
 
 ensure_dirs() ->
     {ok, DataRoot} = application:get_env(riak_repl, data_root),
@@ -325,3 +327,36 @@ register_cluster_name_locator() ->
 get_ring() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_repl_ring:ensure_config(Ring).
+
+prep_stop(_State) ->
+    %% TODO: this should only run with BNW
+
+    try %% wrap with a try/catch - application carries on regardless,
+        %% no error message or logging about the failure otherwise.
+
+        %% the repl bucket hook will check to see if the queue is running and deliver to
+        %% another node if it's shutting down
+        lager:info("Redirecting realtime replication traffic"),
+        riak_repl2_rtq:shutdown(),
+
+        lager:info("Stopping application riak_repl - marked service down.\n", []),
+        %riak_core_ring_manager:force_update(),
+        %% mark the service down so other nodes don't try to migrate to this
+        %% one while it's going down
+        riak_core_node_watcher:service_down(riak_repl),
+
+
+        case riak_repl_migration:start_link() of
+            {ok, _Pid} ->
+                lager:info("Started migration server"),
+                riak_repl_migration:migrate_queue();
+            {error, _} -> lager:error("Can't start replication migration server")
+        end
+       catch
+        Type:Reason ->
+            lager:error("Stopping application riak_api - ~p:~p.\n", [Type, Reason])
+    end,
+    stopping.
+
+
+

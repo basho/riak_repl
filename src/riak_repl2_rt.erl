@@ -102,7 +102,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             %% will bring up an rtsource process that will re-register
             [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
             [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
-          
+
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
             [begin
@@ -112,7 +112,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
 
             %% Unregister disabled sources, freeing up the queue
             [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
-            
+
             [{enabled, ToEnable},
              {started, ToStart},
              {stopped, ToStop},
@@ -137,7 +137,19 @@ get_sink_pids() ->
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
-    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
+    Node = case riak_repl2_rtq:is_running() of
+        true -> node();
+        false ->
+            case riak_repl_util:get_peer_repl_nodes() of
+                [] ->
+                    lager:error("No peer repl nodes to send realtime data to"),
+                    %% TODO: what should we do in this scenario?
+                    undefined;
+                [Peer | _Tl] -> 
+                    Peer
+            end
+    end,
+    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(Node, undefined))++[RObj] of
         Objects when is_list(Objects) ->
             BinObjs = term_to_binary(Objects),
             %% TODO, consider sending to another machine on fail
@@ -149,7 +161,7 @@ postcommit(RObj) ->
 
 %% gen_server callbacks
 init([]) ->
-    {ok, #state{}}.
+     {ok, #state{}}.
 
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
