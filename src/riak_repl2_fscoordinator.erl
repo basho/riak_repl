@@ -14,7 +14,7 @@
     owners = [],
     sources = [],
     connection_ref,
-    waiting_partitions = queeu:new(),
+    waiting_partitions = queue:new(),
     delayed_partitions = queue:new(),
     in_progress_partitions = []
 }).
@@ -122,9 +122,9 @@ handle_info({'EXIT', Pid, Cause}, State) ->
             State;
         {_, _} ->
             Delayed = State#state.delayed_partitions,
-            State#state{delayed_partitions = queue:in_r(Delayed, Partitions)}
+            State#state{delayed_partitions = queue:in_r(Delayed, Partition)}
     end,
-    {Next, Q} = queue:out(State2State.delayed_partitions),
+    {Next, Q} = queue:out(State2#state.delayed_partitions),
     case {Next, State2#state.waiting_partitions} of
         {empty, []} ->
             % TODO not sure if this is the right thing to do,
