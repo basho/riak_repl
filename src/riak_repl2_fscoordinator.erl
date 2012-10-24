@@ -14,8 +14,8 @@
     owners = [],
     sources = [],
     connection_ref,
-    waiting_partitions = [],
-    delayed_partitions = [],
+    waiting_partitions = queeu:new(),
+    delayed_partitions = queue:new(),
     in_progress_partitions = []
 }).
 
@@ -112,6 +112,36 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+handle_info({'EXIT', Pid, Cause}, State) ->
+    Partition = erlang:erase(Pid),
+    State2 = case {Cause, Partition} of
+        {normal, _} ->
+            State;
+        {_, undefined} ->
+            State;
+        {_, _} ->
+            Delayed = State#state.delayed_partitions,
+            State#state{delayed_partitions = queue:in_r(Delayed, Partitions)}
+    end,
+    {Next, Q} = queue:out(State2State.delayed_partitions),
+    case {Next, State2#state.waiting_partitions} of
+        {empty, []} ->
+            % TODO not sure if this is the right thing to do,
+            % but if all partitions successfully synced, it is done.
+            {stop, normal, State2#state{delayed_partitions = Q}};
+        {empty, _} ->
+            {noreply, State2#state{delayed_partitions = Q}};
+        {{value, P}, []} ->
+            % there are no outstanding 'whereis' requests
+            State3 = State2#state{waiting_partitions = [P]},
+            #state{socket = Socket, transport = Transport} = State3,
+            riak_repl_tcp_server:send(Transport, Socket, {whereis, P}),
+            {noreply, State3};
+        {{value, P}, _} ->
+            % there are outstnading 'whereis' requests
+            {noreply, State2}
+    end;
 
 handle_info({Proto, Socket, Data}, #state{socket = Socket} = State) ->
     #state{transport = Transport} = State,
