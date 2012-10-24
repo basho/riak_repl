@@ -36,4 +36,4 @@ init([]) ->
 
 make_childspec(Partition, IP) ->
     {Partition, {riak_repl2_fssource, start_link, [Partition, IP]},
-        permanent, ?SHUTDOWN, worker, [riak_repl2_fssource]}.
+        temporary, ?SHUTDOWN, worker, [riak_repl2_fssource]}.
