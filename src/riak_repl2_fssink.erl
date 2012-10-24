@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/3, register_service/0, start_service/4, legacy_status/2]).
+-export([start_link/4, register_service/0, start_service/5, legacy_status/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -16,8 +16,8 @@
         work_dir
     }).
 
-start_link(Socket, Transport, Proto) ->
-    gen_server:start_link(?MODULE, [Socket, Transport, Proto], []).
+start_link(Socket, Transport, Proto, Props) ->
+    gen_server:start_link(?MODULE, [Socket, Transport, Proto, Props], []).
 
 %% Register with service manager
 register_service() ->
@@ -30,8 +30,9 @@ register_service() ->
     riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
 
 %% Callback from service manager
-start_service(Socket, Transport, Proto, _Args) ->
-    {ok, Pid} = riak_repl2_fssink_sup:start_child(Socket, Transport, Proto),
+start_service(Socket, Transport, Proto, _Args, Props) ->
+    {ok, Pid} = riak_repl2_fssink_sup:start_child(Socket, Transport,
+        Proto, Props),
     ok = Transport:controlling_process(Socket, Pid),
     Pid ! init_ack,
     {ok, Pid}.
@@ -41,8 +42,8 @@ legacy_status(Pid, Timeout) ->
 
 %% gen server
 
-init([Socket, Transport, Proto]) ->
-    Cluster = "somecluster",
+init([Socket, Transport, Proto, Props]) ->
+    Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection"),
     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
     %% strategy is hardcoded
