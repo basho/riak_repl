@@ -209,8 +209,11 @@ largest_n(Ring) ->
 
 sort_partitions(Ring) ->
     BigN = largest_n(Ring),
+    RawPartitions = [P || {P, _Node} <- riak_core_ring:all_owners(Ring)],
+    %% tag partitions with their index, for convienience in detecting preflist
+    %% collisions later
+    Partitions = lists:zip(RawPartitions,lists:seq(1,length(RawPartitions))),
     %% pick a random partition in the ring
-    Partitions = [P || {P, _Node} <- riak_core_ring:all_owners(Ring)],
     R = crypto:rand_uniform(0, length(Partitions)),
     %% pretend that the ring starts at offset R
     {A, B} = lists:split(R, Partitions),
@@ -221,11 +224,18 @@ sort_partitions(Ring) ->
 sort_partitions([], _, Acc) ->
     lists:reverse(Acc);
 sort_partitions(In, N, Acc) ->
-    Split = case length(In) >= N of
-        true ->
-            N - 1;
-        false ->
-            length(In) -1
-    end,
+    Split = min(length(In), N) - 1,
     {A, [P|B]} = lists:split(Split, In),
     sort_partitions(B++A, N, [P|Acc]).
+
+lists_pos(Needle, Haystack) ->
+    lists_pos(Needle, Haystack, 1).
+
+lists_pos(_Needle, [], _N) ->
+    not_found;
+
+lists_pos(Needle, [Needle | _Haystack], N) ->
+    N;
+
+lists_pos(Needle, [_NotNeedle | Haystack], N) ->
+    lists_pos(Needle, Haystack, N + 1).
