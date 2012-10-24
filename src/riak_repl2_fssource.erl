@@ -124,7 +124,13 @@ handle_info({Proto, Socket, Data},
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     gen_fsm:send_event(State#state.fullsync_worker, Msg),
-    {noreply, State};
+    case Msg == fullsync_complete of
+        true ->
+            %% stop on fullsync completion
+            {stop, normal, State};
+        _ ->
+            {noreply, State}
+    end;
 handle_info(_Msg, State) ->
     {noreply, State}.
 
