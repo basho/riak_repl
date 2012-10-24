@@ -97,18 +97,29 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-handle_protocol_msg({whereis, Partition}, State) ->
+handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
     #state{transport = Transport, socket = Socket} = State,
     Ring = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
     Node = proplists:get_value(Partition, Owners),
-    {IP, Port} = case node() of
-        Node ->
-            {ok, ServiceAddr} = application:get_env(riak_core, cluster_mgr),            ServiceAddr;
-        _ ->
-            gen_server:call({?MODULE, Node}, get_service_addr)
-    end,
-    % TODO And if the IP is a hostname, like "localhost"?
-    Outbound = {location, Partition, {Node, IP, Port}},
+    {_, Port} = application:get_env(riak_core, cluster_mgr),
+    {ok, IfAddrs} = inet:getifaddrs(),
+    {ok, NormIP} = riak_repl_app:normalize_ip(ConnIP),
+    Subnet = riak_repl_app:determine_subnet(IfAddrs, NormIP),
+    Masked = riak_repl_app:mask_address(NormIP, Subnet),
+    {ok, {ListenIP, _}} = get_matching_address(Node, NormIP, Masked),
+    Outbound = {location, Partition, {Node, ListenIP, Port}},
     riak_repl_tcp_server:send(Transport, Socket, Outbound),
     State.
+
+get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
+    Res = riak_repl_app:get_matching_address(NormIP, Masked),
+    {ok, Res};
+
+get_matching_address(Node, NormIP, Masked) ->
+    case rpc:call(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
+        {badrpc, Err} ->
+            {error, Err};
+        Res ->
+            {ok, Res}
+    end.

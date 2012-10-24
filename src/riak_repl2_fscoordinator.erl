@@ -90,9 +90,10 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, _From, State) ->
     N = largest_n(Ring),
     [P1 | _] = Partitions = sort_partitions(Ring),
     Owners = riak_core_ring:all_owners(Ring),
+    {PeerIP, PeerPort} = inet:peername(Socket),
     State2 = State#state{ owners = Owners, waiting_partitions = Partitions,
         largest_n = N, socket = Socket, transport = Transport},
-    riak_repl_tcp_server:send(Transport, Socket, {whereis, P1}),
+    riak_repl_tcp_server:send(Transport, Socket, {whereis, P1, PeerIP, PeerPort}),
     % TODO kick off the replication
     % for each P in partition, 
     %   ask local pnode if therea new worker can be started.

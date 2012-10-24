@@ -4,7 +4,7 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(application).
 -export([start/2,stop/1]).
--export([get_matching_address/2]).
+-export([get_matching_address/2, determine_netmask/2, mask_address/2]).
 
 -include("riak_core_connection.hrl").
 
@@ -145,6 +145,42 @@ cluster_mgr_member_fun({IP, Port}) ->
                 get_matching_address, [NormIP, AddressMask]),
             Results
     end.
+
+%% @doc Given the result of inet:getifaddrs() and an IP a client has
+%% connected to, attempt to determine the appropriate subnet mask.  If
+%% the IP the client connected to cannot be found, undefined is returned.
+-spec determine_netmask(Ifaddrs :: [{atom(), any()}], SeekIP :: string() | {integer(), integer(), integer(), integer()}) -> 'undefined' | binary().
+determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
+    {ok, NormIP} = riak_repl_util:normalize_ip(SeekIP),
+    determine_netmask(Ifaddrs, NormIP);
+
+determine_netmask([], _NormIP) ->
+    undefined;
+
+determine_netmask([{_If, Attrs} | Tail], NormIP) ->
+    case lists_pos({addr, NormIP}, Attrs) of
+        not_found ->
+            determine_netmask(Tail, NormIP);
+        N ->
+            case lists:nth(N + 1, Attrs) of
+                {netmask, {_, _, _, _}} = NM ->
+                    cidr(list_to_binary(tuple_to_list(NM)),0);
+                _ ->
+                    determine_netmask(Tail, NormIP)
+            end
+    end.
+
+lists_pos(Needle, Haystack) ->
+    lists_pos(Needle, Haystack, 1).
+
+lists_pos(_Needle, [], _N) ->
+    not_found;
+
+lists_pos(Needle, [Needle | _Haystack], N) ->
+    N;
+
+lists_pos(Needle, [_NotNeedle | Haystack], N) ->
+    lists_pos(Needle, Haystack, N + 1).
 
 %% count the number of 1s in netmask to get the CIDR
 %% Maybe there's a better way....?
