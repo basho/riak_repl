@@ -18,6 +18,7 @@
                   'riak_core_cluster_mgr',
                   'riak_core_cluster_mgr_sup',
                   'riak_core_connection_mgr',
+                  'riak_core_connection_mgr_stats',
                   'riak_core_connection',
                   'riak_repl_console',
                   'riak_repl_fsm_common',
