@@ -3,6 +3,8 @@
 -module(riak_repl2_fscoordinator).
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
+-define(DEFAULT_SOURCE_PER_NODE, 5).
+-define(DEFAULT_SOURCE_PER_CLUSTER, 5).
 
 -record(state, {
     leader_node :: 'undefined' | node(),
@@ -222,7 +224,7 @@ send_next_whereis_req(State) ->
             lager:info("fullsync coordinator: fullsync complete"),
             State#state{partition_queue = Q};
         {{value, P}, Q} ->
-            case node_available(P, State) of
+            case below_max_sources(P, State) of
                 false ->
                     State;
                 true ->
@@ -235,10 +237,20 @@ send_next_whereis_req(State) ->
             end
     end.
 
+below_max_sources(Partition, State) ->
+    Max = app_helper:get_env(raik_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
+    PDict = erlang:get(),
+    if
+        length(PDict) < Max ->
+            node_available(Partition, State);
+        true ->
+            false
+    end.
+
 node_available({Partition,_}, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
-    Max = app_helper:get_env(riak_repl, max_fssource, 5),
+    Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
     RunningList = riak_repl2_fssource_sup:enabled(LocalNode),
     length(RunningList) < Max.
 
