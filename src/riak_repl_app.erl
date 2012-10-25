@@ -51,6 +51,8 @@ start(_Type, _StartArgs) ->
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
+            %% Register connection manager stats application with core
+            riak_core:register(riak_conn_mgr_stats, [{stat_mod, riak_core_connection_mgr_stats}]),
             %% register functions for cluster manager to find it's own
             %% nodes' ip addrs
             riak_core_cluster_mgr:register_member_fun(

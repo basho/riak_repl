@@ -286,9 +286,9 @@ handle_cast({conmgr_no_endpoints, _Ref}, State) ->
     {noreply, State};
 
 %% helper process says it failed to reach an address.
-handle_cast({endpoint_failed, Addr, Reason}, State) ->
+handle_cast({endpoint_failed, Addr, Reason, ProtocolId}, State) ->
     %% mark connection as black-listed and start timer for reset
-    {noreply, fail_endpoint(Addr, Reason, State)}.
+    {noreply, fail_endpoint(Addr, Reason, ProtocolId, State)}.
 
 %% it is time to remove Addr from the black-listed addresses
 handle_info({backoff_timer, Addr}, State = #state{endpoints = EPs}) ->
@@ -323,13 +323,21 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                         [From, Reason]),
             exit({linked, From, Reason});
         {value, #req{cur = Cur, ref = Ref}=Req, Pending2} ->
+            {{ProtocolId, _Foo},_Bar} = Req#req.spec,
             case Reason of
-                ok -> % riak_core_connection set up and handlers called
+                ok ->
+                    %% update the stats module
+                    Stat = conn_success,
+                    riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
+                    %% riak_core_connection set up and handlers called
                     {noreply, connect_endpoint(Cur, State#state{pending = Pending2})};
 
                 {ok, cancelled} ->
-                    %% helper process has been cancelled and has exited nicely. nothing to do
-                    %% except toss out the cancelled request from pending.
+                    %% helper process has been cancelled and has exited nicely.
+                    %% update the stats module
+                    Stat = conn_cancelled,
+                    riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
+                    %% toss out the cancelled request from pending.
                     {noreply, State#state{pending = Pending2}};
                 
                 {error, endpoints_exhausted, Ref} ->
@@ -348,7 +356,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                                      [Cur, Reason, Ref])),
                     lager:error("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
                                 [Cur, Reason, Ref]),
-                    State2 = fail_endpoint(Cur, Reason, State),
+                    State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
                     %% the connection helper will retry
                     {noreply, State2}
             end
@@ -469,7 +477,8 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
                     ok;
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
-                    gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason}),
+                    {{ProtocolId, _Foo},_Bar} = Protocol,
+                    gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
                     connection_helper(Ref, Protocol, Strategy, Addrs)
             end;
         _ ->
@@ -495,7 +504,11 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
 %% our book keeping for that endpoint. Black-list it, and
 %% adjust a backoff timer so that we wait a while before
 %% trying this endpoint again.
-fail_endpoint(Addr, Reason, State) ->
+fail_endpoint(Addr, Reason, ProtocolId, State) ->
+    %% update the stats module
+    Stat = {conn_error, Reason},
+    riak_core_connection_mgr_stats:update(Stat, Addr, ProtocolId),
+    %% update the endpoint
     Fun = fun(EP=#ep{backoff_delay = Backoff, failures = Failures}) ->
                   erlang:send_after(Backoff, self(), {backoff_timer, Addr}),
                   EP#ep{failures = orddict:update_counter(Reason, 1, Failures),

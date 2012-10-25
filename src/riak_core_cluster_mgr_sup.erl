@@ -23,6 +23,9 @@ init([]) ->
          %% Service Manager (inbound connections)
          {riak_core_service_mgr, {riak_core_service_mgr, start_link, []},
           permanent, 5000, worker, [riak_core_service_mgr]},
+         %% Connection Manager Stats - don't start it from here. It gets registered
+         %% {riak_core_connection_mgr_stats, {riak_core_connection_mgr_stats, start_link, []},
+          %% permanent, 5000, worker, [riak_core_connection_mgr_stats]},
          %% Connection Manager (outbound connections)
          {riak_core_connection_mgr, {riak_core_connection_mgr, start_link, []},
           permanent, 5000, worker, [riak_core_connection_mgr]},
