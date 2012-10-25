@@ -5,6 +5,9 @@
 -define(SERVER, ?MODULE).
 -define(DEFAULT_SOURCE_PER_NODE, 5).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
+% how long to wait for a reply from remote cluster before moving on to
+% next partition.
+-define(WAITING_TIMEOUT, 5000).
 
 -record(state, {
     leader_node :: 'undefined' | node(),
@@ -160,6 +163,21 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
             {noreply, State3}
     end;
 
+handle_info({Partition, whereis_timeout}, State) ->
+    #state{whereis_waiting = Waiting} = State,
+    case proplists:get_value(Partition, Waiting) of
+        undefined ->
+            % late timeout.
+            {noreply, State};
+        {N, _Tref} ->
+            Waiting2 = proplists:delete(Partition, Waiting),
+            Partition1 = {Partition, N},
+            Q = queue:in(Partition1, State#state.partition_queue),
+            State2 = State#state{whereis_waiting = Waiting2, partition_queue = Q},
+            State3 = send_next_whereis_req(State2),
+            {noreply, State3}
+    end;
+
 handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
     #state{transport = Transport} = State,
     Transport:setopts(Socket, [{active, once}]),
@@ -203,7 +221,8 @@ handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiti
     case proplists:get_value(Partition, Waiting) of
         undefined ->
             State;
-        N ->
+        {N, Tref} ->
+            erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
             Partition2 = {Partition, N},
@@ -228,7 +247,9 @@ send_next_whereis_req(State) ->
                 false ->
                     State;
                 true ->
-                    Waiting2 = [P | Waiting],
+                    {Pval, N} = P,
+                    Tref = erlang:send_after(?WAITING_TIMEOUT, self(), {Pval, whereis_timeout}),
+                    Waiting2 = [{Pval, {N, Tref}} | Waiting],
                     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
                     lager:info("sending whereis request for partition ~p", [P]),
                     Transport:send(Socket,
