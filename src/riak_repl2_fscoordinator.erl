@@ -34,7 +34,7 @@
 %% connection manager Function Exports
 %% ------------------------------------------------------------------
 
--export([connected/5,connect_failed/3]).
+-export([connected/6,connect_failed/3]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -51,7 +51,7 @@ start_link(Cluster) ->
 %% connection manager callbacks
 %% ------------------------------------------------------------------
 
-connected(Socket, Transport, Endpoint, Proto, Pid) ->
+connected(Socket, Transport, Endpoint, Proto, Pid, _Props) ->
     Transport:controlling_process(Socket, Pid),
     gen_server:cast(Pid, {connected, Socket, Transport, Endpoint, Proto}).
 
@@ -80,10 +80,13 @@ init(Cluster) ->
     end.
 
 handle_call(_Request, _From, State) ->
+    lager:info("ignoring ~p", [_Request]),
     {reply, ok, State}.
 
 handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
-    Ring = riak_core_ring_manager:get_my_ring(),
+    lager:info("fullsync coordinator connected to ~p", [State#state.other_cluster]),
+    Transport:setopts(Socket, [{active, once}]),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
     Partitions = sort_partitions(Ring),
     FirstN = length(Partitions) div N,
@@ -114,6 +117,7 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     % and so this can handle exits fo them.
 
 handle_cast(_Msg, State) ->
+    lager:info("ignoring ~p", [_Msg]),
     {noreply, State}.
 
 handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdown ->
@@ -146,7 +150,9 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
         _ ->
             % TODO putting in the back of the queue a good idea?
             #state{partition_queue = PQueue} = State,
-            PQueue2 = queue:in(Partition, PQueue),
+            %% TODO 0 is probably not the right thing to use here, but do the
+            %% best we can for now
+            PQueue2 = queue:in({Partition, 0}, PQueue),
             State2 = State#state{partition_queue = PQueue2},
             State3 = send_next_whereis_req(State2),
             {noreply, State3}
@@ -159,6 +165,16 @@ handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
     State2 = handle_socket_msg(Data1, State),
     {noreply, State2};
 
+handle_info({Closed, Socket}, #state{socket = Socket} = State) when
+    Closed =:= tcp_closed; Closed =:= ssl_closed ->
+    lager:info("Connect closed"),
+    {stop, normal, State};
+
+handle_info({Erred, Socket, Reason}, #state{socket = Socket} = State) when
+    Erred =:= tcp_error; Erred =:= ssl_error ->
+    lager:error("Connection closed unexpectedly"),
+    {stop, normal, State};
+
 %handle_info({'EXIT', Pid, Cause}, State) ->
     % TODO: handle when a partition fs exploderizes
 %    Partition = erlang:erase(Pid),
@@ -168,6 +184,7 @@ handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
 %        {normal, _} ->
 %            start_fssource
 handle_info(_Info, State) ->
+    lager:info("ignoring ~p", [_Info]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -202,6 +219,7 @@ send_next_whereis_req(State) ->
     #state{transport = Transport, socket = Socket, partition_queue = PQueue, whereis_waiting = Waiting} = State,
     case queue:out(PQueue) of
         {empty, Q} ->
+            lager:info("fullsync coordinator: fullsync complete"),
             State#state{partition_queue = Q};
         {{value, P}, Q} ->
             case node_available(P, State) of
@@ -209,8 +227,10 @@ send_next_whereis_req(State) ->
                     State;
                 true ->
                     Waiting2 = [P | Waiting],
-                    {PeerIP, PeerPort} = inet:peername(Socket),
-                    riak_repl_tcp_server:send(Transport, Socket, {whereis, element(1, P), PeerIP, PeerPort}),
+                    {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
+                    lager:info("sending whereis request for partition ~p", [P]),
+                    Transport:send(Socket,
+                        term_to_binary({whereis, element(1, P), PeerIP, PeerPort})),
                     State#state{partition_queue = Q, whereis_waiting = Waiting2}
             end
     end.
@@ -225,6 +245,8 @@ node_available({Partition,_}, State) ->
 start_fssource({Partition,_}, Ip, Port, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
+    lager:info("starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
+            Ip]),
     {ok, Pid} = riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}),
     link(Pid),
     erlang:put(Pid, Partition),
