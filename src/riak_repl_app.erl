@@ -176,7 +176,7 @@ determine_netmask([{_If, Attrs} | Tail], NormIP) ->
             determine_netmask(Tail, NormIP);
         N ->
             case lists:nth(N + 1, Attrs) of
-                {netmask, {_, _, _, _}} = NM ->
+                {netmask, {_, _, _, _} = NM} ->
                     cidr(list_to_binary(tuple_to_list(NM)),0);
                 _ ->
                     determine_netmask(Tail, NormIP)

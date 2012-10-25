@@ -3,13 +3,13 @@
 
 -export([init/1]).
 
--export([start_link/0, start_child/3]).
+-export([start_link/0, start_child/4]).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-start_child(Socket, Transport, Proto) ->
-    supervisor:start_child(?MODULE, [Socket, Transport, Proto]).
+start_child(Socket, Transport, Proto, Props) ->
+    supervisor:start_child(?MODULE, [Socket, Transport, Proto, Props]).
 
 init(_) ->
     ChildSpec = {id, {riak_repl2_fscoordinator_serv, start_link, []},

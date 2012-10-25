@@ -259,37 +259,37 @@ fullsync([Cmd, Remote]) ->
         "enable" ->
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_enable_trans/2, Remote),
-            riak_repl2_fssource_sup:enable(Leader, Remote);
+            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote);
         "disable" ->
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_disable_trans/2, Remote),
-            riak_repl2_fssource_sup:disable(Leader, Remote);
+            riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote);
         "start" ->
-            Fullsyncs = riak_repl2_fssource_sup:enabled(Leader),
+            Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
                     io:format("No fullsync process for cluster ~p", [Remote]);
                 Pid ->
-                    riak_repl2_fssource:start_fullsync(Pid)
+                    riak_repl2_fscoordinator:start_fullsync(Pid)
             end;
         "stop" ->
-            Fullsyncs = riak_repl2_fssource_sup:enabled(Leader),
+            Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
                     io:format("No fullsync process for cluster ~p", [Remote]);
                 Pid ->
-                    riak_repl2_fssource:stop_fullsync(Pid)
+                    riak_repl2_fscoordinator:stop_fullsync(Pid)
             end
     end;
 fullsync([Cmd]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
-    Fullsyncs = riak_repl2_fssource_sup:enabled(Leader),
+    Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
     case Cmd of
         "start" ->
-            [riak_repl2_fssource:start_fullsync(Pid) || {_, Pid} <-
+            [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs];
         "stop" ->
-            [riak_repl2_fssource:stop_fullsync(Pid) || {_, Pid} <-
+            [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs]
     end.
 

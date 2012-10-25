@@ -15,13 +15,13 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/3]).
+-export([start_link/4]).
 
 %% ------------------------------------------------------------------
 %% service manager callback Function Exports
 %% ------------------------------------------------------------------
 
--export([register_service/0, start_service/4]).
+-export([register_service/0, start_service/5]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -34,8 +34,9 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link(Socket, Transport, Proto) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, {Socket, Transport, Proto}, []).
+start_link(Socket, Transport, Proto, Props) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, {Socket, Transport,
+            Proto, Props}, []).
 
 %% ------------------------------------------------------------------
 %% service manager Function Definitions
@@ -48,8 +49,9 @@ register_service() ->
     HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
     riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
 
-start_service(Socket, Transport, Proto, _Args) ->
-    {ok, Pid} = riak_repl2_fscoordinator_serv_sup:start_child(Socket, Transport, Proto),
+start_service(Socket, Transport, Proto, _Args, Props) ->
+    {ok, Pid} = riak_repl2_fscoordinator_serv_sup:start_child(Socket,
+        Transport, Proto, Props),
     ok = Transport:controlling_process(Socket, Pid),
     Pid ! init_ack,
     {ok, Pid}.
@@ -58,7 +60,7 @@ start_service(Socket, Transport, Proto, _Args) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init({Socket, Transport, Proto}) ->
+init({Socket, Transport, Proto, _Props}) ->
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
 
 handle_call(_Request, _From, State) ->
@@ -84,6 +86,10 @@ handle_info({Proto, Socket, Data}, #state{socket = Socket,
     State2 = handle_protocol_msg(Msg, State),
     {noreply, State2};
 
+handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
+    Transport:setopts(Socket, [{active, once}]),
+    {noreply, State};
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -99,17 +105,17 @@ code_change(_OldVsn, State, _Extra) ->
 
 handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
     #state{transport = Transport, socket = Socket} = State,
-    Ring = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
     Node = proplists:get_value(Partition, Owners),
-    {_, Port} = application:get_env(riak_core, cluster_mgr),
+    {ok, {_IP, Port}} = application:get_env(riak_core, cluster_mgr),
     {ok, IfAddrs} = inet:getifaddrs(),
-    {ok, NormIP} = riak_repl_app:normalize_ip(ConnIP),
-    Subnet = riak_repl_app:determine_subnet(IfAddrs, NormIP),
+    {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
+    Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
     Masked = riak_repl_app:mask_address(NormIP, Subnet),
     {ok, {ListenIP, _}} = get_matching_address(Node, NormIP, Masked),
     Outbound = {location, Partition, {Node, ListenIP, Port}},
-    riak_repl_tcp_server:send(Transport, Socket, Outbound),
+    Transport:send(Socket, term_to_binary(Outbound)),
     State.
 
 get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
