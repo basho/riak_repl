@@ -26,7 +26,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/1]).
+-export([start_link/1, start_fullsync/1, stop_fullsync/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -51,6 +51,12 @@
 
 start_link(Cluster) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, Cluster, []).
+
+start_fullsync(Pid) ->
+    gen_server:cast(Pid, start_fullsync).
+
+stop_fullsync(Pid) ->
+    gen_server:cast(Pid, stop_fullsync).
 
 %% ------------------------------------------------------------------
 %% connection manager callbacks
@@ -91,14 +97,22 @@ handle_call(_Request, _From, State) ->
 handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     lager:info("fullsync coordinator connected to ~p", [State#state.other_cluster]),
     Transport:setopts(Socket, [{active, once}]),
+    State2 = State#state{ socket = Socket, transport = Transport},
+    case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
+        true ->
+            start_fullsync(self());
+        false ->
+            ok
+    end,
+    {noreply, State2};
+
+handle_cast(start_fullsync, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
     Partitions = sort_partitions(Ring),
     FirstN = length(Partitions) div N,
     
     State2 = State#state{
-        socket = Socket,
-        transport = Transport,
         largest_n = N,
         owners = riak_core_ring:all_owners(Ring),
         partition_queue = queue:from_list(Partitions)
@@ -120,6 +134,23 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     % it lives on, tell it to connect to remote, and start syncing
     % link to the fssources, so they when this does,
     % and so this can handle exits fo them.
+
+handle_cast(stop_fullsync, State) ->
+    % exit all running, cancel all timers, and reset the state.
+    [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
+    Pdict = erlang:get(),
+    [begin
+        erlang:erase(Pid),
+        unlink(Pid),
+        riak_repl2_fssource:stop_fullsync(Pid)
+    end || {Pid, _} <- Pdict],
+    State2 = State#state{
+        largest_n = undefined,
+        owners = [],
+        partition_queue = queue:new(),
+        whereis_waiting = []
+    },
+    {noreply, State2};
 
 handle_cast(_Msg, State) ->
     lager:info("ignoring ~p", [_Msg]),
