@@ -155,9 +155,7 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
         _ ->
             % TODO putting in the back of the queue a good idea?
             #state{partition_queue = PQueue} = State,
-            %% TODO 0 is probably not the right thing to use here, but do the
-            %% best we can for now
-            PQueue2 = queue:in({Partition, 0}, PQueue),
+            PQueue2 = queue:in(Partition, PQueue),
             State2 = State#state{partition_queue = PQueue2},
             State3 = send_next_whereis_req(State2),
             {noreply, State3}
@@ -275,14 +273,14 @@ node_available({Partition,_}, State) ->
     RunningList = riak_repl2_fssource_sup:enabled(LocalNode),
     length(RunningList) < Max.
 
-start_fssource({Partition,_}, Ip, Port, State) ->
+start_fssource({Partition,_} = PartitionVal, Ip, Port, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
     lager:info("starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
             Ip]),
     {ok, Pid} = riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}),
     link(Pid),
-    erlang:put(Pid, Partition),
+    erlang:put(Pid, PartitionVal),
     State.
 
 largest_n(Ring) ->
