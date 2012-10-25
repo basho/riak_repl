@@ -26,7 +26,8 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/1, start_fullsync/1, stop_fullsync/1]).
+-export([start_link/1, start_fullsync/1, stop_fullsync/1,
+    status/1, status/2]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -57,6 +58,12 @@ start_fullsync(Pid) ->
 
 stop_fullsync(Pid) ->
     gen_server:cast(Pid, stop_fullsync).
+
+status(Pid) ->
+    status(Pid, infinity).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
 
 %% ------------------------------------------------------------------
 %% connection manager callbacks
@@ -89,6 +96,17 @@ init(Cluster) ->
             lager:warning("Error connection to remote"),
             {stop, Error}
     end.
+
+handle_call(status, _From, State) ->
+    PDict = erlang:get(),
+    SelfStats = [
+        {cluster, State#state.other_cluster},
+        {queued, queue:len(State#state.partition_queue)},
+        {in_progress, length(PDict)},
+        {starting, length(State#state.whereis_waiting)}
+    ],
+    SourceStats = gather_source_stats(PDict),
+    {reply, {SelfStats, SourceStats}, State};
 
 handle_call(_Request, _From, State) ->
     lager:info("ignoring ~p", [_Request]),
@@ -341,3 +359,18 @@ sort_partitions(In, N, Acc) ->
     Split = min(length(In), N) - 1,
     {A, [P|B]} = lists:split(Split, In),
     sort_partitions(B++A, N, [P|Acc]).
+
+gather_source_stats(PDict) ->
+    gather_source_stats(PDict, []).
+
+gather_source_stats([], Acc) ->
+    lists:reverse(Acc);
+
+gather_source_stats([{Pid, _} | Tail], Acc) ->
+    try riak_repl2_fssouce:legacy_status(Pid) of
+        Stats ->
+            gather_source_stats(Tail, [{Pid, Stats} | Acc])
+    catch
+        exit:{noproc, _} ->
+            gather_source_stats(Tail, [{Pid, []} | Acc])
+    end.
