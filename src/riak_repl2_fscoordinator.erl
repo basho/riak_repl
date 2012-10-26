@@ -19,7 +19,8 @@
     owners = [],
     connection_ref,
     partition_queue = queue:new(),
-    whereis_waiting = []
+    whereis_waiting = [],
+    running_sources = []
 }).
 
 %% ------------------------------------------------------------------
@@ -98,14 +99,13 @@ init(Cluster) ->
     end.
 
 handle_call(status, _From, State) ->
-    PDict = erlang:get(),
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
-        {in_progress, length(PDict)},
+        {in_progress, length(State#state.running_sources)},
         {starting, length(State#state.whereis_waiting)}
     ],
-    SourceStats = gather_source_stats(PDict),
+    SourceStats = gather_source_stats(State#state.running_sources),
     {reply, {SelfStats, SourceStats}, State};
 
 handle_call(_Request, _From, State) ->
@@ -156,17 +156,16 @@ handle_cast(start_fullsync, State) ->
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
     [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
-    Pdict = erlang:get(),
     [begin
-        erlang:erase(Pid),
         unlink(Pid),
         riak_repl2_fssource:stop_fullsync(Pid)
-    end || {Pid, _} <- Pdict],
+    end || {Pid, _} <- State#state.running_sources],
     State2 = State#state{
         largest_n = undefined,
         owners = [],
         partition_queue = queue:new(),
-        whereis_waiting = []
+        whereis_waiting = [],
+        running_sources = []
     },
     {noreply, State2};
 
@@ -175,37 +174,37 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdown ->
-    Partition = erlang:erase(Pid),
-    case Partition of
-        undefined ->
+    PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
+    case PartitionEntry of
+        false ->
             {noreply, State};
-        _ ->
+        {value, {Pid, _Partition}, Running} ->
             % are we done?
-            PDict =  erlang:get() == [],
+            EmptyRunning =  Running == [],
             QEmpty = queue:is_empty(State#state.partition_queue),
             Waiting = State#state.whereis_waiting,
-            case {PDict, QEmpty, Waiting} of
+            case {EmptyRunning, QEmpty, Waiting} of
                 {[], true, []} ->
                     % nothing outstanding, so we can exit.
-                    {stop, normal, State};
+                    {stop, normal, State#state{running_sources = Running}};
                 _ ->
                     % there's something waiting for a response.
-                    State2 = send_next_whereis_req(State),
+                    State2 = send_next_whereis_req(State#state{running_sources = Running}),
                     {noreply, State2}
             end
     end;
 
 handle_info({'EXIT', Pid, _Cause}, State) ->
     lager:warning("fssource ~p exited abnormally", [Pid]),
-    Partition = erlang:erase(Pid),
-    case Partition of
-        undefined ->
+    PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
+    case PartitionEntry of
+        false ->
             {noreply, State};
-        _ ->
+        {value, {Pid, Partition}, Running} ->
             % TODO putting in the back of the queue a good idea?
             #state{partition_queue = PQueue} = State,
             PQueue2 = queue:in(Partition, PQueue),
-            State2 = State#state{partition_queue = PQueue2},
+            State2 = State#state{partition_queue = PQueue2, running_sources = Running},
             State3 = send_next_whereis_req(State2),
             {noreply, State3}
     end;
@@ -242,14 +241,6 @@ handle_info({Erred, Socket, Reason}, #state{socket = Socket} = State) when
     lager:error("Connection closed unexpectedly"),
     {stop, normal, State};
 
-%handle_info({'EXIT', Pid, Cause}, State) ->
-    % TODO: handle when a partition fs exploderizes
-%    Partition = erlang:erase(Pid),
-%    case {Cause, Partition} of
-%        {_, undefined} ->
-%            {noreply, State};
-%        {normal, _} ->
-%            start_fssource
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
     {noreply, State}.
@@ -306,10 +297,9 @@ send_next_whereis_req(State) ->
     end.
 
 below_max_sources(Partition, State) ->
-    Max = app_helper:get_env(raik_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
-    PDict = erlang:get(),
+    Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
     if
-        length(PDict) < Max ->
+        length(State#state.running_sources) < Max ->
             node_available(Partition, State);
         true ->
             false
@@ -320,7 +310,9 @@ node_available({Partition,_}, State) ->
     LocalNode = proplists:get_value(Partition, Owners),
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
     RunningList = riak_repl2_fssource_sup:enabled(LocalNode),
-    length(RunningList) < Max.
+    PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode, Part],
+    PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
+    ( length(PartsWaiting) + length(RunningList) ) < Max.
 
 start_fssource({Partition,_} = PartitionVal, Ip, Port, State) ->
     #state{owners = Owners} = State,
@@ -329,8 +321,8 @@ start_fssource({Partition,_} = PartitionVal, Ip, Port, State) ->
             Ip]),
     {ok, Pid} = riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}),
     link(Pid),
-    erlang:put(Pid, PartitionVal),
-    State.
+    Running = orddict:store(Pid, PartitionVal, State#state.running_sources),
+    State#state{running_sources = Running}.
 
 largest_n(Ring) ->
     Defaults = app_helper:get_env(riak_core, default_bucket_props, []),
