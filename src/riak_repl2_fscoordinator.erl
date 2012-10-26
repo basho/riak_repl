@@ -303,7 +303,7 @@ send_next_whereis_req(State) ->
 below_max_sources(Partition, State) ->
     Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
     if
-        length(State#state.running_sources) < Max ->
+        ( length(State#state.running_sources) + length(State#state.whereis_waiting) ) < Max ->
             node_available(Partition, State);
         true ->
             false
