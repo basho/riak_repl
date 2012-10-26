@@ -271,8 +271,12 @@ handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiti
 send_whereis_reqs(State, 0) ->
     State;
 send_whereis_reqs(State, N) ->
-    State2 = send_next_whereis_req(State),
-    send_whereis_reqs(State2, N - 1).
+    case send_next_whereis_req(State) of
+        State ->
+            State;
+        State2 ->
+            send_whereis_reqs(State2, N - 1)
+    end.
 
 send_next_whereis_req(State) ->
     #state{transport = Transport, socket = Socket, partition_queue = PQueue, whereis_waiting = Waiting} = State,
