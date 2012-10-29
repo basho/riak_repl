@@ -61,10 +61,10 @@ stop_fullsync(Pid) ->
     gen_server:cast(Pid, stop_fullsync).
 
 status() ->
-    LeaderNode = riak_repl_leader:leader_node(),
+    LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            [];
+            {[], []};
         _ ->
             gen_server:call({?MODULE, LeaderNode}, status, infinity)
     end.
