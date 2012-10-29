@@ -363,7 +363,7 @@ gather_source_stats([], Acc) ->
     lists:reverse(Acc);
 
 gather_source_stats([{Pid, _} | Tail], Acc) ->
-    try riak_repl2_fssouce:legacy_status(Pid) of
+    try riak_repl2_fssource:legacy_status(Pid, infinity) of
         Stats ->
             gather_source_stats(Tail, [{Pid, Stats} | Acc])
     catch
