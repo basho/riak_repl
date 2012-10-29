@@ -201,9 +201,12 @@ handle_call({set_leader_node, LeaderNode}, _From, State) ->
     case node() of
         LeaderNode ->
             %% oh crap, it's me!
+            lager:info("ClusterManager(repl2): ~p Becoming the leader", [LeaderNode]),
             {reply, ok, become_leader(State2)};
         _ ->
             %% not me.
+            lager:info("ClusterManager(repl2): ~p Becoming a proxy to ~p",
+                       [node(), LeaderNode]),
             {reply, ok, become_proxy(State2)}
     end;
 
@@ -449,19 +452,15 @@ remove_remote_connection(Remote) ->
     end.
 
 proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined ->
-    ?TRACE(?debugFmt("proxy_cast: dropping because leader is undefined: ~p", [_Cast])),
     ok;
 proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
-    ?TRACE(?debugFmt("proxy_cast: forwarding to leader: ~p", [Cast])),
     gen_server:cast({?SERVER, Leader}, Cast).
 
 %% Make a proxy call to the leader. If there is no leader elected or the request fails,
 %% it will return the NoLeaderResult supplied.
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
-    ?TRACE(?debugFmt("proxy_call: dropping because leader is undefined: ~p", [_Call])),
     {reply, NoLeaderResult, State};
 proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
-    ?TRACE(?debugFmt("proxy_call: forwarding to leader: ~p", [Call])),
     Reply = gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT),
     {reply, Reply, State}.
 
@@ -497,8 +496,6 @@ connect_to_targets(Targets) ->
 
 %% start being a cluster manager leader
 become_leader(State) when State#state.is_leader == false ->
-    ?TRACE(?debugMsg("Becoming the leader")),
-    lager:info("Becoming the leader..."),
     %% start leading and tell ourself to connect to known clusters in a bit.
     %% TODO: 5 seconds is arbitrary. It's enough time for the ring to be stable
     %% so that the call into the repl_ring handler won't crash. Fix this.
@@ -514,8 +511,6 @@ become_proxy(State) when State#state.is_leader == false ->
     ?TRACE(?debugMsg("Already a proxy")),
     State;
 become_proxy(State) ->
-    ?TRACE(?debugMsg("Becoming a proxy")),
-    lager:info("Becoming a proxy"),
     %% stop leading
     %% remove all outbound connections
     Connections = riak_core_cluster_conn_sup:connections(),
