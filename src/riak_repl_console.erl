@@ -101,7 +101,8 @@ status2(Verbose) ->
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
-    All = Config++Stats1++LeaderStats++ClientStats++ServerStats,
+    CoordStats = coordinator_stats(),
+    All = Config++Stats1++LeaderStats++ClientStats++ServerStats++CoordStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -467,6 +468,9 @@ server_stats(Pid) ->
                     too_busy
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+coordinator_stats() ->
+    [{coordinator_stats, riak_repl2_fscoordinator:status()}].
 
 rt2_source_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),

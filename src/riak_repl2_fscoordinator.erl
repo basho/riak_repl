@@ -28,7 +28,7 @@
 %% ------------------------------------------------------------------
 
 -export([start_link/1, start_fullsync/1, stop_fullsync/1,
-    status/1, status/2]).
+    status/0, status/1, status/2]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -59,6 +59,15 @@ start_fullsync(Pid) ->
 
 stop_fullsync(Pid) ->
     gen_server:cast(Pid, stop_fullsync).
+
+status() ->
+    LeaderNode = riak_repl_leader:leader_node(),
+    case LeaderNode of
+        undefined ->
+            [];
+        _ ->
+            gen_server:call({?MODULE, LeaderNode}, status, infinity)
+    end.
 
 status(Pid) ->
     status(Pid, infinity).
