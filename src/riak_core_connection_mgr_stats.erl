@@ -13,8 +13,14 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, get_stats/0,
-         update/3, register_stats/0, produce_stats/0]).
+-export([start_link/0,
+         get_stats/0,
+         get_stats_by_ip/1,
+         get_stats_by_protocol/1,
+         get_consolidated_stats/0,
+         update/3,
+         register_stats/0,
+         produce_stats/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -33,7 +39,10 @@ register_stats() ->
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
-%% @doc Get the current aggregation of stats.
+%% @doc Return all stats from the cached value. This will refresh
+%% the cache if it's been over 5 seconds since the last query.
+%% When the cache needs to get the latest values, it will call our
+%% produce_stats() function.
 get_stats() ->
     case riak_core_stat_cache:get_stats(?APP) of
         {ok, Stats, _TS} ->
@@ -41,6 +50,93 @@ get_stats() ->
         Error -> Error
     end.
 
+get_consolidated_stats() ->
+    [format_stat(Stat) || Stat <- get_stats()].
+
+format_stat({{_App, conn_error, StatName, Addr, total}, N}) when not is_atom(Addr) ->
+    {atom_to_list(StatName) ++ "_total", string_of_ipaddr(Addr), N};
+format_stat({{?APP, conn_error, StatName, Addr, ProtocolId, total},N}) ->
+    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName) ++ "_total", string_of_ipaddr(Addr), N};
+format_stat({{?APP, conn_error, StatName, ProtocolId, total},N}) ->
+    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName) ++ "_total", N};
+format_stat({{?APP, conn_error, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) ->
+    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName), string_of_ipaddr(Addr), N};
+format_stat({{?APP, conn_error, StatName, Addr},[{count,N},{one,_W}]}) when not is_atom(Addr) ->
+    {atom_to_list(StatName), string_of_ipaddr(Addr), N};
+format_stat({{?APP, conn_error, StatName, ProtocolId},[{count,N},{one,_W}]}) ->
+    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName), N};
+
+format_stat({{?APP, StatName, Thing, total},Value}) ->
+    format_stat({{?APP, conn_error, StatName, Thing, total},Value});
+format_stat({{?APP, StatName, Addr, ProtocolId, total},Value}) ->
+    format_stat({{?APP, conn_error, StatName, Addr, ProtocolId, total},Value});
+format_stat({{?APP, StatName, Addr, ProtocolId},Value}) ->
+    format_stat({{?APP, conn_error, StatName, Addr, ProtocolId},Value});
+format_stat({{?APP, StatName, Thing},Value}) ->
+    format_stat({{?APP, conn_error, StatName, Thing},Value}).
+
+string_of_ipaddr({IP, Port}) ->
+    lists:flatten(io_lib:format("~s:~p", [IP, Port])).
+
+%% Get stats filtered by given IP address
+get_stats_by_ip({_IP, _Port}=Addr) ->
+    AllStats = get_stats(),
+    Stats = lists:filter(fun(S) -> predicate_by_ip(S,Addr) end, AllStats),
+    [format_stat(Stat) || Stat <- Stats].
+
+predicate_by_ip({{_App, conn_error, _StatName, Addr, _ProtocolId},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, conn_error, _StatName, Addr, _ProtocolId, total},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, conn_error, _StatName, Addr},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, conn_error, _StatName, Addr, total},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, conn_error, _StatName, _ProtocolId},_Value}, _MatchAddr) ->
+    false;
+predicate_by_ip({{_App, conn_error, _StatName, _ProtocolId, total},_Value}, _MatchAddr) ->
+    false;
+predicate_by_ip({{_App, _StatName, Addr},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, _StatName, Addr, total},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, _StatName, Addr, _ProtocolId},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip({{_App, _StatName, Addr, _ProtocolId, total},_Value}, MatchAddr) ->
+    Addr == MatchAddr;
+predicate_by_ip(_X, _MatchAddr) ->
+    false.
+
+%% Get stats filtered by given protocol-id (e.g. rt_repl)
+get_stats_by_protocol(ProtocolId) ->
+    AllStats = get_stats(),
+    Stats = lists:filter(fun(S) -> predicate_by_protocol(S,ProtocolId) end, AllStats),
+    [format_stat(Stat) || Stat <- Stats].
+    
+predicate_by_protocol({{_App, conn_error, _StatName, _Addr, ProtocolId},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, conn_error, _StatName, _Addr, ProtocolId, total},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId, total},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, conn_error, _StatName, _Addr},_Value}, _MatchId) ->
+    false;
+predicate_by_protocol({{_App, conn_error, _StatName, _Addr, total},_Value}, _MatchId) ->
+    false;
+predicate_by_protocol({{_App, _StatName, ProtocolId},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, _StatName, ProtocolId, total},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, _StatName, _Addr, ProtocolId},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol({{_App, _StatName, _Addr, ProtocolId, total},_Value}, MatchId) ->
+    ProtocolId == MatchId;
+predicate_by_protocol(_X, _MatchId) ->
+    false.
+
+%% Public interface to accumulate stats
 update(Stat, Addr, ProtocolId) ->
     gen_server:cast(?SERVER, {update, Stat, Addr, ProtocolId}).
 
@@ -54,7 +150,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Stat, Addr, ProtocolId}, State) ->
-    update3(Stat, Addr, ProtocolId),
+    do_update(Stat, Addr, ProtocolId),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -69,24 +165,29 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Update a stat for given IP-Address, Cluster, and Protocol-id
-update3({conn_error, Error}, IPAddr, Protocol) ->
+do_update({conn_error, Error}, IPAddr, Protocol) ->
     create_or_update({?APP, conn_error, Error, total}, {inc, 1}, counter),
     create_or_update({?APP, conn_error, Error}, 1, spiral),
     create_or_update({?APP, conn_error, Error, IPAddr, total}, {inc, 1}, counter),
     create_or_update({?APP, conn_error, Error, IPAddr}, 1, spiral),
     create_or_update({?APP, conn_error, Error, Protocol, total}, {inc, 1}, counter),
-    create_or_update({?APP, conn_error, Error, Protocol}, 1, spiral);
+    create_or_update({?APP, conn_error, Error, Protocol}, 1, spiral),
+    create_or_update({?APP, conn_error, Error, IPAddr, Protocol, total}, {inc, 1}, counter),
+    create_or_update({?APP, conn_error, Error, IPAddr, Protocol}, 1, spiral);
 
-update3(Stat, IPAddr, Protocol) ->
+do_update(Stat, IPAddr, Protocol) ->
     create_or_update({?APP, Stat, total}, {inc, 1}, counter),
     create_or_update({?APP, Stat}, 1, spiral),
     create_or_update({?APP, Stat, Protocol, total}, {inc, 1}, counter),
     create_or_update({?APP, Stat, Protocol}, 1, spiral),
     create_or_update({?APP, Stat, IPAddr, total}, {inc, 1}, counter),
-    create_or_update({?APP, Stat, IPAddr }, 1, spiral).
+    create_or_update({?APP, Stat, IPAddr }, 1, spiral),
+    create_or_update({?APP, Stat, IPAddr, Protocol, total}, {inc, 1}, counter),
+    create_or_update({?APP, Stat, IPAddr, Protocol}, 1, spiral).
 
 %% private
 
+%% dynamically update (and create if needed) a stat
 create_or_update(Name, UpdateVal, Type) ->
     case (catch folsom_metrics:notify_existing_metric(Name, UpdateVal, Type)) of
         ok ->
@@ -108,10 +209,10 @@ produce_stats() ->
     Stats = [Stat || Stat <- folsom_metrics:get_metrics(), is_tuple(Stat), element(1, Stat) == ?APP],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
 
+%% Get the value of the named stats metric
+%% NOTE: won't work for Histograms
 get_stat(Name) ->
     folsom_metrics:get_metric_value(Name).
 
-%% static stats
+%% Return list of static stat names and types to register
 stats() -> []. %% no static stats to register
-
-    

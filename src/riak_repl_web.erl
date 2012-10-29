@@ -24,7 +24,7 @@
 
 dispatch_table() ->
     [
-     {["riak-repl", "stats"],
-      riak_repl_wm_stats, []}
+     {["riak-repl", "stats"],  riak_repl_wm_stats, []},
+     {["riak-repl", "stats2"], riak_repl_wm_stats, [2]}
      ].
 

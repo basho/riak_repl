@@ -9,7 +9,11 @@
          pause_fullsync/1, resume_fullsync/1]).
 -export([client_stats_rpc/0, server_stats_rpc/0]).
 
--export([clustername/1, connections/1, clusters/1, connect/1, disconnect/1, realtime/1, fullsync/1]).
+-export([clustername/1, clusters/1,clusterstats/1,
+         connect/1, disconnect/1, connections/1,
+         realtime/1, fullsync/1,
+         conn_mgr_stats/0
+        ]).
 
 -export([get_config/0,
          leader_stats/0,
@@ -144,6 +148,35 @@ resume_fullsync([]) ->
 %%
 %% Repl2 commands
 %%
+
+conn_mgr_stats() ->
+    Stats = riak_core_connection_mgr_stats:get_consolidated_stats().
+
+%% Show cluster stats for this node
+clusterstats([]) ->
+    %% connection manager stats
+    Stats = riak_core_connection_mgr_stats:get_stats(),
+    io:format("~p~n", [Stats]);
+%% slice cluster stats by remote "IP:Port" or "protocol-id".
+%% Example protocol-id is rt_repl
+clusterstats([Arg]) ->
+    NWords = string:words(Arg, $:),
+    case NWords of
+        1 ->
+            %% assume protocol-id
+            ProtocolId = list_to_atom(Arg),
+            Stats = riak_core_connection_mgr_stats:get_stats_by_protocol(ProtocolId),
+            io:format("~p~n", [Stats]);
+        2 ->
+            Address = Arg,
+            IP = string:sub_word(Address, 1, $:),
+            PortStr = string:sub_word(Address, 2, $:),
+            {Port,_Rest} = string:to_integer(PortStr),
+            Stats = riak_core_connection_mgr_stats:get_stats_by_ip({IP,Port}),
+            io:format("~p~n", [Stats]);
+        _ ->
+            {error, {badarg, Arg}}
+    end.
 
 %% TODO: cluster naming belongs in riak_core_ring, not in riak_core_connection, but
 %% not until we move all of the connection stuff to core.
