@@ -148,7 +148,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
         ok ->
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
             SocketTag = riak_repl_util:generate_socket_tag("rt_source", Socket),
-            lager:info("Keeping stats for " ++ SocketTag),
+            lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source, SocketTag}),
             {reply, ok, State#state{transport = Transport, 
                                     socket = Socket,

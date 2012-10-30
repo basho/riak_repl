@@ -45,7 +45,7 @@ legacy_status(Pid, Timeout) ->
 
 init([Socket, Transport, _Proto, Props]) ->
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Socket),
-    lager:info("Keeping stats for " ++ SocketTag),
+    lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink, SocketTag}),
 
     Cluster = proplists:get_value(clustername, Props),

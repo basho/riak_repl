@@ -68,7 +68,7 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
-    lager:info("Keeping stats for " ++ SocketTag),
+    lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source, SocketTag}),
 
     Transport:setopts(Socket, [{active, once}]),
