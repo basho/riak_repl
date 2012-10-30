@@ -135,13 +135,15 @@ init(Cluster) ->
 
 handle_call(status, _From, State = #state{socket=Socket}) ->
     SourceStats = gather_source_stats(State#state.running_sources),
+     SocketStats =
+            riak_repl_util:remove_unwanted_stats(riak_core_tcp_mon:socket_status(Socket)),
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
         {in_progress, length(State#state.running_sources)},
         {starting, length(State#state.whereis_waiting)},
         {running_stats, SourceStats},
-        {socket, riak_core_tcp_mon:socket_status(Socket)}
+        {socket, SocketStats}
     ],
     {reply, SelfStats, State};
 

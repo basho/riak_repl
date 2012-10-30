@@ -93,13 +93,15 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
+    SocketStats =
+            riak_repl_util:remove_unwanted_stats(riak_core_tcp_mon:socket_status(Socket)),
     Desc =
         [
             {node, node()},
             {site, State#state.cluster},
             {strategy, fullsync},
             {fullsync_worker, FSW},
-            {socket, riak_repl_tcp_mon:socket_status(Socket)}
+            {socket, SocketStats}
         ],
     {reply, {status, Desc ++ Res}, State};
 handle_call(_Msg, _From, State) ->

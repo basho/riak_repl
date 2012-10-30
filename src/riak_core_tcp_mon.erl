@@ -58,7 +58,7 @@ status(Timeout) ->
     gen_server:call(?MODULE, status, Timeout).
 
 socket_status(Socket) ->
-  gen_server:call(?MODULE, {socket_stats, Socket}).
+  gen_server:call(?MODULE, {socket_status, Socket}).
 
 format() ->
     Status = status(),
@@ -147,9 +147,12 @@ handle_call(status, _From, State = #state{conns = Conns,
 
 handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
-    S = [{Socket, gb_trees:get(Socket, Conns)}],
-    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)]
-             || {P,Conn} <- S, State]};
+    Stats =
+        case gb_trees:lookup(Socket, Conns) of
+          none -> [];
+          {value, Conn} -> [{socket, Conn} | conn_status(Conn, StatusFuns)]
+        end,
+    {reply, Stats, State};
 
 handle_call({monitor, Socket, Tag}, _From, State) ->
     {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal}, State)}.
