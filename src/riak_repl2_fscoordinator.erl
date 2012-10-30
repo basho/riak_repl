@@ -16,12 +16,12 @@
 %% ## `{max_fssource_node, pos_integer()}'
 %%
 %% How many sources can be started on a single node, provided starting one
-%% wouldn't exceede the max_fssource_cluster setting. Defaults to 5.
+%% wouldn't exceede the max_fssource_cluster setting. Defaults to 2.
 
 -module(riak_repl2_fscoordinator).
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
--define(DEFAULT_SOURCE_PER_NODE, 5).
+-define(DEFAULT_SOURCE_PER_NODE, 2).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
 % how long to wait for a reply from remote cluster before moving on to
 % next partition.
