@@ -44,4 +44,4 @@ init(_) ->
 
 make_remote(Remote) ->
     {Remote, {riak_repl2_fscoordinator, start_link, [Remote]},
-        permanent, ?SHUTDOWN, worker, [riak_repl2, fscoordinator]}.
+        transient, ?SHUTDOWN, worker, [riak_repl2, fscoordinator]}.
