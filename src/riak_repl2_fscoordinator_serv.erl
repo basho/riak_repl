@@ -35,7 +35,7 @@
 %% ------------------------------------------------------------------
 
 start_link(Socket, Transport, Proto, Props) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, {Socket, Transport,
+    gen_server:start_link(?MODULE, {Socket, Transport,
             Proto, Props}, []).
 
 %% ------------------------------------------------------------------
