@@ -592,7 +592,8 @@ generate_socket_tag(Prefix, Socket) ->
                 Portnum,
                 O1, O2, O3, O4,
                 PeerPort])).
-
+remove_unwanted_stats([]) ->
+  [];
 remove_unwanted_stats(Stats) ->
     UnwantedProps = [sndbuf, recbuf, buffer, active,
                      type, send_max, send_avg, snd_cnt],

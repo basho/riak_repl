@@ -150,7 +150,7 @@ handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
     Stats =
         case gb_trees:lookup(Socket, Conns) of
           none -> [];
-          {value, Conn} -> [{socket, Conn} | conn_status(Conn, StatusFuns)]
+          {value, Conn} -> conn_status(Conn, StatusFuns)
         end,
     {reply, Stats, State};
 
