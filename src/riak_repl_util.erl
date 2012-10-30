@@ -32,7 +32,9 @@
          shuffle_partitions/2,
          generate_socket_tag/2,
          source_socket_stats/0,
-         sink_socket_stats/0
+         sink_socket_stats/0,
+         get_peer_repl_nodes/0,
+         get_hooks_for_modes/0
      ]).
 
 make_peer_info() ->
@@ -612,4 +614,17 @@ sink_socket_stats() ->
         SocketStats <- AllStats,
         proplists:is_defined(tag, SocketStats),
         {repl_rt, sink, _} <- [proplists:get_value(tag, SocketStats)] ].
+
+%% get other riak_apps across the cluster
+get_peer_repl_nodes() ->
+     [Node || Node <- riak_core_node_watcher:nodes(riak_repl),
+            Node =/= node()].
+
+%% get bucket hooks for current repl mode
+%% This allows V1.2 and BNW to coexist.
+get_hooks_for_modes() ->
+    Modes = riak_repl_console:get_modes(),
+    [ proplists:get_value(K,?REPL_MODES)
+     || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
+
 

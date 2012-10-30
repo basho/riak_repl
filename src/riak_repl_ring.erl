@@ -30,7 +30,9 @@
          rt_started/1,
          fs_enable_trans/2,
          fs_disable_trans/2,
-         fs_enabled/1
+         fs_enabled/1,
+         set_modes/2,
+         get_modes/1
          ]).
 
 -ifdef(TEST).
@@ -381,6 +383,41 @@ get_list(ListName, Ring) ->
             []
     end.
 
+%% set the "mode" for realtime repl behavior
+%% possible values are 
+%% v1, v2, v3
+set_modes(Ring, NewModes) ->
+    % it doesn't make sense to have a mode_repl13_migrating to represent
+    % node shutdown repl migration hook since the mode is stored in the
+    % repl ring
+    ModeCheck = lists:all(fun (Mode) -> 
+                            proplists:is_defined(Mode,
+                            ?REPL_MODES) end,
+                            NewModes)
+                          andalso length(NewModes) > 0,
+    case ModeCheck of
+        true ->
+            RC = get_repl_config(Ring),
+            % just overwrite whatever was there before
+            NewState = riak_core_ring:update_meta(
+                ?MODULE,
+                dict:store(repl_modes, NewModes, RC),
+                Ring),
+            %% force the bucket hooks to be reinstalled
+            riak_core_ring_manager:force_update(),
+            NewState;
+        false ->
+            lager:warning("Invalid replication modes specified: ~p", [NewModes]),
+            Ring
+    end.
+
+get_modes(Ring) ->
+    RC = get_repl_config(Ring),
+    case dict:find(repl_modes, RC) of
+        {ok, ReplModes} -> ReplModes;
+        error ->
+            [mode_repl12]
+    end.
 
 %% unit tests
 

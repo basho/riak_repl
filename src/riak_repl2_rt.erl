@@ -102,7 +102,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             %% will bring up an rtsource process that will re-register
             [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
             [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
-          
+
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
             [begin
@@ -112,7 +112,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
 
             %% Unregister disabled sources, freeing up the queue
             [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
-            
+
             [{enabled, ToEnable},
              {started, ToStart},
              {stopped, ToStop},
@@ -141,7 +141,7 @@ postcommit(RObj) ->
         Objects when is_list(Objects) ->
             BinObjs = term_to_binary(Objects),
             %% TODO, consider sending to another machine on fail
-            riak_repl2_rtq:push(length(Objects), BinObjs); 
+            riak_repl2_rtq:push(length(Objects), BinObjs);
 
         cancel -> % repl helper callback requested not to send over realtime
             ok
@@ -149,7 +149,7 @@ postcommit(RObj) ->
 
 %% gen_server callbacks
 init([]) ->
-    {ok, #state{}}.
+     {ok, #state{}}.
 
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),

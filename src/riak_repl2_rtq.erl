@@ -25,9 +25,15 @@
          set_max_bytes/1,
          push/2,
          pull/2,
+         pull_sync/2,
          ack/2,
+         ack_sync/2,
          status/0,
-         dumpq/0]).
+         dumpq/0,
+         is_empty/1,
+         all_queues_empty/0,
+         shutdown/0,
+         is_running/0]).
 
 -define(SERVER, ?MODULE).
 
@@ -38,14 +44,15 @@
 -record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
-                cs = []}).  % Consumers
+                cs = [],
+                shutting_down=false}).  % Consumers
 -record(c, {name,      % consumer name
             aseq = 0,  % last sequence acked
             cseq = 0,  % last sequence sent
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
-            deliver}).  % deliver function if pending, otherwise undefined
-
+            deliver  % deliver function if pending, otherwise undefined
+           }).
 %% API
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -56,6 +63,13 @@ register(Name) ->
 unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}).
 
+
+is_empty(Name) ->
+    gen_server:call(?SERVER, {is_empty, Name}).
+
+all_queues_empty() ->
+    gen_server:call(?SERVER, all_queues_empty).
+
 %% Set the maximum number of bytes to use - could take a while to return
 %% on a big queue
 set_max_bytes(MaxBytes) ->
@@ -65,18 +79,30 @@ set_max_bytes(MaxBytes) ->
 push(NumItems, Bin) ->
     gen_server:cast(?SERVER, {push, NumItems, Bin}).
 
-%% DeliverFun - (Seq, Item)
 pull(Name, DeliverFun) ->
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
+pull_sync(Name, DeliverFun) ->
+    gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}).
+
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
+
+ack_sync(Name, Seq) ->
+    gen_server:call(?SERVER, {ack_sync, Name, Seq}).
 
 status() ->
     gen_server:call(?SERVER, status).
 
 dumpq() ->
     gen_server:call(?SERVER, dumpq).
+
+shutdown() ->
+    gen_server:call(?SERVER, shutting_down).
+
+is_running() ->
+    gen_server:call(?SERVER, is_running).
+
 
 %% Internals
 init([]) ->
@@ -85,7 +111,7 @@ init([]) ->
 
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                                           qseq = QSeq, cs = Cs}) ->
-    Consumers =        
+    Consumers =
         [{Name, [{pending, QSeq - CSeq},  % items to be send
                  {unacked, CSeq - ASeq},  % sent items requiring ack
                  {drops, Drops},          % number of dropped entries due to max bytes
@@ -97,6 +123,25 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
          {max_bytes, MaxBytes},
          {consumers, Consumers}],
     {reply, Status, State};
+
+handle_call(shutting_down, _From, State) ->
+    %% this will allow the realtime repl hook to determine if it should send
+    %% to another host
+    {reply, ok, State#state{shutting_down = true}};
+
+handle_call(is_running, _From,
+            State = #state{shutting_down = ShuttingDown}) ->
+    {reply, not ShuttingDown, State};
+
+handle_call({is_empty, Name}, _From, State = #state{qseq = QSeq, cs = Cs}) ->
+    Result = is_queue_empty(Name, QSeq, Cs),
+    {reply, Result, State};
+
+handle_call(all_queues_empty, _From, State = #state{qseq = QSeq, cs = Cs}) ->
+    Result = lists:all(fun (#c{name = Name}) -> is_queue_empty(Name, QSeq, Cs) end, Cs),
+    {reply, Result, State};
+
+
 handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     MinSeq = minseq(QTab, QSeq),
     case lists:keytake(Name, #c.name, Cs) of
@@ -115,51 +160,35 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
             UpdCs = [#c{name = Name, aseq = CSeq, cseq = CSeq} | Cs]
     end,
     {reply, {ok, CSeq}, State#state{cs = UpdCs}};
-handle_call({unregister, Name}, _From, State = #state{qtab = QTab, cs = Cs}) ->
-    case lists:keytake(Name, #c.name, Cs) of
-        {value, C, Cs2} ->
-            %% Remove C from Cs, let any pending process know 
-            %% and clean up the queue
-            case C#c.deliver of
-                undefined ->
-                    ok;
-                Deliver ->
-                    Deliver({error, unregistered})
-            end,
-            MinSeq = case Cs2 of 
-                         [] ->
-                             State#state.qseq; % no consumers, remove it all
-                         _ ->
-                             lists:min([Seq || #c{aseq = Seq} <- Cs2])
-                     end,
-            cleanup(QTab, MinSeq),
-            {reply, ok, State#state{cs = Cs2}};
-        false ->
+handle_call({unregister, Name}, _From, State) ->
+    case unregister_q(Name, State) of
+        {ok, NewState} ->
+            {reply, ok, NewState};
+        {{error, not_registered}, State} ->  
             {reply, {error, not_registered}, State}
-    end;
+  end;
+
 handle_call({set_max_bytes, MaxBytes}, _From, State) ->
     {reply, ok, trim_q(State#state{max_bytes = MaxBytes})};
 handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
-    {reply, ets:tab2list(QTab), State}.
+    {reply, ets:tab2list(QTab), State};
 
+handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
+    {reply, ok, pull(Name, DeliverFun, State)};
 
-handle_cast({push, NumItems, Bin}, State = #state{qtab = QTab, qseq = QSeq,
-                                                  cs = Cs}) ->
-    QSeq2 = QSeq + 1,
-    QEntry = {QSeq2, NumItems, Bin},
-    %% Send to any pending consumers
-    Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
-    ets:insert(QTab, QEntry),
-    {noreply, trim_q(State#state{qseq = QSeq2, cs = Cs2})};
-handle_cast({pull, Name, DeliverFun}, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
-    UpdCs = case lists:keytake(Name, #c.name, Cs) of
-                {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, DeliverFun) | Cs2];
-                false ->
-                    DeliverFun({error, not_registered})
-            end,
-    {noreply, State#state{cs = UpdCs}};
-handle_cast({ack, Name, Seq}, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+handle_call({ack_sync, Name, Seq}, _From, State) ->
+    {reply, ok, ack_seq(Name, Seq, State)}.
+
+handle_cast({push, NumItems, Bin}, State) ->
+    {noreply, push(NumItems, Bin, State)};
+
+handle_cast({pull, Name, DeliverFun}, State) ->
+     {noreply, pull(Name, DeliverFun, State)};
+
+handle_cast({ack, Name, Seq}, State) ->
+       {noreply, ack_seq(Name, Seq, State)}.
+
+ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     %% Scan through the clients, updating Name for Seq and also finding the minimum
     %% sequence
     {UpdCs, MinSeq} = lists:foldl(
@@ -173,7 +202,9 @@ handle_cast({ack, Name, Seq}, State = #state{qtab = QTab, qseq = QSeq, cs = Cs})
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
     cleanup(QTab, MinSeq),
-    {noreply, State#state{cs = UpdCs}}.
+    State#state{cs = UpdCs}.
+
+
 
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -190,7 +221,56 @@ terminate(Reason, #state{cs = Cs}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
+     case lists:keytake(Name, #c.name, Cs) of
+        {value, C, Cs2} ->
+            %% Remove C from Cs, let any pending process know 
+            %% and clean up the queue
+            case C#c.deliver of
+                undefined ->
+                    ok;
+                Deliver ->
+                    Deliver({error, unregistered})
+            end,
+            MinSeq = case Cs2 of 
+                         [] ->
+                             State#state.qseq; % no consumers, remove it all
+                         _ ->
+                             lists:min([Seq || #c{aseq = Seq} <- Cs2])
+                     end,
+            cleanup(QTab, MinSeq),
+            NewState = State#state{cs = Cs2},
+            {ok, NewState};
+        false ->
+            {{error, not_registered}, State}
+    end.
 
+push(NumItems, Bin, State = #state{qtab = QTab, qseq = QSeq,
+                                                  cs = Cs, shutting_down = false}) ->
+    QSeq2 = QSeq + 1,
+    QEntry = {QSeq2, NumItems, Bin},
+    %% Send to any pending consumers
+    Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
+    ets:insert(QTab, QEntry),
+    trim_q(State#state{qseq = QSeq2, cs = Cs2});
+push(NumItems, Bin, State = #state{shutting_down = true}) ->
+    case riak_repl_util:get_peer_repl_nodes() of
+        [] ->
+            lager:error("No peer repl nodes to send realtime data to");
+            %% TODO: what should we do in this scenario?
+        [Peer | _Tl] ->
+            gen_server:cast({riak_repl2_rtq,Peer}, {push, NumItems, Bin})
+    end,
+    State.
+
+pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+     UpdCs = case lists:keytake(Name, #c.name, Cs) of
+                {value, C, Cs2} ->
+                    [maybe_pull(QTab, QSeq, C, DeliverFun) | Cs2];
+                false ->
+                    DeliverFun({error, not_registered})
+            end,
+    State#state{cs = UpdCs}.
 
 maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, DeliverFun) ->
     CSeq2 = CSeq + 1,
@@ -204,6 +284,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, DeliverFun) ->
             C#c{deliver = DeliverFun}
     end.
 
+
 maybe_deliver_item(C = #c{deliver = DeliverFun}, QEntry) ->
     case DeliverFun of
         undefined ->
@@ -212,7 +293,7 @@ maybe_deliver_item(C = #c{deliver = DeliverFun}, QEntry) ->
             deliver_item(C, DeliverFun, QEntry)
     end.
 
-deliver_item(C, DeliverFun, {Seq,_NumItem,_Bin} = QEntry) ->
+deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin} = QEntry) ->
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         ok = DeliverFun(QEntry),
@@ -287,6 +368,20 @@ qbytes(QTab) ->
     WordSize = erlang:system_info(wordsize),
     Words = ets:info(QTab, memory),
     Words * WordSize.
+
+
+is_queue_empty(Name, QSeq, Cs) ->
+    case lists:keytake(Name, #c.name, Cs) of
+        {value,  #c{cseq = CSeq}, _Cs2} ->
+            CSeq2 = CSeq + 1,
+            case CSeq2 =< QSeq of
+                true -> false;
+                false -> true
+            end;
+
+        false -> lager:error("Unknown queue")
+    end.
+
 
 %% Find the first sequence number
 minseq(QTab, QSeq) ->

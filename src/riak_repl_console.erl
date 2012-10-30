@@ -19,6 +19,7 @@
          leader_stats/0,
          client_stats/0,
          server_stats/0]).
+-export([set_modes/1, get_modes/0]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -94,6 +95,16 @@ del_site([SiteName]) ->
     NewRing = riak_repl_ring:del_site(Ring, SiteName),
     ok = maybe_set_ring(Ring, NewRing).
 
+set_modes(Modes) ->
+    Ring = get_ring(),
+    NewRing = riak_repl_ring:set_modes(Ring, Modes),
+    ok = maybe_set_ring(Ring, NewRing).
+
+get_modes() ->
+    Ring = get_ring(),
+    riak_repl_ring:get_modes(Ring).
+
+
 status([]) ->
     status2(true);
 status(quiet) ->
@@ -128,6 +139,7 @@ pause_fullsync([]) ->
 resume_fullsync([]) ->
     [riak_repl_tcp_server:resume_fullsync(Pid) || Pid <- server_pids()],
     ok.
+
 
 %%
 %% Repl2 commands
