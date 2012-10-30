@@ -416,7 +416,7 @@ get_modes(Ring) ->
     case dict:find(repl_modes, RC) of
         {ok, ReplModes} -> ReplModes;
         error ->
-            [mode_repl12]
+            [mode_repl13]
     end.
 
 %% unit tests

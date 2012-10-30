@@ -71,7 +71,7 @@
 %% ------------------------------------------------------------------
 
 start_link(Cluster) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Cluster, []).
+    gen_server:start_link(?MODULE, Cluster, []).
 
 start_fullsync(Pid) ->
     gen_server:cast(Pid, start_fullsync).
@@ -160,9 +160,9 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     {noreply, State2};
 
 handle_cast({connect_failed, _From, Why}, State) ->
-    lager:info("fullsync remote connection to ~p failed due to ~p", [State#state.other_cluster, Why]),
-    % Yes I do want to die horribly; my supervisor should restart me.
-    {stop, Why, State};
+    lager:info("fullsync remote connection to ~p failed due to ~p, retrying",
+        [State#state.other_cluster, Why]),
+    {noreply, State};
 
 handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...
@@ -278,12 +278,14 @@ handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
     lager:info("Connect closed"),
-    {stop, normal, State};
+    % Yes I do want to die horribly; my supervisor should restart me.
+    {stop, connection_closed, State};
 
 handle_info({Erred, Socket, Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
     lager:error("Connection closed unexpectedly"),
-    {stop, normal, State};
+    % Yes I do want to die horribly; my supervisor should restart me.
+    {stop, connection_error, State};
 
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
@@ -360,8 +362,11 @@ send_next_whereis_req(State) ->
                         term_to_binary({whereis, element(1, P), PeerIP, PeerPort})),
                     State#state{partition_queue = Q, whereis_waiting =
                         Waiting2};
+                defer ->
+                    send_next_whereis_req(State#state{partition_queue =
+                            queue:in(P, Q)});
                 skip ->
-                    send_next_whereis_req(State#state{partition_queue = queue:in(P, Q)})
+                    send_next_whereis_req(State#state{partition_queue = Q})
             end
     end.
 
@@ -389,7 +394,7 @@ node_available({Partition,_}, State) ->
                         undefined ->
                             true;
                         _ ->
-                            skip
+                            defer
                     end;
                 true ->
                     false
@@ -450,6 +455,6 @@ gather_source_stats([{Pid, _} | Tail], Acc) ->
         Stats ->
             gather_source_stats(Tail, [{Pid, Stats} | Acc])
     catch
-        exit:{noproc, _} ->
+        exit:_ ->
             gather_source_stats(Tail, [{Pid, []} | Acc])
     end.

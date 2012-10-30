@@ -40,7 +40,7 @@ started(Node) ->
 
 %% @private
 init(_) ->
-    {ok, {{one_for_one, 3, 5}, []}}.
+    {ok, {{one_for_one, 10, 5}, []}}.
 
 make_remote(Remote) ->
     {Remote, {riak_repl2_fscoordinator, start_link, [Remote]},
