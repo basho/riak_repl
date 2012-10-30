@@ -351,7 +351,7 @@ become_leader(Leader, State) ->
 new_leader(Leader, LeaderPid, State0) ->
     This = node(),
     State = State0#state{i_am_leader = false, leader_node = Leader},
-    NewState = case State#state.leader_node of
+    NewState = case State0#state.leader_node of
         This ->
             %% this node is surrendering leadership
             leader_change(State#state.i_am_leader, false), % will close connections
