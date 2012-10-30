@@ -165,10 +165,12 @@ clusterstats([Arg]) ->
 %% not until we move all of the connection stuff to core.
 clustername([]) ->
     MyName = riak_core_connection:symbolic_clustername(),
-    io:format("~s~n", [MyName]);
+    io:format("~s~n", [MyName]),
+    ok;
 clustername([ClusterName]) ->
     riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
-        ClusterName).
+                                      ClusterName),
+    ok.
 
 clusters([]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
@@ -182,7 +184,8 @@ clusters([]) ->
               IPs = [string_of_ipaddr(Addr) || Addr <- Members],
               io:format("~s: ~p~n", [ClusterName, IPs])
       end,
-      Clusters).
+      Clusters),
+    ok.
 
 string_of_ipaddr({IP, Port}) ->
     lists:flatten(io_lib:format("~s:~p", [IP, Port])).
