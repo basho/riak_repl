@@ -360,7 +360,7 @@ send_next_whereis_req(State) ->
                     State#state{partition_queue = Q, whereis_waiting =
                         Waiting2};
                 skip ->
-                    send_next_whereis_req(State#state{partition_queue = Q})
+                    send_next_whereis_req(State#state{partition_queue = queue:in(P, Q)})
             end
     end.
 
@@ -382,7 +382,17 @@ node_available({Partition,_}, State) ->
             PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode, Part],
             PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
             lager:info("~p < ~p", [length(PartsWaiting) + length(RunningList), Max]),
-            ( length(PartsWaiting) + length(RunningList) ) < Max
+            if
+                ( length(PartsWaiting) + length(RunningList) ) < Max ->
+                    case proplists:get_value(Partition, RunningList) of
+                        undefined ->
+                            true;
+                        _ ->
+                            skip
+                    end;
+                true ->
+                    false
+            end
     catch
         exit:{noproc, _} ->
             skip;
