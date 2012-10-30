@@ -37,7 +37,8 @@
          source_socket_stats/0,
          sink_socket_stats/0,
          get_peer_repl_nodes/0,
-         get_hooks_for_modes/0
+         get_hooks_for_modes/0,
+         remove_unwanted_stats/1
      ]).
 
 make_peer_info() ->
@@ -619,7 +620,8 @@ generate_socket_tag(Prefix, Socket) ->
                 Portnum,
                 O1, O2, O3, O4,
                 PeerPort])).
-
+remove_unwanted_stats([]) ->
+  [];
 remove_unwanted_stats(Stats) ->
     UnwantedProps = [sndbuf, recbuf, buffer, active,
                      type, send_max, send_avg, snd_cnt],

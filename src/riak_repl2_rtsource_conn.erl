@@ -132,11 +132,12 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
                       {queue_length, QL},     % pending + unacknowledged for this conn
                       {queue_byte_size, QBS}] % approximation, this it total q size
              end,
+    SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
     Status =
         [{node, node()},
          {site, Remote},
          {strategy, realtime},
-         {socket_stats, riak_repl_util:source_socket_stats()}],
+         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}],
         QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
@@ -148,7 +149,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
         ok ->
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
             SocketTag = riak_repl_util:generate_socket_tag("rt_source", Socket),
-            lager:info("Keeping stats for " ++ SocketTag),
+            lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source, SocketTag}),
             {reply, ok, State#state{transport = Transport, 
                                     socket = Socket,

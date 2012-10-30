@@ -150,7 +150,7 @@ resume_fullsync([]) ->
 %%
 
 conn_mgr_stats() ->
-    Stats = riak_core_connection_mgr_stats:get_consolidated_stats().
+    riak_core_connection_mgr_stats:get_consolidated_stats().
 
 %% Show cluster stats for this node
 clusterstats([]) ->
@@ -351,6 +351,13 @@ format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
     io:format("~s: ~p~n", [K,V]),
     format_counter_stats(T);
+%format_counter_stats([{K,V}|T]) when K == fullsync_coordinator ->
+%    io:format("V = ~p",[V]),
+%    case V of
+%        [] -> io:format("~s: {}~n",[K]);
+%        Val -> io:format("~s: ~s",[K,Val])
+%    end,
+%    format_counter_stats(T);
 format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
                                      K == client_tx_kbps;
                                      K == server_rx_kbps;
