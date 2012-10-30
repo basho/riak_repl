@@ -202,8 +202,8 @@ string_of_remote({cluster_by_name, ClusterName}) ->
 
 %% Print info about this sink
 %% Remote :: {ip,port} | ClusterName
-showSink({Remote,Pid}) ->
-    SinkName = string_of_remote(Remote),
+showClusterConn({Remote,Pid}) ->
+    ConnName = string_of_remote(Remote),
     PidStr = io_lib:format("~p", [Pid]),
     %% try to get status from Pid of cluster control channel.
     %% if we haven't connected successfully yet, it will time out, which we will fail
@@ -212,24 +212,25 @@ showSink({Remote,Pid}) ->
     receive
         {Pid, connecting, SRemote} ->
             io:format("~-20s ~-20s ~-15s (connecting to ~p)~n",
-                      [SinkName, "", PidStr, string_of_remote(SRemote)]);
+                      [ConnName, "", PidStr, string_of_remote(SRemote)]);
         {Pid, status, {ClientAddr, _Transport, Name, Members}} ->
             IPs = [string_of_ipaddr(Addr) || Addr <- Members],
             CAddr = choose_best_addr(Remote, ClientAddr),
             io:format("~-20s ~-20s ~-15s ~p (via ~s)~n",
-                      [SinkName, Name, PidStr,IPs, CAddr])
+                      [ConnName, Name, PidStr,IPs, CAddr])
     after 2 ->
             io:format("~-20s ~-20s ~-15s (status timed out)~n",
-                      [SinkName, "", PidStr])
+                      [ConnName, "", PidStr])
     end.
 
 connections([]) ->
     %% get cluster manager's outbound connections to other "remote" clusters,
     %% which for now, are all the "sinks".
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
-    io:format("~-20s ~-20s ~-15s [Members]~n", ["Sink", "Cluster Name", "<Ctrl-Pid>"]),
-    io:format("~-20s ~-20s ~-15s ---------~n", ["----", "------------", "----------"]),
-    [showSink(Conn) || Conn <- Conns].
+    io:format("~-20s ~-20s ~-15s [Members]~n", ["Connection", "Cluster Name", "<Ctrl-Pid>"]),
+    io:format("~-20s ~-20s ~-15s ---------~n", ["----------", "------------", "----------"]),
+    [showClusterConn(Conn) || Conn <- Conns],
+    ok.
 
 connect([Address]) ->
     NWords = string:words(Address, $:),
@@ -243,7 +244,8 @@ connect([Address]) ->
     end;
 connect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
-    riak_core_cluster_mgr:add_remote_cluster({IP, Port}).
+    riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
+    ok.
 
 %% remove a remote connection by clustername or by IP/Port address:
 %% clustername
@@ -283,7 +285,8 @@ realtime([Cmd]) ->
             [riak_repl2_rt:start(Remote) || Remote <- Remotes];
         "stop" ->
             [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
-    end.
+    end,
+    ok. %% TODO: we could gather the return codes of the list comprehensions
 
 fullsync([Cmd, Remote]) ->
     io:format("TODO: implement fullsync ~s ~s~n", [Cmd, Remote]);
