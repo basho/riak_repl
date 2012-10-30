@@ -139,6 +139,11 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     end,
     {noreply, State2};
 
+handle_cast({connect_failed, _From, Why}, State) ->
+    lager:info("fullsync remote connection to ~p failed due to ~p", [State#state.other_cluster, Why]),
+    % Yes I do want to die horribly; my supervisor should restart me.
+    {stop, Why, State};
+
 handle_cast(start_fullsync, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
