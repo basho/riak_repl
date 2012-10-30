@@ -36,7 +36,7 @@ handle_call({wait_for_queue, MaxTimeout}, From, State) ->
     %% TODO: is there a better way to do the next line? just call
     %% handle_info?
     erlang:send_after(100, self(), {sleep, MaxTimeout}),
-    {noreply, State#state{caller = From}}.
+    {noreply, State#state{caller = From, elapsed_sleep = 0}}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
