@@ -34,7 +34,19 @@ init([]) ->
                   permanent, 5000, worker, [riak_repl2_leader]},
 
                  {riak_repl2_rt_sup, {riak_repl2_rt_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_repl2_rt_sup]}
+                  permanent, infinity, supervisor, [riak_repl2_rt_sup]},
+
+                 {riak_repl2_fscoordinator_sup, {riak_repl2_fscoordinator_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fscoordinator_sup]},
+
+                 {riak_repl2_fscoordinator_serv_sup, {riak_repl2_fscoordinator_serv_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fscoordinator_serv_sup]},
+
+                 {riak_repl2_fssource_sup, {riak_repl2_fssource_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fssource_sup]},
+
+                 {riak_repl2_fssink_sup, {riak_repl2_fssink_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fssink_sup]}
         ],
 
     {ok, {{one_for_one, 9, 10}, Processes}}.

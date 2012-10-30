@@ -84,17 +84,17 @@ get_stats_by_ip({_IP, _Port}=Addr) ->
     Stats = lists:filter(fun(S) -> predicate_by_ip(S,Addr) end, AllStats),
     [format_stat(Stat) || Stat <- Stats].
 
+predicate_by_ip({{_App, conn_error, _StatName, Addr, total},_Value}, MatchAddr) when Addr == MatchAddr ->
+    true;
+predicate_by_ip({{_App, conn_error, _StatName, _ProtocolId, total},_Value}, _MatchAddr) ->
+    false;
 predicate_by_ip({{_App, conn_error, _StatName, Addr, _ProtocolId},_Value}, MatchAddr) ->
     Addr == MatchAddr;
 predicate_by_ip({{_App, conn_error, _StatName, Addr, _ProtocolId, total},_Value}, MatchAddr) ->
     Addr == MatchAddr;
-predicate_by_ip({{_App, conn_error, _StatName, Addr},_Value}, MatchAddr) ->
-    Addr == MatchAddr;
-predicate_by_ip({{_App, conn_error, _StatName, Addr, total},_Value}, MatchAddr) ->
-    Addr == MatchAddr;
+predicate_by_ip({{_App, conn_error, _StatName, Addr},_Value}, MatchAddr) when Addr == MatchAddr ->
+    true;
 predicate_by_ip({{_App, conn_error, _StatName, _ProtocolId},_Value}, _MatchAddr) ->
-    false;
-predicate_by_ip({{_App, conn_error, _StatName, _ProtocolId, total},_Value}, _MatchAddr) ->
     false;
 predicate_by_ip({{_App, _StatName, Addr},_Value}, MatchAddr) ->
     Addr == MatchAddr;
@@ -113,14 +113,14 @@ get_stats_by_protocol(ProtocolId) ->
     Stats = lists:filter(fun(S) -> predicate_by_protocol(S,ProtocolId) end, AllStats),
     [format_stat(Stat) || Stat <- Stats].
     
-predicate_by_protocol({{_App, conn_error, _StatName, _Addr, ProtocolId},_Value}, MatchId) ->
-    ProtocolId == MatchId;
+predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId, total},_Value}, MatchId) when ProtocolId == MatchId ->
+    true;
+predicate_by_protocol({{_App, conn_error, _StatName, _Addr, ProtocolId},_Value}, MatchId) when ProtocolId == MatchId ->
+    true;
 predicate_by_protocol({{_App, conn_error, _StatName, _Addr, ProtocolId, total},_Value}, MatchId) ->
     ProtocolId == MatchId;
-predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId},_Value}, MatchId) ->
-    ProtocolId == MatchId;
-predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId, total},_Value}, MatchId) ->
-    ProtocolId == MatchId;
+predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId},_Value}, MatchId) when ProtocolId == MatchId ->
+    true;
 predicate_by_protocol({{_App, conn_error, _StatName, _Addr},_Value}, _MatchId) ->
     false;
 predicate_by_protocol({{_App, conn_error, _StatName, _Addr, total},_Value}, _MatchId) ->
