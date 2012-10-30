@@ -32,7 +32,8 @@
          shuffle_partitions/2,
          generate_socket_tag/2,
          source_socket_stats/0,
-         sink_socket_stats/0
+         sink_socket_stats/0,
+         remove_unwanted_stats/1
      ]).
 
 make_peer_info() ->
