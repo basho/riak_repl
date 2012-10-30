@@ -3,7 +3,7 @@
 -module(riak_core_tcp_mon).
 
 -export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
--export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2]).
+-export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2, socket_status/1]).
 
 %% gen_server callbacks
 -behavior(gen_server).
@@ -56,6 +56,9 @@ status() ->
 
 status(Timeout) ->
     gen_server:call(?MODULE, status, Timeout).
+
+socket_status(Socket) ->
+  gen_server:call(?MODULE, {socket_stats, Socket}).
 
 format() ->
     Status = status(),
@@ -139,7 +142,14 @@ init(Props) ->
 
 handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
-    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)] || {P,Conn} <- gb_trees:to_list(Conns)], State};
+    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)] 
+                || {P,Conn} <- gb_trees:to_list(Conns)], State};
+
+handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
+                                          status_funs = StatusFuns}) ->
+    S = [{Socket, gb_trees:get(Socket, Conns)}],
+    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)]
+             || {P,Conn} <- S, State]};
 
 handle_call({monitor, Socket, Tag}, _From, State) ->
     {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal}, State)}.

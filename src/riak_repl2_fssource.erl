@@ -1,4 +1,5 @@
 -module(riak_repl2_fssource).
+-include("riak_repl.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -65,6 +66,11 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
         State=#state{ip=IP, partition=Partition}) ->
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
+
+    SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
+    lager:info("Keeping stats for " ++ SocketTag),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source, SocketTag}),
+
     Transport:setopts(Socket, [{active, once}]),
     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
     {ok, Client} = riak:local_client(),
@@ -81,7 +87,8 @@ handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
 handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
     riak_repl_keylist_server:cancel_fullsync(FSW),
     {reply, ok, State};
-handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW}) ->
+handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
+                                               socket=Socket}) ->
     Res = case is_pid(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
@@ -91,7 +98,8 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW}) ->
             {node, node()},
             {site, State#state.cluster},
             {strategy, fullsync},
-            {fullsync_worker, FSW}
+            {fullsync_worker, FSW},
+            {socket, riak_repl_tcp_mon:socket_status(Socket)}
         ],
     {reply, {status, Desc ++ Res}, State};
 handle_call(_Msg, _From, State) ->
