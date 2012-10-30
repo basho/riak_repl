@@ -104,7 +104,7 @@ init(Cluster) ->
         {active, false}
     ],
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
-    case riak_core_connection_mgr:connect({fs_coordinate, Cluster}, ClientSpec) of
+    case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Error} ->
