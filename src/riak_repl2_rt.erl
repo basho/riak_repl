@@ -137,23 +137,11 @@ get_sink_pids() ->
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
-    Node = case riak_repl2_rtq:is_running() of
-        true -> node();
-        false ->
-            case riak_repl_util:get_peer_repl_nodes() of
-                [] ->
-                    lager:error("No peer repl nodes to send realtime data to"),
-                    %% TODO: what should we do in this scenario?
-                    undefined;
-                [Peer | _Tl] -> 
-                    Peer
-            end
-    end,
-    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(Node, undefined))++[RObj] of
+    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
         Objects when is_list(Objects) ->
             BinObjs = term_to_binary(Objects),
             %% TODO, consider sending to another machine on fail
-            riak_repl2_rtq:push(length(Objects), BinObjs); 
+            riak_repl2_rtq:push(length(Objects), BinObjs);
 
         cancel -> % repl helper callback requested not to send over realtime
             ok

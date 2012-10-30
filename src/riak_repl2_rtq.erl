@@ -138,6 +138,7 @@ handle_call(unregister_all, _From, State = #state{cs = _Cs}) ->
     %                {ok, NewState} = unregister_q(Name, St),
     %                NewState
     %        end, State, Cs),
+    % FORCE unregister all consumers
     NewState = State#state{cs = []},
     {reply, ok, NewState};
 
@@ -263,13 +264,22 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
     end.
 
 push(NumItems, Bin, State = #state{qtab = QTab, qseq = QSeq,
-                                                  cs = Cs}) ->
+                                                  cs = Cs, shutting_down = false}) ->
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin},
     %% Send to any pending consumers
     Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
     ets:insert(QTab, QEntry),
-    trim_q(State#state{qseq = QSeq2, cs = Cs2}).
+    trim_q(State#state{qseq = QSeq2, cs = Cs2});
+push(NumItems, Bin, State = #state{shutting_down = true}) ->
+    case riak_repl_util:get_peer_repl_nodes() of
+        [] ->
+            lager:error("No peer repl nodes to send realtime data to");
+            %% TODO: what should we do in this scenario?
+        [Peer | _Tl] ->
+            gen_server:cast({riak_repl2_rtq,Peer}, {push, NumItems, Bin})
+    end,
+    State.
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
