@@ -91,7 +91,6 @@ queue_handoff(State) ->
             {reply, error, State};
         _N ->
             lager:info("Starting queue migration"),
-            riak_repl2_rtq:unregister_all(),
             riak_repl2_rtq:register(qm),
 
             Peer = hd(PeerReplNodes),

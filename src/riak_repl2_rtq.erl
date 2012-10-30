@@ -22,8 +22,6 @@
 -export([start_link/0,
          register/1,
          unregister/1,
-         unregister_all/0,
-         unregister_all/1,
          set_max_bytes/1,
          push/2,
          pull/2,
@@ -65,11 +63,6 @@ register(Name) ->
 unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}).
 
-unregister_all() ->
-    gen_server:call(?SERVER, unregister_all).
-
-unregister_all(Timeout) ->
-    gen_server:call(?SERVER, unregister_all, Timeout).
 
 is_empty(Name) ->
     gen_server:call(?SERVER, {is_empty, Name}).
@@ -130,17 +123,6 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
          {max_bytes, MaxBytes},
          {consumers, Consumers}],
     {reply, Status, State};
-
-handle_call(unregister_all, _From, State = #state{cs = _Cs}) ->
-    % this blow up!
-    %NewState = lists:foldl(fun (Name, St) ->
-    %                lager:info("Unregistering ~p",[Name]),
-    %                {ok, NewState} = unregister_q(Name, St),
-    %                NewState
-    %        end, State, Cs),
-    % FORCE unregister all consumers
-    NewState = State#state{cs = []},
-    {reply, ok, NewState};
 
 handle_call(shutting_down, _From, State) ->
     %% this will allow the realtime repl hook to determine if it should send
