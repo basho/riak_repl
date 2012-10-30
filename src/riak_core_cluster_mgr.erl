@@ -446,7 +446,8 @@ ensure_remote_connection(Remote) ->
 remove_remote_connection(Remote) ->
     case riak_core_cluster_conn_sup:is_connected(Remote) of
         true ->
-            riak_core_cluster_conn_sup:remove_remote_connection(Remote);
+            riak_core_cluster_conn_sup:remove_remote_connection(Remote),
+            ok;
         _ ->
             ok
     end.
