@@ -1,4 +1,5 @@
 -module(riak_repl2_fssink).
+-include("riak_repl.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -42,7 +43,11 @@ legacy_status(Pid, Timeout) ->
 
 %% gen server
 
-init([Socket, Transport, Proto, Props]) ->
+init([Socket, Transport, _Proto, Props]) ->
+    SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Socket),
+    lager:debug("Keeping stats for " ++ SocketTag),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink, SocketTag}),
+
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection"),
     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
@@ -52,17 +57,20 @@ init([Socket, Transport, Proto, Props]) ->
     {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
             fullsync_worker=FullsyncWorker, work_dir=WorkDir}}.
 
-handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW}) ->
+handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
+                                               socket=Socket}) ->
     Res = case is_pid(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
+    SocketStats = riak_core_tcp_mon:socket_status(Socket),
     Desc =
         [
             {node, node()},
             {site, State#state.cluster},
             {strategy, fullsync},
-            {fullsync_worker, State#state.fullsync_worker}
+            {fullsync_worker, State#state.fullsync_worker},
+            {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}
         ],
     {reply, {status, Desc ++ Res}, State};
 

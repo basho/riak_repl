@@ -19,6 +19,8 @@
 %% wouldn't exceede the max_fssource_cluster setting. Defaults to 5.
 
 -module(riak_repl2_fscoordinator).
+-include("riak_repl.hrl").
+
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 -define(DEFAULT_SOURCE_PER_NODE, 5).
@@ -131,14 +133,17 @@ init(Cluster) ->
             {stop, Error}
     end.
 
-handle_call(status, _From, State) ->
+handle_call(status, _From, State = #state{socket=Socket}) ->
     SourceStats = gather_source_stats(State#state.running_sources),
+    SocketStats = riak_core_tcp_mon:format_socket_stats(
+        riak_core_tcp_mon:socket_status(Socket), []),
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
         {in_progress, length(State#state.running_sources)},
         {starting, length(State#state.whereis_waiting)},
-        {running_stats, SourceStats}
+        {running_stats, SourceStats},
+        {socket, SocketStats}
     ],
     {reply, SelfStats, State};
 
@@ -148,6 +153,10 @@ handle_call(_Request, _From, State) ->
 
 handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     lager:info("fullsync coordinator connected to ~p", [State#state.other_cluster]),
+    SocketTag = riak_repl_util:generate_socket_tag("fs_coord", Socket),
+    lager:debug("Keeping stats for " ++ SocketTag),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coord, SocketTag}),
+
     Transport:setopts(Socket, [{active, once}]),
     State2 = State#state{ socket = Socket, transport = Transport},
     case app_helper:get_env(riak_repl, fullsync_on_connect, true) orelse
@@ -279,7 +288,7 @@ handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     lager:info("Connect closed"),
     {stop, normal, State};
 
-handle_info({Erred, Socket, Reason}, #state{socket = Socket} = State) when
+handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
     lager:error("Connection closed unexpectedly"),
     {stop, normal, State};
@@ -314,7 +323,7 @@ handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = 
     case proplists:get_value(Partition, Waiting) of
         undefined ->
             State;
-        {N, Tref} ->
+        {_N, Tref} ->
             lager:info("Partition ~p is unavailable on cluster ~p",
                 [Partition, State#state.other_cluster]),
             erlang:cancel_timer(Tref),
