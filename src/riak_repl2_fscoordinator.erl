@@ -168,12 +168,13 @@ handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...
     {noreply, State#state{pending_fullsync = true}};
 handle_cast(start_fullsync,  State) ->
+    {noreply, State1} = handle_cast(stop_fullsync, State),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
     Partitions = sort_partitions(Ring),
     FirstN = length(Partitions) div N,
     
-    State2 = State#state{
+    State2 = State1#state{
         largest_n = N,
         owners = riak_core_ring:all_owners(Ring),
         partition_queue = queue:from_list(Partitions)
@@ -229,7 +230,7 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             case {EmptyRunning, QEmpty, Waiting} of
                 {[], true, []} ->
                     % nothing outstanding, so we can exit.
-                    {stop, normal, State#state{running_sources = Running}};
+                    {noreply, State#state{running_sources = Running}};
                 _ ->
                     % there's something waiting for a response.
                     State2 = send_next_whereis_req(State#state{running_sources = Running}),
