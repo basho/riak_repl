@@ -113,8 +113,13 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
     {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
     Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
     Masked = riak_repl_app:mask_address(NormIP, Subnet),
-    {ok, {ListenIP, _}} = get_matching_address(Node, NormIP, Masked),
-    Outbound = {location, Partition, {Node, ListenIP, Port}},
+    Outbound = case get_matching_address(Node, NormIP, Masked) of
+        {ok, {ListenIP, _}} ->
+            {location, Partition, {Node, ListenIP, Port}};
+        {error, _} ->
+            %% TODO
+            {location_down, Partition}
+    end,
     Transport:send(Socket, term_to_binary(Outbound)),
     State.
 

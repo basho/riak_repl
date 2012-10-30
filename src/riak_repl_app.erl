@@ -110,7 +110,7 @@ cluster_mgr_member_fun({IP, Port}) ->
     %% find the subnet for the interface we connected to
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
-    ?TRACE(lager:info("normIP is ~p", [NormIP])),
+    lager:info("normIP is ~p", [NormIP]),
     MyMask = lists:foldl(fun({_IF, Attrs}, Acc) ->
                 case lists:member({addr, NormIP}, Attrs) of
                     true ->

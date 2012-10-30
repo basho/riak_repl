@@ -460,9 +460,16 @@ proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
     ?TRACE(?debugFmt("proxy_call: dropping because leader is undefined: ~p", [_Call])),
     {reply, NoLeaderResult, State};
-proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
+proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
     ?TRACE(?debugFmt("proxy_call: forwarding to leader: ~p", [Call])),
-    Reply = gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT),
+    Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
+        R -> R
+    catch
+        exit:{noproc, _} ->
+            NoLeaderResult;
+        exit:{{nodedown, _}, _} ->
+            NoLeaderResult
+    end,
     {reply, Reply, State}.
 
 %% Remove given IP Addresses from all clusters. Returns revised clusters orddict.
@@ -555,6 +562,7 @@ read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
+            lager:info("got remote address as ~p", [MyAddr]),
             MyAddr;
         Error ->
             lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
