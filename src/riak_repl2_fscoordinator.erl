@@ -38,7 +38,8 @@
     connection_ref,
     partition_queue = queue:new(),
     whereis_waiting = [],
-    running_sources = []
+    running_sources = [],
+    pending_fullsync = false
 }).
 
 %% ------------------------------------------------------------------
@@ -149,7 +150,8 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     lager:info("fullsync coordinator connected to ~p", [State#state.other_cluster]),
     Transport:setopts(Socket, [{active, once}]),
     State2 = State#state{ socket = Socket, transport = Transport},
-    case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
+    case app_helper:get_env(riak_repl, fullsync_on_connect, true) orelse
+        State#state.pending_fullsync of
         true ->
             start_fullsync(self());
         false ->
@@ -162,7 +164,10 @@ handle_cast({connect_failed, _From, Why}, State) ->
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, Why, State};
 
-handle_cast(start_fullsync, State) ->
+handle_cast(start_fullsync, #state{socket=undefined} = State) ->
+    %% not connected yet...
+    {noreply, State#state{pending_fullsync = true}};
+handle_cast(start_fullsync,  State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     N = largest_n(Ring),
     Partitions = sort_partitions(Ring),
@@ -304,6 +309,18 @@ handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiti
             Partition2 = {Partition, N},
             State3 = start_fssource(Partition2, Ip, Port, State2),
             send_next_whereis_req(State3)
+    end;
+handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
+    case proplists:get_value(Partition, Waiting) of
+        undefined ->
+            State;
+        {N, Tref} ->
+            lager:info("Partition ~p is unavailable on cluster ~p",
+                [Partition, State#state.other_cluster]),
+            erlang:cancel_timer(Tref),
+            Waiting2 = proplists:delete(Partition, Waiting),
+            State2 = State#state{whereis_waiting = Waiting2},
+            send_next_whereis_req(State2)
     end.
 
 send_whereis_reqs(State, 0) ->
@@ -320,7 +337,13 @@ send_next_whereis_req(State) ->
     #state{transport = Transport, socket = Socket, partition_queue = PQueue, whereis_waiting = Waiting} = State,
     case queue:out(PQueue) of
         {empty, Q} ->
-            lager:info("fullsync coordinator: fullsync complete"),
+            case length(Waiting) + length(State#state.running_sources) == 0 of
+                true ->
+                    lager:info("fullsync coordinator: fullsync complete"),
+                    riak_repl_stats:server_fullsyncs();
+                _ ->
+                    ok
+            end,
             State#state{partition_queue = Q};
         {{value, P}, Q} ->
             case below_max_sources(P, State) of
@@ -334,7 +357,10 @@ send_next_whereis_req(State) ->
                     lager:info("sending whereis request for partition ~p", [P]),
                     Transport:send(Socket,
                         term_to_binary({whereis, element(1, P), PeerIP, PeerPort})),
-                    State#state{partition_queue = Q, whereis_waiting = Waiting2}
+                    State#state{partition_queue = Q, whereis_waiting =
+                        Waiting2};
+                skip ->
+                    send_next_whereis_req(State#state{partition_queue = Q})
             end
     end.
 
@@ -351,10 +377,18 @@ node_available({Partition,_}, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
-    RunningList = riak_repl2_fssource_sup:enabled(LocalNode),
-    PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode, Part],
-    PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
-    ( length(PartsWaiting) + length(RunningList) ) < Max.
+    try riak_repl2_fssource_sup:enabled(LocalNode) of
+        RunningList ->
+            PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode, Part],
+            PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
+            lager:info("~p < ~p", [length(PartsWaiting) + length(RunningList), Max]),
+            ( length(PartsWaiting) + length(RunningList) ) < Max
+    catch
+        exit:{noproc, _} ->
+            skip;
+        exit:{{nodedown, _}, _} ->
+            skip
+    end.
 
 start_fssource({Partition,_} = PartitionVal, Ip, Port, State) ->
     #state{owners = Owners} = State,
