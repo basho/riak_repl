@@ -454,8 +454,7 @@ server_stats(Pid) ->
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 coordinator_stats() ->
-    {Coordinator, CoordKids} = riak_repl2_fscoordinator:status(),
-    [{coordinator_stats, Coordinator} | CoordKids].
+    [{fullsync_coordinator, riak_repl2_fscoordinator:status()}].
 
 rt2_source_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
