@@ -162,8 +162,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
 %% Connection manager failed to make connection
 %% TODO: Consider reissuing connect against another host - maybe that
 %%   functionality should be in the connection manager (I want a connection to site X)
-handle_cast({connect_failed, HelperPid, Reason}, 
-            State = #state{remote = Remote, helper_pid = HelperPid}) ->
+handle_cast({connect_failed, _HelperPid, Reason},
+            State = #state{remote = Remote}) ->
     lager:info("Realtime replication connection to site ~p failed\n",
                [Remote, Reason]),
     {stop, normal, State}.

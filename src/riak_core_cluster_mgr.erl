@@ -460,8 +460,15 @@ proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
 %% it will return the NoLeaderResult supplied.
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
     {reply, NoLeaderResult, State};
-proxy_call(Call, _NoLeaderResult, State = #state{leader_node=Leader}) ->
-    Reply = gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT),
+proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
+    Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
+                R -> R
+            catch
+                exit:{noproc, _} ->
+                    NoLeaderResult;
+                exit:{{nodedown, _}, _} ->
+                    NoLeaderResult
+            end,
     {reply, Reply, State}.
 
 %% Remove given IP Addresses from all clusters. Returns revised clusters orddict.
