@@ -1,4 +1,22 @@
-%% @doc Coordinates full sync replication parallelism.
+%% @doc Coordinates full sync replication parallelism.  Uses 3 riak_repl
+%% application env's:  fullsync_on_connect, max_fssource_cluster, and
+%% max_fssource_node.
+%%
+%% ## `{fullsync_on_connect, boolean()}'
+%%
+%% If true, as soon as a connection to the remote cluster is established,
+%% fullsync starts.  If false, then an explicit start must be sent.
+%% Defaults to true.
+%%
+%% ## `{max_fssource_cluster, pos_integer()}'
+%%
+%% How many sources can be started across all nodes in the local cluster.
+%% Defaults to 5.
+%%
+%% ## `{max_fssource_node, pos_integer()}'
+%%
+%% How many sources can be started on a single node, provided starting one
+%% wouldn't exceede the max_fssource_cluster setting. Defaults to 5.
 
 -module(riak_repl2_fscoordinator).
 -behaviour(gen_server).
