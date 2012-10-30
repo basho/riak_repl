@@ -13,5 +13,5 @@ start_child(Socket, Transport, Proto, Props) ->
 
 init(_) ->
     ChildSpec = {id, {riak_repl2_fscoordinator_serv, start_link, []},
-        transient, brutal_kill, worker, [riak_repl2_fscoordinator_serv]},
+        temporary, brutal_kill, worker, [riak_repl2_fscoordinator_serv]},
     {ok, {{simple_one_for_one, 10, 10}, [ChildSpec]}}.
