@@ -3,7 +3,8 @@
 -module(riak_repl_listener_sup).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
--export([start_listener/1, ensure_listeners/1, close_all_connections/0]).
+-export([start_listener/1, ensure_listeners/1, close_all_connections/0,
+        server_pids/0]).
 
 start_listener(Listener = #repl_listener{listen_addr={IP, Port}}) ->
     case riak_repl_util:valid_host_ip(IP) of
@@ -49,5 +50,18 @@ ensure_listeners(Ring) ->
     ok.
 
 close_all_connections() ->
-    [exit(P, kill) || {_, P, _, _} <-
-        supervisor:which_children(riak_repl_server_sup)]. 
+    [exit(P, kill) ||  P <-
+        server_pids()].
+
+server_pids() ->
+    %%%%%%%%
+    %% NOTE:
+    %% This is needed because Ranch doesn't directly expose child PID's.
+    %% However, digging into the Ranch supervision tree can cause problems in the
+    %% future if Ranch is upgraded. Ideally, this code should be moved into
+    %% Ranch. Please check for Ranch updates!
+    %%%%%%%%
+    [Pid2 ||
+        {{ranch_listener_sup, _}, Pid, _Type, _Modules} <- supervisor:which_children(ranch_sup), is_pid(Pid),
+        {ranch_conns_sup,Pid1,_,_} <- supervisor:which_children(Pid),
+        {_,Pid2,_,_} <- supervisor:which_children(Pid1)].

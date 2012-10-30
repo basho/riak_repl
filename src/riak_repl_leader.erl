@@ -351,7 +351,7 @@ new_leader(Leader, LeaderPid, State0) ->
     NewState = case State0#state.leader_node of
         This ->
             %% this node is surrendering leadership
-            leader_change(State#state.i_am_leader, false), % will close connections
+            leader_change(State0#state.i_am_leader, false), % will close connections
             riak_repl_stats:elections_leader_changed(),
             lager:info("Replication leadership surrendered to ~p", [Leader]),
             %% reset the mailbox size to 0 until we poll it again
