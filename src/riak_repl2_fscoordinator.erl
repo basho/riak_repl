@@ -68,9 +68,9 @@ status() ->
         _ ->
             case riak_repl2_fscoordinator_sup:started(LeaderNode) of
                 [] ->
-                    {[], []};
-                [{Remote, Pid}, _] ->
-                    status(Pid)
+                    [];
+                Repls ->
+                    [{Remote, status(Pid)} || {Remote, Pid} <- Repls]
             end
     end.
 
@@ -113,14 +113,15 @@ init(Cluster) ->
     end.
 
 handle_call(status, _From, State) ->
+    SourceStats = gather_source_stats(State#state.running_sources),
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
         {in_progress, length(State#state.running_sources)},
-        {starting, length(State#state.whereis_waiting)}
+        {starting, length(State#state.whereis_waiting)},
+        {running_stats, SourceStats}
     ],
-    SourceStats = gather_source_stats(State#state.running_sources),
-    {reply, {SelfStats, SourceStats}, State};
+    {reply, SelfStats, State};
 
 handle_call(_Request, _From, State) ->
     lager:info("ignoring ~p", [_Request]),
