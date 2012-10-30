@@ -66,7 +66,12 @@ status() ->
         undefined ->
             {[], []};
         _ ->
-            gen_server:call({?MODULE, LeaderNode}, status, infinity)
+            case riak_repl2_fscoordinator_sup:started(LeaderNode) of
+                [] ->
+                    {[], []};
+                [{Remote, Pid}, _] ->
+                    status(Pid)
+            end
     end.
 
 status(Pid) ->
