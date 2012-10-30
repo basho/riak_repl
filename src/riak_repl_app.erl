@@ -334,17 +334,16 @@ prep_stop(_State) ->
     try %% wrap with a try/catch - application carries on regardless,
         %% no error message or logging about the failure otherwise.
 
+        %% mark the service down so other nodes don't try to migrate to this
+        %% one while it's going down
+        riak_core_node_watcher:service_down(riak_repl),
+
         %% the repl bucket hook will check to see if the queue is running and deliver to
         %% another node if it's shutting down
         lager:info("Redirecting realtime replication traffic"),
         riak_repl2_rtq:shutdown(),
 
         lager:info("Stopping application riak_repl - marked service down.\n", []),
-        %riak_core_ring_manager:force_update(),
-        %% mark the service down so other nodes don't try to migrate to this
-        %% one while it's going down
-        riak_core_node_watcher:service_down(riak_repl),
-
 
         case riak_repl_migration:start_link() of
             {ok, _Pid} ->
