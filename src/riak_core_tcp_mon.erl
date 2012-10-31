@@ -3,7 +3,8 @@
 -module(riak_core_tcp_mon).
 
 -export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
--export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2, socket_status/1]).
+-export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
+         socket_status/1, format_socket_stats/2 ]).
 
 %% gen_server callbacks
 -behavior(gen_server).
@@ -150,7 +151,7 @@ handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
     Stats =
         case gb_trees:lookup(Socket, Conns) of
           none -> [];
-          {value, Conn} -> conn_status(Conn, StatusFuns)
+        {value, Conn} -> format_socket_stats(conn_status(Conn, StatusFuns),"")
         end,
     {reply, Stats, State};
 
@@ -253,4 +254,37 @@ conn_status(#conn{tag = Tag, type = Type,
 schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),
     State.
+
+format_socket_stats([], Buf) -> lists:flatten(Buf);
+format_socket_stats([{K,V}|T], Buf) when K == tag ->
+    NewBuf = Buf ++ io_lib:format("id: ~p~n", [V]),
+    format_socket_stats(T, NewBuf);
+format_socket_stats([{K,V}|T], Buf) when is_list(K) ->
+    NewBuf = Buf ++ io_lib:format("~s: ~p~n", [K,V]),
+    format_socket_stats(T, NewBuf);
+format_socket_stats([{K,_V}|T], Buf) when
+        K == sndbuf; 
+        K == recbuf;
+        K == buffer; 
+        K == active;
+        K == type;
+        K == send_max;
+        K == send_avg;
+        K == snd_cnt ->
+    %% skip these
+    format_socket_stats(T, Buf);
+format_socket_stats([{K,V}|T], Buf)
+        when
+        K == recv_avg;
+        K == recv_cnt;
+        K == recv_dvi;
+        K == recv_kbps;
+        K == recv_max;
+        K == send_kbps;
+        K == send_pend ->
+    NewBuf = Buf ++ io_lib:format("~s: ~w~n", [K,V]),
+    format_socket_stats(T, NewBuf);
+format_socket_stats([{K,V}|T], Buf) ->
+    NewBuf = Buf ++ io_lib:format("~s: ~p~n", [K,V]),
+    format_socket_stats(T, NewBuf).
 
