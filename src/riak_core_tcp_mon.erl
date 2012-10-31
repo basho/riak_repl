@@ -79,8 +79,8 @@ format_entry({_Socket, Status}, Stat) ->
     case Value of
         Value when is_list(Value) ->
             [io_lib:format("~40s [", [Tag]),
-             [string:join([format_value(Item) || Item <- Value], ", ")],
-             "]\n"];
+                format_list(Value),
+                "]\n"];
         _ ->
             [io_lib:format("~40s", [Tag]),
              format_value(Value),
@@ -92,6 +92,8 @@ format_value(Val) when is_float(Val) ->
 format_value(Val) ->
     io_lib:format("~w", [Val]).
 
+format_list(Value) ->
+    [$[, string:join([format_value(Item) || Item <- Value], ", "), $]].
 
 %% Provide a way to get to the default status fun
 default_status_funs() ->
@@ -107,14 +109,14 @@ diff(TS, Hist) ->
     diff(RevTS, RevHist, []).    
 
 diff([_TS], [_C], Acc) ->
-    format_value(Acc);
+    Acc;
 diff([_TS1 | TSRest], [C1 | CRest], Acc) ->
     Diff = hd(CRest) - C1,
     diff(TSRest, CRest, [Diff | Acc]).
 
 %% Convert byte rate to bit rate
 kbps(TS, Hist) ->
-    [R / 128.0 || R <- rate(TS, Hist)]. %  *8 bits / 1024 bytes
+    [trunc(R / 128.0) || R <- rate(TS, Hist)]. %  *8 bits / 1024 bytes
 
 %% Work out the rate of something per second
 rate(TS, Hist) ->
@@ -145,14 +147,14 @@ handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
     Out = [ [{socket,P} | conn_status(Conn, StatusFuns)]
                 || {P,Conn} <- gb_trees:to_list(Conns)],
-    {reply, erlang:list_to_tuple(Out) , State};
+    {reply, Out , State};
 
 handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
     Stats =
         case gb_trees:lookup(Socket, Conns) of
           none -> [];
-        {value, Conn} -> erlang:list_to_tuple(conn_status(Conn, StatusFuns))
+        {value, Conn} -> conn_status(Conn, StatusFuns)
         end,
     {reply, Stats, State};
 
@@ -256,36 +258,30 @@ schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),
     State.
 
-format_socket_stats([], Buf) -> lists:flatten(Buf);
-format_socket_stats([{K,V}|T], Buf) when K == tag ->
-    NewBuf = Buf ++ io_lib:format("id: ~p~n", [V]),
-    format_socket_stats(T, NewBuf);
-format_socket_stats([{K,V}|T], Buf) when is_list(K) ->
-    NewBuf = Buf ++ io_lib:format("~s: ~p~n", [K,V]),
-    format_socket_stats(T, NewBuf);
+format_socket_stats([], Buf) -> lists:reverse(Buf);
+%format_socket_stats([{K,V}|T], Buf) when K == tag ->
+    %format_socket_stats(T, [{tag, V} | Buf]);
 format_socket_stats([{K,_V}|T], Buf) when
+        K == tag;
         K == sndbuf; 
         K == recbuf;
         K == buffer; 
         K == active;
         K == type;
         K == send_max;
-        K == send_avg;
-        K == snd_cnt ->
+        K == send_avg ->
     %% skip these
     format_socket_stats(T, Buf);
-format_socket_stats([{K,V}|T], Buf)
-        when
+format_socket_stats([{K,V}|T], Buf) when
         K == recv_avg;
         K == recv_cnt;
         K == recv_dvi;
         K == recv_kbps;
         K == recv_max;
         K == send_kbps;
-        K == send_pend ->
-    NewBuf = Buf ++ io_lib:format("~s: ~w~n", [K,V]),
-    format_socket_stats(T, NewBuf);
+        K == send_pend;
+        K == send_cnt ->
+    format_socket_stats(T, [{K, lists:flatten(format_list(V))} | Buf]);
 format_socket_stats([{K,V}|T], Buf) ->
-    NewBuf = Buf ++ io_lib:format("~s: ~p~n", [K,V]),
-    format_socket_stats(T, NewBuf).
+    format_socket_stats(T, [{K, V} | Buf]).
 

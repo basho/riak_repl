@@ -132,11 +132,12 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
                       {queue_length, QL},     % pending + unacknowledged for this conn
                       {queue_byte_size, QBS}] % approximation, this it total q size
              end,
+    SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
     Status =
         [{node, node()},
          {site, Remote},
          {strategy, realtime},
-         {socket_stats, riak_repl_util:source_socket_stats()}],
+         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}],
         QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
