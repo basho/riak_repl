@@ -168,34 +168,23 @@ handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...
     {noreply, State#state{pending_fullsync = true}};
 handle_cast(start_fullsync,  State) ->
-    {noreply, State1} = handle_cast(stop_fullsync, State),
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    N = largest_n(Ring),
-    Partitions = sort_partitions(Ring),
-    FirstN = length(Partitions) div N,
-    
-    State2 = State1#state{
-        largest_n = N,
-        owners = riak_core_ring:all_owners(Ring),
-        partition_queue = queue:from_list(Partitions)
-    },
-    State3 = send_whereis_reqs(State2, FirstN),
-    {noreply, State3};
-
-    % TODO kick off the replication
-    % for each P in partition, 
-    %   ask local pnode if therea new worker can be started.
-    %   if yes
-    %       reach out to remote side asking for ip:port of matching pnode
-    %       on reply, start worker on local pnode
-    %   else
-    %       put partition in 'delayed' list
-    %   
-    % of pnode in that dise
-    % for each P in partitions, , reach out to the physical node
-    % it lives on, tell it to connect to remote, and start syncing
-    % link to the fssources, so they when this does,
-    % and so this can handle exits fo them.
+    case is_fullsync_in_progress(State) of
+        true ->
+            lager:warning("Fullsync already in progress; ignoring start"),
+            {noreply, State};
+        false ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            N = largest_n(Ring),
+            Partitions = sort_partitions(Ring),
+            FirstN = length(Partitions) div N,
+            State2 = State#state{
+                largest_n = N,
+                owners = riak_core_ring:all_owners(Ring),
+                partition_queue = queue:from_list(Partitions)
+            },
+            State3 = send_whereis_reqs(State2, FirstN),
+            {noreply, State3}
+    end;
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
@@ -457,4 +446,15 @@ gather_source_stats([{Pid, _} | Tail], Acc) ->
     catch
         exit:_ ->
             gather_source_stats(Tail, [{Pid, []} | Acc])
+    end.
+
+is_fullsync_in_progress(State) ->
+    QEmpty = queue:is_empty(State#state.partition_queue),
+    Waiting = State#state.whereis_waiting,
+    Running = State#state.running_sources,
+    case {QEmpty, Waiting, Running} of
+        {true, [], []} ->
+            false;
+        _ ->
+            true
     end.
