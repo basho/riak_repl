@@ -71,7 +71,7 @@
 %% ------------------------------------------------------------------
 
 start_link(Cluster) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Cluster, []).
+    gen_server:start_link(?MODULE, Cluster, []).
 
 start_fullsync(Pid) ->
     gen_server:cast(Pid, start_fullsync).
@@ -160,50 +160,40 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     {noreply, State2};
 
 handle_cast({connect_failed, _From, Why}, State) ->
-    lager:info("fullsync remote connection to ~p failed due to ~p", [State#state.other_cluster, Why]),
-    % Yes I do want to die horribly; my supervisor should restart me.
-    {stop, Why, State};
+    lager:info("fullsync remote connection to ~p failed due to ~p, retrying",
+        [State#state.other_cluster, Why]),
+    {noreply, State};
 
 handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...
     {noreply, State#state{pending_fullsync = true}};
 handle_cast(start_fullsync,  State) ->
-    {noreply, State1} = handle_cast(stop_fullsync, State),
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    N = largest_n(Ring),
-    Partitions = sort_partitions(Ring),
-    FirstN = length(Partitions) div N,
-    
-    State2 = State1#state{
-        largest_n = N,
-        owners = riak_core_ring:all_owners(Ring),
-        partition_queue = queue:from_list(Partitions)
-    },
-    State3 = send_whereis_reqs(State2, FirstN),
-    {noreply, State3};
-
-    % TODO kick off the replication
-    % for each P in partition, 
-    %   ask local pnode if therea new worker can be started.
-    %   if yes
-    %       reach out to remote side asking for ip:port of matching pnode
-    %       on reply, start worker on local pnode
-    %   else
-    %       put partition in 'delayed' list
-    %   
-    % of pnode in that dise
-    % for each P in partitions, , reach out to the physical node
-    % it lives on, tell it to connect to remote, and start syncing
-    % link to the fssources, so they when this does,
-    % and so this can handle exits fo them.
+    case is_fullsync_in_progress(State) of
+        true ->
+            lager:warning("Fullsync already in progress; ignoring start"),
+            {noreply, State};
+        false ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            N = largest_n(Ring),
+            Partitions = sort_partitions(Ring),
+            FirstN = length(Partitions) div N,
+            State2 = State#state{
+                largest_n = N,
+                owners = riak_core_ring:all_owners(Ring),
+                partition_queue = queue:from_list(Partitions)
+            },
+            State3 = send_whereis_reqs(State2, FirstN),
+            {noreply, State3}
+    end;
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
     [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
     [begin
         unlink(Pid),
-        riak_repl2_fssource:stop_fullsync(Pid)
-    end || {Pid, _} <- State#state.running_sources],
+        riak_repl2_fssource:stop_fullsync(Pid),
+        riak_repl2_fssource_sup:disable(node(Pid), Part)
+    end || {Pid, {Part, _PartN}} <- State#state.running_sources],
     State2 = State#state{
         largest_n = undefined,
         owners = [],
@@ -278,12 +268,14 @@ handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
     lager:info("Connect closed"),
-    {stop, normal, State};
+    % Yes I do want to die horribly; my supervisor should restart me.
+    {stop, connection_closed, State};
 
 handle_info({Erred, Socket, Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
     lager:error("Connection closed unexpectedly"),
-    {stop, normal, State};
+    % Yes I do want to die horribly; my supervisor should restart me.
+    {stop, connection_error, State};
 
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
@@ -360,8 +352,11 @@ send_next_whereis_req(State) ->
                         term_to_binary({whereis, element(1, P), PeerIP, PeerPort})),
                     State#state{partition_queue = Q, whereis_waiting =
                         Waiting2};
+                defer ->
+                    send_next_whereis_req(State#state{partition_queue =
+                            queue:in(P, Q)});
                 skip ->
-                    send_next_whereis_req(State#state{partition_queue = queue:in(P, Q)})
+                    send_next_whereis_req(State#state{partition_queue = Q})
             end
     end.
 
@@ -389,7 +384,7 @@ node_available({Partition,_}, State) ->
                         undefined ->
                             true;
                         _ ->
-                            skip
+                            defer
                     end;
                 true ->
                     false
@@ -450,6 +445,17 @@ gather_source_stats([{Pid, _} | Tail], Acc) ->
         Stats ->
             gather_source_stats(Tail, [{Pid, Stats} | Acc])
     catch
-        exit:{noproc, _} ->
+        exit:_ ->
             gather_source_stats(Tail, [{Pid, []} | Acc])
+    end.
+
+is_fullsync_in_progress(State) ->
+    QEmpty = queue:is_empty(State#state.partition_queue),
+    Waiting = State#state.whereis_waiting,
+    Running = State#state.running_sources,
+    case {QEmpty, Waiting, Running} of
+        {true, [], []} ->
+            false;
+        _ ->
+            true
     end.
