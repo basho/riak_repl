@@ -107,7 +107,7 @@ diff(TS, Hist) ->
     diff(RevTS, RevHist, []).    
 
 diff([_TS], [_C], Acc) ->
-    Acc;
+    format_value(Acc);
 diff([_TS1 | TSRest], [C1 | CRest], Acc) ->
     Diff = hd(CRest) - C1,
     diff(TSRest, CRest, [Diff | Acc]).
@@ -143,15 +143,16 @@ init(Props) ->
 
 handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
-    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)] 
-                || {P,Conn} <- gb_trees:to_list(Conns)], State};
+    Out = [ [{socket,P} | conn_status(Conn, StatusFuns)]
+                || {P,Conn} <- gb_trees:to_list(Conns)],
+    {reply, erlang:list_to_tuple(Out) , State};
 
 handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
     Stats =
         case gb_trees:lookup(Socket, Conns) of
           none -> [];
-        {value, Conn} -> format_socket_stats(conn_status(Conn, StatusFuns),"")
+        {value, Conn} -> erlang:list_to_tuple(conn_status(Conn, StatusFuns))
         end,
     {reply, Stats, State};
 
@@ -247,7 +248,7 @@ conn_status(#conn{tag = Tag, type = Type,
                              _ ->
                                  Acc
                          end
-                      end, 
+                      end,
     Stats = lists:sort(lists:foldl(Fun, [], Histories)),
     [{tag, Tag}, {type, Type} | Stats].
 
