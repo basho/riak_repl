@@ -92,7 +92,9 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([ctrlService/5, ctrlServiceProcess/5, round_robin_balancer/1, cluster_mgr_sites_fun/0]).
+-export([ctrlService/5, ctrlServiceProcess/5,
+         round_robin_balancer/1, cluster_mgr_sites_fun/0,
+         get_my_members/1]).
 
 %%%===================================================================
 %%% API
@@ -155,6 +157,9 @@ get_known_clusters() ->
 %% Retrieve a list of IP,Port tuples we are connected to or trying to connect to
 get_connections() ->
     gen_server:call(?SERVER, get_connections).
+
+get_my_members(MyAddr) ->
+    gen_server:call(?SERVER, {get_my_members, MyAddr}).
 
 %% Return a list of the known IP addresses of all nodes in the remote cluster.
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
@@ -309,23 +314,18 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
 %% TODO: we really want to keep all nodes we have every seen, except remove nodes
 %% that explicitly leave the cluster or show up in other clusters.
 handle_cast({cluster_updated, Name, Members, Addr, Remote}, State) ->
-    OldMembers = lists:sort(members_of_cluster(Name, State)),
-    case OldMembers == lists:sort(Members) of
-        true ->
-            ok;
-        false ->
-            persist_members_to_ring(State, Name, Members),
-            lager:info("Cluster Manager: updated by remote ~p at ~p named ~p with members: ~p",
-                       [Remote, Addr, Name, Members])
-    end,
-    %% clean out IPs from other clusters in case of membership movement or
-    %% cluster name changes.
-    Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
-    %% Ensure we have as few connections to a cluster as possible
-    remove_connection_if_aliased(Remote, Name),
-    %% save latest rebalanced members
-    {noreply, State#state{clusters=add_ips_to_cluster(Name, Members, Clusters1)}};
-
+    MyClusterName = riak_core_connection:symbolic_clustername(),
+    case Name of
+        MyClusterName ->
+            %% We somehow got connected to a cluster that is named the same as
+            %% us; could be ourself. Hard to tell. Drop it and log a warning.
+            lager:error("ClusterManager: dropping connection ~p to identically named cluster: ~p",
+                        [Remote, Name]),
+            remove_remote_connection(Remote),
+            {noreply, State};
+        _OtherName ->
+            {noreply, update_cluster_members(Name, Members, Addr, Remote, State)}
+    end;
 handle_cast(_Unhandled, _State) ->
     ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
     {error, unhandled}. %% this will crash the server
@@ -375,16 +375,37 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private
 %%%===================================================================
 
+%% Update ip member information for cluster "Name",
+%% remove aliased connections, and try to ensure that IP addresses only
+%% appear in one cluster.
+update_cluster_members(Name, Members, Addr, Remote, State) ->
+    OldMembers = lists:sort(members_of_cluster(Name, State)),
+    case OldMembers == lists:sort(Members) of
+        true ->
+            ok;
+        false ->
+            persist_members_to_ring(State, Name, Members),
+            lager:info("Cluster Manager: updated by remote ~p at ~p named ~p with members: ~p",
+                       [Remote, Addr, Name, Members])
+    end,
+    %% clean out IPs from other clusters in case of membership movement or
+    %% cluster name changes.
+    Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
+    %% Ensure we have as few connections to a cluster as possible
+    remove_connection_if_aliased(Remote, Name),
+    %% save latest rebalanced members
+    State#state{clusters=add_ips_to_cluster(Name, Members, Clusters1)}.
+
 %% if the cluster name is not the same as the initial remote we connected to,
 %% then remove this connection and ensure that we have one to the actual cluster
 %% name. This should reduce the number of connections to a single one per
 %% remote cluster.
 remove_connection_if_aliased({cluster_by_name, CName}=Remote, Name) when CName =/= Name ->
-    lager:info("Removing sink alias ~p named ~p", [CName, Name]),
+    lager:info("Removing connection alias ~p named ~p", [CName, Name]),
     remove_remote_connection(Remote),
     ensure_remote_connection({cluster_by_name,Name});
 remove_connection_if_aliased({cluster_by_addr, Addr}=Remote, Name) ->
-    lager:info("Replacing remote sink ~p with ~p", [Addr, Name]),
+    lager:info("Replacing connection ~p with ~p", [Addr, Name]),
     remove_remote_connection(Remote),
     ensure_remote_connection({cluster_by_name,Name});
 remove_connection_if_aliased(_,_) ->
@@ -514,10 +535,6 @@ become_leader(State) ->
     State.
 
 %% stop being a cluster manager leader
-become_proxy(State) when State#state.is_leader == false ->
-    %% still not the leader
-    ?TRACE(?debugMsg("Already a proxy")),
-    State;
 become_proxy(State) ->
     %% stop leading
     %% remove all outbound connections
