@@ -39,6 +39,7 @@
     partition_queue = queue:new(),
     whereis_waiting = [],
     running_sources = [],
+    status = stopped :: 'stopped' | 'started',
     pending_fullsync = false
 }).
 
@@ -134,6 +135,7 @@ init(Cluster) ->
 handle_call(status, _From, State) ->
     SourceStats = gather_source_stats(State#state.running_sources),
     SelfStats = [
+        {status, State#state.status},
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
         {in_progress, length(State#state.running_sources)},
@@ -167,12 +169,13 @@ handle_cast({connect_failed, _From, Why}, State) ->
 handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...
     {noreply, State#state{pending_fullsync = true}};
+handle_cast(start_fullsync, #state{status = started} = State) ->
+    lager:warning("Fullsync already in progress; ignoring start"),
+    {noreply, State};
 handle_cast(start_fullsync,  State) ->
-    case is_fullsync_in_progress(State) of
-        true ->
-            lager:warning("Fullsync already in progress; ignoring start"),
-            {noreply, State};
-        false ->
+    case State#state.largest_n of
+        undefined ->
+            
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             N = largest_n(Ring),
             Partitions = sort_partitions(Ring),
@@ -180,26 +183,30 @@ handle_cast(start_fullsync,  State) ->
             State2 = State#state{
                 largest_n = N,
                 owners = riak_core_ring:all_owners(Ring),
-                partition_queue = queue:from_list(Partitions)
+                partition_queue = queue:from_list(Partitions),
+                status = started
             },
             State3 = send_whereis_reqs(State2, FirstN),
-            {noreply, State3}
+            {noreply, State3};
+        _ ->
+            Running = State#state.running_sources,
+            [riak_repl2_fssource:start_fullsync(RPid) || {RPid, _} <- Running],
+            State2 = send_next_whereis_req(State#state{status = started}),
+            {noreply, State2}
     end;
 
 handle_cast(stop_fullsync, State) ->
-    % exit all running, cancel all timers, and reset the state.
-    [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
-    [begin
-        unlink(Pid),
-        riak_repl2_fssource:stop_fullsync(Pid),
-        riak_repl2_fssource_sup:disable(node(Pid), Part)
-    end || {Pid, {Part, _PartN}} <- State#state.running_sources],
+    [riak_repl2_fssource:stop_fullsync(Pid)
+        || {Pid, {_Part, _PartN}} <- State#state.running_sources],
+    WhereisFold = fun({Part, {PartN, Tref}}, Q) ->
+        erlang:cancel_timer(Tref),
+        queue:in_r({Part, PartN}, Q)
+    end,
+    PartitionQ = lists:foldl(WhereisFold, State#state.partition_queue, State#state.whereis_waiting),
     State2 = State#state{
-        largest_n = undefined,
-        owners = [],
-        partition_queue = queue:new(),
+        partition_queue = PartitionQ,
         whereis_waiting = [],
-        running_sources = []
+        status = stopped
     },
     {noreply, State2};
 
@@ -219,8 +226,8 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             Waiting = State#state.whereis_waiting,
             case {EmptyRunning, QEmpty, Waiting} of
                 {[], true, []} ->
-                    % nothing outstanding, so we can exit.
-                    {noreply, State#state{running_sources = Running}};
+                    % nothing outstanding, so we can sit pretty.
+                    {noreply, State#state{running_sources = Running, status = stopped}};
                 _ ->
                     % there's something waiting for a response.
                     State2 = send_next_whereis_req(State#state{running_sources = Running}),
@@ -447,15 +454,4 @@ gather_source_stats([{Pid, _} | Tail], Acc) ->
     catch
         exit:_ ->
             gather_source_stats(Tail, [{Pid, []} | Acc])
-    end.
-
-is_fullsync_in_progress(State) ->
-    QEmpty = queue:is_empty(State#state.partition_queue),
-    Waiting = State#state.whereis_waiting,
-    Running = State#state.running_sources,
-    case {QEmpty, Waiting, Running} of
-        {true, [], []} ->
-            false;
-        _ ->
-            true
     end.
