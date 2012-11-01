@@ -51,29 +51,67 @@ get_stats() ->
     end.
 
 get_consolidated_stats() ->
-    [format_stat(Stat) || Stat <- get_stats()].
+    Strings = [format_stat(Stat) || Stat <- get_stats()],
+    stats_as_atoms(Strings).
 
-format_stat({{_App, conn_error, StatName, Addr, total}, N}) when not is_atom(Addr) ->
-    {atom_to_list(StatName) ++ "_total", string_of_ipaddr(Addr), N};
+%% Sort and convert {K,V} stats to atoms
+stats_as_atoms(StringStats) ->
+    lists:map(fun({S,V}) -> {list_to_atom(S), V} end, lists:sort(StringStats)).
+
+format_stat({{?APP, conn_error, StatName}, N}) ->
+    {"conn_error_" ++ atom_to_list(StatName), N};
+format_stat({{?APP, conn_error, StatName, total}, N}) ->
+    {"conn_error_" ++ atom_to_list(StatName) ++ "_total", N};
+format_stat({{?APP, conn_error, StatName, Addr, total}, N}) when not is_atom(Addr) ->
+    {string_of_ipaddr(Addr) ++ "_"
+     ++ "conn_error_"
+     ++ atom_to_list(StatName)
+     ++ "_total", N};
 format_stat({{?APP, conn_error, StatName, Addr, ProtocolId, total},N}) ->
-    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName) ++ "_total", string_of_ipaddr(Addr), N};
+    {string_of_ipaddr(Addr) ++ "_"
+     ++ "conn_error_"
+     ++ atom_to_list(ProtocolId) ++ "_"
+     ++ atom_to_list(StatName)
+     ++ "_total" , N};
 format_stat({{?APP, conn_error, StatName, ProtocolId, total},N}) ->
-    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName) ++ "_total", N};
+    {atom_to_list(ProtocolId) ++ "_"
+     ++ "conn_error_"
+     ++ atom_to_list(StatName)
+     ++ "_total", N};
 format_stat({{?APP, conn_error, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) ->
-    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName), string_of_ipaddr(Addr), N};
+    {string_of_ipaddr(Addr) ++ "_"
+     ++ "conn_error_"
+     ++ atom_to_list(ProtocolId) ++ "_"
+     ++ atom_to_list(StatName), N};
 format_stat({{?APP, conn_error, StatName, Addr},[{count,N},{one,_W}]}) when not is_atom(Addr) ->
-    {atom_to_list(StatName), string_of_ipaddr(Addr), N};
+    {string_of_ipaddr(Addr) ++ "_"
+     ++ "conn_error_"
+     ++ atom_to_list(StatName), N};
 format_stat({{?APP, conn_error, StatName, ProtocolId},[{count,N},{one,_W}]}) ->
-    {atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName), N};
+    {"conn_error_" ++ atom_to_list(ProtocolId) ++ "_" ++ atom_to_list(StatName), N};
 
-format_stat({{?APP, StatName, Thing, total},Value}) ->
-    format_stat({{?APP, conn_error, StatName, Thing, total},Value});
-format_stat({{?APP, StatName, Addr, ProtocolId, total},Value}) ->
-    format_stat({{?APP, conn_error, StatName, Addr, ProtocolId, total},Value});
-format_stat({{?APP, StatName, Addr, ProtocolId},Value}) ->
-    format_stat({{?APP, conn_error, StatName, Addr, ProtocolId},Value});
-format_stat({{?APP, StatName, Thing},Value}) ->
-    format_stat({{?APP, conn_error, StatName, Thing},Value}).
+format_stat({{?APP, StatName},[{count,N},{one,_W}]}) ->
+    {atom_to_list(StatName), N};
+format_stat({{?APP, StatName, total},N}) ->
+    {atom_to_list(StatName) ++ "_total", N};
+format_stat({{?APP, StatName, Addr, total},N}) when not is_atom(Addr) ->
+    {string_of_ipaddr(Addr)
+     ++ "_" ++ atom_to_list(StatName) ++ "_total", N};
+format_stat({{?APP, StatName, Addr},[{count,N},{one,_W}]}) when not is_atom(Addr) ->
+    {string_of_ipaddr(Addr) ++ "_" ++ atom_to_list(StatName),N};
+format_stat({{?APP, StatName, ProtocolId, total},N}) when is_atom(ProtocolId) ->
+    {atom_to_list(ProtocolId)  ++ "_" ++ atom_to_list(StatName) ++ "_total", N};
+format_stat({{?APP, StatName, ProtocolId},[{count,N},{one,_W}]}) when is_atom(ProtocolId) ->
+    {atom_to_list(ProtocolId)  ++ "_" ++ atom_to_list(StatName), N};
+format_stat({{?APP, StatName, Addr, ProtocolId, total},N}) when is_atom(ProtocolId) ->
+    {string_of_ipaddr(Addr)
+     ++ "_" ++ atom_to_list(ProtocolId) 
+     ++ "_" ++ atom_to_list(StatName)
+     ++ "_total", N};
+format_stat({{?APP, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) when is_atom(ProtocolId) ->
+    {string_of_ipaddr(Addr)
+     ++ "_" ++ atom_to_list(ProtocolId) 
+     ++ "_" ++ atom_to_list(StatName), N}.
 
 string_of_ipaddr({IP, Port}) ->
     lists:flatten(io_lib:format("~s:~p", [IP, Port])).
@@ -82,7 +120,7 @@ string_of_ipaddr({IP, Port}) ->
 get_stats_by_ip({_IP, _Port}=Addr) ->
     AllStats = get_stats(),
     Stats = lists:filter(fun(S) -> predicate_by_ip(S,Addr) end, AllStats),
-    [format_stat(Stat) || Stat <- Stats].
+    stats_as_atoms([format_stat(Stat) || Stat <- Stats]).
 
 predicate_by_ip({{_App, conn_error, _StatName, Addr, total},_Value}, MatchAddr) when Addr == MatchAddr ->
     true;
@@ -111,7 +149,7 @@ predicate_by_ip(_X, _MatchAddr) ->
 get_stats_by_protocol(ProtocolId) ->
     AllStats = get_stats(),
     Stats = lists:filter(fun(S) -> predicate_by_protocol(S,ProtocolId) end, AllStats),
-    [format_stat(Stat) || Stat <- Stats].
+    stats_as_atoms([format_stat(Stat) || Stat <- Stats]).
     
 predicate_by_protocol({{_App, conn_error, _StatName, ProtocolId, total},_Value}, MatchId) when ProtocolId == MatchId ->
     true;
