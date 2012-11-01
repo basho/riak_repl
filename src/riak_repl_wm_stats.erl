@@ -90,7 +90,6 @@ get_stats() ->
     [{client_stats, Clients}] = riak_repl_console:client_stats(),
     Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []) ++
         format_stats(server_stats, Servers, []).
-    
 
 format_stats(Type, [], Acc) ->
     [{Type, lists:reverse(Acc)}];
