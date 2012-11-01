@@ -106,15 +106,17 @@ handle_call(status, _From, State = #state{remote = Remote,
                                {acked_seq, AckedSeq},
                                {pending, Pending}]},
     {reply, Status, State};
-handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
+handle_call(legacy_status, _From, State = #state{remote = Remote,
+                                                 socket = Socket}) ->
     {IPAddr, Port} = peername(State),
     Pending = pending(State),
+    SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
     Status = [{node, node()},
               {site, Remote},
               {strategy, realtime},
               {put_pool_size, Pending}, % close enough
               {connected, IPAddr, Port},
-              {socket_stats, riak_repl_util:sink_socket_stats()}
+              {socket, riak_core_tcp_mon:format_socket_stats(SocketStats,[])}
              ],
     {reply, {status, Status}, State};
 handle_call({set_socket, Socket, Transport}, _From, State) ->
