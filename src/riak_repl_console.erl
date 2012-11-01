@@ -117,7 +117,10 @@ status2(Verbose) ->
     ClientStats = client_stats(),
     ServerStats = server_stats(),
     CoordStats = coordinator_stats(),
-    All = Config++Stats1++LeaderStats++ClientStats++ServerStats++CoordStats,
+    CoordSrvStats = coordinator_srv_stats(),
+    All =
+          Config++Stats1++LeaderStats++ClientStats++ServerStats++
+          CoordStats++CoordSrvStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -475,15 +478,13 @@ client_stats() ->
         end, Stats))}].
 
 client_stats_rpc() ->
-    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
-          [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
+    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
     [client_stats(P) || P <- Pids] ++ RT2.
 
 server_stats() ->
     RT2 = [rt2_source_stats(P) || {_R,P} <-
-        riak_repl2_rtsource_conn_sup:enabled()] ++ 
-        [fs2_source_stats(P) || {_R,P} <- riak_repl2_fssource_sup:enabled()],
+                                  riak_repl2_rtsource_conn_sup:enabled()],
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
@@ -530,6 +531,9 @@ server_stats(Pid) ->
 coordinator_stats() ->
     [{fullsync_coordinator, riak_repl2_fscoordinator:status()}].
 
+coordinator_srv_stats() ->
+    [{fullsync_coordinator_srv, riak_repl2_fscoordinator_serv:status()}].
+
 rt2_source_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
@@ -550,22 +554,3 @@ rt2_sink_stats(Pid) ->
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
-fs2_source_stats(Pid) ->
-    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
-    State = try
-                riak_repl2_fssource:legacy_status(Pid, Timeout)
-            catch
-                _:_ ->
-                    too_busy
-            end,
-    {Pid, erlang:process_info(Pid, message_queue_len), State}.
-
-fs2_sink_stats(Pid) ->
-    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
-    State = try
-                riak_repl2_fssink:legacy_status(Pid, Timeout)
-            catch
-                _:_ ->
-                    too_busy
-            end,
-    {Pid, erlang:process_info(Pid, message_queue_len), State}.
