@@ -120,8 +120,8 @@ status2(Verbose) ->
     CoordSrvStats = coordinator_srv_stats(),
     CMgrStats = cluster_mgr_stats(),
     All =
-          Config++Stats1++LeaderStats++ClientStats++ServerStats++
-          CoordStats++CoordSrvStats++CMgrStats,
+        Config++Stats1++LeaderStats++ClientStats++ServerStats++
+        CoordStats++CoordSrvStats++CMgrStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
