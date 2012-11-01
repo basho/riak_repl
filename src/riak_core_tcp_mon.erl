@@ -3,7 +3,8 @@
 -module(riak_core_tcp_mon).
 
 -export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
--export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2]).
+-export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
+         socket_status/1, format_socket_stats/2 ]).
 
 %% gen_server callbacks
 -behavior(gen_server).
@@ -57,6 +58,9 @@ status() ->
 status(Timeout) ->
     gen_server:call(?MODULE, status, Timeout).
 
+socket_status(Socket) ->
+  gen_server:call(?MODULE, {socket_status, Socket}).
+
 format() ->
     Status = status(),
     io:fwrite([format(Status, recv_kbps),
@@ -75,8 +79,8 @@ format_entry({_Socket, Status}, Stat) ->
     case Value of
         Value when is_list(Value) ->
             [io_lib:format("~40s [", [Tag]),
-             [string:join([format_value(Item) || Item <- Value], ", ")],
-             "]\n"];
+                format_list(Value),
+                "]\n"];
         _ ->
             [io_lib:format("~40s", [Tag]),
              format_value(Value),
@@ -88,6 +92,8 @@ format_value(Val) when is_float(Val) ->
 format_value(Val) ->
     io_lib:format("~w", [Val]).
 
+format_list(Value) ->
+    [$[, string:join([format_value(Item) || Item <- Value], ", "), $]].
 
 %% Provide a way to get to the default status fun
 default_status_funs() ->
@@ -110,7 +116,7 @@ diff([_TS1 | TSRest], [C1 | CRest], Acc) ->
 
 %% Convert byte rate to bit rate
 kbps(TS, Hist) ->
-    [R / 128.0 || R <- rate(TS, Hist)]. %  *8 bits / 1024 bytes
+    [trunc(R / 128.0) || R <- rate(TS, Hist)]. %  *8 bits / 1024 bytes
 
 %% Work out the rate of something per second
 rate(TS, Hist) ->
@@ -139,7 +145,18 @@ init(Props) ->
 
 handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
-    {reply, [ [{socket,P} | conn_status(Conn, StatusFuns)] || {P,Conn} <- gb_trees:to_list(Conns)], State};
+    Out = [ [{socket,P} | conn_status(Conn, StatusFuns)]
+                || {P,Conn} <- gb_trees:to_list(Conns)],
+    {reply, Out , State};
+
+handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
+                                          status_funs = StatusFuns}) ->
+    Stats =
+        case gb_trees:lookup(Socket, Conns) of
+          none -> [];
+        {value, Conn} -> conn_status(Conn, StatusFuns)
+        end,
+    {reply, Stats, State};
 
 handle_call({monitor, Socket, Tag}, _From, State) ->
     {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal}, State)}.
@@ -233,11 +250,38 @@ conn_status(#conn{tag = Tag, type = Type,
                              _ ->
                                  Acc
                          end
-                      end, 
+                      end,
     Stats = lists:sort(lists:foldl(Fun, [], Histories)),
     [{tag, Tag}, {type, Type} | Stats].
 
 schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),
     State.
+
+format_socket_stats([], Buf) -> lists:reverse(Buf);
+%format_socket_stats([{K,V}|T], Buf) when K == tag ->
+    %format_socket_stats(T, [{tag, V} | Buf]);
+format_socket_stats([{K,_V}|T], Buf) when
+        K == tag;
+        K == sndbuf; 
+        K == recbuf;
+        K == buffer; 
+        K == active;
+        K == type;
+        K == send_max;
+        K == send_avg ->
+    %% skip these
+    format_socket_stats(T, Buf);
+format_socket_stats([{K,V}|T], Buf) when
+        K == recv_avg;
+        K == recv_cnt;
+        K == recv_dvi;
+        K == recv_kbps;
+        K == recv_max;
+        K == send_kbps;
+        K == send_pend;
+        K == send_cnt ->
+    format_socket_stats(T, [{K, lists:flatten(format_list(V))} | Buf]);
+format_socket_stats([{K,V}|T], Buf) ->
+    format_socket_stats(T, [{K, V} | Buf]).
 

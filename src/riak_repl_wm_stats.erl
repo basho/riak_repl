@@ -102,6 +102,9 @@ jsonify_stats([], Acc) ->
     lists:flatten(lists:reverse(Acc));
 jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
     jsonify_stats(T, [{K,list_to_binary(erlang:pid_to_list(V))}|Acc]);
+jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
+    %% nested proplist
+    jsonify_stats(T, [{K,V}|Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
     jsonify_stats(T, [{K,list_to_binary(V)}|Acc]);
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
