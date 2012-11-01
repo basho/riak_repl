@@ -85,11 +85,13 @@ pretty_print(RD1, C1=#ctx{}) ->
 
 get_stats() ->
     Stats1 = riak_repl_stats:get_stats(),
+    CMStats = riak_repl_console:cluster_mgr_stats(),
     LeaderStats = riak_repl_console:leader_stats(),
     [{server_stats, Servers}] = riak_repl_console:server_stats(),
     [{client_stats, Clients}] = riak_repl_console:client_stats(),
-    Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []) ++
-        format_stats(server_stats, Servers, []).
+    CMStats ++ Stats1 ++ LeaderStats
+        ++ format_stats(client_stats, Clients, [])
+        ++ format_stats(server_stats, Servers, []).
 
 format_stats(Type, [], Acc) ->
     [{Type, lists:reverse(Acc)}];
