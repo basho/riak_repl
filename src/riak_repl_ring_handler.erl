@@ -126,17 +126,6 @@ update_leader(Ring) ->
                     Candidates=[],
                     Workers=[]
             end,
-            case {has_listeners(RC), has_sites(RC),
-                    app_helper:get_env(riak_repl, inverse_connection, false)} of 
-                {false, _, false} ->
-                    ok; % No need to install hook if nobody is listening
-                {true, _, false} ->
-                    riak_repl:install_hook();
-                {_, false, true} ->
-                    ok; %% no sites
-                {_, true, true} ->
-                    riak_repl:install_hook()
-            end,
             riak_repl_listener_sup:ensure_listeners(Ring),
             riak_repl_leader:set_candidates(Candidates, Workers)
     end.
@@ -156,5 +145,37 @@ listener_nodes(ReplConfig) ->
 rt_update_events(Ring) ->
     riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(Ring),
                             riak_repl_ring:rt_started(Ring)),
+    %% ensure_rt sets this
+    RTEnabled = app_helper:get_env(riak_repl, rtenabled, false),
+
+    RC = case riak_repl_ring:get_repl_config(Ring) of
+        undefined ->
+            riak_repl_ring:initial_config();
+        R ->
+            R
+    end,
+
+    LegacyEnabled = case {has_listeners(RC), has_sites(RC),
+          app_helper:get_env(riak_repl, inverse_connection, false)} of
+        {false, _, false} ->
+            false; % No need to install hook if nobody is listening
+        {true, _, false} ->
+            true;
+        {_, false, true} ->
+            false; %% no sites
+        {_, true, true} ->
+            true
+    end,
+
+    case RTEnabled == LegacyEnabled of
+        true ->
+            ok;
+        _ ->
+            %% one of them must be true
+            application:set_env(riak_repl, rtenabled, true)
+    end,
+
+    %% always 'install' the hook, the postcommit hooks will be toggled by
+    %% the rtenabled environment variable
     riak_repl:install_hook().
 
