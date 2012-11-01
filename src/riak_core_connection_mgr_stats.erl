@@ -58,7 +58,7 @@ get_consolidated_stats() ->
 stats_as_atoms(StringStats) ->
     lists:map(fun({S,V}) -> {list_to_atom(S), V} end, lists:sort(StringStats)).
 
-format_stat({{?APP, conn_error, StatName}, N}) ->
+format_stat({{?APP, conn_error, StatName}, [{count,N},{one,_W}]}) ->
     {"conn_error_" ++ atom_to_list(StatName), N};
 format_stat({{?APP, conn_error, StatName, total}, N}) ->
     {"conn_error_" ++ atom_to_list(StatName) ++ "_total", N};
