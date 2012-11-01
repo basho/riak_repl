@@ -2,6 +2,7 @@
 %% a given partition lives.
 
 -module(riak_repl2_fscoordinator_serv).
+-include("riak_repl.hrl").
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -15,7 +16,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/4]).
+-export([start_link/4, status/0, status/1, status/2]).
 
 %% ------------------------------------------------------------------
 %% service manager callback Function Exports
@@ -37,6 +38,27 @@
 start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, {Socket, Transport,
             Proto, Props}, []).
+
+status() ->
+    LeaderNode = riak_repl2_leader:leader_node(),
+    case LeaderNode of
+        undefined ->
+            {[], []};
+        _ ->
+            case riak_repl2_fscoordinator_serv_sup:started(LeaderNode) of
+                [] ->
+                    [];
+                Repls ->
+                    [{Remote, status(Pid)} || {Remote, Pid} <- Repls]
+            end
+    end.
+
+status(Pid) ->
+    status(Pid, infinity).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
+
 
 %% ------------------------------------------------------------------
 %% service manager Function Definitions
@@ -61,7 +83,18 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 %% ------------------------------------------------------------------
 
 init({Socket, Transport, Proto, _Props}) ->
+    SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Socket),
+    lager:debug("Keeping stats for " ++ SocketTag),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv, SocketTag}),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
+
+handle_call(status, _From, State = #state{socket=Socket}) ->
+    SocketStats = riak_core_tcp_mon:format_socket_stats(
+            riak_core_tcp_mon:socket_status(Socket), []),
+    SelfStats = [
+        {socket, SocketStats}
+    ],
+    {reply, SelfStats, State};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -74,7 +107,7 @@ handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     lager:info("Connect closed"),
     {stop, normal, State};
 
-handle_info({Erred, Socket, Reason}, #state{socket = Socket} = State) when
+handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
     lager:error("Connection closed unexpectedly"),
     {stop, normal, State};
@@ -103,7 +136,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
+handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
     #state{transport = Transport, socket = Socket} = State,
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
@@ -134,3 +167,4 @@ get_matching_address(Node, NormIP, Masked) ->
         Res ->
             {ok, Res}
     end.
+
