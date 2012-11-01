@@ -384,6 +384,6 @@ minseq(QTab, QSeq) ->
         '$end_of_table' ->
             QSeq;
         MinSeq ->
-            MinSeq
+            MinSeq - 1
     end.
 
