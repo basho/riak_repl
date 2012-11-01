@@ -11,11 +11,11 @@
 
 -export([clustername/1, clusters/1,clusterstats/1,
          connect/1, disconnect/1, connections/1,
-         realtime/1, fullsync/1,
-         conn_mgr_stats/0
+         realtime/1, fullsync/1
         ]).
 
 -export([get_config/0,
+         cluster_mgr_stats/0,
          leader_stats/0,
          client_stats/0,
          server_stats/0]).
@@ -118,9 +118,10 @@ status2(Verbose) ->
     ServerStats = server_stats(),
     CoordStats = coordinator_stats(),
     CoordSrvStats = coordinator_srv_stats(),
+    CMgrStats = cluster_mgr_stats(),
     All =
           Config++Stats1++LeaderStats++ClientStats++ServerStats++
-          CoordStats++CoordSrvStats,
+          CoordStats++CoordSrvStats++CMgrStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -152,13 +153,21 @@ resume_fullsync([]) ->
 %% Repl2 commands
 %%
 
-conn_mgr_stats() ->
-    riak_core_connection_mgr_stats:get_consolidated_stats().
+cluster_mgr_stats() ->
+    ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
+                            {ok, Clusters} -> Clusters;
+                            Error -> Error
+                        end,
+    [{cluster_name, riak_core_connection:symbolic_clustername()},
+     {cluster_leader, riak_core_cluster_mgr:get_leader()},
+     {connected_clusters, ConnectedClusters}].
 
 %% Show cluster stats for this node
 clusterstats([]) ->
     %% connection manager stats
-    Stats = riak_core_connection_mgr_stats:get_stats(),
+    CMStats = cluster_mgr_stats(),
+    CConnStats = riak_core_connection_mgr_stats:get_consolidated_stats(),
+    Stats = CMStats ++ CConnStats,
     io:format("~p~n", [Stats]);
 %% slice cluster stats by remote "IP:Port" or "protocol-id".
 %% Example protocol-id is rt_repl
@@ -168,14 +177,18 @@ clusterstats([Arg]) ->
         1 ->
             %% assume protocol-id
             ProtocolId = list_to_atom(Arg),
-            Stats = riak_core_connection_mgr_stats:get_stats_by_protocol(ProtocolId),
+            CConnStats = riak_core_connection_mgr_stats:get_stats_by_protocol(ProtocolId),
+            CMStats = cluster_mgr_stats(),
+            Stats = CMStats ++ CConnStats,
             io:format("~p~n", [Stats]);
         2 ->
             Address = Arg,
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
             {Port,_Rest} = string:to_integer(PortStr),
-            Stats = riak_core_connection_mgr_stats:get_stats_by_ip({IP,Port}),
+            CConnStats = riak_core_connection_mgr_stats:get_stats_by_ip({IP,Port}),
+            CMStats = cluster_mgr_stats(),
+            Stats = CMStats ++ CConnStats,
             io:format("~p~n", [Stats]);
         _ ->
             {error, {badarg, Arg}}
@@ -369,6 +382,10 @@ format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
     format_counter_stats(T);
 format_counter_stats([{K,V}|T]) ->
     io:format("~p: ~p~n", [K,V]),
+    format_counter_stats(T);
+format_counter_stats([{_K,_IPAddr,_V}|T]) ->
+    %% Don't include per-IP stats in this output
+    %% io:format("~p(~p): ~p~n", [K,IPAddr,V]),
     format_counter_stats(T).
 
 make_listener(NodeName, IP, Port) ->

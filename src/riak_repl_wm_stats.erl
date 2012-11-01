@@ -88,9 +88,8 @@ get_stats() ->
     LeaderStats = riak_repl_console:leader_stats(),
     [{server_stats, Servers}] = riak_repl_console:server_stats(),
     [{client_stats, Clients}] = riak_repl_console:client_stats(),
-    ConnMgrStats = [], %% riak_repl_console:conn_mgr_stats(),
     Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []) ++
-        format_stats(server_stats, Servers, []) ++ ConnMgrStats.
+        format_stats(server_stats, Servers, []).
     
 
 format_stats(Type, [], Acc) ->
