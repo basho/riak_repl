@@ -118,16 +118,10 @@ status2(Verbose) ->
     ServerStats = server_stats(),
     CoordStats = coordinator_stats(),
     CoordSrvStats = coordinator_srv_stats(),
-<<<<<<< HEAD
     CMgrStats = cluster_mgr_stats(),
     All =
-          Config++Stats1++LeaderStats++ClientStats++ServerStats++
-          CoordStats++CoordSrvStats++CMgrStats,
-=======
-    All =
-          Config++Stats1++LeaderStats++ClientStats++ServerStats++
-          CoordStats++CoordSrvStats,
->>>>>>> 809b68a507bfc385b5eccdd1c239bf942c648a2d
+        Config++Stats1++LeaderStats++ClientStats++ServerStats++
+        CoordStats++CoordSrvStats++CMgrStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
