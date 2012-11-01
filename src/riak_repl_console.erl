@@ -464,7 +464,8 @@ client_stats() ->
         end, Stats))}].
 
 client_stats_rpc() ->
-    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()],
+    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
+          [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
     [client_stats(P) || P <- Pids] ++ RT2.
 
@@ -537,6 +538,16 @@ rt2_sink_stats(Pid) ->
                 _:_ ->
                     too_busy
             end,
+    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+
+fs2_sink_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+        riak_repl2_fssink:legacy_status(Pid, Timeout)
+    catch
+        _:_ ->
+            too_busy
+    end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 server_pids() ->
