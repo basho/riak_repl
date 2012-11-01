@@ -124,9 +124,10 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
          {consumers, Consumers}],
     {reply, Status, State};
 
-handle_call(shutting_down, _From, State) ->
+handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
     %% this will allow the realtime repl hook to determine if it should send
     %% to another host
+    riak_repl2_rtq_proxy:start(),
     {reply, ok, State#state{shutting_down = true}};
 
 handle_call(is_running, _From,
@@ -254,13 +255,7 @@ push(NumItems, Bin, State = #state{qtab = QTab, qseq = QSeq,
     ets:insert(QTab, QEntry),
     trim_q(State#state{qseq = QSeq2, cs = Cs2});
 push(NumItems, Bin, State = #state{shutting_down = true}) ->
-    case riak_repl_util:get_peer_repl_nodes() of
-        [] ->
-            lager:error("No peer repl nodes to send realtime data to");
-            %% TODO: what should we do in this scenario?
-        [Peer | _Tl] ->
-            gen_server:cast({riak_repl2_rtq,Peer}, {push, NumItems, Bin})
-    end,
+    riak_repl2_rtq_proxy:push(NumItems, Bin),
     State.
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
