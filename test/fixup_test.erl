@@ -9,12 +9,15 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("riak_repl.hrl").
 
+-define(REPL_HOOK, [?REPL_HOOK12, ?REPL_HOOK_BNW]).
+
 fixup_test_() ->
     {foreach,
         fun() ->
                 application:load(riak_core),
                 application:set_env(riak_core, bucket_fixups, [{riak_repl,
                             riak_repl}]),
+                application:set_env(riak_repl, rtenabled, true),
                 riak_core_bucket:append_bucket_defaults([{postcommit, []}]),
                 RingEvtPid = maybe_start_link(riak_core_ring_events:start_link()),
                 RingMgrPid = maybe_start_link(riak_core_ring_manager:start_link(test)),
@@ -25,7 +28,8 @@ fixup_test_() ->
                 stop_pid(RingMgrPid),
                 stop_pid(RingEvtPid),
                 application:unset_env(riak_core, bucket_fixups),
-                application:unset_env(riak_core, default_bucket_props)
+                application:unset_env(riak_core, default_bucket_props),
+                application:unset_env(riak_repl, rtenabled)
         end,
         [
             fun simple/0,
@@ -53,7 +57,7 @@ simple() ->
         proplists:get_value(postcommit, Props)),
     riak_core_bucket:set_bucket("testbucket", [{repl, true}]),
     Props2 = riak_core_bucket:get_bucket("testbucket"),
-    ?assertEqual([?REPL_HOOK],
+    ?assertEqual(?REPL_HOOK,
         proplists:get_value(postcommit, Props2)),
     riak_core_bucket:set_bucket("testbucket", [{repl, false}]),
     Props3 = riak_core_bucket:get_bucket("testbucket"),
@@ -63,13 +67,13 @@ simple() ->
 
 preexisting_repl_hook() ->
     riak_core_bucket:set_bucket("testbucket", [{postcommit,
-                [?REPL_HOOK]}]),
+                ?REPL_HOOK}]),
     Props = riak_core_bucket:get_bucket("testbucket"),
     ?assertEqual([],
         proplists:get_value(postcommit, Props)),
     riak_core_bucket:set_bucket("testbucket", [{repl, true}]),
     Props2 = riak_core_bucket:get_bucket("testbucket"),
-    ?assertEqual([?REPL_HOOK],
+    ?assertEqual(?REPL_HOOK,
         proplists:get_value(postcommit, Props2)),
     ok.
 
@@ -81,7 +85,7 @@ other_postcommit_hook() ->
         proplists:get_value(postcommit, Props)),
     riak_core_bucket:set_bucket("testbucket", [{repl, true}]),
     Props2 = riak_core_bucket:get_bucket("testbucket"),
-    ?assertEqual([my_postcommit_def(), ?REPL_HOOK],
+    ?assertEqual([my_postcommit_def() | ?REPL_HOOK],
         proplists:get_value(postcommit, Props2)),
     riak_core_bucket:set_bucket("testbucket", [{repl, false}]),
     Props3= riak_core_bucket:get_bucket("testbucket"),
@@ -96,7 +100,7 @@ blank_bucket() ->
         proplists:get_value(postcommit, Props)),
     riak_core_bucket:set_bucket("testbucket", [{repl, true}]),
     Props2 = riak_core_bucket:get_bucket("testbucket"),
-    ?assertEqual([?REPL_HOOK],
+    ?assertEqual(?REPL_HOOK,
         proplists:get_value(postcommit, Props2)),
     riak_core_bucket:set_bucket("testbucket", [{repl, false}]),
     Props3 = riak_core_bucket:get_bucket("testbucket"),
@@ -113,7 +117,7 @@ inherit_from_default_bucket() ->
     Props2 = riak_core_bucket:get_bucket("testbucket"),
     ?assertEqual(true,
         proplists:get_value(repl, Props2)),
-    ?assertEqual([?REPL_HOOK],
+    ?assertEqual(?REPL_HOOK,
         proplists:get_value(postcommit, Props2)),
     riak_core_bucket:set_bucket("testbucket", [{repl, false}]),
     Props3 = riak_core_bucket:get_bucket("testbucket"),
@@ -124,7 +128,7 @@ inherit_from_default_bucket() ->
     Props4 = riak_core_bucket:get_bucket("noncustombucket"),
     ?assertEqual(true,
         proplists:get_value(repl, Props4)),
-    ?assertEqual([?REPL_HOOK],
+    ?assertEqual(?REPL_HOOK,
         proplists:get_value(postcommit, Props4)),
     ok.
 
