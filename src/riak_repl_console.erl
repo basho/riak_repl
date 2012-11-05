@@ -119,9 +119,10 @@ status2(Verbose) ->
     CoordStats = coordinator_stats(),
     CoordSrvStats = coordinator_srv_stats(),
     CMgrStats = cluster_mgr_stats(),
+    RTQStats = rtq_stats(),
     All =
         Config++Stats1++LeaderStats++ClientStats++ServerStats++
-        CoordStats++CoordSrvStats++CMgrStats,
+        CoordStats++CoordSrvStats++CMgrStats++RTQStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -152,6 +153,8 @@ resume_fullsync([]) ->
 %%
 %% Repl2 commands
 %%
+rtq_stats() ->
+     RTQStats = [{realtime_queue_stats, riak_repl2_rtq:status()}].
 
 cluster_mgr_stats() ->
     ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
