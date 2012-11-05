@@ -94,12 +94,15 @@ handle_call(status, _From, State =
                 undefined ->
                     [{connected, false}];
                 _ ->
+                    SocketStats = riak_core_tcp_mon:socket_status(S),
                     [{connected, true},
-                     {address, A},
+                     %%{address, riak_repl_util:format_ip_and_port(A)},
                      {transport, T},
-                     {socket, S},
-                     {peer, peername(State)},
-                     {helper_pid, H}]
+                     %%{socket_raw, S},
+                     {socket,
+                      riak_core_tcp_mon:format_socket_stats(SocketStats, [])},
+                     %%{peername, peername(State)},
+                     {helper_pid, erlang:pid_to_list(H)}]
             end,
     HelperProps = case H of
                       undefined ->
@@ -115,7 +118,8 @@ handle_call(status, _From, State =
                                   [{helper, timeout}]
                           end
                   end,
-    Status = {R, self(), Props ++ HelperProps},
+    FormattedPid = erlang:pid_to_list(self()),
+    Status = [{source, R}, {pid, FormattedPid}] ++ Props ++ HelperProps,
     {reply, Status, State};
 handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
     RTQStatus = riak_repl2_rtq:status(),

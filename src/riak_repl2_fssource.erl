@@ -100,10 +100,10 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
             {node, node()},
             {site, State#state.cluster},
             {strategy, fullsync},
-            {fullsync_worker, FSW},
+            {fullsync_worker, erlang:pid_to_list(FSW)},
             {socket, SocketStats}
         ],
-    {reply, {status, Desc ++ Res}, State};
+    {reply, Desc ++ Res, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 

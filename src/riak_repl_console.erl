@@ -18,7 +18,9 @@
          cluster_mgr_stats/0,
          leader_stats/0,
          client_stats/0,
-         server_stats/0]).
+         server_stats/0,
+         coordinator_stats/0,
+         coordinator_srv_stats/0]).
 -export([set_modes/1, get_modes/0]).
 
 add_listener(Params) ->
@@ -154,14 +156,17 @@ resume_fullsync([]) ->
 %% Repl2 commands
 %%
 rtq_stats() ->
-     RTQStats = [{realtime_queue_stats, riak_repl2_rtq:status()}].
+     [{realtime_queue_stats, riak_repl2_rtq:status()}].
 
 cluster_mgr_stats() ->
     ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
-                            {ok, Clusters} -> Clusters;
+                            {ok, Clusters} ->
+                                [erlang:list_to_binary(Cluster) || Cluster <-
+                                                                   Clusters];
                             Error -> Error
                         end,
-    [{cluster_name, riak_core_connection:symbolic_clustername()},
+    [{cluster_name,
+      erlang:list_to_binary(riak_core_connection:symbolic_clustername())},
      {cluster_leader, riak_core_cluster_mgr:get_leader()},
      {connected_clusters, ConnectedClusters}].
 
@@ -492,7 +497,7 @@ leader_stats() ->
 
 client_stats() ->
     {Stats, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv), riak_repl_console, client_stats_rpc, []),
-    [{client_stats, lists:flatten(lists:filter(fun({badrpc, _}) ->
+    [{sinks, lists:flatten(lists:filter(fun({badrpc, _}) ->
                 false;
             (_) -> true
         end, Stats))}].
@@ -509,9 +514,9 @@ server_stats() ->
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            [{server_stats, RT2}];
+            [{sources, RT2}];
         _ ->
-            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
+            [{sources, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
                                      [])++RT2}]
     end.
 
@@ -558,29 +563,38 @@ coordinator_srv_stats() ->
 rt2_source_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
-                riak_repl2_rtsource_conn:legacy_status(Pid, Timeout)
+                riak_repl2_rtsource_conn:status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy
             end,
-    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+    FormattedPid = erlang:pid_to_list(Pid),
+    {source_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
+     {rt_source_connected_to, State}]}.
 
 rt2_sink_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
-                riak_repl2_rtsink_conn:legacy_status(Pid, Timeout)
+                riak_repl2_rtsink_conn:status(Pid, Timeout)
             catch
                 _:_ ->
                     too_busy
             end,
-    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+    %%{Pid, erlang:process_info(Pid, message_queue_len), State}.
+    FormattedPid = erlang:pid_to_list(Pid),
+    {sink_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
+     {rt_sink_connected_to, State}]}.
 
 fs2_sink_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
+        %% even though it's named legacy_status, it's BNW code
         riak_repl2_fssink:legacy_status(Pid, Timeout)
     catch
         _:_ ->
             too_busy
     end,
-    {Pid, erlang:process_info(Pid, message_queue_len), State}.
+   %% {Pid, erlang:process_info(Pid, message_queue_len), State}.
+    {sink_stats, [{pid,erlang:pid_to_list(Pid)},
+                  erlang:process_info(Pid, message_queue_len),
+                  {fs_connected_to, State}]}.
