@@ -88,10 +88,12 @@ init({Socket, Transport, Proto, _Props}) ->
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv, SocketTag}),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
 
-handle_call(status, _From, State = #state{socket=Socket}) ->
+handle_call(status, _From, State = #state{socket=Socket, transport = Transport}) ->
     SocketStats = riak_core_tcp_mon:format_socket_stats(
             riak_core_tcp_mon:socket_status(Socket), []),
+    {ok, PeerData} = Transport:peername(Socket),
     SelfStats = [
+        {peer_name, PeerData},
         {socket, SocketStats}
     ],
     {reply, SelfStats, State};
