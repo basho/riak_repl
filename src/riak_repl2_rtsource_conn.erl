@@ -165,7 +165,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
 %%   functionality should be in the connection manager (I want a connection to site X)
 handle_cast({connect_failed, _HelperPid, Reason},
             State = #state{remote = Remote}) ->
-    lager:info("Realtime replication connection to site ~p failed\n",
+    lager:info("Realtime replication connection to site ~p failed - ~p\n",
                [Remote, Reason]),
     {stop, normal, State}.
     
