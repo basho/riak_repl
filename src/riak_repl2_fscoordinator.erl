@@ -386,7 +386,6 @@ node_available({Partition,_}, State) ->
         RunningList ->
             PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode, Part],
             PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
-            lager:info("~p < ~p", [length(PartsWaiting) + length(RunningList), Max]),
             if
                 ( length(PartsWaiting) + length(RunningList) ) < Max ->
                     case proplists:get_value(Partition, RunningList) of
