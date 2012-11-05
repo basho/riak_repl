@@ -1,103 +1,246 @@
 %%
 %% EQC test for RTQ
 %%
-%% Consumers modelled as public ETS tables
 
 -module(riak_repl2_rtq_eqc).
-%-define(EQC,true).
--undef(EQC).
--ifdef(EQC).
--include_lib("eqc/include/eqc.hrl").
--include_lib("eqc/include/eqc_fsm.hrl").
--include_lib("eunit/include/eunit.hrl").
-
 -compile(export_all).
 
--record(state, {items=0, %% Number of items created
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-include_lib("eqc/include/eqc_statem.hrl").
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+
+-record(state, {rtq,
+                items=0, %% Number of items created
+                tout_no_clients = [],
+                %pcs=[a, b, c, d, e, f, g],
+                pcs=[a, b],
                 cs=[]}).
 
 %% Test consumer record
 -record(tc, {name,    %% Name
-             trec,    %% ETS table for received items
-             tack}).  %% ETS table for acked items
+             tout=[],    %% outstanding items in queue
+             trec=[],    %% received items
+             tack=[]}).  %% acked items
+
+
+-ifdef(TEST).
+rtq_test_() ->
+    {timeout, 30,
+     fun() ->
+                ?assert(eqc:quickcheck(eqc:testing_time(25,
+                                                        ?MODULE:prop_main())))
+        end
+    }.
+-endif.
+
 
 prop_main() ->
-    ?FORALL(Cmds, commands(?MODULE),
+    ?FORALL(Cmds, noshrink(commands(?MODULE)),
+            aggregate(command_names(Cmds),
             begin
-                {H, {_State, _StateData}, Res} = run_commands(?MODULE,Cmds),
+                {_H, S, Res} = run_commands(?MODULE,Cmds),
+                catch(exit(S#state.rtq, kill)),
                 ?WHENFAIL(begin
                               io:format(user, "Test Failed\n~p\n",
-                                        [zip(state_names(H),command_names(Cmds))]),
-                              io:format(user, "State: ~p\nStateData: ~p\nRes: ~p\n",
-                                        [_State, _StateData, Res])
+                                        [command_names(Cmds)]),
+                              io:format(user, "State: ~p\nRes: ~p\n",
+                                        [S, Res])
                           end,
                           %% Generate statistics
-                          aggregate(zip(state_names(H),command_names(Cmds)), Res == ok))
-            end).
+                          Res == ok)
+            end)).
 
 
 %% ====================================================================
-%% eqc_fsm callbacks
+%% eqc_statem callbacks
 %% ====================================================================
 
 initial_state() ->
-    running.
-
-initial_state_data() ->
-    cleanup(),
-    riak_repl2_rtq:start_link(),
-    unlink(whereis(riak_repl2_rtq)),
     #state{}.
 
-running(S) ->
-    [{running, {call, riak_repl2_rtq, push, [make_item(S#state.items)]}},
-     {running, {call, ?MODULE, new_consumer, [length(S#state.cs)]}},
-     {running, {call, ?MODULE, pull, [element(S#state.cs)]].
+command(#state{rtq=undefined}) ->
+        {call, riak_repl2_rtq, start_test, []};
+command(S) ->
+    oneof([{call, ?MODULE, push, [make_item(), S#state.rtq]}] ++
+          [{call, ?MODULE, new_consumer, [elements(S#state.pcs), S#state.rtq]} ||
+            S#state.pcs /= []] ++
+          [{call, ?MODULE, rm_consumer, [elements(S#state.cs), S#state.rtq]} ||
+            S#state.cs /= []] ++
+          [{call, ?MODULE, replace_consumer, [elements(S#state.cs), S#state.rtq]} ||
+            S#state.cs /= []] ++
+          [{call, ?MODULE, pull, [elements(S#state.cs), S#state.rtq]} ||
+            S#state.cs /= []] ++
+          [{call, ?MODULE, ack, [
+                    ?LET(C, elements(S#state.cs),
+                         {C, gen_seq(C)}), S#state.rtq]} ||
+            S#state.cs /= []] ++
+          []
+    ).
 
-next_state_data(_From, _To, S, _Res, {call, _, push, [_Number]}) ->
-    S#state{items = #state.items + 1};
-next_state_data(_From, _To, S, Res, {call, _, new_consumer, [_Number]}) ->
-    S#state{cs = S#state.cs ++ [Res]};
-next_state_data(_From, _To, S, _Res, _Call) ->
+precondition(S,{call,riak_repl2_rtq,start_test,_}) ->
+    S#state.rtq == undefined;
+precondition(S,{call,?MODULE,new_consumer, [Name, _]}) ->
+    lists:member(Name, S#state.pcs);
+precondition(S,{call,?MODULE,pull, [Name, _]}) ->
+    not lists:member(Name, S#state.pcs);
+precondition(_S,{call,_,_,_}) ->
+    true.
+
+postcondition(_S,{call,?MODULE,pull,[C, _]},R) ->
+    %Client = find_client(Name, S),
+    case R of
+        none ->
+            C#tc.tout == [] orelse {not_empty, C#tc.name, C#tc.tout};
+        {_Seq, Size, Item} ->
+            hd(C#tc.tout) == {Size, Item} orelse {not_match, C#tc.name, hd(C#tc.tout),
+            {Size, Item}}
+    end;
+postcondition(_S,{call,_,_,_},_R) ->
+    true.
+
+next_state(S,V,{call, riak_repl2_rtq, start_test, []}) ->
+    S#state{rtq={call, erlang, element, [2, V]}};
+next_state(S,_V,{call, _, new_consumer, [Name, _Q]}) ->
+    %% IF there's other clients, this client's outstanding messages will
+    %% be the longest REC+OUT queue from one of the other consumers.
+    %% Otherwise use the tout_no_clients value and wipe from the state.
+    Tout = lists:foldl(fun(#tc{trec = Trec, tout=Tout}, Longest) ->
+                    Q = strip_seq(Trec) ++ Tout,
+                    lager:info("Q is ~p~n", [Trec]),
+                    case length(Q) > length(Longest) of
+                        true ->
+                            Q;
+                        _ ->
+                            Longest
+                    end
+            end, S#state.tout_no_clients, S#state.cs),
+    lager:info("starting client ~p with backlog of ~p~n", [Name, length(Tout)]),
+    S#state{cs=[#tc{name=Name, tout=Tout}|S#state.cs],
+            tout_no_clients = [],
+            pcs=S#state.pcs -- [Name]};
+next_state(S,_V,{call, _, rm_consumer, [Client, _Q]}) ->
+    delete_client(Client, S#state{pcs=[Client#tc.name|S#state.pcs]});
+next_state(S,_V,{call, _, replace_consumer, [Client, _Q]}) ->
+    %% anything we didn't ack will be considered dropped by the queue
+    NewClient = Client#tc{tack=[], trec=[], tout=strip_seq(Client#tc.trec)
+                          ++ Client#tc.tout},
+    update_client(NewClient, S);
+next_state(S,_V,{call, _, push, [Item, _Q]}) ->
+    case S#state.cs of
+        [] ->
+            S#state{tout_no_clients=S#state.tout_no_clients ++ [Item]};
+        _ ->
+            Clients = lists:map(fun(TC) ->
+                            TC#tc{tout=TC#tc.tout ++ [Item]}
+                    end, S#state.cs),
+            S#state{cs=Clients}
+    end;
+next_state(S,V,{call, _, pull, [Client, _Q]}) ->
+    %lager:info("tout is ~p~n", [Client#tc.tout]),
+    {Tout, Trec} = case Client#tc.tout of
+        [] ->
+            %% nothing to get
+            {[], Client#tc.trec};
+        T ->
+            {tl(T), Client#tc.trec ++ [V]}
+    end,
+    %lager:info("trec ~p, tout ~p~n", [Trec, Tout]),
+    update_client(Client#tc{tout=Tout, trec=Trec}, S);
+next_state(S,_V,{call, _, ack, [{Client,N}, _Q]}) ->
+    case Client#tc.trec of
+        [] ->
+            S;
+        _ ->
+            {H, T} = lists:split(N, Client#tc.trec),
+            update_client(Client#tc{trec=T,
+                                    tack=Client#tc.tack ++ H}, S)
+    end;
+next_state(S,_V,{call, _, _, _}) ->
     S.
-precondition(_From, _To, _S, _Call) ->
-    true.
-postcondition(_From, _To, _S, _Call, _Res) ->
-    true.
 
-%% ====================================================================
-%% Generator functions
-%% ====================================================================
+make_item() ->
+    ?LAZY({1, term_to_binary([make_ref()])}).
 
-%% ====================================================================
-%% Helper functions
-%% ====================================================================
+push({NumItems, Bin}, Q) ->
+    lager:info("pushed item ~p~n to ~p~n", [Bin, Q]),
+    gen_server:call(Q, {push, NumItems, Bin}).
 
-cleanup() ->
-    case whereis(riak_repl2_rtq) of
-        undefined ->
-            ok;
-        Pid ->
-            exit(Pid, kill),
-            MRef = erlang:monitor(process, Pid),
-            receive 
-                {'DOWN', MRef, _Type, _Object, _Info} ->
+new_consumer(Name, Q) ->
+    lager:info("registering ~p to ~p~n", [Name, Q]),
+    gen_server:call(Q, {register, Name}).
+
+rm_consumer(#tc{name=Name}, Q) ->
+    lager:info("unregistering ~p", [Name]),
+    gen_server:call(Q, {unregister, Name}).
+
+replace_consumer(#tc{name=Name}, Q) ->
+    lager:info("replacing ~p", [Name]),
+    gen_server:call(Q, {register, Name}).
+
+pull(#tc{name=Name}, Q) ->
+    lager:info("~p pulling from ~p~n", [Name, Q]),
+    Ref = make_ref(),
+    Self = self(),
+    F = fun(Item) ->
+            Self ! {Ref, Item},
+            receive
+                {Ref, ok} ->
                     ok
             after
-                5000 ->
-                    exit({could_not_kill_riak_repl2_rtq, Pid})
+                1000 ->
+                    lager:info("No pull ack from ~p~n", [Name]),
+                    error
             end
+    end,
+    gen_server:cast(Q, {pull, Name, F}),
+    receive
+        {Ref, {Seq, Size, Item}} ->
+            lager:info("~p got ~p size ~p seq ~p~n", [Name, Item, Size, Seq]),
+            Q ! {Ref, ok},
+            %gen_server:cast(Q, {ack, Name, Seq}),
+            {Seq, Size, Item}
+    after
+        1000 ->
+            lager:info("queue empty: ~p~n", [Name]),
+            none
     end.
 
-make_item(Items) ->
-    list_to_binary("i" ++ integer_to_list(Items+1)).
+ack({C=#tc{name=Name}, N}, Q) ->
+    case C#tc.trec of
+        [] ->
+            lager:info("~p has nothing to ACK~n", [Name]),
+            none;
+        Trec ->
+            {H, _} = lists:split(N, Trec),
+            {Seq, _, _} = I = lists:last(H),
+            lager:info("~p ACKing ~p (~p of ~p)~n", [Name, Seq, N, length(Trec)]),
+            gen_server:call(Q, {ack_sync, Name, Seq}),
+            I
+    end.
 
-make_consumer(Number) ->
-    list_to_atom("c" ++ integer_to_list(Number+1)).
+delete_client(C, S) ->
+    S#state{cs=lists:keydelete(C#tc.name, 2, S#state.cs)}.
 
-new_consumer(Number) ->
-    #tc{name = make_consumer(Number),
-        trec = ets:new(received_tab, [public, ordered_set]),
-        tack = ets:new(acked_tab, [public, ordered_set])}.
-        
+update_client(C, S) ->
+    S#state{cs=[C|lists:keydelete(C#tc.name, 2, S#state.cs)]}.
+
+strip_seq(Trec) ->
+    [{{call, erlang, element, [2, T]}, {call, erlang, element, [3, T]}} ||
+        T <- Trec].
+
+gen_seq(C) ->
+    case length(C#tc.trec) of
+        0 ->
+            0;
+        N ->
+            choose(1, N)
+    end.
+
+
 -endif.
+
