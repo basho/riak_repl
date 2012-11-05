@@ -139,8 +139,6 @@ handle_cast({ack, Ref, Seq}, State = #state{transport = T, socket = S,
         {AckTo, Completed2}  ->
             TcpIOL = riak_repl2_rtframe:encode(ack, AckTo),
             T:send(S, TcpIOL),
-            %% TODO: break out socket stats collection/reporting to separate process
-            riak_repl_stats:client_bytes_sent(iolist_size(TcpIOL)),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
     end;
 handle_cast({ack, Ref, Seq}, State) ->
@@ -149,8 +147,6 @@ handle_cast({ack, Ref, Seq}, State) ->
     {noreply, State}.
 
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
-    %% TODO: break out socket stats collection/reporting to separate process
-    riak_repl_stats:client_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
     case size(Cont) of
