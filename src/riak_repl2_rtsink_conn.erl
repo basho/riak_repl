@@ -126,7 +126,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
     {reply, {status, Status}, State};
 handle_call({set_socket, Socket, Transport}, _From, State) ->
     Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
-    lager:info("Starting realtime connection"),
+    lager:debug("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
@@ -182,8 +182,8 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
                     T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
                     {noreply, State#state{active = true}};
                 {error, Reason} ->
-                    lager:info("Realtime replication sink for ~p had socket error - ~p\n",
-                               [Remote, Reason]),
+                    lager:error("Realtime replication sink for ~p had socket error - ~p\n",
+                                [Remote, Reason]),
                     {stop, normal, State}
             end
     end.
