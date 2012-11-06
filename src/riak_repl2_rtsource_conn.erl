@@ -75,10 +75,10 @@ init([Remote]) ->
     ClientSpec = {{realtime,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
 
     %% Todo: check for bad remote name
-    lager:info("connecting to remote ~p", [Remote]),
+    lager:debug("connecting to remote ~p", [Remote]),
     case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec) of
         {ok, Ref} ->
-            lager:info("connection ref ~p", [Ref]),
+            lager:debug("connection ref ~p", [Ref]),
             {ok, #state{remote = Remote, connection_ref = Ref}};
         {error, Reason}->
             lager:warning("Error connecting to remote"),
@@ -169,8 +169,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
 %%   functionality should be in the connection manager (I want a connection to site X)
 handle_cast({connect_failed, _HelperPid, Reason},
             State = #state{remote = Remote}) ->
-    lager:info("Realtime replication connection to site ~p failed - ~p\n",
-               [Remote, Reason]),
+    lager:warning("Realtime replication connection to site ~p failed - ~p\n",
+                  [Remote, Reason]),
     %% The connection manager keeps trying, even if the connect failed;
     %% we should cancel the request when we're really done with it.
     riak_core_connection_mgr:disconnect({rt_repl, Remote}),
