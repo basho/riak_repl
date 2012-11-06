@@ -49,7 +49,7 @@ status() ->
                 [] ->
                     [];
                 Repls ->
-                    [{Remote, status(Pid)} || {Remote, Pid} <- Repls]
+                    [status(Pid) || {Remote, Pid} <- Repls]
             end
     end.
 
@@ -88,13 +88,15 @@ init({Socket, Transport, Proto, _Props}) ->
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv, SocketTag}),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
 
-handle_call(status, _From, State = #state{socket=Socket}) ->
+handle_call(status, _From, State = #state{socket=Socket, transport = Transport}) ->
     SocketStats = riak_core_tcp_mon:format_socket_stats(
             riak_core_tcp_mon:socket_status(Socket), []),
+    {ok, PeerData} = Transport:peername(Socket),
+    PeerData2 = peername_to_string(PeerData),
     SelfStats = [
         {socket, SocketStats}
     ],
-    {reply, SelfStats, State};
+    {reply, {PeerData2, SelfStats}, State};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -168,3 +170,5 @@ get_matching_address(Node, NormIP, Masked) ->
             {ok, Res}
     end.
 
+peername_to_string({{A,B,C,D},Port}) ->
+    lists:flatten(io_lib:format("~B.~B.~B.~B:~B", [A,B,C,D,Port])).
