@@ -568,7 +568,7 @@ rt2_source_stats(Pid) ->
                 _:_ ->
                     too_busy
             end,
-    FormattedPid = erlang:pid_to_list(Pid),
+    FormattedPid = riak_repl_util:safe_pid_to_list(Pid),
     {source_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
      {rt_source_connected_to, State}]}.
 
@@ -581,7 +581,7 @@ rt2_sink_stats(Pid) ->
                     too_busy
             end,
     %%{Pid, erlang:process_info(Pid, message_queue_len), State}.
-    FormattedPid = erlang:pid_to_list(Pid),
+    FormattedPid = riak_repl_util:safe_pid_to_list(Pid),
     {sink_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
      {rt_sink_connected_to, State}]}.
 
@@ -595,6 +595,6 @@ fs2_sink_stats(Pid) ->
             too_busy
     end,
    %% {Pid, erlang:process_info(Pid, message_queue_len), State}.
-    {sink_stats, [{pid,erlang:pid_to_list(Pid)},
+    {sink_stats, [{pid,riak_repl_util:safe_pid_to_list(Pid)},
                   erlang:process_info(Pid, message_queue_len),
                   {fs_connected_to, State}]}.
