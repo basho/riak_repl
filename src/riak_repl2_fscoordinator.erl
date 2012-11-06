@@ -41,6 +41,8 @@
     partition_queue = queue:new(),
     whereis_waiting = [],
     running_sources = [],
+    successful_exits = 0,
+    error_exits = 0,
     pending_fullsync = false
 }).
 
@@ -142,6 +144,8 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {queued, queue:len(State#state.partition_queue)},
         {in_progress, length(State#state.running_sources)},
         {starting, length(State#state.whereis_waiting)},
+        {successful_exits, State#state.successful_exits},
+        {error_exits, State#state.error_exits},
         {running_stats, SourceStats},
         {socket, SocketStats}
     ],
@@ -189,7 +193,9 @@ handle_cast(start_fullsync,  State) ->
             State2 = State#state{
                 largest_n = N,
                 owners = riak_core_ring:all_owners(Ring),
-                partition_queue = queue:from_list(Partitions)
+                partition_queue = queue:from_list(Partitions),
+                successful_exits = 0,
+                error_exits = 0
             },
             State3 = send_whereis_reqs(State2, FirstN),
             {noreply, State3}
@@ -223,17 +229,19 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             {noreply, State};
         {value, {Pid, _Partition}, Running} ->
             % are we done?
+            Sucesses = State#state.successful_exits + 1,
+            State2 = State#state{successful_exits = Sucesses},
             EmptyRunning =  Running == [],
             QEmpty = queue:is_empty(State#state.partition_queue),
             Waiting = State#state.whereis_waiting,
             case {EmptyRunning, QEmpty, Waiting} of
                 {[], true, []} ->
                     % nothing outstanding, so we can exit.
-                    {noreply, State#state{running_sources = Running}};
+                    {noreply, State2#state{running_sources = Running}};
                 _ ->
                     % there's something waiting for a response.
-                    State2 = send_next_whereis_req(State#state{running_sources = Running}),
-                    {noreply, State2}
+                    State3 = send_next_whereis_req(State2#state{running_sources = Running}),
+                    {noreply, State3}
             end
     end;
 
@@ -245,9 +253,11 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
             {noreply, State};
         {value, {Pid, Partition}, Running} ->
             % TODO putting in the back of the queue a good idea?
+            ErrorExits = State#state.error_exits + 1,
             #state{partition_queue = PQueue} = State,
             PQueue2 = queue:in(Partition, PQueue),
-            State2 = State#state{partition_queue = PQueue2, running_sources = Running},
+            State2 = State#state{partition_queue = PQueue2,
+                running_sources = Running, error_exits = ErrorExits},
             State3 = send_next_whereis_req(State2),
             {noreply, State3}
     end;
