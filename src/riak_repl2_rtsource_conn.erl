@@ -87,8 +87,8 @@ init([Remote]) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-handle_call(status, _From, State = 
-                #state{remote = R, address = A, transport = T, socket = S,
+handle_call(status, _From, State =
+                #state{remote = R, address = _A, transport = T, socket = S,
                        helper_pid = H}) ->
     Props = case T of
                 undefined ->
