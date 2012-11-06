@@ -282,7 +282,8 @@ connect([Address]) ->
             connect([IP, PortStr]);
         _ ->
             {error, {badarg, Address}}
-    end;
+    end,
+    ok;
 connect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
@@ -296,6 +297,13 @@ disconnect([Address]) ->
     NWords = string:words(Address, $:),
     case NWords of
         1 ->
+            %% First, stop any rt or fs syncs in progress
+            Remote = Address,
+            fullsync(["stop",    Remote]),
+            fullsync(["disable", Remote]),
+            realtime(["stop",    Remote]),
+            realtime(["disable", Remote]),
+            %% tear down cluster manager connection
             riak_core_cluster_mgr:remove_remote_cluster(Address);
         2 ->
             IP = string:sub_word(Address, 1, $:),
@@ -303,10 +311,12 @@ disconnect([Address]) ->
             disconnect([IP, PortStr]);
         _ ->
             {error, {badarg, Address}}
-    end;
+    end,
+    ok;
 disconnect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
-    riak_core_cluster_mgr:remove_remote_cluster({IP, Port}).
+    riak_core_cluster_mgr:remove_remote_cluster({IP, Port}),
+    ok.
 
 realtime([Cmd, Remote]) ->
     case Cmd of
@@ -318,7 +328,8 @@ realtime([Cmd, Remote]) ->
             riak_repl2_rt:start(Remote);
         "stop" ->
             riak_repl2_rt:stop(Remote)
-    end;
+    end,
+    ok;
 realtime([Cmd]) ->
     Remotes = riak_repl2_rt:enabled(),
     case Cmd of
@@ -344,7 +355,8 @@ fullsync([Cmd, Remote]) ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
-                    io:format("No fullsync process for cluster ~p", [Remote]);
+                    io:format("Fullsync not enabled for cluster ~p~n", [Remote]),
+                    io:format("Use 'fullsync enable ~p' before start~n", [Remote]);
                 Pid ->
                     riak_repl2_fscoordinator:start_fullsync(Pid)
             end;
@@ -352,11 +364,13 @@ fullsync([Cmd, Remote]) ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
-                    io:format("No fullsync process for cluster ~p", [Remote]);
+                    %% Fullsync is not enabled, but carry on quietly.
+                    ok;
                 Pid ->
                     riak_repl2_fscoordinator:stop_fullsync(Pid)
             end
-    end;
+    end,
+    ok;
 fullsync([Cmd]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
     Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
@@ -367,7 +381,8 @@ fullsync([Cmd]) ->
         "stop" ->
             [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs]
-    end.
+    end,
+    ok.
 
 %% helper functions
 
