@@ -31,16 +31,16 @@ start_link() ->
 add_remote_connection(Remote) ->
     case is_connected(Remote) of
         false ->
-            lager:info("Connecting to remote cluster: ~p", [Remote]),
+            lager:debug("Connecting to remote cluster: ~p", [Remote]),
             ChildSpec = make_remote(Remote),
             supervisor:start_child(?MODULE, ChildSpec);
         _ ->
-            lager:info("Already connected to remote cluster: ~p", [Remote]),
+            lager:debug("Already connected to remote cluster: ~p", [Remote]),
             ok
     end.
 
 remove_remote_connection(Remote) ->
-    lager:info("Disconnecting from remote cluster at: ~p", [Remote]),
+    lager:debug("Disconnecting from remote cluster at: ~p", [Remote]),
     %% remove supervised cluster connection
     supervisor:terminate_child(?MODULE, Remote),
     supervisor:delete_child(?MODULE, Remote),

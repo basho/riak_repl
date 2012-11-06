@@ -179,7 +179,7 @@ set_gc_interval(Interval) ->
 %%%===================================================================
 
 init([]) ->
-    lager:info("Cluster Manager: starting"),
+    lager:debug("Cluster Manager: starting"),
     register_cluster_locator(),
     %% start our cluster_mgr service
     ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
@@ -359,7 +359,7 @@ handle_info(connect_to_clusters, State) ->
         true ->
             Fun = State#state.restore_targets_fun,
             ClusterTargets = Fun(),
-            lager:info("Cluster Manager will connect to clusters: ~p", [ClusterTargets]),
+            lager:debug("Cluster Manager will connect to clusters: ~p", [ClusterTargets]),
             connect_to_targets(ClusterTargets);
         _ ->
             ok
@@ -391,6 +391,8 @@ schedule_gc_timer(Interval) ->
 %% Update ip member information for cluster "Name",
 %% remove aliased connections, and try to ensure that IP addresses only
 %% appear in one cluster.
+update_cluster_members(Name, [], _Addr, _Remote, State) ->
+    State;
 update_cluster_members(Name, Members, Addr, Remote, State) ->
     OldMembers = lists:sort(members_of_cluster(Name, State)),
     case OldMembers == lists:sort(Members) of
@@ -398,8 +400,8 @@ update_cluster_members(Name, Members, Addr, Remote, State) ->
             ok;
         false ->
             persist_members_to_ring(State, Name, Members),
-            lager:info("Cluster Manager: updated by remote ~p at ~p named ~p with members: ~p",
-                       [Remote, Addr, Name, Members])
+            lager:debug("Cluster Manager: updated by remote ~p at ~p named ~p with members: ~p",
+                        [Remote, Addr, Name, Members])
     end,
     %% clean out IPs from other clusters in case of membership movement or
     %% cluster name changes.
@@ -415,23 +417,23 @@ update_cluster_members(Name, Members, Addr, Remote, State) ->
 %% name. This should reduce the number of connections to a single one per
 %% remote cluster.
 remove_connection_if_aliased({cluster_by_name, CName}=Remote, Name) when CName =/= Name ->
-    lager:info("Removing connection alias ~p named ~p", [CName, Name]),
+    lager:debug("Removing connection alias ~p named ~p", [CName, Name]),
     remove_remote_connection(Remote),
     ensure_remote_connection({cluster_by_name,Name});
 remove_connection_if_aliased({cluster_by_addr, Addr}=Remote, Name) ->
-    lager:info("Replacing connection ~p with ~p", [Addr, Name]),
+    lager:debug("Replacing connection ~p with ~p", [Addr, Name]),
     remove_remote_connection(Remote),
     ensure_remote_connection({cluster_by_name,Name});
 remove_connection_if_aliased(_,_) ->
     ok.
 
 collect_garbage(State0) ->
-    lager:info("ClusterManager: GC - cleaning out old empty cluster connections."),
+    lager:debug("ClusterManager: GC - cleaning out old empty cluster connections."),
     %% remove clusters that have no member IP addrs from our view
     State1 = orddict:fold(fun(Name, Cluster, State) ->
                                   case Cluster#cluster.members of
                                       [] ->
-                                          lager:info("ClusterManager: GC - cluster ~p has no members.",
+                                          lager:debug("ClusterManager: GC - cluster ~p has no members.",
                                                     [Name]),
                                           remove_remote(Name, State);
                                       _ ->
@@ -551,9 +553,7 @@ become_leader(State, LeaderNode) when State#state.is_leader == false ->
     %% Wait enough time for the ring to be stable
     %% so that the call into the repl_ring handler won't crash.
     %% We can try several time delays because it's idempotent.
-    erlang:send_after(1000, self(), connect_to_clusters),
     erlang:send_after(5000, self(), connect_to_clusters),
-    erlang:send_after(10000, self(), connect_to_clusters),
     State#state{is_leader = true};
 become_leader(State, LeaderNode) ->
     lager:debug("ClusterManager: ~p still the leader", [LeaderNode]),
@@ -568,7 +568,7 @@ become_proxy(State, LeaderNode) when State#state.is_leader == true ->
         [] ->
             ok;
         Connections ->        
-            lager:info("ClusterManager: proxy is removing connections to remote clusters:"),
+            lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
             [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
              || {Remote, _Pid} <- Connections]
     end,
@@ -598,7 +598,7 @@ ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
 ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args, Props) ->
     {ok, ClientAddr} = inet:peername(Socket),
     RemoteClusterName = proplists:get_value(clustername, Props),
-    lager:info("Cluster Manager: accepted connection from cluster at ~p namded ~p",
+    lager:debug("Cluster Manager: accepted connection from cluster at ~p namded ~p",
                [ClientAddr, RemoteClusterName]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,

@@ -130,7 +130,7 @@ cluster_mgr_member_fun({IP, Port}) ->
     %% find the subnet for the interface we connected to
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
-    ?TRACE(lager:info("normIP is ~p", [NormIP])),
+    lager:debug("normIP is ~p", [NormIP]),
     MyMask = lists:foldl(fun({_IF, Attrs}, Acc) ->
                 case lists:member({addr, NormIP}, Attrs) of
                     true ->
@@ -141,7 +141,7 @@ cluster_mgr_member_fun({IP, Port}) ->
                             end, undefined, Attrs),
                         %% convert the netmask to CIDR
                         CIDR = cidr(list_to_binary(tuple_to_list(NetMask)),0),
-                        ?TRACE(lager:info("~p is ~p in CIDR", [NetMask, CIDR])),
+                        lager:debug("~p is ~p in CIDR", [NetMask, CIDR]),
                         CIDR;
                     false ->
                         Acc
@@ -295,7 +295,7 @@ name_this_cluster() ->
 %% Persist the named cluster and it's members to the repl ring metadata.
 %% TODO: an empty Members list means "delete this cluster name"
 cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->
-    ?TRACE(lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, Members])),
+    lager:debug("Saving cluster to the ring: ~p of ~p", [ClusterName, Members]),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clusterIpAddrs/2,
                                       {ClusterName, Members}).
 
@@ -315,7 +315,9 @@ cluster_mgr_read_cluster_targets_from_ring() ->
 register_cluster_name_locator() ->
     Locator = fun(ClusterName, _Policy) ->
                       Ring = get_ring(),
-                      {ok,riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName)}
+                      Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+                      lager:debug("located members for cluster ~p: ~p", [ClusterName, Addrs]),
+                      {ok,Addrs}
               end,
     ok = riak_core_connection_mgr:register_locator(?CLUSTER_NAME_LOCATOR_TYPE, Locator),
     %% Register functions to save/restore cluster names and their members

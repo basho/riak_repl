@@ -383,7 +383,7 @@ identity_locator([Ips], _Policy) ->
 
 %% close the pending connection and cancel the request
 disconnect_from_target(Target, State = #state{pending = Pending}) ->
-    lager:info("Disconnecting from: ~p", [Target]),
+    lager:debug("Disconnecting from: ~p", [Target]),
     case lists:keyfind(Target, #req.target, Pending) of
         false ->
             %% already gone!
@@ -428,7 +428,7 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             gen_server:cast(?SERVER, {conmgr_no_endpoints, Ref}),
             Interval = app_helper:get_env(riak_core, connmgr_no_endpoint_retry,
                                          ?DEFAULT_RETRY_NO_ENDPOINTS),
-            lager:info("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
+            lager:debug("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
             %% schedule a retry and exit
             schedule_retry(Interval, Ref, State);
         {ok, EpAddrs } ->
@@ -481,12 +481,12 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
-    lager:info("Holding off ~p seconds before trying ~p at ~p",
+    lager:debug("Holding off ~p seconds before trying ~p at ~p",
                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
         true ->
-            lager:info("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
+            lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             case riak_core_connection:sync_connect(Addr, Protocol) of
                 ok ->
                     ok;
@@ -497,7 +497,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             end;
         _ ->
             %% connection request has been cancelled
-            lager:info("Ignoring connection to: ~p at ~p because it was cancelled",
+            lager:debug("Ignoring connection to: ~p at ~p because it was cancelled",
                        [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.

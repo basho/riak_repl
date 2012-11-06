@@ -67,8 +67,8 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             From ! {self(), connecting, Remote},
             ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connect_failed, Error}} ->
-            lager:info("cluster_conn: client connect_failed to ~p because ~p",
-                       [Remote, Error]),
+            lager:warning("cluster_conn: client connect_failed to ~p because ~p",
+                          [Remote, Error]),
             %% This is not fatal! We are being supervised by conn_sup and if we
             %% die, it will restart us. But we don't want to die because the
             %% connection manager is trying lots of different IP/Port combos
@@ -99,7 +99,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             %% die with error once we've passed the timeout period that the
             %% core_connection module will expire. Go round and let the connection
             %% manager keep trying.
-            lager:info("cluster_conn: client timed out waiting for ~p", [Remote]),
+            lager:debug("cluster_conn: client timed out waiting for ~p", [Remote]),
             ctrlClientProcess(Remote, connecting, Members0)
     end;
 ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->

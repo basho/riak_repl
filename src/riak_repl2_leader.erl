@@ -205,7 +205,7 @@ become_leader(Leader, State) ->
             NewState = State,
             %% we can get here if a non-leader node goes down
             %% so we want to make sure any missing clients are started
-            lager:info("LeaderII: ~p re-elected as replication leader", [Leader]);
+            lager:debug("LeaderII: ~p re-elected as replication leader", [Leader]);
         _ ->
             %% newly the leader
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
