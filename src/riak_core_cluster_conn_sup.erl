@@ -35,6 +35,7 @@ add_remote_connection(Remote) ->
             ChildSpec = make_remote(Remote),
             supervisor:start_child(?MODULE, ChildSpec);
         _ ->
+            lager:info("Already connected to remote cluster: ~p", [Remote]),
             ok
     end.
 

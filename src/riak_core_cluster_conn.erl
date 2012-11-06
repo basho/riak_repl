@@ -76,7 +76,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
-            lager:info("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
+            lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
                        [Remote, Addr, RemoteName]),
             %% ask it's name and member list, even if it's a previously
             %% resolved cluster. Then we can sort everything out in the

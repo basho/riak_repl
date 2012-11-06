@@ -401,6 +401,7 @@ schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
             %% this should never happen
+            lager:error("ConnectionManager: failed to find connection ref while scheduling retry."),
             State;
         Req ->
             case Req#req.state of
@@ -427,11 +428,14 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             gen_server:cast(?SERVER, {conmgr_no_endpoints, Ref}),
             Interval = app_helper:get_env(riak_core, connmgr_no_endpoint_retry,
                                          ?DEFAULT_RETRY_NO_ENDPOINTS),
+            lager:info("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
             %% schedule a retry and exit
             schedule_retry(Interval, Ref, State);
         {ok, EpAddrs } ->
+            lager:debug("Connection Manager located endpoints: ~p", [EpAddrs]),
             AllEps = update_endpoints(EpAddrs, State#state.endpoints),
             TryAddrs = filter_blacklisted_endpoints(EpAddrs, AllEps),
+            lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
                     fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
                                   catch T:R -> {exception, {T, R}}
@@ -458,6 +462,9 @@ increase_backoff(Delay) when Delay > ?MAX_BACKOFF ->
 increase_backoff(Delay) ->
     2 * Delay.
 
+string_of_ipport({IP,Port}) ->
+    IP ++ ":" ++ erlang:integer_to_list(Port).
+
 %% A spawned process that will walk down the list of endpoints and try them
 %% all until exhausting the list. This process is responsible for waiting for
 %% the backoff delay for each endpoint.
@@ -465,25 +472,27 @@ connection_helper(Ref, _Protocol, _Strategy, []) ->
     %% exhausted the list of endpoints. let server start new helper process
     {error, endpoints_exhausted, Ref};
 connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
+    {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
-    lager:info("Holding off ~p seconds before trying ~p", [(BackoffDelay/1000), Addr]),
+    lager:info("Holding off ~p seconds before trying ~p at ~p",
+               [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
         true ->
-            lager:info("Trying connection to: ~p", [Addr]),
+            lager:info("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             case riak_core_connection:sync_connect(Addr, Protocol) of
                 ok ->
                     ok;
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
-                    {{ProtocolId, _Foo},_Bar} = Protocol,
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
                     connection_helper(Ref, Protocol, Strategy, Addrs)
             end;
         _ ->
             %% connection request has been cancelled
-            lager:info("Ignoring connection to: ~p because it was cancelled", [Addr]),
+            lager:info("Ignoring connection to: ~p at ~p because it was cancelled",
+                       [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.
 
@@ -570,6 +579,12 @@ update_endpoints(Addrs, Endpoints) ->
 %% Return the addresses of non-blacklisted endpoints that are also
 %% members of the list EpAddrs.
 filter_blacklisted_endpoints(EpAddrs, AllEps) ->
-    [EP#ep.addr || {AddrKey,EP} <- orddict:to_list(AllEps),
-                   lists:member(AddrKey, EpAddrs),
-                   EP#ep.is_black_listed == false].
+    PredicateFun = (fun(Addr) ->
+                            case orddict:find(Addr, AllEps) of
+                                {ok, EP} ->
+                                    EP#ep.is_black_listed == false;
+                                error ->
+                                    false
+                            end
+                    end),
+    lists:filter(PredicateFun, EpAddrs).

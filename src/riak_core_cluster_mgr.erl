@@ -52,7 +52,7 @@
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
 -define(MAX_CONS, 20).
 -define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
--define(GC_INTERVAL, 60 * 1000).
+-define(GC_INTERVAL, infinity).
 -define(PROXY_CALL_TIMEOUT, 30 * 1000).
 
 %% State of a resolved remote cluster
@@ -65,6 +65,7 @@
 
 -record(state, {is_leader = false :: boolean(),                % true when the buck stops here
                 leader_node = undefined :: undefined | node(),
+                gc_interval = infinity,
                 member_fun = fun(_Addr) -> [] end,             % return members of local cluster
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
@@ -84,6 +85,7 @@
          get_known_clusters/0,
          get_connections/0,
          get_ipaddrs_of_cluster/1,
+         set_gc_interval/1,
          stop/0
          ]).
 
@@ -169,6 +171,9 @@ get_ipaddrs_of_cluster(ClusterName) ->
 stop() ->
     gen_server:call(?SERVER, stop).
 
+set_gc_interval(Interval) ->
+    gen_server:cast(?SERVER, {set_gc_interval, Interval}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -182,8 +187,6 @@ init([]) ->
     riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
-    %% schedule a timer to garbage collect old cluster and endpoint data
-    erlang:send_after(?GC_INTERVAL, self(), garbage_collection_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
     {ok, #state{is_leader=false,
                 balancer_fun=BalancerFun
@@ -206,13 +209,10 @@ handle_call({set_leader_node, LeaderNode}, _From, State) ->
     case node() of
         LeaderNode ->
             %% oh crap, it's me!
-            lager:info("ClusterManager(repl2): ~p Becoming the leader", [LeaderNode]),
-            {reply, ok, become_leader(State2)};
+            {reply, ok, become_leader(State2, LeaderNode)};
         _ ->
             %% not me.
-            lager:info("ClusterManager(repl2): ~p Becoming a proxy to ~p",
-                       [node(), LeaderNode]),
-            {reply, ok, become_proxy(State2)}
+            {reply, ok, become_proxy(State2, LeaderNode)}
     end;
 
 handle_call(stop, _From, State) ->
@@ -259,6 +259,7 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
             Members = members_of_cluster(ClusterName, State),
             BalancerFun = State#state.balancer_fun,
             RebalancedMembers = BalancerFun(Members),
+            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
             {reply, {ok, Members},
              State#state{clusters=add_ips_to_cluster(ClusterName, RebalancedMembers,
                                                      State#state.clusters)}};
@@ -268,6 +269,10 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
                        NoLeaderResult,
                        State)
     end.
+
+handle_cast({set_gc_interval, Interval}, State) ->
+    schedule_gc_timer(Interval),
+    State#state{gc_interval=Interval};
 
 handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
@@ -343,10 +348,10 @@ handle_info(poll_clusters_timer, State) ->
 %% Remove old clusters that no longer have any IP addresses associated with them.
 %% They are probably old cluster names that no longer exist. If we don't have an IP,
 %% then we can't connect to it anyhow.
-handle_info(garbage_collection_timer, State0) ->
-    State = collect_garbage(State0),
-    erlang:send_after(?GC_INTERVAL, self(), garbage_collection_timer),
-    {noreply, State};
+handle_info(garbage_collection_timer, State) ->
+    State1 = collect_garbage(State),
+    schedule_gc_timer(State#state.gc_interval),
+    {noreply, State1};
 
 handle_info(connect_to_clusters, State) ->
     %% Open a connection to all known (persisted) clusters
@@ -375,6 +380,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Private
 %%%===================================================================
 
+schedule_gc_timer(infinity) ->
+    ok;
+schedule_gc_timer(0) ->
+    ok;
+schedule_gc_timer(Interval) ->
+    %% schedule a timer to garbage collect old cluster and endpoint data
+    erlang:send_after(Interval, self(), garbage_collection_timer).
+
 %% Update ip member information for cluster "Name",
 %% remove aliased connections, and try to ensure that IP addresses only
 %% appear in one cluster.
@@ -391,10 +404,11 @@ update_cluster_members(Name, Members, Addr, Remote, State) ->
     %% clean out IPs from other clusters in case of membership movement or
     %% cluster name changes.
     Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
+    %% save latest rebalanced members
+    State1 = State#state{clusters=add_ips_to_cluster(Name, Members, Clusters1)},
     %% Ensure we have as few connections to a cluster as possible
     remove_connection_if_aliased(Remote, Name),
-    %% save latest rebalanced members
-    State#state{clusters=add_ips_to_cluster(Name, Members, Clusters1)}.
+    State1.
 
 %% if the cluster name is not the same as the initial remote we connected to,
 %% then remove this connection and ensure that we have one to the actual cluster
@@ -412,10 +426,13 @@ remove_connection_if_aliased(_,_) ->
     ok.
 
 collect_garbage(State0) ->
+    lager:info("ClusterManager: GC - cleaning out old empty cluster connections."),
     %% remove clusters that have no member IP addrs from our view
     State1 = orddict:fold(fun(Name, Cluster, State) ->
                                   case Cluster#cluster.members of
                                       [] ->
+                                          lager:info("ClusterManager: GC - cluster ~p has no members.",
+                                                    [Name]),
                                           remove_remote(Name, State);
                                       _ ->
                                           State
@@ -474,15 +491,19 @@ remove_remote_connection(Remote) ->
     end.
 
 proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined ->
+    lager:debug("proxy_cast: leader is undefined. dropping cast: ~p", [_Cast]),
     ok;
 proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
+    lager:debug("proxy_cast: casting to leader ~p: ~p", [Leader, Cast]),
     gen_server:cast({?SERVER, Leader}, Cast).
 
 %% Make a proxy call to the leader. If there is no leader elected or the request fails,
 %% it will return the NoLeaderResult supplied.
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
+    lager:debug("proxy_call: leader is undefined. dropping call: ~p", [_Call]),
     {reply, NoLeaderResult, State};
 proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
+    lager:debug("proxy_call: call to leader ~p: ~p", [Leader, Call]),
     Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
                 R -> R
             catch
@@ -524,23 +545,37 @@ connect_to_targets(Targets) ->
                   Targets).
 
 %% start being a cluster manager leader
-become_leader(State) when State#state.is_leader == false ->
+become_leader(State, LeaderNode) when State#state.is_leader == false ->
+    lager:info("ClusterManager: ~p becoming the leader", [LeaderNode]),
     %% start leading and tell ourself to connect to known clusters in a bit.
-    %% TODO: 5 seconds is arbitrary. It's enough time for the ring to be stable
-    %% so that the call into the repl_ring handler won't crash. Fix this.
+    %% Wait enough time for the ring to be stable
+    %% so that the call into the repl_ring handler won't crash.
+    %% We can try several time delays because it's idempotent.
+    erlang:send_after(1000, self(), connect_to_clusters),
     erlang:send_after(5000, self(), connect_to_clusters),
+    erlang:send_after(10000, self(), connect_to_clusters),
     State#state{is_leader = true};
-become_leader(State) ->
-    ?TRACE(?debugMsg("Already the leader")),
+become_leader(State, LeaderNode) ->
+    lager:debug("ClusterManager: ~p still the leader", [LeaderNode]),
     State.
 
 %% stop being a cluster manager leader
-become_proxy(State) ->
+become_proxy(State, LeaderNode) when State#state.is_leader == true ->
+    lager:info("ClusterManager: ~p becoming a proxy to ~p", [node(), LeaderNode]),
     %% stop leading
-    %% remove all outbound connections
-    Connections = riak_core_cluster_conn_sup:connections(),
-    [riak_core_cluster_conn_sup:remove_remote_connection(Remote) || {Remote, _Pid} <- Connections],
-    State#state{is_leader = false}.
+    %% remove any outbound connections
+    case riak_core_cluster_conn_sup:connections() of
+        [] ->
+            ok;
+        Connections ->        
+            lager:info("ClusterManager: proxy is removing connections to remote clusters:"),
+            [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
+             || {Remote, _Pid} <- Connections]
+    end,
+    State#state{is_leader = false};
+become_proxy(State, LeaderNode) ->
+    lager:debug("ClusterManager: ~p still a proxy to ~p", [node(), LeaderNode]),
+    State.
 
 persist_members_to_ring(State, ClusterName, Members) ->
     SaveFun = State#state.save_members_fun,
