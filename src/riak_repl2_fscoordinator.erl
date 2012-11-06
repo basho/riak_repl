@@ -135,7 +135,6 @@ init(Cluster) ->
 
 handle_call(status, _From, State = #state{socket=Socket}) ->
     SourceStats = gather_source_stats(State#state.running_sources),
-    lager:info("SOURCE STATS = ~p",[SourceStats]),
     SocketStats = riak_core_tcp_mon:format_socket_stats(
         riak_core_tcp_mon:socket_status(Socket), []),
     SelfStats = [

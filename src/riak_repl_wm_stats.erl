@@ -89,11 +89,10 @@ get_stats() ->
     LeaderStats = riak_repl_console:leader_stats(),
     %%[{sources, Servers}] = riak_repl_console:server_stats(),
     Servers = riak_repl_console:server_stats(),
-    [{sinks, Clients}] = riak_repl_console:client_stats(),
+    %[{sinks, Clients}] = riak_repl_console:client_stats(),
+    Clients = riak_repl_console:client_stats(),
     Coord = riak_repl_console:coordinator_stats(),
     CoordSrv = riak_repl_console:coordinator_srv_stats(),
-    lager:info("COORD = ~p",[Coord]),
-    lager:info("COORDSRV = ~p",[CoordSrv]),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
     CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
