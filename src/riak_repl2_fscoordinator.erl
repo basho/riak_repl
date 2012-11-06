@@ -451,10 +451,10 @@ gather_source_stats([], Acc) ->
 gather_source_stats([{Pid, _} | Tail], Acc) ->
     try riak_repl2_fssource:legacy_status(Pid, infinity) of
         Stats ->
-            gather_source_stats(Tail, [{Pid, Stats} | Acc])
+            gather_source_stats(Tail, [{erlang:pid_to_list(Pid), Stats} | Acc])
     catch
         exit:_ ->
-            gather_source_stats(Tail, [{Pid, []} | Acc])
+            gather_source_stats(Tail, [{erlang:pid_to_list(Pid), []} | Acc])
     end.
 
 is_fullsync_in_progress(State) ->

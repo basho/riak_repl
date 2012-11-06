@@ -38,7 +38,8 @@
          sink_socket_stats/0,
          get_peer_repl_nodes/0,
          get_hooks_for_modes/0,
-         remove_unwanted_stats/1
+         remove_unwanted_stats/1,
+         format_ip_and_port/2
      ]).
 
 make_peer_info() ->
@@ -655,4 +656,6 @@ get_hooks_for_modes() ->
     [ proplists:get_value(K,?REPL_MODES)
      || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
 
+format_ip_and_port(Ip, Port) ->
+    lists:flatten(io_lib:format("~s:~p",[Ip,Port])).
 

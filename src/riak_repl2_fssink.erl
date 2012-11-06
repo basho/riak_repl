@@ -69,10 +69,10 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
             {node, node()},
             {site, State#state.cluster},
             {strategy, fullsync},
-            {fullsync_worker, State#state.fullsync_worker},
+            {fullsync_worker, erlang:pid_to_list(State#state.fullsync_worker)},
             {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}
         ],
-    {reply, {status, Desc ++ Res}, State};
+    {reply, Desc ++ Res, State};
 
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.

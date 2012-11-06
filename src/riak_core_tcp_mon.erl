@@ -204,7 +204,7 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
           end,
     {noreply, State#state{conns = gb_trees:map(Fun, Conns)}};
 handle_info({clear, Socket}, State = #state{conns = Conns}) ->
-    {noreply, State#state{conns = gb_trees:delete(Socket, Conns)}}.
+    {noreply, State#state{conns = gb_trees:delete_any(Socket, Conns)}}.
 
 terminate(_Reason, _State) ->
     lager:info("Shutting down TCP Monitor"),
