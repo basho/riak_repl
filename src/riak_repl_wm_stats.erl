@@ -73,7 +73,7 @@ forbidden(RD, Ctx) ->
 produce_body(ReqData, Ctx) ->
     Body = mochijson2:encode({struct,
                               get_stats()
-                              }),    
+                              }),
     {Body, ReqData, Ctx}.
 
 %% @spec pretty_print(webmachine:wrq(), context()) ->
@@ -87,19 +87,24 @@ get_stats() ->
     Stats1 = riak_repl_stats:get_stats(),
     CMStats = riak_repl_console:cluster_mgr_stats(),
     LeaderStats = riak_repl_console:leader_stats(),
-    [{server_stats, Servers}] = riak_repl_console:server_stats(),
-    [{client_stats, Clients}] = riak_repl_console:client_stats(),
+    Servers = riak_repl_console:server_stats(),
+    Clients = riak_repl_console:client_stats(),
+    Coord = riak_repl_console:coordinator_stats(),
+    CoordSrv = riak_repl_console:coordinator_srv_stats(),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
     CMStats ++ Stats1 ++ LeaderStats
-        ++ format_stats(client_stats, Clients, [])
-        ++ format_stats(server_stats, Servers, [])
-        ++ RTQ.
+        ++ jsonify_stats(Clients, [])
+        ++ jsonify_stats(Servers, [])
+    ++ RTQ 
+    ++ jsonify_stats(Coord,[])
+    ++ jsonify_stats(CoordSrv,[]).
 
-format_stats(Type, [], Acc) ->
-    [{Type, lists:reverse(Acc)}];
-format_stats(Type, [{P, M, {status, S}}|T], Acc) ->
-    format_stats(Type, T, [[{pid, list_to_binary(erlang:pid_to_list(P))},
-                            M, {status, jsonify_stats(S, [])}]|Acc]).
+%%format_stats(Type, [], Acc) ->
+%%    [{Type, lists:reverse(Acc)}];
+%%format_stats(Type, [{P, M, {status, S}}|T], Acc) ->
+%%    format_stats(Type, T, [[{pid, list_to_binary(erlang:pid_to_list(P))},
+%%                            M, {status, jsonify_stats(S, [])}]|Acc]).
+
 jsonify_stats([], Acc) ->
     lists:flatten(lists:reverse(Acc));
 jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
@@ -117,4 +122,4 @@ jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Po
                        iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
-    
+
