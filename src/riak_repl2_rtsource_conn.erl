@@ -167,6 +167,9 @@ handle_cast({connect_failed, _HelperPid, Reason},
             State = #state{remote = Remote}) ->
     lager:info("Realtime replication connection to site ~p failed\n",
                [Remote, Reason]),
+    %% The connection manager keeps trying, even if the connect failed;
+    %% we should cancel the request when we're really done with it.
+    riak_core_connection_mgr:disconnect({rt_repl, Remote}),
     {stop, normal, State}.
     
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->

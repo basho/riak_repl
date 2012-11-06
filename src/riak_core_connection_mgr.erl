@@ -354,8 +354,8 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 Reason -> % something bad happened to the connection, reuse the request
                     ?TRACE(?debugFmt("handle_info: EP failed on ~p for ~p. removed Ref ~p",
                                      [Cur, Reason, Ref])),
-                    lager:error("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
-                                [Cur, Reason, Ref]),
+                    lager:warning("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
+                                  [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
                     %% the connection helper will retry
                     {noreply, State2}
