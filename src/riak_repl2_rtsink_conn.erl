@@ -89,13 +89,13 @@ init([Proto, Remote]) ->
     {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending, helper = Helper}}.
 
 handle_call(status, _From, State = #state{remote = Remote,
-                                          transport = T, socket = S, helper = Helper,
+                                          transport = T, socket = _S, helper = Helper,
                                           active = Active, deactivated = Deactivated,
                                           source_drops = SourceDrops,
                                           expect_seq = ExpSeq, acked_seq = AckedSeq}) ->
     Pending = pending(State),
     SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
-    Status = [%%{sink, Remote},
+    Status = [{source, Remote},
               {pid, erlang:pid_to_list(self())},
               {connected, true},
               {transport, T},
