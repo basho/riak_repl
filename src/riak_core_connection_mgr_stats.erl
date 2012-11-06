@@ -114,7 +114,13 @@ format_stat({{?APP, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) when is_a
      ++ "_" ++ atom_to_list(StatName), N}.
 
 string_of_ipaddr({IP, Port}) ->
-    lists:flatten(io_lib:format("~s:~p", [IP, Port])).
+    {Fmt, Args} = case IP of
+        {A,B,C,D} ->
+            {"~B.~B.~B.~B:~p", [A,B,C,D,Port]};
+        _ ->
+            {"~s:~p", [IP, Port]}
+    end,
+    lists:flatten(io_lib:format(Fmt, Args)).
 
 %% Get stats filtered by given IP address
 get_stats_by_ip({_IP, _Port}=Addr) ->
