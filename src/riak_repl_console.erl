@@ -356,7 +356,8 @@ fullsync([Cmd, Remote]) ->
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
                     io:format("Fullsync not enabled for cluster ~p~n", [Remote]),
-                    io:format("Use 'fullsync enable ~p' before start~n", [Remote]);
+                    io:format("Use 'fullsync enable ~p' before start~n", [Remote]),
+                    {error, not_enabled};
                 Pid ->
                     riak_repl2_fscoordinator:start_fullsync(Pid)
             end;
