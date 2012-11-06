@@ -462,8 +462,14 @@ increase_backoff(Delay) when Delay > ?MAX_BACKOFF ->
 increase_backoff(Delay) ->
     2 * Delay.
 
+%% Convert an inet:address to a string if needed.
+string_of_ip(IP) when is_tuple(IP) ->    
+    inet_parse:ntoa(IP);
+string_of_ip(IP) ->
+    IP.
+
 string_of_ipport({IP,Port}) ->
-    IP ++ ":" ++ erlang:integer_to_list(Port).
+    string_of_ip(IP) ++ ":" ++ erlang:integer_to_list(Port).
 
 %% A spawned process that will walk down the list of endpoints and try them
 %% all until exhausting the list. This process is responsible for waiting for
