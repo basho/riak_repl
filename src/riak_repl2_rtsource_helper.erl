@@ -53,8 +53,6 @@ handle_call({pull, {Seq, NumObjects, BinObjs}}, _From,
             State = #state{transport = T, socket = S, objects = Objects}) ->
     TcpIOL = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
     T:send(S, TcpIOL),
-    %% TODO: break out socket stats collection/reporting to separate process
-    riak_repl_stats:server_bytes_sent(iolist_size(TcpIOL)),
     async_pull(State),
     {reply, ok, State#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->

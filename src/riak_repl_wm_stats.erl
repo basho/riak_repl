@@ -89,9 +89,11 @@ get_stats() ->
     LeaderStats = riak_repl_console:leader_stats(),
     [{server_stats, Servers}] = riak_repl_console:server_stats(),
     [{client_stats, Clients}] = riak_repl_console:client_stats(),
+    RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
     CMStats ++ Stats1 ++ LeaderStats
         ++ format_stats(client_stats, Clients, [])
-        ++ format_stats(server_stats, Servers, []).
+        ++ format_stats(server_stats, Servers, [])
+        ++ RTQ.
 
 format_stats(Type, [], Acc) ->
     [{Type, lists:reverse(Acc)}];

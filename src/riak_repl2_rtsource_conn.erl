@@ -170,7 +170,6 @@ handle_cast({connect_failed, _HelperPid, Reason},
     {stop, normal, State}.
     
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
-    riak_repl_stats:server_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, _S}, 
             State = #state{remote = Remote, cont = Cont}) ->

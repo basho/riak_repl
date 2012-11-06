@@ -13,7 +13,7 @@
 -include("riak_repl.hrl").
 
 -export([register_service/0, start_service/5]).
--export([start_link/1,
+-export([start_link/2,
          stop/1,
          set_socket/3,
          status/1, status/2,
@@ -53,14 +53,14 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
     SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, sink, SocketTag}),
-    _RemoteClusterName = proplists:get_value(clustername, Props),
-    {ok, Pid} = riak_repl2_rtsink_conn_sup:start_child(Proto),
+    Remote = proplists:get_value(clustername, Props),
+    {ok, Pid} = riak_repl2_rtsink_conn_sup:start_child(Proto, Remote),
     ok = Transport:controlling_process(Socket, Pid),
     ok = set_socket(Pid, Socket, Transport),
     {ok, Pid}.
 
-start_link(Proto) ->
-    gen_server:start_link(?MODULE, [Proto], []).
+start_link(Proto, Remote) ->
+    gen_server:start_link(?MODULE, [Proto, Remote], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop, infinity).
@@ -82,11 +82,11 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 %% Callbacks
-init([Proto]) ->
+init([Proto, Remote]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
-    {ok, #state{proto = Proto, max_pending = MaxPending, helper = Helper}}.
+    {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending, helper = Helper}}.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = S, helper = Helper,
@@ -139,8 +139,6 @@ handle_cast({ack, Ref, Seq}, State = #state{transport = T, socket = S,
         {AckTo, Completed2}  ->
             TcpIOL = riak_repl2_rtframe:encode(ack, AckTo),
             T:send(S, TcpIOL),
-            %% TODO: break out socket stats collection/reporting to separate process
-            riak_repl_stats:client_bytes_sent(iolist_size(TcpIOL)),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
     end;
 handle_cast({ack, Ref, Seq}, State) ->
@@ -149,8 +147,6 @@ handle_cast({ack, Ref, Seq}, State) ->
     {noreply, State}.
 
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
-    %% TODO: break out socket stats collection/reporting to separate process
-    riak_repl_stats:client_bytes_recv(size(TcpBin)),
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
     case size(Cont) of
