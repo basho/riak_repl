@@ -102,7 +102,7 @@ handle_call(status, _From, State =
                      {socket,
                       riak_core_tcp_mon:format_socket_stats(SocketStats, [])},
                      %%{peername, peername(State)},
-                     {helper_pid, erlang:pid_to_list(H)}]
+                     {helper_pid, riak_repl_util:safe_pid_to_list(H)}]
             end,
     HelperProps = case H of
                       undefined ->
@@ -118,7 +118,7 @@ handle_call(status, _From, State =
                                   [{helper, timeout}]
                           end
                   end,
-    FormattedPid = erlang:pid_to_list(self()),
+    FormattedPid = riak_repl_util:safe_pid_to_list(self()),
     Status = [{source, R}, {pid, FormattedPid}] ++ Props ++ HelperProps,
     {reply, Status, State};
 handle_call(legacy_status, _From, State = #state{remote = Remote}) ->

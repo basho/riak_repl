@@ -39,7 +39,8 @@
          get_peer_repl_nodes/0,
          get_hooks_for_modes/0,
          remove_unwanted_stats/1,
-         format_ip_and_port/2
+         format_ip_and_port/2,
+         safe_pid_to_list/1
      ]).
 
 make_peer_info() ->
@@ -658,4 +659,9 @@ get_hooks_for_modes() ->
 
 format_ip_and_port(Ip, Port) ->
     lists:flatten(io_lib:format("~s:~p",[Ip,Port])).
+
+safe_pid_to_list(Pid) when is_pid(Pid) ->
+    erlang:pid_to_list(Pid);
+safe_pid_to_list(NotAPid) ->
+    NotAPid.
 
