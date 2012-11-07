@@ -85,7 +85,8 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 init({Socket, Transport, Proto, _Props}) ->
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
-    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv, SocketTag}),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv,
+                                       SocketTag}, Transport),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
 
 handle_call(status, _From, State = #state{socket=Socket, transport = Transport}) ->
