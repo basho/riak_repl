@@ -173,7 +173,7 @@ handle_cast({connect_failed, _HelperPid, Reason},
     lager:warning("Realtime replication connection to site ~p failed - ~p\n",
                   [Remote, Reason]),
     {stop, normal, State}.
-    
+
 handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
 handle_info({tcp_closed, _S}, 
@@ -193,8 +193,10 @@ handle_info({tcp_error, _S, Reason},
             State = #state{remote = Remote, cont = Cont}) ->
     lager:warning("Realtime connection ~p to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
-    {stop, normal, State}.
-
+    {stop, normal, State};
+handle_info(Msg, State) ->
+    lager:warning("Unhandled info:  ~p", [Msg]),
+    {noreply, State}.
 
 terminate(_Reason, #state{helper_pid = HelperPid}) ->
     %%TODO: check if this is called, don't think it is on normal supervisor
