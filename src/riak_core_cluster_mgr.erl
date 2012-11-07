@@ -635,7 +635,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             %% timeouts are OK, I think.
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, Reason} ->
-            lager:error("Cluster Manager: serice ~p failed recv on control channel. Error = ~p",
+            lager:error("Cluster Manager: service ~p failed recv on control channel. Error = ~p",
                         [self(), Reason]),
             % nothing to do now but die
             {error, Reason};

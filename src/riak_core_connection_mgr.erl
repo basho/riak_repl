@@ -60,7 +60,8 @@
              is_black_listed = false :: boolean(), %% true after a failed connection attempt
              backoff_delay=0 :: counter(),  %% incremented on each failure, reset to zero on success
              failures = orddict:new() :: orddict:orddict(), %% failure reasons
-             last_fail                      %% time of last failure
+             last_fail_time :: erlang:timestamp(),          %% time of last failure since 1970
+             next_try_secs :: counter()     %% time in seconds to next retry attempt
              }).
 
 %% connection request record
@@ -529,7 +530,8 @@ fail_endpoint(Addr, Reason, ProtocolId, State) ->
                   EP#ep{failures = orddict:update_counter(Reason, 1, Failures),
                         nb_failures = EP#ep.nb_failures + 1,
                         backoff_delay = increase_backoff(Backoff),
-                        last_fail = os:timestamp(),
+                        last_fail_time = os:timestamp(),
+                        next_try_secs = Backoff/1000,
                         is_black_listed = true}
           end,
     update_endpoint(Addr, Fun, State).
@@ -538,6 +540,7 @@ connect_endpoint(Addr, State) ->
     update_endpoint(Addr, fun(EP) ->
                                   EP#ep{is_black_listed = false,
                                         nb_success = EP#ep.nb_success + 1,
+                                        next_try_secs = 0,
                                         backoff_delay = 0}
                           end, State).
 
