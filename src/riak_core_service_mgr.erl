@@ -54,7 +54,14 @@
 %% All sub-protocols will be dispatched from there.
 -spec(start_link() -> {ok, pid()}).
 start_link() ->
-    {ok, ServiceAddr} = application:get_env(riak_core, cluster_mgr),
+    ServiceAddr = case app_helper:get_env(riak_core, cluster_mgr) of
+        undefined ->
+            lager:error("cluster_mgr is not configured for riak_core in
+                app.config, defaulting to {\"127.0.0.1\", 0}."),
+            {"127.0.0.1", 0};
+        Res ->
+            Res
+    end,
     start_link(ServiceAddr).
 
 %% start the Service Manager on the given Ip Address and Port.
