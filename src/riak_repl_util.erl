@@ -674,17 +674,17 @@ peername(Socket, Transport) ->
     case Transport:peername(Socket) of
         {ok, {Ip, Port}} ->
             format_ip_and_port(Ip, Port);
-        {error, _Reason} ->
-            "{error, error}"
-            %{lists:flatten(io_lib:format("error:~p", [Reason])), 0}
+        {error, Reason} ->
+            %% just return a string so JSON doesn't blow up
+            lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
 sockname(Socket, Transport) ->
     case Transport:sockname(Socket) of
         {ok, {Ip, Port}} ->
             format_ip_and_port(Ip, Port);
-        {error, _Reason} ->
-            "{error, error}"
-            %{lists:flatten(io_lib:format("error:~p", [Reason])), 0}
+        {error, Reason} ->
+            %% just return a string so JSON doesn't blow up
+            lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
