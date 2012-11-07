@@ -67,13 +67,11 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             From ! {self(), connecting, Remote},
             ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connect_failed, Error}} ->
-            lager:warning("cluster_conn: client connect_failed to ~p because ~p",
+            lager:warning("ClusterManager Client: connect_failed to ~p because ~p. Will retry.",
                           [Remote, Error]),
-            %% This is not fatal! We are being supervised by conn_sup and if we
-            %% die, it will restart us. But we don't want to die because the
-            %% connection manager is trying lots of different IP/Port combos
-            %% for us. So, go round and try again.
-            ctrlClientProcess(Remote, connecting, Members0);
+            %% This is fatal! We are being supervised by conn_sup and if we
+            %% die, it will restart us.
+            {error, Error};
         {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
             lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
@@ -82,11 +80,19 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             %% resolved cluster. Then we can sort everything out in the
             %% gen_server. If the name or members fails, these matches
             %% will fail and the connection will get restarted.
-            {ok, Name} = ask_cluster_name(Socket, Transport, Remote),
-            {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
-            gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                            {cluster_updated, Name, Members, Addr, Remote}),
-            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
+            case ask_cluster_name(Socket, Transport, Remote) of
+                {ok, Name} ->
+                    case ask_member_ips(Socket, Transport, Addr, Remote) of
+                        {ok, Members} ->
+                            gen_server:cast(?CLUSTER_MANAGER_SERVER,
+                                            {cluster_updated, Name, Members, Addr, Remote}),
+                            ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
+                        {error, closed} ->
+                            {error, closed}
+                    end;
+                {error, closed} ->
+                    {error, closed}
+            end;
         {_From, poll_cluster} ->
             %% cluster manager doesn't know we haven't connected yet.
             %% just ignore this while we're waiting to connect or fail
@@ -152,6 +158,9 @@ ask_cluster_name(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinName} ->
             {ok, binary_to_term(BinName)};
+        {error, closed} ->
+            %% the other side hung up. Stop quietly.
+            {error, closed};
         Error ->
             lager:error("cluster_conn: failed to recv name from remote cluster at ~p because ~p",
                         [Remote, Error]),
