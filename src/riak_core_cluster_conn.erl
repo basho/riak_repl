@@ -132,7 +132,9 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
                             Error
                     end;
                 {error, closed} ->
-                    {error, connection_closed}
+                    {error, connection_closed};
+                Error ->
+                    Error
             end;
         %% request for our connection status
         {From, status} ->
