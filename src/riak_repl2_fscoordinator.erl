@@ -395,7 +395,7 @@ node_available({Partition,_}, State) ->
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
     try riak_repl2_fssource_sup:enabled(LocalNode) of
         RunningList ->
-            PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode, Part],
+            PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode],
             PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
             if
                 ( length(PartsWaiting) + length(RunningList) ) < Max ->
