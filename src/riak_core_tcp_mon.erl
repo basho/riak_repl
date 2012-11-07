@@ -2,7 +2,7 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_tcp_mon).
 
--export([start_link/0, start_link/1, monitor/2, status/0, status/1, format/0, format/2]).
+-export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
          socket_status/1, format_socket_stats/2 ]).
 
@@ -38,6 +38,7 @@
                 }).
 
 -record(conn, {tag,               %% Tag used to find socket
+               transport,
                type,              %% Type - normal, dist, error
                ts_hist = [],      %% History of timestamps for readings
                hist = []}).       %% History of readings
@@ -49,8 +50,8 @@ start_link() ->
 start_link(Props) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Props, []).
 
-monitor(Socket, Tag) ->
-    gen_server:call(?MODULE, {monitor, Socket, Tag}).
+monitor(Socket, Tag, Transport) ->
+    gen_server:call(?MODULE, {monitor, Socket, Tag, Transport}).
 
 status() ->
     gen_server:call(?MODULE, status).
@@ -145,7 +146,7 @@ init(Props) ->
 
 handle_call(status, _From, State = #state{conns = Conns,
                                           status_funs = StatusFuns}) ->
-    Out = [ [{socket,P} | conn_status(Conn, StatusFuns)]
+    Out = [ [{socket,P} | conn_status(P, Conn, StatusFuns)]
                 || {P,Conn} <- gb_trees:to_list(Conns)],
     {reply, Out , State};
 
@@ -154,12 +155,13 @@ handle_call({socket_status, Socket}, _From, State = #state{conns = Conns,
     Stats =
         case gb_trees:lookup(Socket, Conns) of
           none -> [];
-        {value, Conn} -> conn_status(Conn, StatusFuns)
+        {value, Conn} -> conn_status(Socket, Conn, StatusFuns)
         end,
     {reply, Stats, State};
 
-handle_call({monitor, Socket, Tag}, _From, State) ->
-    {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal}, State)}.
+handle_call({monitor, Socket, Tag, Transport}, _From, State) ->
+    {reply, ok,  add_conn(Socket, #conn{tag = Tag, type = normal,
+                                        transport = Transport}, State)}.
 
 handle_cast(Msg, State) ->
     lager:warning("unknown message received: ~p", [Msg]),
@@ -239,8 +241,9 @@ update_hist(Readings, Limit, Histories) ->
 prepend_trunc(Val, List, Limit) ->
     lists:sublist([Val | List], Limit).
 
-conn_status(#conn{tag = Tag, type = Type,
-                  ts_hist = TsHist, hist = Histories}, StatusFuns) ->
+conn_status(Socket, #conn{tag = Tag, type = Type,
+                  ts_hist = TsHist, hist = Histories,
+                  transport = Transport}, StatusFuns) ->
     Fun = fun({Stat, Hist}, Acc) ->
                          case dict:find(Stat, StatusFuns) of
                              {ok, {Alias, StatusFun}} ->
@@ -252,7 +255,15 @@ conn_status(#conn{tag = Tag, type = Type,
                          end
                       end,
     Stats = lists:sort(lists:foldl(Fun, [], Histories)),
-    [{tag, Tag}, {type, Type} | Stats].
+    Conn = try % Socket could be dead, don't kill the TCP mon finding out
+               Peername = riak_repl_util:peername(Socket, Transport),
+               Sockname = riak_repl_util:sockname(Socket, Transport),
+               [{peername, Peername}, {sockname, Sockname}]
+           catch
+               _:_ ->
+                   [{peername, "error"}, {sockname, "error"}]
+           end,
+    [{tag, Tag}, {type, Type}] ++ Conn ++ Stats.
 
 schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),
