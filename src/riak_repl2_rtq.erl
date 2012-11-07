@@ -106,7 +106,8 @@ is_running() ->
 
 %% Internals
 init([]) ->
-    MaxBytes = app_helper:get_env(riak_repl, rtq_max_bytes),
+    %% Default maximum realtime queue size to 100Mb
+    MaxBytes = app_helper:get_env(riak_repl, rtq_max_bytes, 100*1024*1024),
     {ok, #state{max_bytes = MaxBytes}}. % lots of initialization done by defaults
 
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
