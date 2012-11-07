@@ -104,7 +104,6 @@ exchange_handshakes_with(host, Socket, Transport) ->
                     {ok,TheirName};
                 {error, Reason} ->
                     ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
-                    lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
                     {error, Reason}
             end;
         Error ->

@@ -610,11 +610,13 @@ read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
-            MyAddr;
+            {ok, MyAddr};
+        {error, closed} ->
+            {error, closed};
         Error ->
             lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
                         [Remote, Error]),
-            undefined
+            Error
     end.
 
 %% process instance for handling control channel requests from remote clusters.
@@ -627,13 +629,22 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {ok, ?CTRL_ASK_MEMBERS} ->
             %% remote wants list of member machines in my cluster
-            MyAddr = read_ip_address(Socket, Transport, ClientAddr),
-            BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
-            ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+            case read_ip_address(Socket, Transport, ClientAddr) of
+                {error, closed} ->
+                    {error, connection_closed};
+                {ok, MyAddr} ->
+                    BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
+                    ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
+                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+                Error ->
+                    Error
+            end;
         {error, timeout} ->
             %% timeouts are OK, I think.
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+        {error, closed} ->
+            % nothing to do now but die quietly
+            {error, connection_closed};
         {error, Reason} ->
             lager:error("Cluster Manager: service ~p failed recv on control channel. Error = ~p",
                         [self(), Reason]),

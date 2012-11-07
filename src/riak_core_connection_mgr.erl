@@ -358,7 +358,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                     lager:warning("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
                                   [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
-                    %% the connection helper will retry
+                    %% the connection helper will not retry. It's up the caller.
                     {noreply, State2}
             end
     end;
