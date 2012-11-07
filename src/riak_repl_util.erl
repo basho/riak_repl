@@ -41,7 +41,8 @@
          remove_unwanted_stats/1,
          format_ip_and_port/2,
          safe_pid_to_list/1,
-         peername/2
+         peername/2,
+         sockname/2
      ]).
 
 make_peer_info() ->
@@ -658,19 +659,30 @@ get_hooks_for_modes() ->
     [ proplists:get_value(K,?REPL_MODES)
      || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
 
-format_ip_and_port(Ip, Port) ->
-    lists:flatten(io_lib:format("~s:~p",[Ip,Port])).
+format_ip_and_port(Ip, Port) when is_list(Ip) ->
+    lists:flatten(io_lib:format("~s:~p",[Ip,Port]));
+format_ip_and_port(Ip, Port) when is_tuple(Ip) ->
+    lists:flatten(io_lib:format("~s:~p",[inet_parse:ntoa(Ip),
+                                         Port])).
 
 safe_pid_to_list(Pid) when is_pid(Pid) ->
     erlang:pid_to_list(Pid);
 safe_pid_to_list(NotAPid) ->
     NotAPid.
 
-peername(Socket,Transport) ->
+peername(Socket, Transport) ->
     case Transport:peername(Socket) of
         {ok, {Ip, Port}} ->
-            lists:flatten(io_lib:format("~s:~p",[inet_parse:ntoa(Ip),
-                                                       Port]));
+            format_ip_and_port(Ip, Port);
+        {error, _Reason} ->
+            "{error, error}"
+            %{lists:flatten(io_lib:format("error:~p", [Reason])), 0}
+    end.
+
+sockname(Socket, Transport) ->
+    case Transport:sockname(Socket) of
+        {ok, {Ip, Port}} ->
+            format_ip_and_port(Ip, Port);
         {error, _Reason} ->
             "{error, error}"
             %{lists:flatten(io_lib:format("error:~p", [Reason])), 0}

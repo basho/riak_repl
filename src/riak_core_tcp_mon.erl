@@ -255,8 +255,15 @@ conn_status(Socket, #conn{tag = Tag, type = Type,
                          end
                       end,
     Stats = lists:sort(lists:foldl(Fun, [], Histories)),
-    Peername = riak_repl_util:peername(Socket, Transport),
-    [{tag, Tag}, {type, Type}, {peername, Peername} | Stats].
+    Conn = try % Socket could be dead, don't kill the TCP mon finding out
+               Peername = riak_repl_util:peername(Socket, Transport),
+               Sockname = riak_repl_util:sockname(Socket, Transport),
+               [{peername, Peername}, {sockname, Sockname}]
+           catch
+               _:_ ->
+                   [{peername, "error"}, {sockname, "error"}]
+           end,
+    [{tag, Tag}, {type, Type}] ++ Conn ++ Stats.
 
 schedule_tick(State = #state{interval = Interval}) ->
     erlang:send_after(Interval, self(), measurement_tick),
