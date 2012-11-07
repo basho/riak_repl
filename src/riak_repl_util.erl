@@ -40,7 +40,8 @@
          get_hooks_for_modes/0,
          remove_unwanted_stats/1,
          format_ip_and_port/2,
-         safe_pid_to_list/1
+         safe_pid_to_list/1,
+         peername/2
      ]).
 
 make_peer_info() ->
@@ -664,4 +665,14 @@ safe_pid_to_list(Pid) when is_pid(Pid) ->
     erlang:pid_to_list(Pid);
 safe_pid_to_list(NotAPid) ->
     NotAPid.
+
+peername(Socket,Transport) ->
+    case Transport:peername(Socket) of
+        {ok, {Ip, Port}} ->
+            lists:flatten(io_lib:format("~s:~p",[inet_parse:ntoa(Ip),
+                                                       Port]));
+        {error, _Reason} ->
+            "{error, error}"
+            %{lists:flatten(io_lib:format("error:~p", [Reason])), 0}
+    end.
 
