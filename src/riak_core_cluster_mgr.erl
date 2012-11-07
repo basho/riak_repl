@@ -632,12 +632,12 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             case read_ip_address(Socket, Transport, ClientAddr) of
                 {error, closed} ->
                     {error, connection_closed};
-                Error ->
-                    Error;
                 {ok, MyAddr} ->
                     BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
                     ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
-                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
+                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+                Error ->
+                    Error
             end;
         {error, timeout} ->
             %% timeouts are OK, I think.
