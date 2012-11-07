@@ -569,7 +569,6 @@ fail_request(Reason, #req{ref = Ref, spec = Spec},
              State = #state{pending = Pending}) ->
     %% Tell the module it failed
     {Proto, {_TcpOptions, Module,Args}} = Spec,
-    lager:error("connect_failed for ~p", [Spec]),
     Module:connect_failed(Proto, {error, Reason}, Args),
     %% Remove the request from the pending list
     State#state{pending = lists:keydelete(Ref, #req.ref, Pending)}.
