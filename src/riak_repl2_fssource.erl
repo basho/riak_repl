@@ -69,7 +69,8 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
-    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source, SocketTag}),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
+                                       SocketTag}, Transport),
 
     Transport:setopts(Socket, [{active, once}]),
     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
@@ -133,12 +134,12 @@ handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
-    gen_fsm:send_event(State#state.fullsync_worker, Msg),
     case Msg == fullsync_complete of
         true ->
             %% stop on fullsync completion
             {stop, normal, State};
         _ ->
+            gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
     end;
 handle_info(_Msg, State) ->
