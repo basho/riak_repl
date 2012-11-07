@@ -49,12 +49,14 @@ init([Remote, Transport, Socket]) ->
 
 handle_call({pull, {error, Reason}}, _From, State) ->
     {stop, {queue_error, Reason}, State};
-handle_call({pull, {Seq, NumObjects, BinObjs}}, _From,
+handle_call({pull, {Seq, NumObjects, BinObjs}}, From,
             State = #state{transport = T, socket = S, objects = Objects}) ->
+    %% unblock the rtq as fast as possible
+    gen_server:reply(From, ok),
     TcpIOL = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
     T:send(S, TcpIOL),
     async_pull(State),
-    {reply, ok, State#state{sent_seq = Seq, objects = Objects + NumObjects}};
+    {noreply, State#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(status, _From, State = 
