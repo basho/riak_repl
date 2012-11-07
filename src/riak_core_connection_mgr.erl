@@ -359,7 +359,8 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                                   [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
                     %% the connection helper will not retry. It's up the caller.
-                    {noreply, State2}
+                    State3 = fail_request(Reason, Req, State2),
+                    {noreply, State3}
             end
     end;
 handle_info(_Unhandled, State) ->

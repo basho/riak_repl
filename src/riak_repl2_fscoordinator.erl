@@ -174,9 +174,9 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     {noreply, State2};
 
 handle_cast({connect_failed, _From, Why}, State) ->
-    lager:info("fullsync remote connection to ~p failed due to ~p, retrying",
-        [State#state.other_cluster, Why]),
-    {noreply, State};
+    lager:warning("fullsync remote connection to ~p failed due to ~p, retrying",
+                  [State#state.other_cluster, Why]),
+    {stop, normal, State};
 
 handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...

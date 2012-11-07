@@ -159,6 +159,9 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
                     {error, closed} ->
                         %%erlang:exit(connection_closed);
                         {error, connection_closed};
+                    {error, ebadf} ->
+                        %% like a closed file descriptor
+                        {error, connection_closed};
                     {error, Reason} ->
                         lager:error("cluster_conn: client got error from remote: ~p, ~p",
                                     [Remote, Reason]),

@@ -140,7 +140,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                             Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args, Props);
                         {error, Reason} ->
                             ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
-                            Module:connect_failed(ClientProtocol, {error, Reason}, Args),
+                            %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
                             {error, Reason}
                     end;
                 Error ->
@@ -148,7 +148,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                     Error
             end;
         {error, Reason} ->
-            Module:connect_failed(ClientProtocol, {error, Reason}, Args),
+            %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
             {error, Reason}
     end.
 
