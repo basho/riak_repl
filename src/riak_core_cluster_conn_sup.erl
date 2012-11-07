@@ -31,7 +31,7 @@ start_link() ->
 add_remote_connection(Remote) ->
     case is_connected(Remote) of
         false ->
-            lager:debug("Connecting to remote cluster: ~p", [Remote]),
+            lager:info("Connecting to remote cluster: ~p", [Remote]),
             ChildSpec = make_remote(Remote),
             supervisor:start_child(?MODULE, ChildSpec);
         _ ->
