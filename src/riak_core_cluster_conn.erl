@@ -88,7 +88,9 @@ ctrlClientProcess(Remote, connecting, Members0) ->
                                             {cluster_updated, Name, Members, Addr, Remote}),
                             ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
                         {error, closed} ->
-                            {error, connection_closed}
+                            {error, connection_closed};
+                        Error ->
+                            Error
                     end;
                 {error, closed} ->
                     {error, connection_closed}
@@ -123,7 +125,9 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
                                             {cluster_updated, Name1, Members, Addr, Remote}),
                             ctrlClientProcess(Remote, {Name1, Socket, Transport, Addr}, Members);
                         {error, closed} ->
-                            {error, connection_closed}
+                            {error, connection_closed};
+                        Error ->
+                            Error
                     end;
                 {error, closed} ->
                     {error, connection_closed}
