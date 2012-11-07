@@ -88,10 +88,10 @@ ctrlClientProcess(Remote, connecting, Members0) ->
                                             {cluster_updated, Name, Members, Addr, Remote}),
                             ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
                         {error, closed} ->
-                            {error, closed}
+                            {error, connection_closed}
                     end;
                 {error, closed} ->
-                    {error, closed}
+                    {error, connection_closed}
             end;
         {_From, poll_cluster} ->
             %% cluster manager doesn't know we haven't connected yet.
@@ -115,11 +115,19 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
     receive
         %% cluster manager asking us to poll the remove cluster
         {_From, poll_cluster} ->
-            {ok, Name1} = ask_cluster_name(Socket, Transport, Remote),
-            {ok, Members} = ask_member_ips(Socket, Transport, Addr, Remote),
-            gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                            {cluster_updated, Name1, Members, Addr, Remote}),
-            ctrlClientProcess(Remote, {Name1, Socket, Transport, Addr}, Members);
+            case ask_cluster_name(Socket, Transport, Remote) of
+                {ok, Name1} ->
+                    case ask_member_ips(Socket, Transport, Addr, Remote) of
+                        {ok, Members} ->
+                            gen_server:cast(?CLUSTER_MANAGER_SERVER,
+                                            {cluster_updated, Name1, Members, Addr, Remote}),
+                            ctrlClientProcess(Remote, {Name1, Socket, Transport, Addr}, Members);
+                        {error, closed} ->
+                            {error, connection_closed}
+                    end;
+                {error, closed} ->
+                    {error, connection_closed}
+            end;
         %% request for our connection status
         {From, status} ->
             %% don't try talking to the remote cluster; we don't want to stall our status
@@ -173,6 +181,9 @@ ask_member_ips(Socket, Transport, Addr, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinMembers} ->
             {ok, binary_to_term(BinMembers)};
+        {error, closed} ->
+            %% the other side hung up. Stop quietly.
+            {error, closed};
         Error ->
             lager:error("cluster_conn: failed to recv members from remote cluster at ~p because ~p",
                         [Remote, Error]),

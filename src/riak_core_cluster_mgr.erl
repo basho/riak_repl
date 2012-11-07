@@ -611,6 +611,8 @@ read_ip_address(Socket, Transport, Remote) ->
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
             MyAddr;
+        {error, closed} ->
+            {error, closed};
         Error ->
             lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
                         [Remote, Error]),
@@ -627,13 +629,24 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {ok, ?CTRL_ASK_MEMBERS} ->
             %% remote wants list of member machines in my cluster
-            MyAddr = read_ip_address(Socket, Transport, ClientAddr),
-            BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
-            ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+            case read_ip_address(Socket, Transport, ClientAddr) of
+                undefined ->
+                    %% try again? Or die? We could guess our own IP address and use that.
+                    ok = Transport:send(Socket, term_to_binary([])),
+                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+                {error, closed} ->
+                    {error, connection_closed};
+                MyAddr ->
+                    BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
+                    ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
+                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
+            end;
         {error, timeout} ->
             %% timeouts are OK, I think.
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
+        {error, closed} ->
+            % nothing to do now but die quietly
+            {error, connection_closed};
         {error, Reason} ->
             lager:error("Cluster Manager: service ~p failed recv on control channel. Error = ~p",
                         [self(), Reason]),
