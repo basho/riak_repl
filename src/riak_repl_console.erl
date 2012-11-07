@@ -279,11 +279,11 @@ connect([Address]) ->
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            connect([IP, PortStr]);
+            connect([IP, PortStr]),
+            ok;
         _ ->
             {error, {badarg, Address}}
-    end,
-    ok;
+    end;
 connect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
@@ -304,15 +304,16 @@ disconnect([Address]) ->
             realtime(["stop",    Remote]),
             realtime(["disable", Remote]),
             %% tear down cluster manager connection
-            riak_core_cluster_mgr:remove_remote_cluster(Address);
+            riak_core_cluster_mgr:remove_remote_cluster(Address),
+            ok;
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            disconnect([IP, PortStr]);
+            disconnect([IP, PortStr]),
+            ok;
         _ ->
             {error, {badarg, Address}}
-    end,
-    ok;
+    end;
 disconnect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}),
@@ -346,11 +347,13 @@ fullsync([Cmd, Remote]) ->
         "enable" ->
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_enable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote);
+            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
+            ok;
         "disable" ->
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_disable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote);
+            riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
+            ok;
         "start" ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
@@ -359,7 +362,8 @@ fullsync([Cmd, Remote]) ->
                     io:format("Use 'fullsync enable ~p' before start~n", [Remote]),
                     {error, not_enabled};
                 Pid ->
-                    riak_repl2_fscoordinator:start_fullsync(Pid)
+                    riak_repl2_fscoordinator:start_fullsync(Pid),
+                    ok
             end;
         "stop" ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
@@ -368,10 +372,10 @@ fullsync([Cmd, Remote]) ->
                     %% Fullsync is not enabled, but carry on quietly.
                     ok;
                 Pid ->
-                    riak_repl2_fscoordinator:stop_fullsync(Pid)
+                    riak_repl2_fscoordinator:stop_fullsync(Pid),
+                    ok
             end
-    end,
-    ok;
+    end;
 fullsync([Cmd]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
     Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
@@ -512,7 +516,8 @@ leader_stats() ->
     [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats.
 
 client_stats() ->
-    {Stats, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv), riak_repl_console, client_stats_rpc, []),
+    %% NOTE: rpc:multicall to all clients removed
+    Stats = riak_repl_console:client_stats_rpc(),
     [{sinks, lists:flatten(lists:filter(fun({badrpc, _}) ->
                 false;
             (_) -> true
