@@ -93,7 +93,9 @@ ctrlClientProcess(Remote, connecting, Members0) ->
                             Error
                     end;
                 {error, closed} ->
-                    {error, connection_closed}
+                    {error, connection_closed};
+                Error ->
+                    Error
             end;
         {_From, poll_cluster} ->
             %% cluster manager doesn't know we haven't connected yet.
