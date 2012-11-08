@@ -21,7 +21,7 @@
          server_stats/0,
          coordinator_stats/0,
          coordinator_srv_stats/0]).
--export([set_modes/1, get_modes/0]).
+-export([modes/1, set_modes/1, get_modes/0]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -388,6 +388,15 @@ fullsync([Cmd]) ->
                 Fullsyncs]
     end,
     ok.
+
+modes([]) ->
+    CurrentModes = get_modes(),
+    io:format("Current replication modes: ~p~n",[CurrentModes]),
+    ok;
+modes(NewModes) ->
+    Modes = [ list_to_atom(Mode) || Mode <- NewModes],
+    set_modes(Modes),
+    modes([]).
 
 %% helper functions
 
