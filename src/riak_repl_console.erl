@@ -279,15 +279,21 @@ connect([Address]) ->
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            connect([IP, PortStr]),
-            ok;
+            connect([IP, PortStr]);
         _ ->
             {error, {badarg, Address}}
     end;
 connect([IP, PortStr]) ->
     {Port,_Rest} = string:to_integer(PortStr),
-    riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
-    ok.
+    case riak_core_connection:symbolic_clustername() of
+        "undefined" ->
+            io:format("Error: Unable to establish connections until local cluster is named.~n"),
+            io:format("First use 'riak-repl clustername <clustername>'~n"),
+            {error, undefined_cluster_name};
+        _Name ->
+            riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
+            ok
+    end.
 
 %% remove a remote connection by clustername or by IP/Port address:
 %% clustername
@@ -297,14 +303,14 @@ disconnect([Address]) ->
     NWords = string:words(Address, $:),
     case NWords of
         1 ->
-            %% First, stop any rt or fs syncs in progress
             Remote = Address,
-            fullsync(["stop",    Remote]),
-            fullsync(["disable", Remote]),
-            realtime(["stop",    Remote]),
-            realtime(["disable", Remote]),
+            %% TODO: need to wrap a single ring transition around all of these.
+            %% fullsync(["stop",    Remote]),
+            %% fullsync(["disable", Remote]),
+            %% realtime(["stop",    Remote]),
+            %% realtime(["disable", Remote]),
             %% tear down cluster manager connection
-            riak_core_cluster_mgr:remove_remote_cluster(Address),
+            riak_core_cluster_mgr:remove_remote_cluster(Remote),
             ok;
         2 ->
             IP = string:sub_word(Address, 1, $:),
