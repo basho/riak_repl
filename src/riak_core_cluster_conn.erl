@@ -189,9 +189,13 @@ ask_cluster_name(Socket, Transport, Remote) ->
             Error
     end.
 
-ask_member_ips(Socket, Transport, Addr, Remote) ->
+ask_member_ips(Socket, Transport, _Addr, Remote) ->
     Transport:send(Socket, ?CTRL_ASK_MEMBERS),
-    Transport:send(Socket, term_to_binary(Addr)),
+    %% get the IP we think we've connected to
+    {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
+    %% make it a string
+    PeerIPStr = inet_parse:ntoa(PeerIP),
+    Transport:send(Socket, term_to_binary({PeerIPStr, PeerPort})),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinMembers} ->
             {ok, binary_to_term(BinMembers)};
