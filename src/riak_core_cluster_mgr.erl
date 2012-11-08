@@ -320,12 +320,24 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
 %% that explicitly leave the cluster or show up in other clusters.
 handle_cast({cluster_updated, Name, Members, Addr, Remote}, State) ->
     MyClusterName = riak_core_connection:symbolic_clustername(),
+    ConnectedClusters = [CName || {CName,_C} <- orddict:to_list(State#state.clusters)],
+    AlreadyConnected = lists:member(Name, ConnectedClusters),
     case Name of
+        "undefined" ->
+            %% Don't connect to clusters that haven't been named yet
+            lager:warning("ClusterManager: dropping connection ~p to unnamed cluster", [Remote]),
+            remove_remote_connection(Remote),
+            {noreply, State};
         MyClusterName ->
             %% We somehow got connected to a cluster that is named the same as
             %% us; could be ourself. Hard to tell. Drop it and log a warning.
-            lager:error("ClusterManager: dropping connection ~p to identically named cluster: ~p",
-                        [Remote, Name]),
+            lager:warning("ClusterManager: dropping connection ~p to identically named cluster: ~p",
+                          [Remote, Name]),
+            remove_remote_connection(Remote),
+            {noreply, State};
+        _SomeName when AlreadyConnected == true ->
+            lager:warning("ClusterManager: dropping connection ~p. Already connected to ~p",
+                          [Remote, Name]),
             remove_remote_connection(Remote),
             {noreply, State};
         _OtherName ->
