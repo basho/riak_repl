@@ -32,7 +32,9 @@
          fs_disable_trans/2,
          fs_enabled/1,
          set_modes/2,
-         get_modes/1
+         get_modes/1,
+         compose/2,
+         multicompose/1
          ]).
 
 -ifdef(TEST).
@@ -419,6 +421,11 @@ get_modes(Ring) ->
             %% default to mixed modes
             [mode_repl12, mode_repl13]
     end.
+
+%% Function composition
+compose(F,G) -> fun(X) -> F(G(X)) end.
+multicompose(Fs) ->
+    lists:foldl(fun compose/2, fun(X) -> X end, Fs).
 
 %% unit tests
 
