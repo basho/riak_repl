@@ -139,15 +139,17 @@ status2(Verbose) ->
 
 rt_remotes_status() ->
     Ring = get_ring(),
-    [{realtime_enabled, riak_repl_ring:rt_enabled(Ring)},
-     {realtime_started, riak_repl_ring:rt_started(Ring)}].
+    Enabled = string:join(riak_repl_ring:rt_enabled(Ring),", "),
+    Started = string:join(riak_repl_ring:rt_started(Ring),", "),
+    [{realtime_enabled, Enabled},
+     {realtime_started, Started}].
 
 fs_remotes_status() ->
     Ring = get_ring(),
     Sinks = riak_repl_ring:rt_enabled(Ring),
     RunningSinks = [Sink || Sink <- Sinks, cluster_fs_running(Sink)],
-    [{fullsync_enabled, riak_repl_ring:fs_enabled(Ring)},
-     {fullsync_running, RunningSinks}].
+    [{fullsync_enabled, string:join(riak_repl_ring:fs_enabled(Ring),", ")},
+     {fullsync_running, string:join(RunningSinks,", ")}].
 
 cluster_fs_running(Sink) ->
   riak_repl2_fscoordinator:is_running(riak_repl2_fscoordinator_sup:coord_for_cluster(Sink)).
