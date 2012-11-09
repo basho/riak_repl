@@ -156,8 +156,8 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
     ],
     {reply, SelfStats, State};
 
-handle_call(is_running, From, State) ->
-   PartitionEntry = lists:keytake(From, 1, State#state.running_sources),
+handle_call(is_running, _From, State) ->
+    PartitionEntry = lists:keytake(self(), 1, State#state.running_sources),
     case PartitionEntry of
         false ->
             {reply, false, State};
