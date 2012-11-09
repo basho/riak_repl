@@ -89,19 +89,19 @@ sync_connect({IP,Port}, ClientSpec) ->
 %% @private
 
 %% exchange brief handshake with client to ensure that we're supporting sub-protocols.
-%% client -> server : Hello <clustername>
-%% server -> client : Ack <clustername>
-exchange_handshakes_with(host, Socket, Transport) ->
-    MyName = symbolic_clustername(),
-    Hello = term_to_binary({?CTRL_HELLO, MyName}),
+%% client -> server : Hello {1,0} [Capabilities]
+%% server -> client : Ack {1,0} [Capabilities]
+exchange_handshakes_with(host, Socket, Transport, MyCaps) ->
+    Hello = term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}),
     case Transport:send(Socket, Hello) of
         ok ->
             ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK])),
             case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
                 {ok, Ack} ->
                     ?TRACE(?debugFmt("exchange_handshakes with host: got ~p", [?Ack])),
-                    {?CTRL_ACK, TheirName} = binary_to_term(Ack),
-                    {ok,TheirName};
+                    {?CTRL_ACK, TheirRev, TheirCaps} = binary_to_term(Ack),
+                    Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
+                    {ok,Props};
                 {error, Reason} ->
                     ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
                     {error, Reason}
@@ -124,8 +124,10 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
             ?TRACE(?debugFmt("Setting system options on client side: ~p", [?CONNECT_OPTIONS])),
             Transport:setopts(Socket, ?CONNECT_OPTIONS),
             %% handshake to make sure it's a riak sub-protocol dispatcher
-            case exchange_handshakes_with(host, Socket, Transport) of
-                {ok,TheirName} ->
+            MyName = symbolic_clustername(),
+            MyCaps = [{clustername, MyName}],
+            case exchange_handshakes_with(host, Socket, Transport, MyCaps) of
+                {ok,Props} ->
                     %% ask for protocol, see what host has
                     case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
                         {ok,HostProtocol} ->
@@ -136,7 +138,6 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                             %% pass back returned value in case problem detected on connection
                             %% by module.  requestor is responsible for transferring control
                             %% of the socket.
-                            Props = [{clustername, TheirName}],
                             Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args, Props);
                         {error, Reason} ->
                             ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),

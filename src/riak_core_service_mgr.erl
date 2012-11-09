@@ -237,7 +237,10 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     %% set some starting options for the channel; these should match the client
     ?TRACE(?debugFmt("setting system options on service side: ~p", [?CONNECT_OPTIONS])),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
-    {ok,TheirName} = exchange_handshakes_with(client, Socket, Transport),
+    %% Version 1.0 capabilities just passes our clustername
+    MyName = riak_core_connection:symbolic_clustername(),
+    MyCaps = [{clustername, MyName}],
+    {ok,Props} = exchange_handshakes_with(client, Socket, Transport, MyCaps),
     %% get latest set of registered services from gen_server and do negotiation
     Services = gen_server:call(?SERVER, get_services),
     SubProtocols = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
@@ -245,7 +248,6 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
                      [SubProtocols])),
     Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
     ?TRACE(?debugFmt("negotiated = ~p", [Negotiated])),
-    Props = [{clustername, TheirName}],
     start_negotiated_service(Socket, Transport, Negotiated, Props).
 
 %% start user's module:function and transfer socket to it's process.
@@ -339,17 +341,19 @@ choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
     end.
 
 %% exchange brief handshake with client to ensure that we're supporting sub-protocols.
-%% client -> server : Hello clustername
-%% server -> client : Ack clustername
-exchange_handshakes_with(client, Socket, Transport) ->
-    MyName = riak_core_connection:symbolic_clustername(),
+%% client -> server : Hello {1,0} [Capabilities]
+%% server -> client : Ack {1,0} [Capabilities]
+exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
     ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO])),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, Hello} ->
-            {?CTRL_HELLO, TheirName} = binary_to_term(Hello),
-            Ack = term_to_binary({?CTRL_ACK, MyName}),
+            %% read their hello
+            {?CTRL_HELLO, TheirRev, TheirCaps} = binary_to_term(Hello),
+            Ack = term_to_binary({?CTRL_ACK, ?CTRL_REV, MyCaps}),
             Transport:send(Socket, Ack),
-            {ok, TheirName};
+            %% make some props to hand dispatched service
+            Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
+            {ok,Props};
         {error, Reason} ->
             lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
             {error, Reason}
