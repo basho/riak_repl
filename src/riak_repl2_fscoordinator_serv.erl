@@ -49,7 +49,7 @@ status() ->
                 [] ->
                     [];
                 Repls ->
-                    [status(Pid) || {Remote, Pid} <- Repls]
+                    [status(Pid) || {_Remote, Pid} <- Repls]
             end
     end.
 
