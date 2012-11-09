@@ -98,10 +98,15 @@ exchange_handshakes_with(host, Socket, Transport, MyCaps) ->
             ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK])),
             case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
                 {ok, Ack} ->
-                    ?TRACE(?debugFmt("exchange_handshakes with host: got ~p", [?Ack])),
-                    {?CTRL_ACK, TheirRev, TheirCaps} = binary_to_term(Ack),
-                    Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
-                    {ok,Props};
+                    case binary_to_term(Ack) of
+                        {?CTRL_ACK, TheirRev, TheirCaps} ->
+                            Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
+                            {ok,Props};
+                        Msg ->
+                            lager:error("Control protocol handshake with host got unexpected ack: ~p",
+                                        [Msg]),
+                            {error, bad_handshake}
+                    end;
                 {error, Reason} ->
                     ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
                     {error, Reason}

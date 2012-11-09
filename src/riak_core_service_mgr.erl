@@ -348,12 +348,18 @@ exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, Hello} ->
             %% read their hello
-            {?CTRL_HELLO, TheirRev, TheirCaps} = binary_to_term(Hello),
-            Ack = term_to_binary({?CTRL_ACK, ?CTRL_REV, MyCaps}),
-            Transport:send(Socket, Ack),
-            %% make some props to hand dispatched service
-            Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
-            {ok,Props};
+            case binary_to_term(Hello) of
+                {?CTRL_HELLO, TheirRev, TheirCaps} ->
+                    Ack = term_to_binary({?CTRL_ACK, ?CTRL_REV, MyCaps}),
+                    Transport:send(Socket, Ack),
+                    %% make some props to hand dispatched service
+                    Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
+                    {ok,Props};
+                Msg ->
+                    lager:error("Control protocol handshake with client got unexpected hello: ~p",
+                                [Msg]),
+                    {error, bad_handshake}
+            end;
         {error, Reason} ->
             lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
             {error, Reason}
