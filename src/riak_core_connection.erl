@@ -102,13 +102,12 @@ exchange_handshakes_with(host, Socket, Transport, MyCaps) ->
                         {?CTRL_ACK, TheirRev, TheirCaps} ->
                             Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
                             {ok,Props};
+                        {error, Reason} = Error ->
+                            Error;
                         Msg ->
-                            lager:error("Control protocol handshake with host got unexpected ack: ~p",
-                                        [Msg]),
-                            {error, bad_handshake}
+                            {error, Msg}
                     end;
                 {error, Reason} ->
-                    ?TRACE(?debugFmt("Failed to exchange handshake with host. Error = ~p", [Reason])),
                     {error, Reason}
             end;
         Error ->
@@ -149,9 +148,16 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                             %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
                             {error, Reason}
                     end;
+                {error, closed} ->
+                    %% socket got closed, don't report this
+                    {error, closed};
+                {error, Reason} ->
+                    lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
+                    {error, Reason};
                 Error ->
-                    %% failed to exchange handshakes, probably because the socket closed
-                    Error
+                    %% failed to exchange handshakes
+                    lager:error("Failed to exchange handshake with host. Error = ~p", [Error]),
+                    {error, Error}
             end;
         {error, Reason} ->
             %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),

@@ -360,9 +360,12 @@ exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
                     Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
                     {ok,Props};
                 Msg ->
+                    %% tell other side we are failing them
+                    Error = {error, bad_handshake},
+                    Transport:send(Socket, erlang:term_to_binary(Error)),
                     lager:error("Control protocol handshake with client got unexpected hello: ~p",
                                 [Msg]),
-                    {error, bad_handshake}
+                    Error
             end;
         {error, Reason} ->
             lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
