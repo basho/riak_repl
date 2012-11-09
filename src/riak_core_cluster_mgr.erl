@@ -449,7 +449,7 @@ save_cluster(NewName, OldMembers, Members, State) ->
 %% appear in one cluster.
 update_cluster_members(_OldName, _NewName, [], _Addr, _Remote, State) ->
     State;
-update_cluster_members(_OldName, NewName, Members, _Addr, {cluster_by_addr, CAddr}=Remote, State) ->
+update_cluster_members(_OldName, NewName, Members, _Addr, {cluster_by_addr, _CAddr}=Remote, State) ->
     %% This was a connection by host:ip, replace with cluster connection
     State1 = save_cluster(NewName, [], Members, State),
     %% restart connection as a cluster_by_name
