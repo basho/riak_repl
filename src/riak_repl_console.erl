@@ -15,20 +15,14 @@
          server_stats/0]).
          
 add_listener(Params) ->
-    Ring = get_ring(),
-    case add_listener_internal(Ring,Params) of
-        {ok, NewRing} ->
-            ok = maybe_set_ring(Ring, NewRing);
-        error -> error
-    end.
+    maybe_set_ring_trans(fun(Ring) ->
+                                 add_listener_internal(Ring,Params)
+                         end).
 
 add_nat_listener(Params) ->
-    Ring = get_ring(),
-    case add_nat_listener_internal(Ring, Params) of
-        {ok, NewRing} ->
-            ok = maybe_set_ring(Ring, NewRing);
-        error -> error
-    end.
+    maybe_set_ring_trans(fun(Ring) ->
+                                 add_nat_listener_internal(Ring, Params)
+                         end).
 
 add_listener_internal(Ring, [NodeName, IP, Port]) ->
     Listener = make_listener(NodeName, IP, Port),
@@ -71,22 +65,28 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
     end.
 
 del_listener([NodeName, IP, Port]) ->
-    Ring = get_ring(),
-    Listener = make_listener(NodeName, IP, Port),
-    NewRing0 = riak_repl_ring:del_listener(Ring, Listener),
-    NewRing = riak_repl_ring:del_nat_listener(NewRing0, Listener),
-    ok = maybe_set_ring(Ring, NewRing).
+    maybe_set_ring_trans(
+      fun(Ring) ->
+              Listener = make_listener(NodeName, IP, Port),
+              NewRing0 = riak_repl_ring:del_listener(Ring, Listener),
+              NewRing = riak_repl_ring:del_nat_listener(NewRing0, Listener),
+              {ok, NewRing}
+      end).
 
 add_site([IP, Port, SiteName]) ->
-    Ring = get_ring(),
-    Site = make_site(SiteName, IP, Port),
-    NewRing = riak_repl_ring:add_site(Ring, Site),
-    ok = maybe_set_ring(Ring, NewRing).
+    maybe_set_ring_trans(
+      fun(Ring) ->
+              Site = make_site(SiteName, IP, Port),
+              NewRing = riak_repl_ring:add_site(Ring, Site),
+              {ok, NewRing}
+      end).
 
 del_site([SiteName]) ->
-    Ring = get_ring(),
-    NewRing = riak_repl_ring:del_site(Ring, SiteName),
-    ok = maybe_set_ring(Ring, NewRing).
+    maybe_set_ring_trans(
+      fun(Ring) ->
+              NewRing = riak_repl_ring:del_site(Ring, SiteName),
+              {ok, NewRing}
+      end).
 
 status([]) ->
     status2(true);
@@ -155,19 +155,24 @@ make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort) ->
 make_site(SiteName, IP, Port) ->
     #repl_site{name=SiteName, addrs=[{IP, list_to_integer(Port)}]}.
 
-maybe_set_ring(_R, _R) -> ok;
-maybe_set_ring(_R1, R2) ->
-    RC = riak_repl_ring:get_repl_config(R2),
-    F = fun(InRing, ReplConfig) ->
-                {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
+maybe_set_ring_trans(ConfigFn) ->
+    F = fun(InRing, _) ->
+                R1 = riak_repl_ring:ensure_config(InRing),
+                case ConfigFn(R1) of
+                    error ->
+                        ignore;
+                    {ok, R1} ->
+                        ignore;
+                    {ok, R2} ->
+                        {new_ring, R2}
+                end
         end,
-    RC = riak_repl_ring:get_repl_config(R2),
-    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, RC),
-    ok.
-
-get_ring() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    riak_repl_ring:ensure_config(Ring).
+    case riak_core_ring_manager:ring_trans(F, undefined) of
+        {ok, _} ->
+            ok;
+        not_changed ->
+            error
+    end.
 
 get_config() ->
     {ok, R} = riak_core_ring_manager:get_my_ring(),
