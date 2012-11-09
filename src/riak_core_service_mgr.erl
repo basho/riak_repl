@@ -240,15 +240,19 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
     MyCaps = [{clustername, MyName}],
-    {ok,Props} = exchange_handshakes_with(client, Socket, Transport, MyCaps),
-    %% get latest set of registered services from gen_server and do negotiation
-    Services = gen_server:call(?SERVER, get_services),
-    SubProtocols = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
-    ?TRACE(?debugFmt("started dispatch_service with protocols: ~p",
-                     [SubProtocols])),
-    Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
-    ?TRACE(?debugFmt("negotiated = ~p", [Negotiated])),
-    start_negotiated_service(Socket, Transport, Negotiated, Props).
+    case exchange_handshakes_with(client, Socket, Transport, MyCaps) of
+        {ok,Props} ->
+            %% get latest set of registered services from gen_server and do negotiation
+            Services = gen_server:call(?SERVER, get_services),
+            SubProtocols = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
+            ?TRACE(?debugFmt("started dispatch_service with protocols: ~p",
+                             [SubProtocols])),
+            Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
+            ?TRACE(?debugFmt("negotiated = ~p", [Negotiated])),
+            start_negotiated_service(Socket, Transport, Negotiated, Props);
+        Error ->
+            Error
+    end.
 
 %% start user's module:function and transfer socket to it's process.
 start_negotiated_service(_Socket, _Transport, {error, Reason}, _Props) ->
