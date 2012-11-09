@@ -313,7 +313,7 @@ rt_start_trans(Ring, Remote) ->
 rt_stop_trans(Ring, Remote) ->
     del_list_trans(Remote, rt_started, Ring).
 
-%% Get list of RT enabled remotes
+%% Get list of RT started remotes
 rt_started(Ring) ->
     get_list(rt_started, Ring).
 

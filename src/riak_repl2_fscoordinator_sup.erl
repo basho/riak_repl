@@ -2,7 +2,7 @@
 %% in response to leader changes.
 -module(riak_repl2_fscoordinator_sup).
 -export([start_link/0, set_leader/2, start_coord/2, stop_coord/2,
-    started/0, started/1]).
+    started/0, started/1, coord_for_cluster/1]).
 -export([init/1]).
 
 -define(SHUTDOWN, 5000).
@@ -37,6 +37,14 @@ started() ->
 started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
         supervisor:which_children({?MODULE, Node}), is_pid(Pid)].
+
+coord_for_cluster(Cluster) ->
+    Coords = [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE),
+                      is_pid(Pid), Remote == Cluster],
+    case Coords of
+        [] -> undefined;
+        [{_,CoordPid}|_] -> CoordPid
+    end.
 
 %% @private
 init(_) ->

@@ -51,7 +51,7 @@
 %% ------------------------------------------------------------------
 
 -export([start_link/1, start_fullsync/1, stop_fullsync/1,
-    status/0, status/1, status/2]).
+    status/0, status/1, status/2, is_running/1]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -103,6 +103,11 @@ status(Pid) ->
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
+is_running(Pid) when is_pid(Pid) ->
+    gen_server:call(Pid, is_running, infinity);
+is_running(_Other) ->
+    false.
+
 %% ------------------------------------------------------------------
 %% connection manager callbacks
 %% ------------------------------------------------------------------
@@ -150,6 +155,21 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {socket, SocketStats}
     ],
     {reply, SelfStats, State};
+
+handle_call(is_running, _From, State) ->
+    RunningSrcs = State#state.running_sources,
+    % are we done?
+    QEmpty = queue:is_empty(State#state.partition_queue),
+    Waiting = State#state.whereis_waiting,
+    case {RunningSrcs, QEmpty, Waiting} of
+        {[], true, []} ->
+            % nothing outstanding, so we can exit.
+            {reply, false, State};
+        _ ->
+            % there's something waiting for a response.
+            {reply, true, State}
+    end;
+
 
 handle_call(_Request, _From, State) ->
     lager:info("ignoring ~p", [_Request]),

@@ -84,6 +84,8 @@ pretty_print(RD1, C1=#ctx{}) ->
     {json_pp:print(binary_to_list(list_to_binary(Json))), RD2, C2}.
 
 get_stats() ->
+    RTRemotesStatus = riak_repl_console:rt_remotes_status(),
+    FSRemotesStatus = riak_repl_console:fs_remotes_status(),
     Stats1 = riak_repl_stats:get_stats(),
     CMStats = riak_repl_console:cluster_mgr_stats(),
     LeaderStats = riak_repl_console:leader_stats(),
@@ -92,7 +94,7 @@ get_stats() ->
     Coord = riak_repl_console:coordinator_stats(),
     CoordSrv = riak_repl_console:coordinator_srv_stats(),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
-    CMStats ++ Stats1 ++ LeaderStats
+    jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
     ++ RTQ 
