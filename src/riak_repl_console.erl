@@ -20,7 +20,10 @@
          client_stats/0,
          server_stats/0,
          coordinator_stats/0,
-         coordinator_srv_stats/0]).
+         coordinator_srv_stats/0,
+         rt_remotes_status/0,
+         fs_remotes_status/0]).
+
 -export([set_modes/1, get_modes/0]).
 
 add_listener(Params) ->
