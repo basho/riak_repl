@@ -20,7 +20,10 @@
          client_stats/0,
          server_stats/0,
          coordinator_stats/0,
-         coordinator_srv_stats/0]).
+         coordinator_srv_stats/0,
+         rt_remotes_status/0,
+         fs_remotes_status/0]).
+
 -export([set_modes/1, get_modes/0]).
 
 add_listener(Params) ->
@@ -115,6 +118,8 @@ status(quiet) ->
 status2(Verbose) ->
     Config = get_config(),
     Stats1 = lists:sort(riak_repl_stats:get_stats()),
+    RTRemotesStatus = rt_remotes_status(),
+    FSRemotesStatus = fs_remotes_status(),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
@@ -123,13 +128,31 @@ status2(Verbose) ->
     CMgrStats = cluster_mgr_stats(),
     RTQStats = rtq_stats(),
     All =
-        Config++Stats1++LeaderStats++ClientStats++ServerStats++
-        CoordStats++CoordSrvStats++CMgrStats++RTQStats,
+          RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
+          LeaderStats++ClientStats++ServerStats++
+          CoordStats++CoordSrvStats++CMgrStats++RTQStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
             All
     end.
+
+rt_remotes_status() ->
+    Ring = get_ring(),
+    Enabled = string:join(riak_repl_ring:rt_enabled(Ring),", "),
+    Started = string:join(riak_repl_ring:rt_started(Ring),", "),
+    [{realtime_enabled, Enabled},
+     {realtime_started, Started}].
+
+fs_remotes_status() ->
+    Ring = get_ring(),
+    Sinks = riak_repl_ring:rt_enabled(Ring),
+    RunningSinks = [Sink || Sink <- Sinks, cluster_fs_running(Sink)],
+    [{fullsync_enabled, string:join(riak_repl_ring:fs_enabled(Ring),", ")},
+     {fullsync_running, string:join(RunningSinks,", ")}].
+
+cluster_fs_running(Sink) ->
+  riak_repl2_fscoordinator:is_running(riak_repl2_fscoordinator_sup:coord_for_cluster(Sink)).
 
 start_fullsync([]) ->
     [riak_repl_tcp_server:start_fullsync(Pid) ||
