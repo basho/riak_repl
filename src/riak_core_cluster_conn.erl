@@ -84,8 +84,11 @@ ctrlClientProcess(Remote, connecting, Members0) ->
                 {ok, Name} ->
                     case ask_member_ips(Socket, Transport, Addr, Remote) of
                         {ok, Members} ->
+                            %% This is the first time we're updating the cluster manager
+                            %% with the name of this cluster, so it's old name is undefined.
+                            OldName = "undefined",
                             gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                                            {cluster_updated, Name, Members, Addr, Remote}),
+                                            {cluster_updated, OldName, Name, Members, Addr, Remote}),
                             ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members);
                         {error, closed} ->
                             {error, connection_closed};
@@ -120,12 +123,12 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
         %% cluster manager asking us to poll the remove cluster
         {_From, poll_cluster} ->
             case ask_cluster_name(Socket, Transport, Remote) of
-                {ok, Name1} ->
+                {ok, NewName} ->
                     case ask_member_ips(Socket, Transport, Addr, Remote) of
                         {ok, Members} ->
                             gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                                            {cluster_updated, Name1, Members, Addr, Remote}),
-                            ctrlClientProcess(Remote, {Name1, Socket, Transport, Addr}, Members);
+                                            {cluster_updated, Name, NewName, Members, Addr, Remote}),
+                            ctrlClientProcess(Remote, {NewName, Socket, Transport, Addr}, Members);
                         {error, closed} ->
                             {error, connection_closed};
                         Error ->
@@ -149,7 +152,7 @@ ctrlClientProcess(Remote, {Name, Socket, Transport, Addr}, Members0) ->
                     {ok, {cluster_members_changed, BinMembers}} ->
                         Members = {ok, binary_to_term(BinMembers)},
                         gen_server:cast(?CLUSTER_MANAGER_SERVER,
-                                        {cluster_updated, Name, Members, Addr, Remote}),
+                                        {cluster_updated, Name, Name, Members, Addr, Remote}),
                         Members;
                     {ok, Other} ->
                         lager:error("cluster_conn: client got unexpected msg from remote: ~p, ~p",
