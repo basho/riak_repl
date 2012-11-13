@@ -414,7 +414,7 @@ send(Transport, {Owner, Socket}, Data) when is_binary(Data) ->
             riak_repl_stats:server_bytes_sent(size(Data)),
             ok;
         {error, _} = Error ->
-            Owner ! {list_to_atom(Transport:name() ++ "_error"), Socket, Error},
+            Owner ! {list_to_atom(atom_to_list(Transport:name()) ++ "_error"), Socket, Error},
             Error
     end;
 send(Transport, Socket, Data) when is_binary(Data)->
