@@ -204,6 +204,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     %% timer:sleep(1),
     case State#state.receivers of
         [] ->
+            riak_repl_util:dropped_realtime_hook(Msg),
             riak_repl_stats:objects_dropped_no_clients(),
             {noreply, State};
         Receivers ->
@@ -250,11 +251,13 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
             %% D = definitely drop
             %% io:format("D"),
             %% TODO: create a new stat rather than abusing this counter.
+            riak_repl_util:dropped_realtime_hook(Msg),
             riak_repl_stats:objects_dropped_no_clients()
     end,        
     {noreply, State};
-handle_cast({repl, _Msg}, State) ->
+handle_cast({repl, Msg}, State) ->
     %% No leader currently defined - cannot do anything
+    riak_repl_util:dropped_realtime_hook(Msg),
     riak_repl_stats:objects_dropped_no_leader(),
     {noreply, State};
 handle_cast(ensure_sites, State) ->
@@ -348,10 +351,10 @@ become_leader(Leader, State) ->
 new_leader(Leader, LeaderPid, State0) ->
     This = node(),
     State = State0#state{i_am_leader = false, leader_node = Leader},
-    NewState = case State#state.leader_node of
+    NewState = case State0#state.leader_node of
         This ->
             %% this node is surrendering leadership
-            leader_change(State#state.i_am_leader, false), % will close connections
+            leader_change(State0#state.i_am_leader, false), % will close connections
             riak_repl_stats:elections_leader_changed(),
             lager:info("Replication leadership surrendered to ~p", [Leader]),
             %% reset the mailbox size to 0 until we poll it again
@@ -422,6 +425,14 @@ leader_change(false, true) ->
         {SiteName, _Pid} <- RunningSiteProcs];
 leader_change(true, false) ->
     %% we've lost the leadership, close any local listeners
+    case app_helper:get_env(riak_repl, inverse_connection) of
+        true ->
+            %% in the inverted case need to stop sites
+            RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
+            [riak_repl_client_sup:stop_site(SiteName) ||
+                {SiteName, _Pid} <- RunningSiteProcs];
+        _ -> ok
+    end,
     riak_repl_listener_sup:close_all_connections().
 
 %% Inspect the cluster and determine if we can balance clients between
