@@ -18,7 +18,24 @@
          get_listener/2,
          del_listener/2,
          del_nat_listener/2,
-         get_nat_listener/2]).
+         get_nat_listener/2,
+         set_clusterIpAddrs/2,
+         get_clusterIpAddrs/2,
+         get_clusters/1,
+         rt_enable_trans/2,
+         rt_disable_trans/2,
+         rt_enabled/1,
+         rt_start_trans/2,
+         rt_stop_trans/2,
+         rt_started/1,
+         fs_enable_trans/2,
+         fs_disable_trans/2,
+         fs_enabled/1,
+         set_modes/2,
+         get_modes/1,
+         compose/2,
+         multicompose/1
+         ]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -234,6 +251,84 @@ get_nat_listener(Ring,Listener) ->
         error -> undefined
     end.
 
+%% set or replace the list of Addrs associated with ClusterName in the ring
+set_clusterIpAddrs(Ring, {ClusterName, Addrs}) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    OldClusters = get_list(clusters, Ring),
+    %% replace Cluster in the list of Clusters
+    Cluster = {ClusterName, Addrs},
+    Clusters = case lists:keymember(ClusterName, 1, OldClusters) of
+                   true ->
+                       lists:keyreplace(ClusterName, 1, OldClusters, Cluster);
+                   _ ->
+                       [Cluster | OldClusters]
+               end,
+    %% replace Clusters in ring
+    RC2 = dict:store(clusters, Clusters, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                    ?MODULE,
+                    RC2,
+                    Ring)}
+    end.
+
+%% get list of Addrs associated with ClusterName in the ring
+get_clusterIpAddrs(Ring, ClusterName) ->
+    Clusters = get_clusters(Ring),
+    case lists:keyfind(ClusterName, 1, Clusters) of
+        false -> [];
+        {_Name,Addrs} -> Addrs
+    end.
+
+get_clusters(Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    case dict:find(clusters, RC) of
+        {ok, Clusters} ->
+            Clusters;
+        error ->
+            []
+    end.
+
+%% Enable replication for the remote (queue will start building)
+rt_enable_trans(Ring, Remote) ->
+    add_list_trans(Remote, rt_enabled, Ring).
+
+%% Disable replication for the remote (queue will be cleaned up)
+rt_disable_trans(Ring, Remote) ->
+    del_list_trans(Remote, rt_enabled, Ring).
+
+%% Get list of RT enabled remotes
+rt_enabled(Ring) ->
+    get_list(rt_enabled, Ring).
+
+%% Start replication for the remote - make connection and send
+rt_start_trans(Ring, Remote) ->
+    add_list_trans(Remote, rt_started, Ring).
+
+%% Stop replication for the remote - break connection and queue
+rt_stop_trans(Ring, Remote) ->
+    del_list_trans(Remote, rt_started, Ring).
+
+%% Get list of RT started remotes
+rt_started(Ring) ->
+    get_list(rt_started, Ring).
+
+%% Enable replication for the remote (queue will start building)
+fs_enable_trans(Ring, Remote) ->
+    add_list_trans(Remote, fs_enabled, Ring).
+
+%% Disable replication for the remote (queue will be cleaned up)
+fs_disable_trans(Ring, Remote) ->
+    del_list_trans(Remote, fs_enabled, Ring).
+
+%% Get list of RT enabled remotes
+fs_enabled(Ring) ->
+    get_list(fs_enabled, Ring).
+
 initial_config() ->
     dict:from_list(
       [{natlisteners, []},
@@ -241,6 +336,96 @@ initial_config() ->
        {sites, []},
        {version, ?REPL_VERSION}]
       ).
+
+add_list_trans(Item, ListName, Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    List = case dict:find(ListName, RC) of
+               {ok, List1} ->
+                   List1;
+               error ->
+                   []
+           end,
+    case lists:member(Item, List) of
+        false ->
+            NewList = lists:usort([Item|List]),
+            {new_ring, riak_core_ring:update_meta(
+                         ?MODULE,
+                         dict:store(ListName, NewList, RC),
+                         Ring)};
+        true ->
+            {ignore, {already_present, Item}}
+    end.
+
+del_list_trans(Item, ListName, Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    List = case dict:find(ListName, RC) of
+               {ok, List1} ->
+                   List1;
+               error ->
+                   []
+           end,
+    case lists:member(Item, List) of
+        true ->
+            NewList = List -- [Item],
+            {new_ring, riak_core_ring:update_meta(
+                         ?MODULE,
+                         dict:store(ListName, NewList, RC),
+                         Ring)};
+        false ->
+            {ignore, {not_present, Item}}
+    end.
+
+%% Lookup the list name in the repl config, return empty list if not found
+get_list(ListName, Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    case dict:find(ListName, RC) of
+        {ok, List}  ->
+            List;
+        error ->
+            []
+    end.
+
+%% set the "mode" for realtime repl behavior
+%% possible values are 
+%% v1, v2, v3
+set_modes(Ring, NewModes) ->
+    % it doesn't make sense to have a mode_repl13_migrating to represent
+    % node shutdown repl migration hook since the mode is stored in the
+    % repl ring
+    ModeCheck = lists:all(fun (Mode) -> 
+                            proplists:is_defined(Mode,
+                            ?REPL_MODES) end,
+                            NewModes)
+                          andalso length(NewModes) > 0,
+    case ModeCheck of
+        true ->
+            RC = get_repl_config(Ring),
+            % just overwrite whatever was there before
+            NewState = riak_core_ring:update_meta(
+                ?MODULE,
+                dict:store(repl_modes, NewModes, RC),
+                Ring),
+            %% force the bucket hooks to be reinstalled
+            riak_core_ring_manager:force_update(),
+            NewState;
+        false ->
+            lager:warning("Invalid replication modes specified: ~p", [NewModes]),
+            Ring
+    end.
+
+get_modes(Ring) ->
+    RC = get_repl_config(Ring),
+    case dict:find(repl_modes, RC) of
+        {ok, ReplModes} -> ReplModes;
+        error ->
+            %% default to mixed modes
+            [mode_repl12, mode_repl13]
+    end.
+
+%% Function composition
+compose(F,G) -> fun(X) -> F(G(X)) end.
+multicompose(Fs) ->
+    lists:foldl(fun compose/2, fun(X) -> X end, Fs).
 
 %% unit tests
 

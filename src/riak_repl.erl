@@ -4,7 +4,7 @@
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
 -export([start/0, stop/0]).
--export([install_hook/0]).
+-export([install_hook/0, uninstall_hook/0]).
 -export([fixup/2]).
 
 start() ->
@@ -19,11 +19,19 @@ install_hook() ->
     riak_core_bucket:append_bucket_defaults([{repl, true}]),
     ok.
 
+uninstall_hook() ->
+    %% Cannot remove bucket defaults, best we can do is disable
+    riak_core_bucket:append_bucket_defaults([{repl, false}]),
+    ok.
+
 fixup(_Bucket, BucketProps) ->
     CleanPostcommit = strip_postcommit(BucketProps),
+    RTEnabled = app_helper:get_env(riak_repl, rtenabled, false),
     case proplists:get_value(repl, BucketProps) of
-        Val when Val==true; Val==realtime; Val==both ->
-            UpdPostcommit = CleanPostcommit ++ [?REPL_HOOK],
+        Val when (Val==true orelse Val==realtime orelse Val==both),
+                 RTEnabled == true  ->
+            lager:debug("Hooks for repl modes = ~p", [riak_repl_util:get_hooks_for_modes()]),
+            UpdPostcommit = CleanPostcommit ++ riak_repl_util:get_hooks_for_modes(),
 
             {ok, lists:keystore(postcommit, 1, BucketProps, 
                     {postcommit, UpdPostcommit})};
@@ -44,7 +52,6 @@ strip_postcommit(BucketProps) ->
         {struct, _}=X ->
             CurrentPostcommit=[X]
     end,
-    
     %% Add repl hook - make sure there are not duplicate entries
-    CurrentPostcommit -- [?REPL_HOOK].
+    CurrentPostcommit -- riak_repl_util:get_hooks_for_modes().
 
