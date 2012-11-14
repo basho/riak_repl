@@ -3,7 +3,13 @@
 -module(riak_repl_app).
 -author('Andy Gross <andy@basho.com>').
 -behaviour(application).
--export([start/2,stop/1]).
+-export([start/2,prep_stop/1,stop/1]).
+-export([get_matching_address/2, determine_netmask/2, mask_address/2]).
+
+-include("riak_core_connection.hrl").
+
+-define(TRACE(_Stmt),ok).
+%%-define(TRACE(Stmt),Stmt).
 
 %% @spec start(Type :: term(), StartArgs :: term()) ->
 %%          {ok,Pid} | ignore | {error,Error}
@@ -41,14 +47,38 @@ start(_Type, _StartArgs) ->
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
 
+
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
+            %% Register connection manager stats application with core
+            riak_core:register(riak_conn_mgr_stats, [{stat_mod, riak_core_connection_mgr_stats}]),
+            %% register functions for cluster manager to find it's own
+            %% nodes' ip addrs
+            riak_core_cluster_mgr:register_member_fun(
+                fun cluster_mgr_member_fun/1),
+            %% cluster manager leader will follow repl leader
+            riak_repl2_leader:register_notify_fun(
+              fun riak_core_cluster_mgr:set_leader/2),
+            %% fullsync co-ordincation will follow leader
+            riak_repl2_leader:register_notify_fun(
+                fun riak_repl2_fscoordinator_sup:set_leader/2),
+            name_this_cluster(),
+            riak_core_node_watcher:service_up(riak_repl, Pid),
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
             %% Add routes to webmachine
             [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
+            %% Now that we have registered the ring handler, we can register the
+            %% cluster manager name locator function (which reads the ring).
+            register_cluster_name_locator(),
+
+            %% makes service manager start connection dispatcher
+            riak_repl2_rtsink_conn:register_service(),
+            riak_repl2_fssink:register_service(),
+            riak_repl2_fscoordinator_serv:register_service(),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
@@ -56,7 +86,9 @@ start(_Type, _StartArgs) ->
 
 %% @spec stop(State :: term()) -> ok
 %% @doc The application:stop callback for riak_repl.
-stop(_State) -> ok.
+stop(_State) -> 
+    lager:info("Stopped application riak_repl"),
+    ok.
 
 ensure_dirs() ->
     {ok, DataRoot} = application:get_env(riak_repl, data_root),
@@ -92,3 +124,240 @@ prune_old_workdirs(WorkRoot) ->
         _ ->
             ignore
     end.
+
+%% Get the list of nodes of our ring
+cluster_mgr_member_fun({IP, Port}) ->
+    %% find the subnet for the interface we connected to
+    {ok, MyIPs} = inet:getifaddrs(),
+    {ok, NormIP} = riak_repl_util:normalize_ip(IP),
+    lager:debug("normIP is ~p", [NormIP]),
+    MyMask = lists:foldl(fun({_IF, Attrs}, Acc) ->
+                case lists:member({addr, NormIP}, Attrs) of
+                    true ->
+                        NetMask = lists:foldl(fun({netmask, NM = {_, _, _, _}}, _) ->
+                                    NM;
+                                (_, Acc2) ->
+                                    Acc2
+                            end, undefined, Attrs),
+                        %% convert the netmask to CIDR
+                        CIDR = cidr(list_to_binary(tuple_to_list(NetMask)),0),
+                        lager:debug("~p is ~p in CIDR", [NetMask, CIDR]),
+                        CIDR;
+                    false ->
+                        Acc
+                end
+        end, undefined, MyIPs),
+    case MyMask of
+        undefined ->
+            lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
+                         [{IP,Port}]),
+            %% might as well return the one IP we know will work
+            [{IP, Port}];
+        _ ->
+            ?TRACE(lager:notice("Mask is ~p", [MyMask])),
+            AddressMask = mask_address(NormIP, MyMask),
+            ?TRACE(lager:notice("address mask is ~p", [AddressMask])),
+            Nodes = riak_core_node_watcher:nodes(riak_kv),
+            {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
+                get_matching_address, [NormIP, AddressMask]),
+            Results
+    end.
+
+%% @doc Given the result of inet:getifaddrs() and an IP a client has
+%% connected to, attempt to determine the appropriate subnet mask.  If
+%% the IP the client connected to cannot be found, undefined is returned.
+-spec determine_netmask(Ifaddrs :: [{atom(), any()}], SeekIP :: string() | {integer(), integer(), integer(), integer()}) -> 'undefined' | binary().
+determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
+    {ok, NormIP} = riak_repl_util:normalize_ip(SeekIP),
+    determine_netmask(Ifaddrs, NormIP);
+
+determine_netmask([], _NormIP) ->
+    undefined;
+
+determine_netmask([{_If, Attrs} | Tail], NormIP) ->
+    case lists_pos({addr, NormIP}, Attrs) of
+        not_found ->
+            determine_netmask(Tail, NormIP);
+        N ->
+            case lists:nth(N + 1, Attrs) of
+                {netmask, {_, _, _, _} = NM} ->
+                    cidr(list_to_binary(tuple_to_list(NM)),0);
+                _ ->
+                    determine_netmask(Tail, NormIP)
+            end
+    end.
+
+lists_pos(Needle, Haystack) ->
+    lists_pos(Needle, Haystack, 1).
+
+lists_pos(_Needle, [], _N) ->
+    not_found;
+
+lists_pos(Needle, [Needle | _Haystack], N) ->
+    N;
+
+lists_pos(Needle, [_NotNeedle | Haystack], N) ->
+    lists_pos(Needle, Haystack, N + 1).
+
+%% count the number of 1s in netmask to get the CIDR
+%% Maybe there's a better way....?
+cidr(<<>>, Acc) ->
+    Acc;
+cidr(<<X:1/bits, Rest/bits>>, Acc) ->
+    case X of
+        <<1:1>> ->
+            cidr(Rest, Acc + 1);
+        _ ->
+            cidr(Rest, Acc)
+    end.
+
+%% get the subnet mask as an integer, stolen from an old post on
+%% erlang-questions
+mask_address(Addr={_, _, _, _}, Maskbits) ->
+    B = list_to_binary(tuple_to_list(Addr)),
+    ?TRACE(lager:info("address as binary: ~p ~p", [B,Maskbits])),
+    <<Subnet:Maskbits, _Host/bitstring>> = B,
+    Subnet;
+mask_address(_, _) ->
+    %% presumably ipv6, don't have a function for that one yet
+    undefined.
+
+rfc1918({10, _, _, _}) ->
+    true;
+rfc1918({192.168, _, _}) ->
+    true;
+rfc1918(IP={172, _, _, _}) ->
+    %% this one is a /12, not so simple
+    mask_address({172, 16, 0, 0}, 12) == mask_address(IP, 12);
+rfc1918(_) ->
+    false.
+
+%% find the right address to serve given the IP the node connected to
+get_matching_address(IP, Mask) ->
+    {RawListenIP, Port} = app_helper:get_env(riak_core, cluster_mgr),
+    {ok, ListenIP} = riak_repl_util:normalize_ip(RawListenIP),
+    case ListenIP of
+        {0, 0, 0, 0} ->
+            {ok, MyIPs} = inet:getifaddrs(),
+            lists:foldl(fun({_IF, Attrs}, Acc) ->
+                        V4Attrs = lists:filter(fun({addr, {_, _, _, _}}) ->
+                                    true;
+                                ({netmask, {_, _, _, _}}) ->
+                                    true;
+                                (_) ->
+                                    false
+                            end, Attrs),
+                        case V4Attrs of
+                            [] ->
+                                Acc;
+                            _ ->
+                                MyIP = proplists:get_value(addr, V4Attrs),
+                                NetMask = proplists:get_value(netmask, V4Attrs),
+                                CIDR = cidr(list_to_binary(tuple_to_list(NetMask)), 0),
+                                case mask_address(MyIP, CIDR) of
+                                    Mask ->
+                                        {MyIP, Port};
+                                    _Other ->
+                                        ?TRACE(lager:info("IP ~p with CIDR ~p masked as ~p",
+                                                          [MyIP, CIDR, _Other])),
+                                        Acc
+                                end
+                        end
+                end, undefined, MyIPs); %% TODO if result is undefined, check NAT
+            _ ->
+                case rfc1918(IP) == rfc1918(ListenIP) of
+                    true ->
+                        %% Both addresses are either internal or external.
+                        %% We'll have to assume the user knows what they're
+                        %% doing
+                        ?TRACE(lager:info("returning speific listen IP ~p",
+                                          [ListenIP])),
+                        {ListenIP, Port};
+                    false ->
+                        lager:warning("NAT detected?"),
+                        undefined
+                end
+        end.
+
+%% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
+name_this_cluster() ->
+    ClusterName = case riak_core_connection:symbolic_clustername() of
+                      "undefined" ->
+                          {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                          lists:flatten(
+                            io_lib:format("~p", [riak_core_ring:cluster_name(Ring)]));
+                      Name ->
+                          Name
+                  end,
+    riak_core_connection:set_symbolic_clustername(ClusterName).
+
+
+%% Persist the named cluster and it's members to the repl ring metadata.
+%% TODO: an empty Members list means "delete this cluster name"
+cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->
+    lager:debug("Saving cluster to the ring: ~p of ~p", [ClusterName, Members]),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clusterIpAddrs/2,
+                                      {ClusterName, Members}).
+
+%% Return a list of cluster targets by cluster name.
+%% These will then be resolved by calls back to our registered
+%% locator function, registered below.
+cluster_mgr_read_cluster_targets_from_ring() ->
+    %% get cluster names from cluster manager
+    Ring = get_ring(),
+    Clusters = riak_repl_ring:get_clusters(Ring),
+    [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].
+
+%% Register a locator for cluster names. MUST do this BEFORE we
+%% register the save/restore functions because the restore function
+%% is going to immediately try and locate functions if the cluster
+%% manager is already the leader.
+register_cluster_name_locator() ->
+    Locator = fun(ClusterName, _Policy) ->
+                      Ring = get_ring(),
+                      Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+                      lager:debug("located members for cluster ~p: ~p", [ClusterName, Addrs]),
+                      {ok,Addrs}
+              end,
+    ok = riak_core_connection_mgr:register_locator(?CLUSTER_NAME_LOCATOR_TYPE, Locator),
+    %% Register functions to save/restore cluster names and their members
+    riak_core_cluster_mgr:register_save_cluster_members_fun(
+      fun cluster_mgr_write_cluster_members_to_ring/2),
+    riak_core_cluster_mgr:register_restore_cluster_targets_fun(
+      fun cluster_mgr_read_cluster_targets_from_ring/0).
+
+get_ring() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_ring:ensure_config(Ring).
+
+prep_stop(_State) ->
+    %% TODO: this should only run with BNW
+
+    try %% wrap with a try/catch - application carries on regardless,
+        %% no error message or logging about the failure otherwise.
+
+        %% mark the service down so other nodes don't try to migrate to this
+        %% one while it's going down
+        riak_core_node_watcher:service_down(riak_repl),
+
+        %% the repl bucket hook will check to see if the queue is running and deliver to
+        %% another node if it's shutting down
+        lager:info("Redirecting realtime replication traffic"),
+        riak_repl2_rtq:shutdown(),
+
+        lager:info("Stopping application riak_repl - marked service down.\n", []),
+
+        case riak_repl_migration:start_link() of
+            {ok, _Pid} ->
+                lager:info("Started migration server"),
+                riak_repl_migration:migrate_queue();
+            {error, _} -> lager:error("Can't start replication migration server")
+        end
+       catch
+        Type:Reason ->
+            lager:error("Stopping application riak_api - ~p:~p.\n", [Type, Reason])
+    end,
+    stopping.
+
+
+

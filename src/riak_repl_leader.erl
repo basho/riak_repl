@@ -410,7 +410,7 @@ maybe_start_helper(State) ->
         [] ->
             Pid = undefined;
         Candidates ->
-            {ok, Pid} = riak_repl_leader_helper:start_link(self(), Candidates,
+            {ok, Pid} = riak_repl_leader_helper:start_link(?MODULE, self(), Candidates,
                                                            State#state.workers)
     end,
     State#state{helper_pid = Pid}.

@@ -11,12 +11,12 @@
 -module(couch_merkle).
 -author('cliff@powerset.com').
 
--behaviour(gen_server2).
+-behaviour(riak_core_gen_server).
 
 %% API
 -export([open/1, open/2, equals/2, root/1, update/3, update_many/2, updatea/3, delete/2, deletea/2, diff/2, close/1, tree/1]).
 
-%% gen_server2 callbacks
+%% riak_core_gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -52,7 +52,7 @@ open(Filename) ->
   open(Filename, true).
   
 open(Filename, Create) ->
-  gen_server2:start_link(?MODULE, [Filename, Create], []).
+  riak_core_gen_server:start_link(?MODULE, [Filename, Create], []).
   
 equals(Server1, Server2) ->
   {_, Hash1} = root(Server1),
@@ -61,22 +61,22 @@ equals(Server1, Server2) ->
   Hash1 == Hash2.
   
 root(Server) ->
-  gen_server2:call(Server, root, infinity).
+  riak_core_gen_server:call(Server, root, infinity).
   
 update(Server, Key, Hash) ->
-  gen_server2:call(Server, {update, Key, Hash}, infinity).
+  riak_core_gen_server:call(Server, {update, Key, Hash}, infinity).
   
 updatea(Server, Key, Hash) ->
-  gen_server2:cast(Server, {update, Key, Hash}).
+  riak_core_gen_server:cast(Server, {update, Key, Hash}).
 
 update_many(Server, KHPairs) ->
-    gen_server2:call(Server, {update_many, KHPairs}, infinity).
+    riak_core_gen_server:call(Server, {update_many, KHPairs}, infinity).
 
 delete(Server, Key) ->
-  gen_server2:call(Server, {delete, Key}, infinity).
+  riak_core_gen_server:call(Server, {delete, Key}, infinity).
   
 deletea(Server, Key) ->
-  gen_server2:cast(Server, {delete, Key}).
+  riak_core_gen_server:cast(Server, {delete, Key}).
   
 diff(Server1, Server2) ->
   Bt1 = tree(Server1),
@@ -84,18 +84,18 @@ diff(Server1, Server2) ->
   handle_diff(Bt1, Bt2).
   
 %lookup(Server, Key) ->
-%  gen_server2:call(Server, {lookup, Key}).
+%  riak_core_gen_server:call(Server, {lookup, Key}).
   
 %leaves(Server) ->
-%  gen_server2:call(Server, leaves).
+%  riak_core_gen_server:call(Server, leaves).
   
 close(Server) ->
-  gen_server2:cast(Server, close).
+  riak_core_gen_server:cast(Server, close).
   
 tree(Server) ->
-  gen_server2:call(Server, tree, infinity).
+  riak_core_gen_server:call(Server, tree, infinity).
 %%====================================================================
-%% gen_server2 callbacks
+%% riak_core_gen_server callbacks
 %%====================================================================
 
 %%--------------------------------------------------------------------
@@ -178,9 +178,9 @@ handle_info(_Info, State) ->
 
 %%--------------------------------------------------------------------
 %% @spec terminate(Reason, State) -> void()
-%% @doc This function is called by a gen_server2 when it is about to
+%% @doc This function is called by a riak_core_gen_server when it is about to
 %% terminate. It should be the opposite of Module:init/1 and do any necessary
-%% cleaning up. When it returns, the gen_server2 terminates with Reason.
+%% cleaning up. When it returns, the riak_core_gen_server terminates with Reason.
 %% The return value is ignored.
 %% @end 
 %%--------------------------------------------------------------------

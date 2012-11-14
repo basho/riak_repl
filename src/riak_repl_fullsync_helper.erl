@@ -6,7 +6,7 @@
 %% from the main TCP server/client processes.
 %%
 -module(riak_repl_fullsync_helper).
--behaviour(gen_server2).
+-behaviour(riak_core_gen_server).
 
 %% API
 -export([start_link/1,
@@ -53,10 +53,10 @@
 %% ===================================================================
 
 start_link(OwnerFsm) ->
-    gen_server2:start_link(?MODULE, [OwnerFsm], []).
+    riak_core_gen_server:start_link(?MODULE, [OwnerFsm], []).
 
 stop(Pid) ->
-    gen_server2:call(Pid, stop, infinity).
+    riak_core_gen_server:call(Pid, stop, infinity).
 
 %% Make a couch_btree of key/object hashes.
 %%
@@ -64,7 +64,7 @@ stop(Pid) ->
 %% a gen_fsm event {Ref, merkle_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_merkle(Pid, Partition, Filename) ->
-    gen_server2:call(Pid, {make_merkle, Partition, Filename}).
+    riak_core_gen_server:call(Pid, {make_merkle, Partition, Filename}).
 
 %% Make a sorted file of key/object hashes.
 %% 
@@ -72,7 +72,7 @@ make_merkle(Pid, Partition, Filename) ->
 %% a gen_fsm event {Ref, keylist_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_keylist(Pid, Partition, Filename) ->
-    gen_server2:call(Pid, {make_keylist, Partition, Filename}).
+    riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename}).
    
 %% Convert a couch_btree to a sorted keylist file.
 %%
@@ -80,17 +80,17 @@ make_keylist(Pid, Partition, Filename) ->
 %% Sends a gen_fsm event {Ref, converted} on success or
 %% {Ref, {error, Reason}} on failure
 merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
-    gen_server2:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}).
+    riak_core_gen_server:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}).
     
 %% Computes the difference between two keylist sorted files.
 %% Returns {ok, Ref} or {error, Reason}
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
 diff(Pid, Partition, TheirFn, OurFn) ->
-    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true}).
+    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true}).
 
 diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
-    gen_server2:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false}).
+    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false}).
 
 %% ====================================================================
 %% gen_server callbacks
@@ -117,7 +117,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
     %% default timeout.  Do not wish to block the repl server for
     %% that long in any case.
     Ref = make_ref(),
-    gen_server2:reply(From, {ok, Ref}),
+    riak_core_gen_server:reply(From, {ok, Ref}),
 
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
@@ -128,7 +128,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
             Worker = fun() ->
                              riak_kv_vnode:fold({Partition,OwnerNode},
                                                 fun ?MODULE:merkle_fold/3, Self),
-                             gen_server2:cast(Self, merkle_finish)
+                             riak_core_gen_server:cast(Self, merkle_finish)
                      end,
             FolderPid = spawn_link(Worker),
             NewState = State#state{ref = Ref, 
@@ -143,7 +143,7 @@ handle_call({make_merkle, Partition, FileName}, From, State) ->
 %% request from client of server to write a keylist of hashed key/value to Filename for Partition
 handle_call({make_keylist, Partition, Filename}, From, State) ->
     Ref = make_ref(),
-    gen_server2:reply(From, {ok, Ref}),
+    riak_core_gen_server:reply(From, {ok, Ref}),
 
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
@@ -158,13 +158,13 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                 true ->
                                     {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
                                         fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
-                                    gen_server2:cast(Self, {kl_finish, Total});
+                                    riak_core_gen_server:cast(Self, {kl_finish, Total});
                                 false ->
                                     %% use old accumulator without the total
                                     {Self, _} = riak_kv_vnode:fold({Partition,OwnerNode},
                                         fun ?MODULE:keylist_fold/3, {Self, 0}),
                                     %% total is 0, not much else we can do
-                                    gen_server2:cast(Self, {kl_finish, 0})
+                                    riak_core_gen_server:cast(Self, {kl_finish, 0})
                             end
                      end,
             FolderPid = spawn_link(Worker),
@@ -185,7 +185,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
     %% write to files this process will crash and the caller
     %% will discover the problem.
     Ref = make_ref(),
-    gen_server2:reply(From, {ok, Ref}),
+    riak_core_gen_server:reply(From, {ok, Ref}),
 
     %% Iterate over the couch file and write out to the keyfile
     {ok, InFileFd, InFileBtree} = open_couchdb(MerkleFn),
@@ -214,7 +214,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
     %% read files this process will crash and the caller
     %% will discover the problem.
     Ref = make_ref(),
-    gen_server2:reply(From, {ok, Ref}),
+    riak_core_gen_server:reply(From, {ok, Ref}),
     try
         {ok, RemoteFile} = file:open(RemoteFilename,
             [read, binary, raw, read_ahead]),
@@ -297,7 +297,7 @@ handle_cast({kl_finish, Count}, State) ->
         ok -> ok;
         _ -> file:close(State#state.kl_fp)
     end,
-    gen_server2:cast(self(), kl_sort),
+    riak_core_gen_server:cast(self(), kl_sort),
     {noreply, State#state{kl_total=Count}};
 handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
@@ -406,7 +406,7 @@ diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffStat
     %% TODO do this more correctly when there's more time.
     receive
         {'$gen_call', From, stop} ->
-            gen_server2:reply(From, ok),
+            riak_core_gen_server:reply(From, ok),
             DiffState;
         {Ref, diff_resume} ->
             %% Resuming the diff stream generation
@@ -481,7 +481,7 @@ missing_key(PBKey, DiffState) ->
 %%
 %% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
 merkle_fold(K, V, Pid) ->
-    gen_server2:cast(Pid, {merkle, K, hash_object(V)}),
+    riak_core_gen_server:cast(Pid, {merkle, K, hash_object(V)}),
     Pid.
 
 %% @private
@@ -491,11 +491,11 @@ keylist_fold(K, V, {MPid, Count, Total}) ->
     H = hash_object(V),
     Bin = term_to_binary({pack_key(K), H}),
     %% write key/value hash to file
-    gen_server2:cast(MPid, {keylist, Bin}),
+    riak_core_gen_server:cast(MPid, {keylist, Bin}),
     case Count of
         100 ->
             %% send keylist_ack to "self" every 100 key/value hashes
-            ok = gen_server2:call(MPid, keylist_ack, infinity),
+            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
             {MPid, 0, Total+1};
         _ ->
             {MPid, Count+1, Total+1}
@@ -505,11 +505,11 @@ keylist_fold(K, V, {MPid, Count}) ->
     H = hash_object(V),
     Bin = term_to_binary({pack_key(K), H}),
     %% write key/value hash to file
-    gen_server2:cast(MPid, {keylist, Bin}),
+    riak_core_gen_server:cast(MPid, {keylist, Bin}),
     case Count of
         100 ->
             %% send keylist_ack to "self" every 100 key/value hashes
-            ok = gen_server2:call(MPid, keylist_ack, infinity),
+            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
             {MPid, 0};
         _ ->
             {MPid, Count+1}

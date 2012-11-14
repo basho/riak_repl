@@ -40,6 +40,7 @@
 %% API
 -export([start_link/5,
         start_fullsync/1,
+        start_fullsync/2,
         cancel_fullsync/1,
         pause_fullsync/1,
         resume_fullsync/1
@@ -109,6 +110,9 @@ start_link(SiteName, Transport, Socket, WorkDir, Client) ->
 start_fullsync(Pid) ->
     Pid ! start_fullsync.
 
+start_fullsync(Pid, Partitions) ->
+    Pid ! {start_fullsync, Partitions}.
+
 cancel_fullsync(Pid) ->
     gen_fsm:send_event(Pid, cancel_fullsync).
 
@@ -138,6 +142,10 @@ wait_for_partition(Command, State)
     %% annoyingly the server is the one that triggers the fullsync in the old
     %% protocol, so we'll just send it on to the client.
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    {next_state, wait_for_partition, State};
+wait_for_partition({start_fullsync, _} = Command, State) ->
+    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+        Command),
     {next_state, wait_for_partition, State};
 %% Full sync has completed
 wait_for_partition(fullsync_complete, State) ->
@@ -524,6 +532,9 @@ handle_sync_event(_Event,_F,StateName,State) ->
 handle_info(start_fullsync, wait_for_partition, State) ->
     gen_fsm:send_event(self(), start_fullsync),
     {next_state, wait_for_partition, State};
+handle_info({start_fullsync, Partitions}, wait_for_partition, State) ->
+    gen_fsm:send_event(self(), {start_fullsync, Partitions}),
+    {next_state, wait_for_partition, State};
 handle_info(_I, StateName, State) ->
     lager:info("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _I]),
     {next_state, StateName, State}.
@@ -564,7 +575,7 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
     %% TODO do this more correctly when there's more time.
     receive
         {'$gen_call', From, stop} ->
-            gen_server2:reply(From, ok),
+            riak_core_gen_server:reply(From, ok),
             Acc;
         bloom_resume ->
             ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),

@@ -38,7 +38,7 @@ open(Filepath) ->
     open(Filepath, []).
     
 open(Filepath, Options) ->
-    case gen_server2:start_link(couch_file,
+    case riak_core_gen_server:start_link(couch_file,
             {Filepath, Options, self(), Ref = make_ref()}, [{spawn_opt, [{fullsweep_after, 100}]}]) of
     {ok, Fd} ->
         {ok, Fd};
