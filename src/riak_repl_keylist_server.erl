@@ -575,7 +575,7 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
     %% TODO do this more correctly when there's more time.
     receive
         {'$gen_call', From, stop} ->
-            gen_server2:reply(From, ok),
+            riak_core_gen_server:reply(From, ok),
             Acc;
         bloom_resume ->
             ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
