@@ -47,11 +47,11 @@
     ]).
 
 %% gen_fsm
--export([init/1, 
+-export([init/1,
          handle_event/3,
-         handle_sync_event/4, 
-         handle_info/3, 
-         terminate/3, 
+         handle_sync_event/4,
+         handle_info/3,
+         terminate/3,
          code_change/4]).
 
 %% states
@@ -569,6 +569,7 @@ bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent,
     {ok, Bloom} = ebloom:deserialize(SBloom),
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz});
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
+    Monitor = riak_core_vnode:monitor(MPid),
     ?TRACE(lager:info("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
     gen_fsm:send_event(MPid, {self(), bloom_paused}),
     %% wait for a message telling us to stop, or to continue.
@@ -576,11 +577,16 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
     receive
         {'$gen_call', From, stop} ->
             riak_core_gen_server:reply(From, ok),
+            erlang:demonitor(Monitor, [flush]),
             Acc;
         bloom_resume ->
             ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
+            erlang:demonitor(Monitor, [flush]),
             bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz});
+        {'DOWN', Monitor, process, MPid, _Reason} ->
+            throw(receiver_down);
         _Other ->
+            erlang:demonitor(Monitor, [flush]),
             ?TRACE(lager:info("bloom_fold <- ? : ~p", [_Other]))
     end;
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
@@ -594,4 +600,3 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
                     NSent0
             end,
     {MPid, Bloom, Client, Transport, Socket, NSent, WinSz}.
-
