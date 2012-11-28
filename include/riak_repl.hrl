@@ -20,9 +20,9 @@
 -define(TCP_MON_RT_APP, repl_rt).
 -define(TCP_MON_FULLSYNC_APP, repl_fullsync).
 -define(DEFAULT_REPL_MODE, mode_repl12).
--define(DEFAULT_SOURCE_PER_NODE, 2).
+-define(DEFAULT_SOURCE_PER_NODE, 1).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
--define(DEFAULT_MAX_SINKS_NODE, 2).
+-define(DEFAULT_MAX_SINKS_NODE, 1).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
