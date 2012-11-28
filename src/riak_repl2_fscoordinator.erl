@@ -23,8 +23,7 @@
 
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
--define(DEFAULT_SOURCE_PER_NODE, 2).
--define(DEFAULT_SOURCE_PER_CLUSTER, 5).
+
 % how long to wait for a reply from remote cluster before moving on to
 % next partition.
 -define(WAITING_TIMEOUT, 5000).
