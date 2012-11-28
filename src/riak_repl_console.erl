@@ -23,7 +23,9 @@
          server_stats/0,
          coordinator_stats/0,
          coordinator_srv_stats/0]).
--export([modes/1, set_modes/1, get_modes/0]).
+-export([modes/1, set_modes/1, get_modes/0,
+         max_fssource_node/1,
+         max_fssource_cluster/1]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -427,6 +429,28 @@ modes(NewModes) ->
     Modes = [ list_to_atom(Mode) || Mode <- NewModes],
     set_modes(Modes),
     modes([]).
+
+max_fssource_node([]) ->
+    %% show the default so as not to confuse the user
+    io:format("max_fssource_node value = ~p~n",
+              [app_helper:get_env(riak_repl, max_fssource_node,
+                                  ?DEFAULT_SOURCE_PER_NODE)]);
+max_fssource_node([FSSourceNode]) ->
+    NewVal = erlang:list_to_integer(FSSourceNode),
+    application:set_env(riak_repl, max_fssource_node, NewVal),
+    max_fssource_node([]),
+    ok.
+
+max_fssource_cluster([]) ->
+    %% show the default so as not to confuse the user
+    io:format("max_fssource_cluster value = ~p~n",
+              [app_helper:get_env(riak_repl, max_fssource_cluster,
+                                  ?DEFAULT_SOURCE_PER_CLUSTER)]);
+max_fssource_cluster([FSSourceCluster]) ->
+    NewVal = erlang:list_to_integer(FSSourceCluster),
+    application:set_env(riak_repl, max_fssource_cluster, NewVal),
+    max_fssource_cluster([]),
+    ok.
 
 %% helper functions
 
