@@ -25,7 +25,8 @@
          coordinator_srv_stats/0]).
 -export([modes/1, set_modes/1, get_modes/0,
          max_fssource_node/1,
-         max_fssource_cluster/1]).
+         max_fssource_cluster/1,
+         max_fssink_node/1]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -450,6 +451,15 @@ max_fssource_cluster([FSSourceCluster]) ->
     NewVal = erlang:list_to_integer(FSSourceCluster),
     application:set_env(riak_repl, max_fssource_cluster, NewVal),
     max_fssource_cluster([]),
+    ok.
+
+max_fssink_node([]) ->
+    io:format("max_fssink_node value = ~p~n",
+        [app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE)]);
+max_fssink_node([FSSinkNode]) ->
+    NewVal = erlang:list_to_integer(FSSinkNode),
+    application:set_env(riak_repl, max_fssink_node, NewVal),
+    max_fssink_node([]),
     ok.
 
 %% helper functions
