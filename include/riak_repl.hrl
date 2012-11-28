@@ -22,6 +22,7 @@
 -define(DEFAULT_REPL_MODE, mode_repl12).
 -define(DEFAULT_SOURCE_PER_NODE, 2).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
+-define(DEFAULT_MAX_SINKS_NODE, 2).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).

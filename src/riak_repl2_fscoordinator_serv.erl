@@ -140,24 +140,47 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 
 handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
-    #state{transport = Transport, socket = Socket} = State,
+    % which node is the partition for
+    % is that node available
+    % send an appropriate reply
+    Node = get_partition_node(Partition),
+    Reply = case is_node_available(Node) of
+        true ->
+            case get_node_ip_port(Node, ConnIP) of
+                {ok, {ListenIP, Port}} ->
+                    {location, Partition, {Node, ListenIP, Port}};
+                {error, _} ->
+                    {location_down, Partition}
+            end;
+        false ->
+            {location_busy, Partition}
+    end,
+    #state{socket = Socket, transport = Transport} = State,
+    Transport:send(Socket, term_to_binary(Reply)),
+    State.
+
+get_partition_node(Partition) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
-    Node = proplists:get_value(Partition, Owners),
+    proplists:get_value(Partition, Owners).
+
+is_node_available(Node) ->
+    Kids = supervisor:which_children({riak_repl2_fssink_sup, Node}),
+    Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
+    length(Kids) < Max.
+
+get_node_ip_port(Node, ConnIP) ->
     {ok, {_IP, Port}} = application:get_env(riak_core, cluster_mgr),
     {ok, IfAddrs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
     Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
     Masked = riak_repl_app:mask_address(NormIP, Subnet),
-    Outbound = case get_matching_address(Node, NormIP, Masked) of
+    case get_matching_address(Node, NormIP, Masked) of
         {ok, {ListenIP, _}} ->
-            {location, Partition, {Node, ListenIP, Port}};
-        {error, _} ->
-            %% TODO
-            {location_down, Partition}
-    end,
-    Transport:send(Socket, term_to_binary(Outbound)),
-    State.
+            {ok, {ListenIP, Port}};
+        Else ->
+            Else
+    end.
 
 get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
     Res = riak_repl_app:get_matching_address(NormIP, Masked),
