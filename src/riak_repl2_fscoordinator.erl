@@ -342,6 +342,31 @@ handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiti
             State3 = start_fssource(Partition2, Ip, Port, State2),
             send_next_whereis_req(State3)
     end;
+handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} = State) ->
+    case proplists:get_value(Partition, Waiting) of
+        undefined ->
+            State;
+        {N, Tref} ->
+            lager:info("Partition ~p is too busy on cluster ~p", [Partition, State#state.other_cluster]),
+            erlang:cancel_timer(Tref),
+
+            Waiting2 = proplists:delete(Partition, Waiting),
+            State2 = State#state{whereis_waiting = Waiting2},
+
+            Partition2 = {Partition, N},
+            PQueue = State2#state.partition_queue,
+            PQueue2 = queue:in(Partition2, PQueue),
+            State3 = State2#state{partition_queue = PQueue2},
+
+            case queue:peek(PQueue2) of
+                Partition2 ->
+                    % we where just told it was busy, so no point in asking
+                    % again until a fullsync for another partition is done
+                    State3;
+                _ ->
+                    send_next_whereis_req(State3)
+            end
+    end;
 handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
