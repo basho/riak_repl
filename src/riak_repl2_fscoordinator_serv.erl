@@ -12,16 +12,14 @@
 -record(state, {
     transport,
     socket,
-    proto,
-    reservations = [],  %% [{node(), integer()}]
-    timeouts = [] %% [{partition(), timer_ref()}] partitions waiting for reservation comfirmation
+    proto
 }).
 
 %% ------------------------------------------------------------------
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start_link/4, status/0, status/1, status/2, claim_reservation/1]).
+-export([start_link/4, status/0, status/1, status/2]).
 
 %% ------------------------------------------------------------------
 %% service manager callback Function Exports
@@ -44,24 +42,13 @@ start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, {Socket, Transport,
             Proto, Props}, []).
 
-claim_reservation(Partition) ->
-    Node = node(),
-    lager:info("claiming reserveration for ~p, timer tag ~p", [Node, Partition]),
-    Server = case riak_repl2_leader:leader_node() of
-        Node ->
-            ?SERVER;
-        OtherNode ->
-            {OtherNode, ?SERVER}
-    end,
-    gen_server:cast(Server, {claim_reservation, Node, Partition}).
-
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
         undefined ->
             {[], []};
         _ ->
-            case riak_repl2_fscoordinator_serv_sup:started(LeaderNode) of
+            case riak_repl2_fscoordinator_serv_sup:started() of
                 [] ->
                     [];
                 Repls ->
@@ -118,21 +105,8 @@ handle_call(status, _From, State = #state{socket=Socket, transport = Transport})
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({claim_reservation, Node, Partition}, State) ->
-    #state{reservations = Reservations, timeouts = Timeouts } = State,
-    lager:info("Handling a claim for node reserveration ~p partition ~p", [Node, Partition]),
-    case proplists:get_value(Partition, Timeouts) of
-        undefined ->
-            % timeout has already expired and been removed, meaning the reservation is already gone.
-            {noreply, State};
-        Tref ->
-            erlang:cancel_timer(Tref),
-            NewReservations = decrement_reservation(Node, Reservations),
-            NewTimeouts = proplists:delete(Partition, Timeouts),
-            {noreply, State#state{reservations = NewReservations, timeouts = NewTimeouts}}
-    end;
-
-handle_cast(_Msg, State) ->
+handle_cast(Msg, State) ->
+    lager:info("OH GOD WHY ~p", [Msg]),
     {noreply, State}.
 
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
@@ -156,19 +130,6 @@ handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
     Transport:setopts(Socket, [{active, once}]),
     {noreply, State};
 
-%% timer expired
-handle_info({reservation_expired, Partition, Node}, State) ->
-    lager:info("Handling a reservation expiration for node ~p partition ~p", [Node, Partition]),
-    #state{reservations = Reservations, timeouts = Timeouts} = State,
-    case proplists:get_value(Partition, Timeouts) of
-        undefined -> % reservation was already claimed
-            {noreply, State};
-        _Tref ->
-            NewTimeouts = proplists:delete(Partition, Timeouts),
-            NewReservations = decrement_reservation(Node, Reservations),
-            {noreply, State#state{reservations = NewReservations, timeouts = NewTimeouts}}
-    end;
-
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -186,77 +147,29 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
     % which node is the partition for
     % is that node available
     % send an appropriate reply
-    ExistingReservations = State#state.reservations,
+    #state{transport = Transport, socket = Socket} = State,
     Node = get_partition_node(Partition),
-    {Reply, NewReservations, Tref} = reserve_node(Node, ExistingReservations, Partition, ConnIP),
-    NewTimeouts = maybe_extend_timeouts(Partition, Tref, State#state.timeouts),
-    #state{socket = Socket, transport = Transport} = State,
+    Reply = case riak_repl2_fs_node_reserver:reserve(Partition) of
+        ok ->
+            case get_node_ip_port(Node, ConnIP) of
+                {ok, {ListenIP, Port}} ->
+                    {location, Partition, {Node, ListenIP, Port}};
+                {error, _} ->
+                    riak_repl2_fs_node_reserver:unreserve(Partition),
+                    {location_down, Partition}
+            end;
+        busy ->
+            {location_busy, Partition};
+        down ->
+            {location_down, Partition}
+    end,
     Transport:send(Socket, term_to_binary(Reply)),
-    State#state{reservations=NewReservations, timeouts=NewTimeouts}.
-
-maybe_extend_timeouts(Partition, Tref, Timeouts) ->
-    case Tref of
-        undefined ->
-            Timeouts;
-        _Tref ->
-            lists:keystore(Partition, 1, Timeouts, {Partition, Tref})
-    end.
-
-%% return new reservation list after decrementing count for Node
-decrement_reservation(Node, Reservations) ->
-    case lists:keyfind(Node, 1, Reservations) of
-        false ->
-            Reservations;
-        {_Node, 0} ->
-            lists:keydelete(Node, 1, Reservations);
-        {_Node, N} ->
-            Reservation = {Node, N-1},
-            lists:keystore(Node, 1, Reservations, Reservation)
-    end.
-
-%% ask for a reservation. Depends on busyness and prior reservations.
-reserve_node(Node, Reservations, Partition, ConnIP) ->
-    NReservations = case lists:keyfind(Node, 1, Reservations) of
-                        false ->
-                            0;
-                        {_Node, N} ->
-                            N
-                    end,
-    {Reply, Accepted} = case is_node_available(Node, NReservations) of
-                            true ->
-                                case get_node_ip_port(Node, ConnIP) of
-                                    {ok, {ListenIP, Port}} ->
-                                        R = {location, Partition, {Node, ListenIP, Port}},
-                                        {R, true};
-                                    {error, _} ->
-                                        R = {location_down, Partition},
-                                        {R, false}
-                                end;
-                            false ->
-                                {{location_busy, Partition}, false}
-                        end,
-    case Accepted of
-        true ->
-            %% start an expiration timer to decrement reservation count
-            lager:info("Reserving Node ~p for partition ~p", [Node, Partition]),
-            Tref = erlang:send_after(?RESERVATION_TIMEOUT, self(), {reservation_expired, Partition, Node}),
-            Reservation = {Node, NReservations+1},
-            NewReservations = lists:keystore(Node, 1, Reservations, Reservation),
-            {Reply, NewReservations, Tref};
-        false ->
-            lager:info("Reservation denied. Node ~p for partition ~p is busy or overbooked", [Node, Partition]),
-            {Reply, Reservations, undefined}
-    end.
+    State.
 
 get_partition_node(Partition) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
     proplists:get_value(Partition, Owners).
-
-is_node_available(Node, NReservations) ->
-    Kids = supervisor:which_children({riak_repl2_fssink_sup, Node}),
-    Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
-    (length(Kids)+NReservations) < Max.
 
 get_node_ip_port(Node, ConnIP) ->
     {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
