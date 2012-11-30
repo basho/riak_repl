@@ -330,6 +330,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+decrement_nonneg(0) -> 0;
+decrement_nonneg(N) -> N-1.
+
+increment_if(true, N) -> N+1;
+increment_if(false, N) -> N.
+
 handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
@@ -337,13 +343,7 @@ handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiti
         {N, Tref} ->
             erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
-            DecrementedBusies = State#state.whereis_busies - 1,
-            CurrentBusies = if
-                DecrementedBusies < 0 ->
-                    0;
-                true ->
-                    DecrementedBusies
-            end,
+            CurrentBusies = decrement_nonneg(State#state.whereis_busies),
             State2 = State#state{whereis_waiting = Waiting2, whereis_busies = CurrentBusies},
             Partition2 = {Partition, N},
             State3 = start_fssource(Partition2, Ip, Port, State2),
@@ -364,15 +364,15 @@ handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} 
             PQueue = State2#state.partition_queue,
             PQueue2 = queue:in(Partition2, PQueue),
             MaxBusies = app_helper:get_env(riak_repl, max_fs_busies_tolerated, ?DEFAULT_MAX_FS_BUSIES_TOLERATED),
-            CurrentBusies = State#state.whereis_busies + 1,
-            State3 = State2#state{partition_queue = PQueue2, whereis_busies = CurrentBusies},
+            NewBusies = increment_if((State#state.whereis_busies < MaxBusies), State#state.whereis_busies),
+            State3 = State2#state{partition_queue = PQueue2, whereis_busies = NewBusies},
 
             case queue:peek(PQueue2) of
                 Partition2 ->
                     % we where just told it was busy, so no point in asking
                     % again until a fullsync for another partition is done
                     State3;
-                _ when CurrentBusies < MaxBusies ->
+                _ when NewBusies < MaxBusies ->
                     send_next_whereis_req(State3);
                 _ ->
                     lager:info("Too many location_busy threshold reached, waiting for an exit"),

@@ -63,8 +63,6 @@ start(_Type, _StartArgs) ->
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
-            riak_repl2_leader:register_notify_fun(
-                fun riak_repl2_fs_node_reserver:set_leader/2),
             name_this_cluster(),
             riak_core_node_watcher:service_up(riak_repl, Pid),
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),

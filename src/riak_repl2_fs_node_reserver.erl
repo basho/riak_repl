@@ -4,7 +4,6 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-    leader :: node(),
     reservations = []
     }).
 
