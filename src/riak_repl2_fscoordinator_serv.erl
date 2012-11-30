@@ -46,13 +46,14 @@ start_link(Socket, Transport, Proto, Props) ->
 
 claim_reservation(Partition) ->
     Node = node(),
+    lager:info("claiming reserveration for ~p, timer tag ~p", [Node, Partition]),
     Server = case riak_repl2_leader:leader_node() of
         Node ->
             ?SERVER;
         OtherNode ->
             {OtherNode, ?SERVER}
     end,
-    gen_sever:cast(Server, {claim_reservation, Node, Partition}).
+    gen_server:cast(Server, {claim_reservation, Node, Partition}).
 
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
@@ -117,12 +118,9 @@ handle_call(status, _From, State = #state{socket=Socket, transport = Transport})
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-%% notification from a fssink that it claimed the reservation made by fssource
-handle_cast({reservation_claimed, Node}, State) ->
-    {noreply, State#state{reservations=decrement_reservation(Node, State#state.reservations)}};
-
 handle_cast({claim_reservation, Node, Partition}, State) ->
     #state{reservations = Reservations, timeouts = Timeouts } = State,
+    lager:info("Handling a claim for node reserveration ~p", [Node]),
     case proplists:get_value(Partition, Timeouts) of
         undefined ->
             % timeout has already expired and been removed, meaning the reservation is already gone.
@@ -160,6 +158,7 @@ handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
 
 %% timer expired
 handle_info({reservation_expired, Partition, Node}, State) ->
+    lager:info("Handling a reservation expiration for ~p", [Node]),
     #state{reservations = Reservations, timeouts = Timeouts} = State,
     case proplists:get_value(Partition, Timeouts) of
         undefined -> % reservation was already claimed
@@ -225,7 +224,7 @@ reserve_node(Node, Reservations, Partition, ConnIP) ->
                                         {R, false}
                                 end;
                             false ->
-                                {location_busy, Partition}
+                                {{location_busy, Partition}, false}
                         end,
     case Accepted of
         true ->
@@ -246,7 +245,7 @@ get_partition_node(Partition) ->
 is_node_available(Node, NReservations) ->
     Kids = supervisor:which_children({riak_repl2_fssink_sup, Node}),
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
-    length(Kids+NReservations) < Max.
+    (length(Kids)+NReservations) < Max.
 
 get_node_ip_port(Node, ConnIP) ->
     {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
