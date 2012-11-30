@@ -209,7 +209,6 @@ handle_cast(start_fullsync,  State) ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             N = largest_n(Ring),
             Partitions = sort_partitions(Ring),
-            FirstN = length(Partitions) div N,
             State2 = State#state{
                 largest_n = N,
                 owners = riak_core_ring:all_owners(Ring),
@@ -217,7 +216,7 @@ handle_cast(start_fullsync,  State) ->
                 successful_exits = 0,
                 error_exits = 0
             },
-            State3 = send_whereis_reqs(State2, FirstN),
+            State3 = send_next_whereis_req(State2),
             {noreply, State3}
     end;
 
@@ -378,16 +377,6 @@ handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = 
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
             send_next_whereis_req(State2)
-    end.
-
-send_whereis_reqs(State, 0) ->
-    State;
-send_whereis_reqs(State, N) ->
-    case send_next_whereis_req(State) of
-        State ->
-            State;
-        State2 ->
-            send_whereis_reqs(State2, N - 1)
     end.
 
 send_next_whereis_req(State) ->
