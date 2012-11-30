@@ -6,9 +6,6 @@
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
-%% 20 seconds. sources should claim within 5 seconds, but give them a little more time
--define(RESERVATION_TIMEOUT, (20 * 1000)).
-
 -record(state, {
     transport,
     socket,
