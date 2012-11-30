@@ -38,9 +38,9 @@ reserve(Partition) ->
     try gen_server:call({?SERVER, Node}, {reserve, Partition}) of
         Out -> Out
     catch
-        'EXIT':{noproc, _} ->
+        exit:{noproc, _} ->
             down;
-        'EXIT':{{nodedown, _}, _} ->
+        exit:{{nodedown, _}, _} ->
             down
     end.
 
