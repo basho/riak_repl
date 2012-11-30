@@ -13,7 +13,8 @@
     transport,
     socket,
     proto,
-    reservations = []  %% [{node(), integer()}]
+    reservations = [],  %% [{node(), integer()}]
+    timeouts = [] %% [{partition(), timer_ref()}] partitions waiting for reservation comfirmation
 }).
 
 %% ------------------------------------------------------------------
@@ -43,8 +44,15 @@ start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, {Socket, Transport,
             Proto, Props}, []).
 
-claim_reservation(Node) ->
-    gen_server:cast(?SERVER, {claim_reservation, Node}).
+claim_reservation(Partition) ->
+    Node = node(),
+    Server = case riak_repl2_leader:leader_node() of
+        Node ->
+            ?SERVER;
+        OtherNode ->
+            {OtherNode, ?SERVER}
+    end,
+    gen_sever:cast(Server, {claim_reservation, Node, Partition}).
 
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
@@ -113,6 +121,19 @@ handle_call(_Request, _From, State) ->
 handle_cast({reservation_claimed, Node}, State) ->
     {noreply, State#state{reservations=decrement_reservation(Node, State#state.reservations)}};
 
+handle_cast({claim_reservation, Node, Partition}, State) ->
+    #state{reservations = Reservations, timeouts = Timeouts } = State,
+    case proplists:get_value(Partition, Timeouts) of
+        undefined ->
+            % timeout has already expired and been removed, meaning the reservation is already gone.
+            {noreply, State};
+        Tref ->
+            erlang:cancel_timer(Tref),
+            NewReservations = decrement_reservation(Node, Reservations),
+            NewTimeouts = proplists:delete(Partition, Timeouts),
+            {noreply, State#state{reservations = NewReservations, timeouts = NewTimeouts}}
+    end;
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -138,8 +159,16 @@ handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
     {noreply, State};
 
 %% timer expired
-handle_info({reservation_expired, Node}, State) ->
-    {noreply, State#state{reservations=decrement_reservation(Node, State#state.reservations)}};
+handle_info({reservation_expired, Partition, Node}, State) ->
+    #state{reservations = Reservations, timeouts = Timeouts} = State,
+    case proplists:get_value(Partition, Timeouts) of
+        undefined -> % reservation was already claimed
+            {noreply, State};
+        _Tref ->
+            NewTimeouts = proplists:delete(Partition, Timeouts),
+            NewReservations = decrement_reservation(Node, Reservations),
+            {noreply, State#state{reservations = NewReservations, timeouts = NewTimeouts}}
+    end;
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -201,7 +230,7 @@ reserve_node(Node, Reservations, Partition, ConnIP) ->
     case Accepted of
         true ->
             %% start an expiration timer to decrement reservation count
-            erlang:send_after(?RESERVATION_TIMEOUT, self(), {reservation_expired, Node}),
+            erlang:send_after(?RESERVATION_TIMEOUT, self(), {reservation_expired, Partition, Node}),
             Reservation = {Node, NReservations+1},
             NewReservations = lists:keystore(Node, 1, Reservations, Reservation),
             {Reply, NewReservations};
@@ -220,7 +249,7 @@ is_node_available(Node, NReservations) ->
     length(Kids+NReservations) < Max.
 
 get_node_ip_port(Node, ConnIP) ->
-    {ok, {_IP, Port}} = application:get_env(riak_core, cluster_mgr),
+    {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
     Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
