@@ -57,11 +57,11 @@ claim_reservation(Partition) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init(Args) ->
-    {ok, Args}.
+init(_Args) ->
+    {ok, #state{}}.
 
 handle_call({reserve, Partition}, _From, State) ->
-    Kids = supervisor:which_children(riak_repl2_fssink_sup, node()),
+    Kids = supervisor:which_children(riak_repl2_fssink_sup),
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
     Running = length(Kids),
     Reserved = length(State#state.reservations),
