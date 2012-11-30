@@ -120,7 +120,7 @@ handle_call(_Request, _From, State) ->
 
 handle_cast({claim_reservation, Node, Partition}, State) ->
     #state{reservations = Reservations, timeouts = Timeouts } = State,
-    lager:info("Handling a claim for node reserveration ~p", [Node]),
+    lager:info("Handling a claim for node reserveration ~p partition ~p", [Node, Partition]),
     case proplists:get_value(Partition, Timeouts) of
         undefined ->
             % timeout has already expired and been removed, meaning the reservation is already gone.
@@ -158,7 +158,7 @@ handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
 
 %% timer expired
 handle_info({reservation_expired, Partition, Node}, State) ->
-    lager:info("Handling a reservation expiration for ~p", [Node]),
+    lager:info("Handling a reservation expiration for node ~p partition ~p", [Node, Partition]),
     #state{reservations = Reservations, timeouts = Timeouts} = State,
     case proplists:get_value(Partition, Timeouts) of
         undefined -> % reservation was already claimed
@@ -188,10 +188,19 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
     % send an appropriate reply
     ExistingReservations = State#state.reservations,
     Node = get_partition_node(Partition),
-    {Reply, NewReservations} = reserve_node(Node, ExistingReservations, Partition, ConnIP),
+    {Reply, NewReservations, Tref} = reserve_node(Node, ExistingReservations, Partition, ConnIP),
+    NewTimeouts = maybe_extend_timeouts(Partition, Tref, State#state.timeouts),
     #state{socket = Socket, transport = Transport} = State,
     Transport:send(Socket, term_to_binary(Reply)),
-    State#state{reservations=NewReservations}.
+    State#state{reservations=NewReservations, timeouts=NewTimeouts}.
+
+maybe_extend_timeouts(Partition, Tref, Timeouts) ->
+    case Tref of
+        undefined ->
+            Timeouts;
+        _Tref ->
+            lists:keystore(Partition, 1, Timeouts, {Partition, Tref})
+    end.
 
 %% return new reservation list after decrementing count for Node
 decrement_reservation(Node, Reservations) ->
@@ -229,12 +238,14 @@ reserve_node(Node, Reservations, Partition, ConnIP) ->
     case Accepted of
         true ->
             %% start an expiration timer to decrement reservation count
-            erlang:send_after(?RESERVATION_TIMEOUT, self(), {reservation_expired, Partition, Node}),
+            lager:info("Reserving Node ~p for partition ~p", [Node, Partition]),
+            Tref = erlang:send_after(?RESERVATION_TIMEOUT, self(), {reservation_expired, Partition, Node}),
             Reservation = {Node, NReservations+1},
             NewReservations = lists:keystore(Node, 1, Reservations, Reservation),
-            {Reply, NewReservations};
+            {Reply, NewReservations, Tref};
         false ->
-            {Reply, Reservations}
+            lager:info("Reservation denied. Node ~p for partition ~p is busy or overbooked", [Node, Partition]),
+            {Reply, Reservations, undefined}
     end.
 
 get_partition_node(Partition) ->
