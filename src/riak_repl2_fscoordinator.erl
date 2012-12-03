@@ -316,6 +316,11 @@ handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, connection_error, State};
 
+handle_info(retry_whereis, State) ->
+    NewBusies = State#state.whereis_busies - 1,
+    State2 = send_next_whereis_req(State#state{whereis_busies = NewBusies}),
+    {noreply, State2};
+
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
     {noreply, State}.
@@ -375,6 +380,7 @@ handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} 
                 _ when NewBusies < MaxBusies ->
                     send_next_whereis_req(State3);
                 _ ->
+                    erlang:send_after(10000, self(), retry_whereis),
                     lager:info("Too many location_busy threshold reached, waiting for an exit"),
                     State3
             end
