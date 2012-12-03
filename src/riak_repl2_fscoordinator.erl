@@ -40,6 +40,7 @@
     partition_queue = queue:new(),
     whereis_waiting = [],
     whereis_busies = 0,
+    max_whereis_busies = 0,
     running_sources = [],
     successful_exits = 0,
     error_exits = 0,
@@ -215,7 +216,8 @@ handle_cast(start_fullsync,  State) ->
                 owners = riak_core_ring:all_owners(Ring),
                 partition_queue = queue:from_list(Partitions),
                 successful_exits = 0,
-                error_exits = 0
+                error_exits = 0,
+                max_whereis_busies = length(Partitions)
             },
             State3 = send_next_whereis_req(State2),
             {noreply, State3}
@@ -317,8 +319,9 @@ handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     {stop, connection_error, State};
 
 handle_info(retry_whereis, State) ->
-    NewBusies = State#state.whereis_busies - 1,
-    State2 = send_next_whereis_req(State#state{whereis_busies = NewBusies}),
+    %NewBusies = State#state.whereis_busies - 1,
+    PQueue = State#state.partition_queue,
+    State2 = send_next_whereis_req(State#state{whereis_busies = 0, max_whereis_busies = queue:len(PQueue)}),
     {noreply, State2};
 
 handle_info(_Info, State) ->
@@ -368,7 +371,8 @@ handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} 
             Partition2 = {Partition, N},
             PQueue = State2#state.partition_queue,
             PQueue2 = queue:in(Partition2, PQueue),
-            MaxBusies = app_helper:get_env(riak_repl, max_fs_busies_tolerated, ?DEFAULT_MAX_FS_BUSIES_TOLERATED),
+            %MaxBusies = app_helper:get_env(riak_repl, max_fs_busies_tolerated, ?DEFAULT_MAX_FS_BUSIES_TOLERATED),
+            MaxBusies = State#state.max_whereis_busies,
             NewBusies = increment_if((State#state.whereis_busies < MaxBusies), State#state.whereis_busies),
             State3 = State2#state{partition_queue = PQueue2, whereis_busies = NewBusies},
 
@@ -381,7 +385,7 @@ handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} 
                     send_next_whereis_req(State3);
                 _ ->
                     erlang:send_after(10000, self(), retry_whereis),
-                    lager:info("Too many location_busy threshold reached, waiting for an exit"),
+                    lager:info("Too many location_busy threshold reached, waiting retry timer"),
                     State3
             end
     end;
