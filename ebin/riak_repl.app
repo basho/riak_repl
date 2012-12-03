@@ -28,6 +28,7 @@
                   'riak_repl2_fscoordinator_sup',
                   'riak_repl2_fscoordinator_serv',
                   'riak_repl2_fscoordinator_serv_sup',
+                  'riak_repl2_fs_node_reserver',
                   'riak_repl2_fssource',
                   'riak_repl2_fssource_sup',
                   'riak_repl2_fssink',

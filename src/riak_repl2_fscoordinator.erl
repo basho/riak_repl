@@ -39,6 +39,8 @@
     connection_ref,
     partition_queue = queue:new(),
     whereis_waiting = [],
+    whereis_busies = 0,
+    max_whereis_busies = 0,
     running_sources = [],
     successful_exits = 0,
     error_exits = 0,
@@ -209,15 +211,15 @@ handle_cast(start_fullsync,  State) ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             N = largest_n(Ring),
             Partitions = sort_partitions(Ring),
-            FirstN = length(Partitions) div N,
             State2 = State#state{
                 largest_n = N,
                 owners = riak_core_ring:all_owners(Ring),
                 partition_queue = queue:from_list(Partitions),
                 successful_exits = 0,
-                error_exits = 0
+                error_exits = 0,
+                max_whereis_busies = length(Partitions)
             },
-            State3 = send_whereis_reqs(State2, FirstN),
+            State3 = send_next_whereis_req(State2),
             {noreply, State3}
     end;
 
@@ -316,6 +318,12 @@ handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, connection_error, State};
 
+handle_info(retry_whereis, State) ->
+    %NewBusies = State#state.whereis_busies - 1,
+    PQueue = State#state.partition_queue,
+    State2 = send_next_whereis_req(State#state{whereis_busies = 0, max_whereis_busies = queue:len(PQueue)}),
+    {noreply, State2};
+
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
     {noreply, State}.
@@ -330,6 +338,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
+decrement_nonneg(0) -> 0;
+decrement_nonneg(N) -> N-1.
+
+increment_if(true, N) -> N+1;
+increment_if(false, N) -> N.
+
 handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
@@ -337,7 +351,8 @@ handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiti
         {N, Tref} ->
             erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
-            State2 = State#state{whereis_waiting = Waiting2},
+            CurrentBusies = decrement_nonneg(State#state.whereis_busies),
+            State2 = State#state{whereis_waiting = Waiting2, whereis_busies = CurrentBusies},
             Partition2 = {Partition, N},
             State3 = start_fssource(Partition2, Ip, Port, State2),
             send_next_whereis_req(State3)
@@ -356,15 +371,22 @@ handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} 
             Partition2 = {Partition, N},
             PQueue = State2#state.partition_queue,
             PQueue2 = queue:in(Partition2, PQueue),
-            State3 = State2#state{partition_queue = PQueue2},
+            %MaxBusies = app_helper:get_env(riak_repl, max_fs_busies_tolerated, ?DEFAULT_MAX_FS_BUSIES_TOLERATED),
+            MaxBusies = State#state.max_whereis_busies,
+            NewBusies = increment_if((State#state.whereis_busies < MaxBusies), State#state.whereis_busies),
+            State3 = State2#state{partition_queue = PQueue2, whereis_busies = NewBusies},
 
             case queue:peek(PQueue2) of
                 Partition2 ->
                     % we where just told it was busy, so no point in asking
                     % again until a fullsync for another partition is done
                     State3;
+                _ when NewBusies < MaxBusies ->
+                    send_next_whereis_req(State3);
                 _ ->
-                    send_next_whereis_req(State3)
+                    erlang:send_after(10000, self(), retry_whereis),
+                    lager:info("Too many location_busy threshold reached, waiting retry timer"),
+                    State3
             end
     end;
 handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
@@ -378,16 +400,6 @@ handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = 
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
             send_next_whereis_req(State2)
-    end.
-
-send_whereis_reqs(State, 0) ->
-    State;
-send_whereis_reqs(State, N) ->
-    case send_next_whereis_req(State) of
-        State ->
-            State;
-        State2 ->
-            send_whereis_reqs(State2, N - 1)
     end.
 
 send_next_whereis_req(State) ->
