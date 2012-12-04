@@ -40,8 +40,6 @@
     partition_queue = queue:new(),
     whereis_waiting = [],
     busy_nodes = sets:new(),
-    %whereis_busies = 0,
-    %max_whereis_busies = 0,
     running_sources = [],
     successful_exits = 0,
     error_exits = 0,
@@ -219,7 +217,6 @@ handle_cast(start_fullsync,  State) ->
                 successful_exits = 0,
                 error_exits = 0
             },
-            %State3 = send_next_whereis_req(State2),
             State3 = start_up_reqs(State2),
             {noreply, State3}
     end;
@@ -260,12 +257,12 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             QEmpty = queue:is_empty(State#state.partition_queue),
             Waiting = State#state.whereis_waiting,
             case {EmptyRunning, QEmpty, Waiting} of
-                {[], true, []} ->
-                    % nothing outstanding, so we can exit.
+                {true, true, []} ->
+                    lager:info("fullsync complete"),
+                    riak_repl_stats:server_fullsyncs(),
                     {noreply, State2#state{running_sources = Running, busy_nodes = NewBusies}};
                 _ ->
                     % there's something waiting for a response.
-                    %State3 = send_next_whereis_req(State2#state{running_sources = Running, busy_nodes = NewBusies}),
                     State3 = start_up_reqs(State2#state{running_sources = Running, busy_nodes = NewBusies}),
                     {noreply, State3}
             end
@@ -280,7 +277,6 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
         {value, {Pid, Partition}, Running} ->
             {_, _, Node} = Partition,
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
-            % TODO putting in the back of the queue a good idea?
             ErrorExits = State#state.error_exits + 1,
             #state{partition_queue = PQueue} = State,
             PQueue2 = queue:in(Partition, PQueue),
@@ -334,12 +330,6 @@ handle_info(send_next_whereis_req, State) ->
     State2 = start_up_reqs(State#state{busy_nodes = NewBusies}),
     {noreply, State2};
 
-%handle_info(retry_whereis, State) ->
-%    %NewBusies = State#state.whereis_busies - 1,
-%    PQueue = State#state.partition_queue,
-%    State2 = send_next_whereis_req(State#state{whereis_busies = 0, max_whereis_busies = queue:len(PQueue)}),
-%    {noreply, State2};
-
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
     {noreply, State}.
@@ -353,12 +343,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
-
-%decrement_nonneg(0) -> 0;
-%decrement_nonneg(N) -> N-1.
-
-%increment_if(true, N) -> N+1;
-%increment_if(false, N) -> N.
 
 handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
@@ -391,23 +375,6 @@ handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Wai
             NewBusies = sets:add_element(Node, State#state.busy_nodes),
             State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
             start_up_reqs(State3)
-            %MaxBusies = app_helper:get_env(riak_repl, max_fs_busies_tolerated, ?DEFAULT_MAX_FS_BUSIES_TOLERATED),
-            %MaxBusies = State#state.max_whereis_busies,
-            %NewBusies = increment_if((State#state.whereis_busies < MaxBusies), State#state.whereis_busies),
-            %State3 = State2#state{partition_queue = PQueue2, whereis_busies = NewBusies},
-
-%            case queue:peek(PQueue2) of
-%                Partition2 ->
-%                    % we where just told it was busy, so no point in asking
-%                    % again until a fullsync for another partition is done
-%                    State3;
-%                _ when NewBusies < MaxBusies ->
-%                    send_next_whereis_req(State3);
-%                _ ->
-%                    erlang:send_after(10000, self(), retry_whereis),
-%                    lager:info("Too many location_busy threshold reached, waiting retry timer"),
-%                    State3
-%            end
     end;
 handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
@@ -437,16 +404,8 @@ start_up_reqs(State, N) ->
 
 send_next_whereis_req(State) ->
     #state{transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
-    %case queue:out(PQueue) of
     case nab_next(State) of
         {empty, Q} ->
-            case length(Waiting) + length(State#state.running_sources) == 0 of
-                true ->
-                    lager:info("fullsync coordinator: fullsync complete"),
-                    riak_repl_stats:server_fullsyncs();
-                _ ->
-                    ok
-            end,
             case queue:is_empty(Q) of
                 false ->
                     erlang:send_after(1000, self(), send_next_whereis_req);
