@@ -33,6 +33,9 @@ init([]) ->
                  {riak_repl2_leader, {riak_repl2_leader, start_link, []},
                   permanent, 5000, worker, [riak_repl2_leader]},
 
+                 {riak_repl2_fs_node_reserver, {riak_repl2_fs_node_reserver, start_link, []},
+                  permanent, infinity, worker, [riak_repl2_fs_node_reserver]},
+
                  {riak_repl2_rt_sup, {riak_repl2_rt_sup, start_link, []},
                   permanent, infinity, supervisor, [riak_repl2_rt_sup]},
 

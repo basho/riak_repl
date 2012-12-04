@@ -45,7 +45,7 @@ status() ->
         undefined ->
             {[], []};
         _ ->
-            case riak_repl2_fscoordinator_serv_sup:started(LeaderNode) of
+            case riak_repl2_fscoordinator_serv_sup:started() of
                 [] ->
                     [];
                 Repls ->
@@ -102,7 +102,8 @@ handle_call(status, _From, State = #state{socket=Socket, transport = Transport})
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast(_Msg, State) ->
+handle_cast(Msg, State) ->
+    lager:info("OH GOD WHY ~p", [Msg]),
     {noreply, State}.
 
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
@@ -143,19 +144,22 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
     % which node is the partition for
     % is that node available
     % send an appropriate reply
+    #state{transport = Transport, socket = Socket} = State,
     Node = get_partition_node(Partition),
-    Reply = case is_node_available(Node) of
-        true ->
+    Reply = case riak_repl2_fs_node_reserver:reserve(Partition) of
+        ok ->
             case get_node_ip_port(Node, ConnIP) of
                 {ok, {ListenIP, Port}} ->
                     {location, Partition, {Node, ListenIP, Port}};
                 {error, _} ->
+                    riak_repl2_fs_node_reserver:unreserve(Partition),
                     {location_down, Partition}
             end;
-        false ->
-            {location_busy, Partition}
+        busy ->
+            {location_busy, Partition};
+        down ->
+            {location_down, Partition}
     end,
-    #state{socket = Socket, transport = Transport} = State,
     Transport:send(Socket, term_to_binary(Reply)),
     State.
 
@@ -164,13 +168,8 @@ get_partition_node(Partition) ->
     Owners = riak_core_ring:all_owners(Ring),
     proplists:get_value(Partition, Owners).
 
-is_node_available(Node) ->
-    Kids = supervisor:which_children({riak_repl2_fssink_sup, Node}),
-    Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
-    length(Kids) < Max.
-
 get_node_ip_port(Node, ConnIP) ->
-    {ok, {_IP, Port}} = application:get_env(riak_core, cluster_mgr),
+    {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
     Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
