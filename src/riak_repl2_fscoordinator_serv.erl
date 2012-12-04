@@ -153,12 +153,12 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
                     {location, Partition, {Node, ListenIP, Port}};
                 {error, _} ->
                     riak_repl2_fs_node_reserver:unreserve(Partition),
-                    {location_down, Partition}
+                    {location_down, Partition, Node}
             end;
         busy ->
-            {location_busy, Partition};
+            {location_busy, Partition, Node};
         down ->
-            {location_down, Partition}
+            {location_down, Partition, Node}
     end,
     Transport:send(Socket, term_to_binary(Reply)),
     State.

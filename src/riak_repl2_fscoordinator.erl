@@ -39,8 +39,9 @@
     connection_ref,
     partition_queue = queue:new(),
     whereis_waiting = [],
-    whereis_busies = 0,
-    max_whereis_busies = 0,
+    busy_nodes = sets:new(),
+    %whereis_busies = 0,
+    %max_whereis_busies = 0,
     running_sources = [],
     successful_exits = 0,
     error_exits = 0,
@@ -216,10 +217,10 @@ handle_cast(start_fullsync,  State) ->
                 owners = riak_core_ring:all_owners(Ring),
                 partition_queue = queue:from_list(Partitions),
                 successful_exits = 0,
-                error_exits = 0,
-                max_whereis_busies = length(Partitions)
+                error_exits = 0
             },
-            State3 = send_next_whereis_req(State2),
+            %State3 = send_next_whereis_req(State2),
+            State3 = start_up_reqs(State2),
             {noreply, State3}
     end;
 
@@ -249,8 +250,10 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
     case PartitionEntry of
         false ->
             {noreply, State};
-        {value, {Pid, _Partition}, Running} ->
+        {value, {Pid, Partition}, Running} ->
             % are we done?
+            {_, _, Node} = Partition,
+            NewBusies = sets:del_element(Node, State#state.busy_nodes),
             Sucesses = State#state.successful_exits + 1,
             State2 = State#state{successful_exits = Sucesses},
             EmptyRunning =  Running == [],
@@ -259,10 +262,11 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             case {EmptyRunning, QEmpty, Waiting} of
                 {[], true, []} ->
                     % nothing outstanding, so we can exit.
-                    {noreply, State2#state{running_sources = Running}};
+                    {noreply, State2#state{running_sources = Running, busy_nodes = NewBusies}};
                 _ ->
                     % there's something waiting for a response.
-                    State3 = send_next_whereis_req(State2#state{running_sources = Running}),
+                    %State3 = send_next_whereis_req(State2#state{running_sources = Running, busy_nodes = NewBusies}),
+                    State3 = start_up_reqs(State2#state{running_sources = Running, busy_nodes = NewBusies}),
                     {noreply, State3}
             end
     end;
@@ -274,13 +278,15 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
         false ->
             {noreply, State};
         {value, {Pid, Partition}, Running} ->
+            {_, _, Node} = Partition,
+            NewBusies = sets:del_element(Node, State#state.busy_nodes),
             % TODO putting in the back of the queue a good idea?
             ErrorExits = State#state.error_exits + 1,
             #state{partition_queue = PQueue} = State,
             PQueue2 = queue:in(Partition, PQueue),
-            State2 = State#state{partition_queue = PQueue2,
+            State2 = State#state{partition_queue = PQueue2, busy_nodes = NewBusies,
                 running_sources = Running, error_exits = ErrorExits},
-            State3 = send_next_whereis_req(State2),
+            State3 = start_up_reqs(State2),
             {noreply, State3}
     end;
 
@@ -290,12 +296,12 @@ handle_info({Partition, whereis_timeout}, State) ->
         undefined ->
             % late timeout.
             {noreply, State};
-        {N, _Tref} ->
+        {N, NodeData, _Tref} ->
             Waiting2 = proplists:delete(Partition, Waiting),
-            Partition1 = {Partition, N},
+            Partition1 = {Partition, N, NodeData},
             Q = queue:in(Partition1, State#state.partition_queue),
             State2 = State#state{whereis_waiting = Waiting2, partition_queue = Q},
-            State3 = send_next_whereis_req(State2),
+            State3 = start_up_reqs(State2),
             {noreply, State3}
     end;
 
@@ -318,11 +324,21 @@ handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, connection_error, State};
 
-handle_info(retry_whereis, State) ->
-    %NewBusies = State#state.whereis_busies - 1,
-    PQueue = State#state.partition_queue,
-    State2 = send_next_whereis_req(State#state{whereis_busies = 0, max_whereis_busies = queue:len(PQueue)}),
+handle_info(send_next_whereis_req, #state{whereis_waiting = [], running_sources = []} = State) ->
+    NewBusies = sets:new(),
+    State2 = start_up_reqs(State#state{busy_nodes = NewBusies}),
     {noreply, State2};
+
+handle_info(send_next_whereis_req, State) ->
+    NewBusies = sets:new(),
+    State2 = start_up_reqs(State#state{busy_nodes = NewBusies}),
+    {noreply, State2};
+
+%handle_info(retry_whereis, State) ->
+%    %NewBusies = State#state.whereis_busies - 1,
+%    PQueue = State#state.partition_queue,
+%    State2 = send_next_whereis_req(State#state{whereis_busies = 0, max_whereis_busies = queue:len(PQueue)}),
+%    {noreply, State2};
 
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
@@ -338,73 +354,91 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-decrement_nonneg(0) -> 0;
-decrement_nonneg(N) -> N-1.
+%decrement_nonneg(0) -> 0;
+%decrement_nonneg(N) -> N-1.
 
-increment_if(true, N) -> N+1;
-increment_if(false, N) -> N.
+%increment_if(true, N) -> N+1;
+%increment_if(false, N) -> N.
 
-handle_socket_msg({location, Partition, {_Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
+handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
             State;
-        {N, Tref} ->
+        {N, _OldNode, Tref} ->
             erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
-            CurrentBusies = decrement_nonneg(State#state.whereis_busies),
-            State2 = State#state{whereis_waiting = Waiting2, whereis_busies = CurrentBusies},
-            Partition2 = {Partition, N},
+            %CurrentBusies = decrement_nonneg(State#state.whereis_busies),
+            NewBusies = sets:del_element(Node, State#state.busy_nodes),
+            State2 = State#state{whereis_waiting = Waiting2, busy_nodes = NewBusies},
+            Partition2 = {Partition, N, Node},
             State3 = start_fssource(Partition2, Ip, Port, State2),
-            send_next_whereis_req(State3)
+            start_up_reqs(State3)
     end;
-handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} = State) ->
+handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
             State;
-        {N, Tref} ->
-            lager:info("Partition ~p is too busy on cluster ~p", [Partition, State#state.other_cluster]),
+        {N, _OldNode, Tref} ->
+            lager:info("Partition ~p is too busy on cluster ~p at node ~p", [Partition, State#state.other_cluster, Node]),
             erlang:cancel_timer(Tref),
 
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
 
-            Partition2 = {Partition, N},
+            Partition2 = {Partition, N, Node},
             PQueue = State2#state.partition_queue,
             PQueue2 = queue:in(Partition2, PQueue),
+            NewBusies = sets:add_element(Node, State#state.busy_nodes),
+            State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
+            start_up_reqs(State3)
             %MaxBusies = app_helper:get_env(riak_repl, max_fs_busies_tolerated, ?DEFAULT_MAX_FS_BUSIES_TOLERATED),
-            MaxBusies = State#state.max_whereis_busies,
-            NewBusies = increment_if((State#state.whereis_busies < MaxBusies), State#state.whereis_busies),
-            State3 = State2#state{partition_queue = PQueue2, whereis_busies = NewBusies},
+            %MaxBusies = State#state.max_whereis_busies,
+            %NewBusies = increment_if((State#state.whereis_busies < MaxBusies), State#state.whereis_busies),
+            %State3 = State2#state{partition_queue = PQueue2, whereis_busies = NewBusies},
 
-            case queue:peek(PQueue2) of
-                Partition2 ->
-                    % we where just told it was busy, so no point in asking
-                    % again until a fullsync for another partition is done
-                    State3;
-                _ when NewBusies < MaxBusies ->
-                    send_next_whereis_req(State3);
-                _ ->
-                    erlang:send_after(10000, self(), retry_whereis),
-                    lager:info("Too many location_busy threshold reached, waiting retry timer"),
-                    State3
-            end
+%            case queue:peek(PQueue2) of
+%                Partition2 ->
+%                    % we where just told it was busy, so no point in asking
+%                    % again until a fullsync for another partition is done
+%                    State3;
+%                _ when NewBusies < MaxBusies ->
+%                    send_next_whereis_req(State3);
+%                _ ->
+%                    erlang:send_after(10000, self(), retry_whereis),
+%                    lager:info("Too many location_busy threshold reached, waiting retry timer"),
+%                    State3
+%            end
     end;
-handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
+handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
             State;
-        {_N, Tref} ->
+        {_N, _OldNode, Tref} ->
             lager:info("Partition ~p is unavailable on cluster ~p",
                 [Partition, State#state.other_cluster]),
             erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
-            send_next_whereis_req(State2)
+            start_up_reqs(State2)
     end.
 
+start_up_reqs(State) ->
+    Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
+    Running = length(State#state.running_sources),
+    Waiting = length(State#state.whereis_waiting),
+    StartupCount = Max - Running - Waiting,
+    start_up_reqs(State, StartupCount).
+
+start_up_reqs(State, N) when N < 1 ->
+    State;
+start_up_reqs(State, N) ->
+    State2 = send_next_whereis_req(State),
+    start_up_reqs(State2, N - 1).
+
 send_next_whereis_req(State) ->
-    #state{transport = Transport, socket = Socket, partition_queue = PQueue, whereis_waiting = Waiting} = State,
-    case queue:out(PQueue) of
+    #state{transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
+    %case queue:out(PQueue) of
+    case nab_next(State) of
         {empty, Q} ->
             case length(Waiting) + length(State#state.running_sources) == 0 of
                 true ->
@@ -413,15 +447,21 @@ send_next_whereis_req(State) ->
                 _ ->
                     ok
             end,
+            case queue:is_empty(Q) of
+                false ->
+                    erlang:send_after(1000, self(), send_next_whereis_req);
+                true ->
+                    ok
+            end,
             State#state{partition_queue = Q};
         {{value, P}, Q} ->
             case below_max_sources(P, State) of
                 false ->
                     State;
                 true ->
-                    {Pval, N} = P,
+                    {Pval, N, RemoteNode} = P,
                     Tref = erlang:send_after(?WAITING_TIMEOUT, self(), {Pval, whereis_timeout}),
-                    Waiting2 = [{Pval, {N, Tref}} | Waiting],
+                    Waiting2 = [{Pval, {N, RemoteNode, Tref}} | Waiting],
                     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
                     lager:info("sending whereis request for partition ~p", [P]),
                     Transport:send(Socket,
@@ -436,6 +476,29 @@ send_next_whereis_req(State) ->
             end
     end.
 
+nab_next(State) ->
+    #state{partition_queue = PQueue, busy_nodes = Busies} = State,
+    MaxLoops = queue:len(PQueue),
+    nab_next(PQueue, Busies, MaxLoops).
+
+nab_next(PQueue, _Business, 0) ->
+    {empty, PQueue};
+nab_next(PQueue, Busies, N) ->
+    case queue:out(PQueue) of
+        {empty, _PQueue2} = Out ->
+            Out;
+        {{value, {_, _, undefined}}, _PQueue2}  = Out ->
+            Out;
+        {{value, {_, _, Node} = PartitionInfo}, PQueue2} = MaybeOut ->
+            case sets:is_element(Node, Busies) of
+                true ->
+                    PQueue3 = queue:in(PartitionInfo, PQueue2),
+                    nab_next(PQueue3, Busies, N - 1);
+                false ->
+                    MaybeOut
+            end
+    end.
+
 below_max_sources(Partition, State) ->
     Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
     if
@@ -445,7 +508,7 @@ below_max_sources(Partition, State) ->
             false
     end.
 
-node_available({Partition,_}, State) ->
+node_available({Partition,_,_}, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
@@ -471,7 +534,7 @@ node_available({Partition,_}, State) ->
             skip
     end.
 
-start_fssource({Partition,_} = PartitionVal, Ip, Port, State) ->
+start_fssource({Partition,_,_} = PartitionVal, Ip, Port, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
     lager:info("starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
@@ -503,7 +566,7 @@ sort_partitions(Ring) ->
     sort_partitions(OffsetPartitions, BigN, []).
 
 sort_partitions([], _, Acc) ->
-    lists:reverse(Acc);
+    [{P,N,undefined} || {P,N} <- lists:reverse(Acc)];
 sort_partitions(In, N, Acc) ->
     Split = min(length(In), N) - 1,
     {A, [P|B]} = lists:split(Split, In),
