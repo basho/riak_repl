@@ -416,6 +416,9 @@ send_next_whereis_req(State) ->
             State#state{partition_queue = Q};
         {{value, P}, Q} ->
             case below_max_sources(P, State) of
+                false when State#state.running_sources =:= [] ->
+                    erlang:send_after(0, self(), retry_whereis),
+                    State;
                 false ->
                     State;
                 true ->
