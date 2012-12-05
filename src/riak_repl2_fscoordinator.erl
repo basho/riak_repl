@@ -151,6 +151,7 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {starting, length(State#state.whereis_waiting)},
         {successful_exits, State#state.successful_exits},
         {error_exits, State#state.error_exits},
+        {busy_nodes, sets:size(State#state.busy_nodes)},
         {running_stats, SourceStats},
         {socket, SocketStats}
     ],
@@ -320,14 +321,14 @@ handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, connection_error, State};
 
-handle_info(send_next_whereis_req, #state{whereis_waiting = [], running_sources = []} = State) ->
-    NewBusies = sets:new(),
-    State2 = start_up_reqs(State#state{busy_nodes = NewBusies}),
-    {noreply, State2};
-
 handle_info(send_next_whereis_req, State) ->
-    NewBusies = sets:new(),
-    State2 = start_up_reqs(State#state{busy_nodes = NewBusies}),
+    State2 = case is_fullsync_in_progress(State) of
+        true ->
+            NewBusies = sets:new(),
+            start_up_reqs(State#state{busy_nodes = NewBusies});
+        false ->
+            State
+    end,
     {noreply, State2};
 
 handle_info(_Info, State) ->
@@ -399,92 +400,87 @@ start_up_reqs(State) ->
 start_up_reqs(State, N) when N < 1 ->
     State;
 start_up_reqs(State, N) ->
-    State2 = send_next_whereis_req(State),
-    start_up_reqs(State2, N - 1).
+    case send_next_whereis_req(State) of
+        {ok, State2} ->
+            start_up_reqs(State2, N - 1);
+        {defer, State2} ->
+            State2
+    end.
 
 send_next_whereis_req(State) ->
-    #state{transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
-    case nab_next(State) of
-        {empty, Q} ->
-            case queue:is_empty(Q) of
-                false ->
-                    erlang:send_after(1000, self(), send_next_whereis_req);
-                true ->
-                    ok
-            end,
-            State#state{partition_queue = Q};
-        {{value, P}, Q} ->
-            case below_max_sources(P, State) of
-                false when State#state.running_sources =:= [] ->
-                    erlang:send_after(0, self(), retry_whereis),
-                    State;
-                false ->
-                    State;
-                true ->
-                    {Pval, N, RemoteNode} = P,
+    % do we even need to bother?
+    % if we have a slot available, loop through the queue until a good candicate
+    % is found
+    % if no good candidate is found, wait a second and try again.
+    case below_max_sources(State) of
+        false ->
+            State;
+        true ->
+            {Partition, Queue} = determine_best_partition(State),
+            case Partition of
+                undefined when State#state.whereis_waiting == [], State#state.running_sources == [] ->
+                    lager:info("No partition available to start, no events outstanding, trying again later"),
+                    erlang:send_after(?RETRY_WHEREIS_INTERVAL, self(), send_next_whereis_req),
+                    {defer, State#state{partition_queue = Queue}};
+                undefined ->
+                    {defer, State#state{partition_queue = Queue}};
+                {Pval, N, RemoteNode} = P ->
+                    #state{transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
                     Tref = erlang:send_after(?WAITING_TIMEOUT, self(), {Pval, whereis_timeout}),
                     Waiting2 = [{Pval, {N, RemoteNode, Tref}} | Waiting],
                     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
                     lager:info("sending whereis request for partition ~p", [P]),
                     Transport:send(Socket,
                         term_to_binary({whereis, element(1, P), PeerIP, PeerPort})),
-                    State#state{partition_queue = Q, whereis_waiting =
-                        Waiting2};
-                defer ->
-                    send_next_whereis_req(State#state{partition_queue =
-                            queue:in(P, Q)});
-                skip ->
-                    send_next_whereis_req(State#state{partition_queue = Q})
+                    {ok, State#state{partition_queue = Queue, whereis_waiting =
+                        Waiting2}}
             end
     end.
 
-nab_next(State) ->
-    #state{partition_queue = PQueue, busy_nodes = Busies} = State,
-    MaxLoops = queue:len(PQueue),
-    nab_next(PQueue, Busies, MaxLoops).
+determine_best_partition(State) ->
+    #state{partition_queue = Queue, busy_nodes = Busies, owners = Owners, whereis_waiting = Waiting} = State,
+    SeedPart = queue:out(Queue),
+    lager:info("starting partition search"),
+    determine_best_partition(SeedPart, Busies, Owners, Waiting, queue:new()).
 
-nab_next(PQueue, _Business, 0) ->
-    {empty, PQueue};
-nab_next(PQueue, Busies, N) ->
-    case queue:out(PQueue) of
-        {empty, _PQueue2} = Out ->
-            Out;
-        {{value, {_, _, undefined}}, _PQueue2}  = Out ->
-            Out;
-        {{value, {_, _, Node} = PartitionInfo}, PQueue2} = MaybeOut ->
-            case sets:is_element(Node, Busies) of
-                true ->
-                    PQueue3 = queue:in(PartitionInfo, PQueue2),
-                    nab_next(PQueue3, Busies, N - 1);
-                false ->
-                    MaybeOut
-            end
-    end.
+determine_best_partition({empty, _Q}, _Business, _Owners, _Waiting, AccQ) ->
+    lager:info("no partition"),
+    % there is no best partition, try again later
+    {undefined, AccQ};
 
-below_max_sources(Partition, State) ->
-    Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
-    if
-        ( length(State#state.running_sources) + length(State#state.whereis_waiting) ) < Max ->
-            node_available(Partition, State);
+determine_best_partition({{value, Part}, Queue}, Busies, Owners, Waiting, AccQ) ->
+    case node_available(Part, Owners, Waiting) of
+        false ->
+            determine_best_partition(queue:out(Queue), Busies, Owners, Waiting, queue:in(Part, AccQ));
+        skip ->
+            determine_best_partition(queue:out(Queue), Busies, Owners, Waiting, AccQ);
         true ->
-            false
+            case remote_node_available(Part, Busies) of
+                false ->
+                    determine_best_partition(queue:out(Queue), Busies, Owners, Waiting, queue:in(Part, AccQ));
+                true ->
+                    {Part, queue:join(Queue, AccQ)}
+            end
     end.
 
-node_available({Partition,_,_}, State) ->
-    #state{owners = Owners} = State,
+below_max_sources(State) ->
+    Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
+    ( length(State#state.running_sources) + length(State#state.whereis_waiting) ) < Max.
+
+node_available({Partition, _, _}, Owners, Waiting) ->
     LocalNode = proplists:get_value(Partition, Owners),
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
     try riak_repl2_fssource_sup:enabled(LocalNode) of
         RunningList ->
             PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode],
-            PartsWaiting = [Part || {Part, _} <- State#state.whereis_waiting, lists:member(Part, PartsSameNode)],
+            PartsWaiting = [Part || {Part, _} <- Waiting, lists:member(Part, PartsSameNode)],
             if
                 ( length(PartsWaiting) + length(RunningList) ) < Max ->
                     case proplists:get_value(Partition, RunningList) of
                         undefined ->
                             true;
                         _ ->
-                            defer
+                            false
                     end;
                 true ->
                     false
@@ -495,6 +491,11 @@ node_available({Partition,_,_}, State) ->
         exit:{{nodedown, _}, _} ->
             skip
     end.
+
+remote_node_available({_Partition, _, undefined}, _Busies) ->
+    true;
+remote_node_available({_Partition, _, RemoteNode}, Busies) ->
+    not sets:is_element(RemoteNode, Busies).
 
 start_fssource({Partition,_,_} = PartitionVal, Ip, Port, State) ->
     #state{owners = Owners} = State,
