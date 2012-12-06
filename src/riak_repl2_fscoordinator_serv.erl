@@ -1,5 +1,8 @@
 %% @doc Service which replies to requests for the IP:Port of the node where
-%% a given partition lives.
+%% a given partition lives. Responsible for determining if the node for a 
+%% partition is available for use as the sink. Reservations and actual running
+%% sinks are used to determine availability. Once a reservation is issued, it
+%% is up to the keylist_client to claim it.
 
 -module(riak_repl2_fscoordinator_serv).
 -include("riak_repl.hrl").
@@ -35,10 +38,16 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
+%% @doc Given the communication channel data, start up a serv. There is one
+%% serv per remote cluster being fullsync'ed from.
+-spec start_link(any(), any(), any(), any()) -> {'ok', pid()}.
 start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, {Socket, Transport,
             Proto, Props}, []).
 
+%% @doc Get the stats for every serv.
+%% @see status/1
+-spec status() -> [tuple()].
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
@@ -53,9 +62,14 @@ status() ->
             end
     end.
 
+%% @doc Get the status for the given serv.
+-spec status(Pid :: pid()) -> [tuple()].
 status(Pid) ->
     status(Pid, infinity).
 
+%% @doc Get the status for the given serv giving up after the timeout; or never
+%% give up if the timeout is `infinity'.
+-spec status(Pid :: pid(), Timeout :: timeout()) -> [tuple()].
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
@@ -82,6 +96,7 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
+%% @hidden
 init({Socket, Transport, Proto, _Props}) ->
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
@@ -89,6 +104,8 @@ init({Socket, Transport, Proto, _Props}) ->
                                        SocketTag}, Transport),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
 
+
+%% @hidden
 handle_call(status, _From, State = #state{socket=Socket, transport = Transport}) ->
     SocketStats = riak_core_tcp_mon:format_socket_stats(
             riak_core_tcp_mon:socket_status(Socket), []),
@@ -102,10 +119,14 @@ handle_call(status, _From, State = #state{socket=Socket, transport = Transport})
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
+
+%% @hidden
 handle_cast(Msg, State) ->
     lager:info("OH GOD WHY ~p", [Msg]),
     {noreply, State}.
 
+
+%% @hidden
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
     lager:info("Connect closed"),
@@ -130,9 +151,13 @@ handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
+
+%% @hidden
 terminate(_Reason, _State) ->
     ok.
 
+
+%% @hidden
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
