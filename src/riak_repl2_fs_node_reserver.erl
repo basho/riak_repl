@@ -1,3 +1,5 @@
+%% @doc Hold reservations for new sink processes on the node. It takes into
+%% account the running sinks and how many reservations there are for that node.
 -module(riak_repl2_fs_node_reserver).
 -include("riak_repl.hrl").
 -behaviour(gen_server).
@@ -25,9 +27,16 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
+%% @doc Start the reservation server on the local node, registering to the
+%% module name.
+-spec start_link() -> {'ok', pid()}.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+%% @doc Find the node for given partition, and issue a reservation on that node.
+%% If the node is down or a reservation process is not running, `down' is
+%% returned. A reservation that is unclaimed for 20 seconds is released.
+-spec reserve(Partition :: any()) -> 'ok' | 'busy' | 'down'.
 reserve(Partition) ->
     Node = get_partition_node(Partition),
     % I don't want to crash the caller if the node is down
@@ -40,10 +49,15 @@ reserve(Partition) ->
             down
     end.
 
+%% @doc Release a reservation for the given partition on the correct node.
+-spec unreserve(Partition :: any()) -> 'ok'.
 unreserve(Partition) ->
     Node = get_partition_node(Partition),
     gen_server:cast({?SERVER, Node}, {unreserve, Partition}).
 
+%% @doc Indicates a reservation has been converted to a running sink. Usually
+%% used by a sink.
+-spec claim_reservation(Partition :: any()) -> 'ok'.
 claim_reservation(Partition) ->
     Node = get_partition_node(Partition),
     gen_server:cast({?SERVER, Node}, {claim_reservation, Partition}).
@@ -53,9 +67,11 @@ claim_reservation(Partition) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
+%% @hidden
 init(_Args) ->
     {ok, #state{}}.
 
+%% @hidden
 handle_call({reserve, Partition}, _From, State) ->
     Kids = supervisor:which_children(riak_repl2_fssink_sup),
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
@@ -73,6 +89,8 @@ handle_call({reserve, Partition}, _From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
+
+%% @hidden
 handle_cast({unreserve, Partition}, State) ->
     Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
     {noreply, State#state{reservations = Reserved2}};
@@ -84,6 +102,8 @@ handle_cast({claim_reservation, Partition}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+
+%% @hidden
 handle_info({reservation_expired, Partition}, State) ->
     Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
     {noreply, State#state{reservations = Reserved2}};
@@ -91,9 +111,13 @@ handle_info({reservation_expired, Partition}, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
+
+%% @hidden
 terminate(_Reason, _State) ->
     ok.
 
+
+%% @hidden
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
