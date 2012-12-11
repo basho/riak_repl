@@ -122,7 +122,7 @@ handle_call(_Request, _From, State) ->
 
 %% @hidden
 handle_cast(Msg, State) ->
-    lager:info("OH GOD WHY ~p", [Msg]),
+    lager:info("Unexpected message ~p", [Msg]),
     {noreply, State}.
 
 
