@@ -296,6 +296,7 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin} = QEntry) ->
         C#c{cseq = Seq, deliver = undefined}
     catch
         _:_ ->
+            riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.

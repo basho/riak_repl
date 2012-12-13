@@ -35,7 +35,9 @@
          elections_leader_changed/0,
          register_stats/0,
          get_stats/0,
-         produce_stats/0]).
+         produce_stats/0,
+         rt_source_errors/0,
+         rt_sink_errors/0]).
 
 -define(APP, riak_repl).
 
@@ -109,6 +111,12 @@ produce_stats() ->
     lists:flatten([backwards_compat(Stat, Type) ||
         {Stat, Type} <- stats()]).
 
+rt_source_errors() ->
+    increment_counter(rt_source_errors).
+
+rt_sink_errors() ->
+    increment_counter(rt_sink_errors).
+
 init([]) ->
     register_stats(),
     schedule_report_bw(),
@@ -147,7 +155,9 @@ stats() ->
      {last_client_bytes_sent, gauge},
      {last_client_bytes_recv, gauge},
      {last_server_bytes_sent, gauge},
-     {last_server_bytes_recv, gauge}].
+     {last_server_bytes_recv, gauge},
+     {rt_source_errors, counter},
+     {rt_sink_errors, counter}].
 
 increment_counter(Name) ->
     increment_counter(Name, 1).
@@ -275,7 +285,9 @@ test_populate_stats() ->
     ok = objects_sent(),
     ok = objects_forwarded(),
     ok = elections_elected(),
-    ok = elections_leader_changed().
+    ok = elections_leader_changed(),
+    ok = rt_source_errors(),
+    ok = rt_sink_errors().
 
 test_check_stats() ->
     ?assertEqual([{server_bytes_sent,1000},
@@ -297,7 +309,9 @@ test_check_stats() ->
                   {client_rx_kbps,[]},
                   {client_tx_kbps,[]},
                   {server_rx_kbps,[]},
-                  {server_tx_kbps,[]}], get_stats()).
+                  {server_tx_kbps,[]},
+                  {rt_source_errors,1},
+                  {rt_sink_errors, 1}], get_stats()).
 
 test_report() ->
     Bytes = 1024 * 60,

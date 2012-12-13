@@ -356,7 +356,14 @@ prep_stop(_State) ->
        catch
         Type:Reason ->
             lager:error("Stopping application riak_api - ~p:~p.\n", [Type, Reason])
-    end,
+       end,
+       Stats = riak_repl_stats:get_stats(),
+       SourceErrors = proplists:get_value(rt_source_errors, Stats, 0),
+       SinkErrors = proplists:get_value(rt_sink_errors, Stats, 0),
+       lager:info("There were ~p rt_source_errors upon shutdown",
+                  [SourceErrors]),
+       lager:info("There were ~p rt_sink_errors upon shutdown",
+                  [SinkErrors]),
     stopping.
 
 
