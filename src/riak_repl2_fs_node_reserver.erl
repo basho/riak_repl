@@ -86,6 +86,9 @@ handle_call({reserve, Partition}, _From, State) ->
             {reply, busy, State}
     end;
 
+handle_call(state, _From, State) ->
+    {reply, State, State};
+
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
