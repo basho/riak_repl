@@ -125,5 +125,3 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-

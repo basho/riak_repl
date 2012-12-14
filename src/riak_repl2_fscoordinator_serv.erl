@@ -1,5 +1,8 @@
 %% @doc Service which replies to requests for the IP:Port of the node where
-%% a given partition lives.
+%% a given partition lives. Responsible for determining if the node for a 
+%% partition is available for use as the sink. Reservations and actual running
+%% sinks are used to determine availability. Once a reservation is issued, it
+%% is up to the keylist_client to claim it.
 
 -module(riak_repl2_fscoordinator_serv).
 -include("riak_repl.hrl").
@@ -35,17 +38,23 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
+%% @doc Given the communication channel data, start up a serv. There is one
+%% serv per remote cluster being fullsync'ed from.
+-spec start_link(any(), any(), any(), any()) -> {'ok', pid()}.
 start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, {Socket, Transport,
             Proto, Props}, []).
 
+%% @doc Get the stats for every serv.
+%% @see status/1
+-spec status() -> [tuple()].
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
         undefined ->
             {[], []};
         _ ->
-            case riak_repl2_fscoordinator_serv_sup:started(LeaderNode) of
+            case riak_repl2_fscoordinator_serv_sup:started() of
                 [] ->
                     [];
                 Repls ->
@@ -53,9 +62,14 @@ status() ->
             end
     end.
 
+%% @doc Get the status for the given serv.
+-spec status(Pid :: pid()) -> [tuple()].
 status(Pid) ->
     status(Pid, infinity).
 
+%% @doc Get the status for the given serv giving up after the timeout; or never
+%% give up if the timeout is `infinity'.
+-spec status(Pid :: pid(), Timeout :: timeout()) -> [tuple()].
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
@@ -82,6 +96,7 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
+%% @hidden
 init({Socket, Transport, Proto, _Props}) ->
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
@@ -89,6 +104,8 @@ init({Socket, Transport, Proto, _Props}) ->
                                        SocketTag}, Transport),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
 
+
+%% @hidden
 handle_call(status, _From, State = #state{socket=Socket, transport = Transport}) ->
     SocketStats = riak_core_tcp_mon:format_socket_stats(
             riak_core_tcp_mon:socket_status(Socket), []),
@@ -102,9 +119,14 @@ handle_call(status, _From, State = #state{socket=Socket, transport = Transport})
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
-handle_cast(_Msg, State) ->
+
+%% @hidden
+handle_cast(Msg, State) ->
+    lager:info("Unexpected message ~p", [Msg]),
     {noreply, State}.
 
+
+%% @hidden
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
     lager:info("Connect closed"),
@@ -129,9 +151,13 @@ handle_info(init_ack, #state{socket=Socket, transport=Transport} = State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
+
+%% @hidden
 terminate(_Reason, _State) ->
     ok.
 
+
+%% @hidden
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
@@ -140,24 +166,45 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 
 handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
+    % which node is the partition for
+    % is that node available
+    % send an appropriate reply
     #state{transport = Transport, socket = Socket} = State,
+    Node = get_partition_node(Partition),
+    Reply = case riak_repl2_fs_node_reserver:reserve(Partition) of
+        ok ->
+            case get_node_ip_port(Node, ConnIP) of
+                {ok, {ListenIP, Port}} ->
+                    {location, Partition, {Node, ListenIP, Port}};
+                {error, _} ->
+                    riak_repl2_fs_node_reserver:unreserve(Partition),
+                    {location_down, Partition, Node}
+            end;
+        busy ->
+            {location_busy, Partition, Node};
+        down ->
+            {location_down, Partition, Node}
+    end,
+    Transport:send(Socket, term_to_binary(Reply)),
+    State.
+
+get_partition_node(Partition) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
-    Node = proplists:get_value(Partition, Owners),
-    {ok, {_IP, Port}} = application:get_env(riak_core, cluster_mgr),
+    proplists:get_value(Partition, Owners).
+
+get_node_ip_port(Node, ConnIP) ->
+    {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
     Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
     Masked = riak_repl_app:mask_address(NormIP, Subnet),
-    Outbound = case get_matching_address(Node, NormIP, Masked) of
+    case get_matching_address(Node, NormIP, Masked) of
         {ok, {ListenIP, _}} ->
-            {location, Partition, {Node, ListenIP, Port}};
-        {error, _} ->
-            %% TODO
-            {location_down, Partition}
-    end,
-    Transport:send(Socket, term_to_binary(Outbound)),
-    State.
+            {ok, {ListenIP, Port}};
+        Else ->
+            Else
+    end.
 
 get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
     Res = riak_repl_app:get_matching_address(NormIP, Masked),
