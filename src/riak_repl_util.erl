@@ -17,6 +17,7 @@
          merkle_filename/3,
          keylist_filename/3,
          valid_host_ip/1,
+         normalize_ip/1,
          format_socketaddrs/2,
          maybe_use_ssl/0,
          upgrade_client_to_ssl/1,
@@ -31,7 +32,17 @@
          shuffle_partitions/2,
          proxy_get_active/0,
          log_dropped_realtime_obj/1,
-         dropped_realtime_hook/1
+         dropped_realtime_hook/1,
+         generate_socket_tag/2,
+         source_socket_stats/0,
+         sink_socket_stats/0,
+         get_peer_repl_nodes/0,
+         get_hooks_for_modes/0,
+         remove_unwanted_stats/1,
+         format_ip_and_port/2,
+         safe_pid_to_list/1,
+         peername/2,
+         sockname/2
      ]).
 
 make_peer_info() ->
@@ -240,20 +251,20 @@ binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) ->
 
 
 merkle_filename(WorkDir, Partition, Type) ->
-    case Type of
+    Ext = case Type of
         ours ->
-            Ext=".merkle";
+            ".merkle";
         theirs ->
-            Ext=".theirs"
+            ".theirs"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 keylist_filename(WorkDir, Partition, Type) ->
-    case Type of
+    Ext = case Type of
         ours ->
-            Ext=".ours.sterm";
+            ".ours.sterm";
         theirs ->
-            Ext=".theirs.sterm"
+            ".theirs.sterm"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
@@ -602,5 +613,78 @@ dropped_realtime_hook(Obj) ->
         {Mod, Fun} ->
                 Mod:Fun(Obj);
         _ -> pass
+    end.
+
+%% generate a unique ID for a socket to log stats against
+generate_socket_tag(Prefix, Socket) ->
+    {ok, {{O1, O2, O3, O4}, PeerPort}} = inet:peername(Socket),
+    {ok, Portnum} = inet:port(Socket),
+    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
+                Prefix,
+                Portnum,
+                O1, O2, O3, O4,
+                PeerPort])).
+remove_unwanted_stats([]) ->
+  [];
+remove_unwanted_stats(Stats) ->
+    UnwantedProps = [sndbuf, recbuf, buffer, active,
+                     type, send_max, send_avg, snd_cnt],
+    lists:foldl(fun(K, Acc) -> proplists:delete(K, Acc) end, Stats, UnwantedProps).
+
+source_socket_stats() ->
+    AllStats = riak_core_tcp_mon:status(),
+    [ remove_unwanted_stats(SocketStats) ||
+        SocketStats <- AllStats,
+        proplists:is_defined(tag, SocketStats),
+        {repl_rt, source, _} <- [proplists:get_value(tag, SocketStats)] ].
+
+sink_socket_stats() ->
+    %% It doesn't seem like it's possible to pass in "source" below as a
+    %% param
+    AllStats = riak_core_tcp_mon:status(),
+    [ remove_unwanted_stats(SocketStats) ||
+        SocketStats <- AllStats,
+        proplists:is_defined(tag, SocketStats),
+        {repl_rt, sink, _} <- [proplists:get_value(tag, SocketStats)] ].
+
+%% get other riak_apps across the cluster
+get_peer_repl_nodes() ->
+     [Node || Node <- riak_core_node_watcher:nodes(riak_repl),
+            Node =/= node()].
+
+%% get bucket hooks for current repl mode
+%% This allows V1.2 and BNW to coexist.
+get_hooks_for_modes() ->
+    Modes = riak_repl_console:get_modes(),
+    [ proplists:get_value(K,?REPL_MODES)
+     || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
+
+format_ip_and_port(Ip, Port) when is_list(Ip) ->
+    lists:flatten(io_lib:format("~s:~p",[Ip,Port]));
+format_ip_and_port(Ip, Port) when is_tuple(Ip) ->
+    lists:flatten(io_lib:format("~s:~p",[inet_parse:ntoa(Ip),
+                                         Port])).
+
+safe_pid_to_list(Pid) when is_pid(Pid) ->
+    erlang:pid_to_list(Pid);
+safe_pid_to_list(NotAPid) ->
+    NotAPid.
+
+peername(Socket, Transport) ->
+    case Transport:peername(Socket) of
+        {ok, {Ip, Port}} ->
+            format_ip_and_port(Ip, Port);
+        {error, Reason} ->
+            %% just return a string so JSON doesn't blow up
+            lists:flatten(io_lib:format("error:~p", [Reason]))
+    end.
+
+sockname(Socket, Transport) ->
+    case Transport:sockname(Socket) of
+        {ok, {Ip, Port}} ->
+            format_ip_and_port(Ip, Port);
+        {error, Reason} ->
+            %% just return a string so JSON doesn't blow up
+            lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 

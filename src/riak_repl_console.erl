@@ -9,11 +9,25 @@
          pause_fullsync/1, resume_fullsync/1]).
 -export([client_stats_rpc/0, server_stats_rpc/0]).
 
+-export([clustername/1, clusters/1,clusterstats/1,
+         connect/1, disconnect/1, connections/1,
+         realtime/1, fullsync/1
+        ]).
+-export([rt_remotes_status/0,
+         fs_remotes_status/0]).
+
 -export([get_config/0,
+         cluster_mgr_stats/0,
          leader_stats/0,
          client_stats/0,
-         server_stats/0]).
-         
+         server_stats/0,
+         coordinator_stats/0,
+         coordinator_srv_stats/0]).
+-export([modes/1, set_modes/1, get_modes/0,
+         max_fssource_node/1,
+         max_fssource_cluster/1,
+         max_fssink_node/1]).
+
 add_listener(Params) ->
     Ring = get_ring(),
     case add_listener_internal(Ring,Params) of
@@ -88,6 +102,16 @@ del_site([SiteName]) ->
     NewRing = riak_repl_ring:del_site(Ring, SiteName),
     ok = maybe_set_ring(Ring, NewRing).
 
+set_modes(Modes) ->
+    Ring = get_ring(),
+    NewRing = riak_repl_ring:set_modes(Ring, Modes),
+    ok = maybe_set_ring(Ring, NewRing).
+
+get_modes() ->
+    Ring = get_ring(),
+    riak_repl_ring:get_modes(Ring).
+
+
 status([]) ->
     status2(true);
 status(quiet) ->
@@ -96,15 +120,42 @@ status(quiet) ->
 status2(Verbose) ->
     Config = get_config(),
     Stats1 = lists:sort(riak_repl_stats:get_stats()),
+    RTRemotesStatus = rt_remotes_status(),
+    FSRemotesStatus = fs_remotes_status(),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
-    All = Config++Stats1++LeaderStats++ClientStats++ServerStats,
+    CoordStats = coordinator_stats(),
+    CoordSrvStats = coordinator_srv_stats(),
+    CMgrStats = cluster_mgr_stats(),
+    RTQStats = rtq_stats(),
+    All =
+          RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
+          LeaderStats++ClientStats++ServerStats++
+          CoordStats++CoordSrvStats++CMgrStats++RTQStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
             All
     end.
+
+rt_remotes_status() ->
+    Ring = get_ring(),
+    Enabled = string:join(riak_repl_ring:rt_enabled(Ring),", "),
+    Started = string:join(riak_repl_ring:rt_started(Ring),", "),
+    [{realtime_enabled, Enabled},
+     {realtime_started, Started}].
+
+fs_remotes_status() ->
+    Ring = get_ring(),
+    Sinks = riak_repl_ring:fs_enabled(Ring),
+    RunningSinks = [Sink || Sink <- Sinks, cluster_fs_running(Sink)],
+    [{fullsync_enabled, string:join(Sinks, ", ")},
+     {fullsync_running, string:join(RunningSinks, ", ")}].
+
+cluster_fs_running(Sink) ->
+    ClusterCoord = riak_repl2_fscoordinator_sup:coord_for_cluster(Sink),
+    riak_repl2_fscoordinator:is_running(ClusterCoord).
 
 start_fullsync([]) ->
     [riak_repl_tcp_server:start_fullsync(Pid) ||
@@ -126,12 +177,304 @@ resume_fullsync([]) ->
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
+
+%%
+%% Repl2 commands
+%%
+rtq_stats() ->
+     [{realtime_queue_stats, riak_repl2_rtq:status()}].
+
+cluster_mgr_stats() ->
+    ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
+                            {ok, Clusters} ->
+                                [erlang:list_to_binary(Cluster) || Cluster <-
+                                                                   Clusters];
+                            Error -> Error
+                        end,
+    [{cluster_name,
+      erlang:list_to_binary(riak_core_connection:symbolic_clustername())},
+     {cluster_leader, riak_core_cluster_mgr:get_leader()},
+     {connected_clusters, ConnectedClusters}].
+
+%% Show cluster stats for this node
+clusterstats([]) ->
+    %% connection manager stats
+    CMStats = cluster_mgr_stats(),
+    CConnStats = riak_core_connection_mgr_stats:get_consolidated_stats(),
+    Stats = CMStats ++ CConnStats,
+    io:format("~p~n", [Stats]);
+%% slice cluster stats by remote "IP:Port" or "protocol-id".
+%% Example protocol-id is rt_repl
+clusterstats([Arg]) ->
+    NWords = string:words(Arg, $:),
+    case NWords of
+        1 ->
+            %% assume protocol-id
+            ProtocolId = list_to_atom(Arg),
+            CConnStats = riak_core_connection_mgr_stats:get_stats_by_protocol(ProtocolId),
+            CMStats = cluster_mgr_stats(),
+            Stats = CMStats ++ CConnStats,
+            io:format("~p~n", [Stats]);
+        2 ->
+            Address = Arg,
+            IP = string:sub_word(Address, 1, $:),
+            PortStr = string:sub_word(Address, 2, $:),
+            {Port,_Rest} = string:to_integer(PortStr),
+            CConnStats = riak_core_connection_mgr_stats:get_stats_by_ip({IP,Port}),
+            CMStats = cluster_mgr_stats(),
+            Stats = CMStats ++ CConnStats,
+            io:format("~p~n", [Stats]);
+        _ ->
+            {error, {badarg, Arg}}
+    end.
+
+%% TODO: cluster naming belongs in riak_core_ring, not in riak_core_connection, but
+%% not until we move all of the connection stuff to core.
+clustername([]) ->
+    MyName = riak_core_connection:symbolic_clustername(),
+    io:format("~s~n", [MyName]),
+    ok;
+clustername([ClusterName]) ->
+    riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
+                                      ClusterName),
+    ok.
+
+clusters([]) ->
+    {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
+    %% TODO: include our own cluster in the listing
+    %% MyAddr = ???
+    %% MyMembers = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, MyAddr}),
+    %% io:format("~-20s ~-15s ~p~n", [string_of_ipaddr(MyAddr), " ", MyMembers]),
+    lists:foreach(
+      fun(ClusterName) ->
+              {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
+              IPs = [string_of_ipaddr(Addr) || Addr <- Members],
+              io:format("~s: ~p~n", [ClusterName, IPs])
+      end,
+      Clusters),
+    ok.
+
+string_of_ipaddr({IP, Port}) ->
+    lists:flatten(io_lib:format("~s:~p", [IP, Port])).
+
+choose_best_addr({cluster_by_addr, {IP,Port}}, _ClientAddr) ->
+    string_of_ipaddr({IP,Port});
+choose_best_addr({cluster_by_name, _}, ClientAddr) ->
+    string_of_ipaddr(ClientAddr).
+
+string_of_remote({cluster_by_addr, {IP,Port}}) ->
+    string_of_ipaddr({IP,Port});
+string_of_remote({cluster_by_name, ClusterName}) ->
+    ClusterName.
+
+%% Print info about this sink
+%% Remote :: {ip,port} | ClusterName
+showClusterConn({Remote,Pid}) ->
+    ConnName = string_of_remote(Remote),
+    PidStr = io_lib:format("~p", [Pid]),
+    %% try to get status from Pid of cluster control channel.
+    %% if we haven't connected successfully yet, it will time out, which we will fail
+    %% fast for since it's a local process, not a remote one.
+    Pid ! {self(), status},
+    receive
+        {Pid, connecting, SRemote} ->
+            io:format("~-20s ~-20s ~-15s (connecting to ~p)~n",
+                      [ConnName, "", PidStr, string_of_remote(SRemote)]);
+        {Pid, status, {ClientAddr, _Transport, Name, Members}} ->
+            IPs = [string_of_ipaddr(Addr) || Addr <- Members],
+            CAddr = choose_best_addr(Remote, ClientAddr),
+            io:format("~-20s ~-20s ~-15s ~p (via ~s)~n",
+                      [ConnName, Name, PidStr,IPs, CAddr])
+    after 2 ->
+            io:format("~-20s ~-20s ~-15s (status timed out)~n",
+                      [ConnName, "", PidStr])
+    end.
+
+connections([]) ->
+    %% get cluster manager's outbound connections to other "remote" clusters,
+    %% which for now, are all the "sinks".
+    {ok, Conns} = riak_core_cluster_mgr:get_connections(),
+    io:format("~-20s ~-20s ~-15s [Members]~n", ["Connection", "Cluster Name", "<Ctrl-Pid>"]),
+    io:format("~-20s ~-20s ~-15s ---------~n", ["----------", "------------", "----------"]),
+    [showClusterConn(Conn) || Conn <- Conns],
+    ok.
+
+connect([Address]) ->
+    NWords = string:words(Address, $:),
+    case NWords of
+        2 ->
+            IP = string:sub_word(Address, 1, $:),
+            PortStr = string:sub_word(Address, 2, $:),
+            connect([IP, PortStr]);
+        _ ->
+            io:format("Error: remote connection is missing port. Expected 'connect <host:ip>'~n"),
+            {error, {badarg, Address}}
+    end;
+connect([IP, PortStr]) ->
+    {Port,_Rest} = string:to_integer(PortStr),
+    case riak_core_connection:symbolic_clustername() of
+        "undefined" ->
+            io:format("Error: Unable to establish connections until local cluster is named.~n"),
+            io:format("First use 'riak-repl clustername <clustername>'~n"),
+            {error, undefined_cluster_name};
+        _Name ->
+            riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
+            ok
+    end.
+
+%% remove a remote connection by clustername or by IP/Port address:
+%% clustername
+%% | ip:port
+%% | ip port
+disconnect([Address]) ->
+    NWords = string:words(Address, $:),
+    case NWords of
+        1 ->
+            Remote = Address,
+            %% TODO: need to wrap a single ring transition around all of these.
+            %% fullsync(["stop",    Remote]),
+            %% fullsync(["disable", Remote]),
+            %% realtime(["stop",    Remote]),
+            %% realtime(["disable", Remote]),
+            %% tear down cluster manager connection
+            riak_core_cluster_mgr:remove_remote_cluster(Remote),
+            ok;
+        2 ->
+            IP = string:sub_word(Address, 1, $:),
+            PortStr = string:sub_word(Address, 2, $:),
+            disconnect([IP, PortStr]),
+            ok;
+        _ ->
+            {error, {badarg, Address}}
+    end;
+disconnect([IP, PortStr]) ->
+    {Port,_Rest} = string:to_integer(PortStr),
+    riak_core_cluster_mgr:remove_remote_cluster({IP, Port}),
+    ok.
+
+realtime([Cmd, Remote]) ->
+    case Cmd of
+        "enable" ->
+            riak_repl2_rt:enable(Remote);
+        "disable" ->
+            riak_repl2_rt:disable(Remote);
+        "start" ->
+            riak_repl2_rt:start(Remote);
+        "stop" ->
+            riak_repl2_rt:stop(Remote)
+    end,
+    ok;
+realtime([Cmd]) ->
+    Remotes = riak_repl2_rt:enabled(),
+    case Cmd of
+        "start" ->
+            [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+        "stop" ->
+            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+    end,
+    ok. %% TODO: we could gather the return codes of the list comprehensions
+
+fullsync([Cmd, Remote]) ->
+    Leader = riak_core_cluster_mgr:get_leader(),
+    case Cmd of
+        "enable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:fs_enable_trans/2, Remote),
+            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
+            ok;
+        "disable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:fs_disable_trans/2, Remote),
+            riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
+            ok;
+        "start" ->
+            Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
+            case proplists:get_value(Remote, Fullsyncs) of
+                undefined ->
+                    io:format("Fullsync not enabled for cluster ~p~n", [Remote]),
+                    io:format("Use 'fullsync enable ~p' before start~n", [Remote]),
+                    {error, not_enabled};
+                Pid ->
+                    riak_repl2_fscoordinator:start_fullsync(Pid),
+                    ok
+            end;
+        "stop" ->
+            Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
+            case proplists:get_value(Remote, Fullsyncs) of
+                undefined ->
+                    %% Fullsync is not enabled, but carry on quietly.
+                    ok;
+                Pid ->
+                    riak_repl2_fscoordinator:stop_fullsync(Pid),
+                    ok
+            end
+    end;
+fullsync([Cmd]) ->
+    Leader = riak_core_cluster_mgr:get_leader(),
+    Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
+    case Cmd of
+        "start" ->
+            [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
+                Fullsyncs];
+        "stop" ->
+            [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
+                Fullsyncs]
+    end,
+    ok.
+
+modes([]) ->
+    CurrentModes = get_modes(),
+    io:format("Current replication modes: ~p~n",[CurrentModes]),
+    ok;
+modes(NewModes) ->
+    Modes = [ list_to_atom(Mode) || Mode <- NewModes],
+    set_modes(Modes),
+    modes([]).
+
+max_fssource_node([]) ->
+    %% show the default so as not to confuse the user
+    io:format("max_fssource_node value = ~p~n",
+              [app_helper:get_env(riak_repl, max_fssource_node,
+                                  ?DEFAULT_SOURCE_PER_NODE)]);
+max_fssource_node([FSSourceNode]) ->
+    NewVal = erlang:list_to_integer(FSSourceNode),
+    application:set_env(riak_repl, max_fssource_node, NewVal),
+    max_fssource_node([]),
+    ok.
+
+max_fssource_cluster([]) ->
+    %% show the default so as not to confuse the user
+    io:format("max_fssource_cluster value = ~p~n",
+              [app_helper:get_env(riak_repl, max_fssource_cluster,
+                                  ?DEFAULT_SOURCE_PER_CLUSTER)]);
+max_fssource_cluster([FSSourceCluster]) ->
+    NewVal = erlang:list_to_integer(FSSourceCluster),
+    application:set_env(riak_repl, max_fssource_cluster, NewVal),
+    max_fssource_cluster([]),
+    ok.
+
+max_fssink_node([]) ->
+    io:format("max_fssink_node value = ~p~n",
+        [app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE)]);
+max_fssink_node([FSSinkNode]) ->
+    NewVal = erlang:list_to_integer(FSSinkNode),
+    application:set_env(riak_repl, max_fssink_node, NewVal),
+    max_fssink_node([]),
+    ok.
+
 %% helper functions
 
 format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
     io:format("~s: ~p~n", [K,V]),
     format_counter_stats(T);
+%format_counter_stats([{K,V}|T]) when K == fullsync_coordinator ->
+%    io:format("V = ~p",[V]),
+%    case V of
+%        [] -> io:format("~s: {}~n",[K]);
+%        Val -> io:format("~s: ~s",[K,Val])
+%    end,
+%    format_counter_stats(T);
 format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
                                      K == client_tx_kbps;
                                      K == server_rx_kbps;
@@ -140,6 +483,10 @@ format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
     format_counter_stats(T);
 format_counter_stats([{K,V}|T]) ->
     io:format("~p: ~p~n", [K,V]),
+    format_counter_stats(T);
+format_counter_stats([{_K,_IPAddr,_V}|T]) ->
+    %% Don't include per-IP stats in this output
+    %% io:format("~p(~p): ~p~n", [K,IPAddr,V]),
     format_counter_stats(T).
 
 make_listener(NodeName, IP, Port) ->
@@ -242,29 +589,44 @@ leader_stats() ->
     [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats.
 
 client_stats() ->
-    {Stats, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv), riak_repl_console, client_stats_rpc, []),
-    [{client_stats, lists:flatten(lists:filter(fun({badrpc, _}) ->
+    %% NOTE: rpc:multicall to all clients removed
+    Stats = riak_repl_console:client_stats_rpc(),
+    [{sinks, lists:flatten(lists:filter(fun({badrpc, _}) ->
                 false;
             (_) -> true
         end, Stats))}].
 
 client_stats_rpc() ->
+    RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
+          [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
-    [client_stats(P) || P <- Pids].
+    [client_stats(P) || P <- Pids] ++ RT2.
 
 server_stats() ->
+    RT2 = [rt2_source_stats(P) || {_R,P} <-
+                                  riak_repl2_rtsource_conn_sup:enabled()],
     LeaderNode = riak_repl_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            [{server_stats, []}];
+            [{sources, RT2}];
         _ ->
-            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc, [])}]
+            [{sources, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
+                                     [])++RT2}]
     end.
 
 server_stats_rpc() ->
     [server_stats(P) ||
         P <- riak_repl_listener_sup:server_pids()].
 
+%%socket_stats(Pid) ->
+%%    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+%%    State = try
+%%                riak_repl_tcp_mon:status(Pid, Timeout)
+%%            catch
+%%                _:_ ->
+%%                    too_busy
+%%            end,
+%%    {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 client_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
@@ -286,4 +648,47 @@ server_stats(Pid) ->
             end,
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
+coordinator_stats() ->
+    [{fullsync_coordinator, riak_repl2_fscoordinator:status()}].
 
+coordinator_srv_stats() ->
+    [{fullsync_coordinator_srv, riak_repl2_fscoordinator_serv:status()}].
+
+rt2_source_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_rtsource_conn:status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    FormattedPid = riak_repl_util:safe_pid_to_list(Pid),
+    {source_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
+     {rt_source_connected_to, State}]}.
+
+rt2_sink_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+                riak_repl2_rtsink_conn:status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    %%{Pid, erlang:process_info(Pid, message_queue_len), State}.
+    FormattedPid = riak_repl_util:safe_pid_to_list(Pid),
+    {sink_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
+     {rt_sink_connected_to, State}]}.
+
+fs2_sink_stats(Pid) ->
+    Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
+    State = try
+        %% even though it's named legacy_status, it's BNW code
+        riak_repl2_fssink:legacy_status(Pid, Timeout)
+    catch
+        _:_ ->
+            too_busy
+    end,
+   %% {Pid, erlang:process_info(Pid, message_queue_len), State}.
+    {sink_stats, [{pid,riak_repl_util:safe_pid_to_list(Pid)},
+                  erlang:process_info(Pid, message_queue_len),
+                  {fs_connected_to, State}]}.

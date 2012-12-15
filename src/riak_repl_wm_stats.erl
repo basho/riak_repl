@@ -71,9 +71,9 @@ forbidden(RD, Ctx) ->
     {riak_kv_wm_utils:is_forbidden(RD), RD, Ctx}.
 
 produce_body(ReqData, Ctx) ->
-    Body = mochijson2:encode({struct, 
+    Body = mochijson2:encode({struct,
                               get_stats()
-                              }),    
+                              }),
     {Body, ReqData, Ctx}.
 
 %% @spec pretty_print(webmachine:wrq(), context()) ->
@@ -84,28 +84,44 @@ pretty_print(RD1, C1=#ctx{}) ->
     {json_pp:print(binary_to_list(list_to_binary(Json))), RD2, C2}.
 
 get_stats() ->
+    RTRemotesStatus = riak_repl_console:rt_remotes_status(),
+    FSRemotesStatus = riak_repl_console:fs_remotes_status(),
     Stats1 = riak_repl_stats:get_stats(),
+    CMStats = riak_repl_console:cluster_mgr_stats(),
     LeaderStats = riak_repl_console:leader_stats(),
-    [{server_stats, Servers}] = riak_repl_console:server_stats(),
-    [{client_stats, Clients}] = riak_repl_console:client_stats(),
-    Stats1 ++ LeaderStats ++ format_stats(client_stats, Clients, []) ++
-        format_stats(server_stats, Servers, []).
-    
+    Servers = riak_repl_console:server_stats(),
+    Clients = riak_repl_console:client_stats(),
+    Coord = riak_repl_console:coordinator_stats(),
+    CoordSrv = riak_repl_console:coordinator_srv_stats(),
+    RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
+    jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
+        ++ jsonify_stats(Clients, [])
+        ++ jsonify_stats(Servers, [])
+    ++ RTQ 
+    ++ jsonify_stats(Coord,[])
+    ++ jsonify_stats(CoordSrv,[]).
 
-format_stats(Type, [], Acc) ->
-    [{Type, lists:reverse(Acc)}];
-format_stats(Type, [{P, M, {status, S}}|T], Acc) ->
-    format_stats(Type, T, [[{pid, list_to_binary(erlang:pid_to_list(P))},
-                            M, {status, jsonify_stats(S, [])}]|Acc]).
+%%format_stats(Type, [], Acc) ->
+%%    [{Type, lists:reverse(Acc)}];
+%%format_stats(Type, [{P, M, {status, S}}|T], Acc) ->
+%%    format_stats(Type, T, [[{pid, list_to_binary(erlang:pid_to_list(P))},
+%%                            M, {status, jsonify_stats(S, [])}]|Acc]).
+
 jsonify_stats([], Acc) ->
     lists:flatten(lists:reverse(Acc));
 jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
-    jsonify_stats(T, [{K,list_to_binary(erlang:pid_to_list(V))}|Acc]);
+    jsonify_stats(T, [{K,list_to_binary(riak_repl_util:safe_pid_to_list(V))}|Acc]);
+jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
+    NewV = jsonify_stats(V,[]),
+    jsonify_stats(T, [{K,NewV}|Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
     jsonify_stats(T, [{K,list_to_binary(V)}|Acc]);
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
+jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Port) ->
+    jsonify_stats(T, [{S,
+                       iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
-    
+

@@ -18,13 +18,39 @@ start_link() ->
 %% @doc supervisor callback.
 init([]) ->
     Processes = [
-        {riak_repl_client_sup,
-            {riak_repl_client_sup, start_link, []},
-            permanent, infinity, supervisor, [riak_repl_client_sup]},
-        {riak_repl_server_sup,
-            {riak_repl_server_sup, start_link, []},
-            permanent, infinity, supervisor, [riak_repl_server_sup]},
-        {riak_repl_leader,
-            {riak_repl_leader, start_link, []},
-            permanent, 5000, worker, [riak_repl_leader]}],
+                 {riak_repl_client_sup, {riak_repl_client_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl_client_sup]},
+
+                 {riak_repl_server_sup, {riak_repl_server_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl_server_sup]},
+
+                 {riak_core_cluster_mgr_sup, {riak_core_cluster_mgr_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_cluster_mgr_sup]},
+
+                 {riak_repl_leader, {riak_repl_leader, start_link, []},
+                  permanent, 5000, worker, [riak_repl_leader]},
+
+                 {riak_repl2_leader, {riak_repl2_leader, start_link, []},
+                  permanent, 5000, worker, [riak_repl2_leader]},
+
+                 {riak_repl2_fs_node_reserver, {riak_repl2_fs_node_reserver, start_link, []},
+                  permanent, infinity, worker, [riak_repl2_fs_node_reserver]},
+
+                 {riak_repl2_rt_sup, {riak_repl2_rt_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_rt_sup]},
+
+                 {riak_repl2_fscoordinator_sup, {riak_repl2_fscoordinator_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fscoordinator_sup]},
+
+                 {riak_repl2_fscoordinator_serv_sup, {riak_repl2_fscoordinator_serv_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fscoordinator_serv_sup]},
+
+                 {riak_repl2_fssource_sup, {riak_repl2_fssource_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fssource_sup]},
+
+                 {riak_repl2_fssink_sup, {riak_repl2_fssink_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_fssink_sup]}
+        ],
+
     {ok, {{one_for_one, 9, 10}, Processes}}.
+

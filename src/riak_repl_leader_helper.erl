@@ -22,7 +22,7 @@
 %%===================================================================
 -module(riak_repl_leader_helper).
 -behaviour(gen_leader).
--export([start_link/3, leader_node/1, leader_node/2, refresh_leader/1]).
+-export([start_link/4, leader_node/1, leader_node/2, refresh_leader/1]).
 -export([init/1,elected/3,surrendered/3,handle_leader_call/4, 
          handle_leader_cast/3, from_leader/3, handle_call/4,
          handle_cast/3, handle_DOWN/3, handle_info/2, terminate/2,
@@ -30,21 +30,23 @@
 
 -define(LEADER_OPTS, [{vardir, VarDir}, {bcast_type, all}]).
 
--record(state, {local_pid,    % pid of local riak_repl_leader gen_server
+-record(state, {leader_mod,   % module name of replication leader
+                local_pid,    % pid of local replication leader gen_server
                 elected_node, % node last elected
-                elected_pid}).% pid or riak_repl_leader on elected node
+                elected_pid}).% pid or replication leader on elected node
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-start_link(LeaderPid, Candidates, Workers) ->
+start_link(LeaderModule, LeaderPid, Candidates, Workers) ->
     %% Make a unique name for this list of candidates.  gen_leader protocol is designed
     %% to only handle static lists of candidate nodes.  Make sure this is true by
     %% basing the name of the server on the list of candidates.
     Hash = integer_to_list(erlang:phash2({Candidates, Workers})),
     CandidateHashStr = Hash,
-    RegStr = "riak_repl_leader_" ++ CandidateHashStr,
+    LeaderModuleStr = atom_to_list(LeaderModule),
+    RegStr = LeaderModuleStr ++ "_" ++ CandidateHashStr,
     RegName = list_to_atom(RegStr),
 
     %% Make sure there is a unique directory for this election
@@ -52,8 +54,8 @@ start_link(LeaderPid, Candidates, Workers) ->
     VarDir = filename:join(DataRootDir, RegStr),
     ok = filelib:ensure_dir(filename:join(VarDir, ".empty")),
 
-    LOpts = [{vardir, VarDir},{workers, Workers}, {bcast_type, all}], 
-    gen_leader:start_link(RegName, Candidates, LOpts, ?MODULE, [LeaderPid], []).
+    LOpts = [{vardir, VarDir},{workers, Workers}, {bcast_type, all}],
+    gen_leader:start_link(RegName, Candidates, LOpts, ?MODULE, [LeaderModule, LeaderPid], []).
 
 leader_node(HelperPid) ->
     leader_node(HelperPid, 5000).
@@ -70,8 +72,8 @@ refresh_leader(HelperPid) ->
 %%% gen_leader callbacks
 %%%===================================================================
 
-init([LeaderPid]) ->
-    {ok, #state{local_pid=LeaderPid}}.
+init([LeaderModule, LeaderPid]) ->
+    {ok, #state{leader_mod=LeaderModule, local_pid=LeaderPid}}.
 
 elected(State, _NewElection, _Node) ->
     NewState = State#state{elected_node=node(), elected_pid=State#state.local_pid},
@@ -121,8 +123,9 @@ code_change(_OldVsn, State, _Election, _Extra) ->
 
 %% Tell who the main riak_repl_leader process who the leader is
 tell_who_leader_is(State) ->
-    riak_repl_leader:set_leader(State#state.local_pid, 
-                                State#state.elected_node,
-                                State#state.elected_pid).
+    LeaderModule = State#state.leader_mod,
+    LeaderModule:set_leader(State#state.local_pid, 
+                            State#state.elected_node,
+                            State#state.elected_pid).
     
   

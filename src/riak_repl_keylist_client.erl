@@ -89,6 +89,12 @@ wait_for_fullsync(Command, State)
                           [State#state.sitename, Remaining]),
     gen_fsm:send_event(self(), continue),
     {next_state, request_partition, State#state{partitions=Partitions}};
+wait_for_fullsync({start_fullsync, Partitions}, State) ->
+    Remaining = length(Partitions),
+    lager:info("Full-sync with site ~p starting; ~p partitions.",
+                          [State#state.sitename, Remaining]),
+    gen_fsm:send_event(self(), continue),
+    {next_state, request_partition, State#state{partitions=Partitions}};
 wait_for_fullsync(_Other, State) ->
     {next_state, wait_for_fullsync, State}.
 
@@ -114,6 +120,7 @@ request_partition(continue, #state{partitions=[], sitename=SiteName} = State) ->
 request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
     lager:info("Full-sync with site ~p; starting fullsync for ~p",
         [State#state.sitename, P]),
+    riak_repl2_fs_node_reserver:claim_reservation(P),
     application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
     riak_repl_tcp_client:send(State#state.transport, Socket, {partition, P}),
     KeyListFn = riak_repl_util:keylist_filename(WorkDir, P, ours),
