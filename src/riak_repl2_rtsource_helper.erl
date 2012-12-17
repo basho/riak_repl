@@ -48,6 +48,7 @@ init([Remote, Transport, Socket]) ->
     {ok, State}.
 
 handle_call({pull, {error, Reason}}, _From, State) ->
+    riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, State};
 handle_call({pull, {Seq, NumObjects, BinObjs}}, From,
             State = #state{transport = T, socket = S, objects = Objects}) ->

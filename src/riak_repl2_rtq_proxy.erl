@@ -55,6 +55,7 @@ handle_call(_Request, _From, State) ->
 
 handle_cast({push, NumItems, _Bin}, State = #state{nodes=[]}) ->
     lager:warning("No available nodes to proxy ~p objects to~n", [NumItems]),
+    riak_repl_stats:rt_source_errors(),
     {noreply, State};
 handle_cast({push, NumItems, Bin}, State) ->
     Node = hd(State#state.nodes),
@@ -66,6 +67,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'DOWN', _Ref, _, {riak_repl2_rtq, Node}, _}, State) ->
+    riak_repl_stats:rt_source_errors(),
     lager:info("rtq proxy target ~p is down", [Node]),
     {noreply, State#state{nodes=State#state.nodes -- [Node]}};
 handle_info(_Info, State) ->
