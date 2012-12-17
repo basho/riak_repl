@@ -35,7 +35,13 @@
          elections_leader_changed/0,
          register_stats/0,
          get_stats/0,
-         produce_stats/0]).
+         produce_stats/0,
+         rt_source_errors/0,
+         rt_sink_errors/0,
+         clear_rt_dirty/0,
+         touch_rt_dirty_file/0,
+         remove_rt_dirty_file/0,
+         is_rt_dirty/0]).
 
 -define(APP, riak_repl).
 
@@ -98,6 +104,34 @@ elections_elected() ->
 elections_leader_changed() ->
     increment_counter(elections_leader_changed).
 
+%% If any source errors are detected, write a file out to persist this status
+%% across restarts
+rt_source_errors() ->
+    increment_counter(rt_source_errors),
+    rt_dirty().
+
+%% If any sink errors are detected, write a file out to persist this status
+%% across restarts
+rt_sink_errors() ->
+    increment_counter(rt_sink_errors),
+    rt_dirty().
+
+rt_dirty() ->
+    touch_rt_dirty_file(),
+    increment_counter(rt_dirty),
+    Stat = lookup_stat(rt_dirty) + 1,  % we know it's at least 1
+    % increment counter is a cast, so if the number is relatively small
+    % then notify the server. otherwise, we don't want to spam the
+    % coordinator. Once this value is reset to 0, we'll notify the
+    % coordinator again.
+    case Stat > 0 andalso Stat < 5 of
+        true ->
+            %% the coordinator might not be up yet
+            lager:info("Notifying coordinator of rt_dirty"),
+            riak_repl2_fscoordinator:node_dirty(node());
+        false -> pass
+    end.
+
 get_stats() ->
     case riak_core_stat_cache:get_stats(?APP) of
         {ok, Stats, _TS} ->
@@ -112,6 +146,18 @@ produce_stats() ->
 init([]) ->
     register_stats(),
     schedule_report_bw(),
+    case is_rt_dirty() of
+        true ->
+            lager:info("Warning: RT marked as dirty upon startup"),
+            folsom_metrics:notify_existing_metric({?APP, rt_dirty}, {inc, 1},
+                                                  counter),
+            % let the coordinator know about the dirty state when the node
+            % comes back up
+            lager:info("Notifying coordinator of rt_dirty state"),
+            riak_repl2_fscoordinator:node_dirty(node());
+        false ->
+            lager:info("RT is NOT dirty")
+    end,
     {ok, ok}.
 
 register_stat(Name, counter) ->
@@ -147,7 +193,10 @@ stats() ->
      {last_client_bytes_sent, gauge},
      {last_client_bytes_recv, gauge},
      {last_server_bytes_sent, gauge},
-     {last_server_bytes_recv, gauge}].
+     {last_server_bytes_recv, gauge},
+     {rt_source_errors, counter},
+     {rt_sink_errors, counter},
+     {rt_dirty, counter}].
 
 increment_counter(Name) ->
     increment_counter(Name, 1).
@@ -228,6 +277,48 @@ backwards_compat(_Name, gauge) ->
 backwards_compat(Name,  _Type) ->
     {Name, lookup_stat(Name)}.
 
+rt_dirty_filename() ->
+    %% or riak_repl/work_dir?
+    P_DataDir = app_helper:get_env(riak_core, platform_data_dir),
+    filename:join([P_DataDir, "riak_repl", "rt_dirty"]).
+
+touch_rt_dirty_file() ->
+    DirtyRTFile = rt_dirty_filename(),
+    ok = filelib:ensure_dir(DirtyRTFile),
+    case file:write_file(DirtyRTFile, "") of
+        ok -> lager:info("RT dirty file written to ~p", [DirtyRTFile]);
+        ER -> lager:warning("Can't write to file ~p due to ~p",[DirtyRTFile,
+                                                                ER])
+    end.
+
+remove_rt_dirty_file() ->
+    DirtyRTFile = rt_dirty_filename(),
+    case file:delete(DirtyRTFile) of
+        ok -> lager:info("RT dirty flag cleared");
+        {error, Reason} ->
+            %% this is a lager:debug because each fullsync
+            %% would display this warning.
+            lager:debug("Can't clear RT dirty flag: ~p",
+                                       [Reason])
+    end.
+
+
+clear_rt_dirty() ->
+    remove_rt_dirty_file(),
+    %% folsom_metrics:notify_existing_metric doesn't support clear yet
+    folsom_metrics_counter:clear({riak_repl, rt_dirty}).
+
+is_rt_dirty() ->
+    DirtyRTFile = rt_dirty_filename(),
+    case file:read_file_info(DirtyRTFile) of
+        {error, enoent} -> false;
+        {error, Reason} ->
+                  lager:warning("Error reading RT dirty file: ~p", [Reason]),
+                  %% assume it's not there
+                  false;
+        {ok, _Data} -> true
+    end.
+
 -ifdef(TEST).
 
 repl_stats_test_() ->
@@ -275,7 +366,13 @@ test_populate_stats() ->
     ok = objects_sent(),
     ok = objects_forwarded(),
     ok = elections_elected(),
-    ok = elections_leader_changed().
+    ok = elections_leader_changed(),
+    ok = rt_source_errors(),
+    ok = rt_sink_errors(),
+    %% incrementing rt_source_errors + rt_sink_errors 
+    %% should set rt_dirty to 2, then the call to rt_dirty()
+    %% will set it to 3
+    ok = rt_dirty().
 
 test_check_stats() ->
     ?assertEqual([{server_bytes_sent,1000},
@@ -297,7 +394,10 @@ test_check_stats() ->
                   {client_rx_kbps,[]},
                   {client_tx_kbps,[]},
                   {server_rx_kbps,[]},
-                  {server_tx_kbps,[]}], get_stats()).
+                  {server_tx_kbps,[]},
+                  {rt_source_errors,1},
+                  {rt_sink_errors, 1},
+                  {rt_dirty, 3}], get_stats()).
 
 test_report() ->
     Bytes = 1024 * 60,

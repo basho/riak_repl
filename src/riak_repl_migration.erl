@@ -74,7 +74,8 @@ drain_queue(false, Peer) ->
                         % probably too much spam in the logs for this warning
                         %lager:warning("Dropped object during replication queue migration"),
                         % is this the correct stat?
-                        riak_repl_stats:objects_dropped_no_clients()
+                        riak_repl_stats:objects_dropped_no_clients(),
+                        riak_repl_stats:rt_source_errors()
                 end,
              ok end),
     drain_queue(riak_repl2_rtq:is_empty(qm), Peer);
@@ -88,6 +89,7 @@ queue_handoff(State) ->
         0 -> %% TODO: bump up riak_repl_stats dropped_objects stats
             %% should we have a new stat? riak_repl_stats:objects_dropped_no_leader()
             lager:error("No nodes available to migrate replication data"),
+            riak_repl_stats:rt_source_errors(),
             {reply, error, State};
         _N ->
             lager:info("Starting queue migration"),
