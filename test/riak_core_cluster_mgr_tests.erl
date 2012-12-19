@@ -2,6 +2,7 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 
 -module(riak_core_cluster_mgr_tests).
+-compile(export_all).
 
 -include("riak_core_connection.hrl").
 
@@ -11,7 +12,7 @@
 %%-define(TRACE(Stmt),ok).
 
 %% internal functions
--export([ctrlService/5, ctrlServiceProcess/5]).
+%-export([ctrlService/5, ctrlServiceProcess/5]).
 
 %% For testing, both clusters have to look like they are on the same machine
 %% and both have the same port number for offered sub-protocols. "my cluster"
@@ -28,7 +29,7 @@
 -define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4097}).
 -define(REMOTE_MEMBERS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
 
-running_test_() ->
+single_node_test_() ->
     {setup, fun start_link_setup/0, fun(_) -> cleanup() end, fun(_) -> [
 
         {"is leader", ?_assert(riak_core_cluster_mgr:get_is_leader() == false)},
@@ -105,13 +106,53 @@ running_test_() ->
 
     ] end }.
 
+leader_transfer_test_() ->
+    {setup, fun() ->
+        NodeConfigs = [
+            {rt_superman, [{port, 6001}]},
+            {rt_batman, [{port, 6002}]},
+            {rt_wonderwoman, [{port, 6003}]}
+        ],
+        TearDownHints = maybe_start_master(),
+        Localhost = list_to_atom(net_adm:localhost()),
+        CodePath = code:get_path(),
+        ResAndNode = [begin
+            {ok, Node} = start_setup_node(Name, Localhost),
+            sync_paths(CodePath, Node),
+            Port = proplists:get_value(port, Props),
+            R = rpc:call(Node, ?MODULE, start_link_setup, [{"127.0.0.1", Port}]),
+            {R, Node}
+        end || {Name, Props} <- NodeConfigs],
+        {Res, Nodes} = lists:unzip(ResAndNode),
+        ?debugFmt("Setup result:  ~p", [Res]),
+        {TearDownHints, Nodes}
+    end,
+    fun({TDH, Nodes}) ->
+        rpc:multicall(Nodes, ?MODULE, cleanup, []),
+        teardown_nodes(TDH, Nodes)
+    end,
+    fun({_TDH, [Superman, Batman, Wonder] = Nodes}) -> [
+
+        {"leader election responses", fun() ->
+            rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Superman, self()]),
+            {Leaders, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_leader, []),
+            [?assertEqual(Superman, L) || L <- Leaders],
+            {IsLeaders, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_is_leader, []),
+            ?assertEqual([true, false, false], IsLeaders)
+        end}
+
+    ] end }.
+
 %% this test runs first and leaves the server running for other tests
 %start_link_test() ->
 start_link_setup() ->
+    start_link_setup(?MY_CLUSTER_ADDR).
+
+start_link_setup(ClusterAddr) ->
     %% need to start it here so that a supervision tree will be created.
     ok = application:start(ranch),
     %% we also need to start the other connection servers
-    {ok, _Pid1} = riak_core_service_mgr:start_link(?MY_CLUSTER_ADDR),
+    {ok, _Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
     {ok, _Pid2} = riak_core_connection_mgr:start_link(),
     {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
     unlink(Pid3),
@@ -130,6 +171,77 @@ cleanup() ->
     end,
     riak_core_cluster_mgr:stop(),
     application:stop(ranch).
+
+maybe_start_master() ->
+    case node() of
+        'nonode@nohost' ->
+            net_kernel:start([riak_repl_tests]),
+            {started, node()};
+        Node ->
+            {kept, Node}
+    end.
+
+setup_nodes(NodeNames) ->
+    Started = maybe_start_master(),
+    case start_setup_nodes(NodeNames) of
+        {ok, Slaves} ->
+            {Started, Slaves};
+        {error, {Running, Failer, What}} ->
+            teardown_nodes(Started, Running ++ [Failer]),
+            erlang:error({bad_node_startup, {Failer, What}})
+    end.
+
+start_setup_nodes(NodeNames) ->
+    Localhost = list_to_atom(net_adm:localhost()),
+    CodePath = code:get_path(),
+    start_setup_nodes(NodeNames, Localhost, CodePath, []).
+
+start_setup_nodes([], _Host, _CodePath, Acc) ->
+    {ok, lists:reverse(Acc)};
+
+start_setup_nodes([Name | Tail], Host, CodePath, Acc) ->
+    case start_setup_node(Name, Host) of
+        {ok, Node} ->
+            true = sync_paths(CodePath, Node),
+            %true = rpc:call(Node, code, set_path, [CodePath]),
+            start_setup_nodes(Tail, Host, CodePath, [Node | Acc]);
+        {error, {Node, What}} ->
+            {error, {Acc, Node, What}}
+    end.
+
+sync_paths([], _Node) ->
+    true;
+
+sync_paths(["." | Paths], Node) ->
+    rpc:call(Node, code, set_path, ["."]),
+    sync_paths(Paths, Node);
+
+sync_paths([D | Tail], Node) ->
+    case rpc:call(Node, code, add_pathz, [D]) of
+        true ->
+            sync_paths(Tail, Node);
+        {error, bad_directory} ->
+            ?debugFmt("Hope this directory wasn't important:  ~s", [D]),
+            sync_paths(Tail, Node)
+    end.
+
+start_setup_node(Name, Host) ->
+    Opts = [{monitor_master, true}],
+    case ct_slave:start(Host, Name, Opts) of
+        {ok, _SlaveNode} = O ->
+            O;
+        {error, Cause, Node} ->
+            {error, {Node, Cause}}
+    end.
+
+teardown_nodes({Started, Master}, Slaves) ->
+    [ct_slave:stop(S) || S <- Slaves, is_atom(S)],
+    case Started of
+        kept ->
+            ok;
+        started ->
+            net_kernel:stop()
+    end.
 
 %%--------------------------
 %% helper functions
