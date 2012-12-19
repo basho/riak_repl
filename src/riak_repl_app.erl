@@ -160,7 +160,7 @@ cluster_mgr_member_fun({IP, Port}) ->
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
                 get_matching_address, [NormIP, AddressMask]),
-            Results
+            lists_shuffle(Results)
     end.
 
 %% @doc Given the result of inet:getifaddrs() and an IP a client has
@@ -198,6 +198,18 @@ lists_pos(Needle, [Needle | _Haystack], N) ->
 
 lists_pos(Needle, [_NotNeedle | Haystack], N) ->
     lists_pos(Needle, Haystack, N + 1).
+
+lists_shuffle([]) ->
+    [];
+
+lists_shuffle([E]) ->
+    [E];
+
+lists_shuffle(List) ->
+    Max = length(List),
+    Keyed = [{crypto:rand_uniform(1, Max), E} || E <- List],
+    Sorted = lists:sort(Keyed),
+    [N || {_, N} <- Sorted].
 
 %% count the number of 1s in netmask to get the CIDR
 %% Maybe there's a better way....?
