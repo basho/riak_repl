@@ -207,7 +207,7 @@ lists_shuffle([E]) ->
 
 lists_shuffle(List) ->
     Max = length(List),
-    Keyed = [{crypto:rand_uniform(1, Max), E} || E <- List],
+    Keyed = [{random:uniform(Max), E} || E <- List],
     Sorted = lists:sort(Keyed),
     [N || {_, N} <- Sorted].
 
