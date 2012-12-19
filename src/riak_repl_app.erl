@@ -8,8 +8,12 @@
 
 -include("riak_core_connection.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 -define(TRACE(_Stmt),ok).
-%%-define(TRACE(Stmt),Stmt).
+-else.
+-define(TRACE(_Stmt),ok).
+-endif.
 
 %% @spec start(Type :: term(), StartArgs :: term()) ->
 %%          {ok,Pid} | ignore | {error,Error}
@@ -372,4 +376,18 @@ prep_stop(_State) ->
     stopping.
 
 
+%%%%%%%%%%%%%%%%
+%% Unit Tests %%
+%%%%%%%%%%%%%%%%
 
+-ifdef(TEST).
+
+lists_shuffle_test() ->
+    %% We can rely on the output to "expected" to be deterministic only as long
+    %% as lists_shuffle/1 uses a deterministic random function. It does for now.
+    In = lists:seq(0,9),
+    Expected = [4,0,8,3,5,9,7,1,2,6],
+    Out = lists_shuffle(In),
+    ?assert(Expected == Out).
+
+-endif.
