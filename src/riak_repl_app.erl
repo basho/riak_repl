@@ -8,8 +8,12 @@
 
 -include("riak_core_connection.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 -define(TRACE(_Stmt),ok).
-%%-define(TRACE(Stmt),Stmt).
+-else.
+-define(TRACE(_Stmt),ok).
+-endif.
 
 %% @spec start(Type :: term(), StartArgs :: term()) ->
 %%          {ok,Pid} | ignore | {error,Error}
@@ -160,7 +164,7 @@ cluster_mgr_member_fun({IP, Port}) ->
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
                 get_matching_address, [NormIP, AddressMask]),
-            Results
+            lists_shuffle(Results)
     end.
 
 %% @doc Given the result of inet:getifaddrs() and an IP a client has
@@ -198,6 +202,18 @@ lists_pos(Needle, [Needle | _Haystack], N) ->
 
 lists_pos(Needle, [_NotNeedle | Haystack], N) ->
     lists_pos(Needle, Haystack, N + 1).
+
+lists_shuffle([]) ->
+    [];
+
+lists_shuffle([E]) ->
+    [E];
+
+lists_shuffle(List) ->
+    Max = length(List),
+    Keyed = [{random:uniform(Max), E} || E <- List],
+    Sorted = lists:sort(Keyed),
+    [N || {_, N} <- Sorted].
 
 %% count the number of 1s in netmask to get the CIDR
 %% Maybe there's a better way....?
@@ -360,4 +376,18 @@ prep_stop(_State) ->
     stopping.
 
 
+%%%%%%%%%%%%%%%%
+%% Unit Tests %%
+%%%%%%%%%%%%%%%%
 
+-ifdef(TEST).
+
+lists_shuffle_test() ->
+    %% We can rely on the output to "expected" to be deterministic only as long
+    %% as lists_shuffle/1 uses a deterministic random function. It does for now.
+    In = lists:seq(0,9),
+    Expected = [4,0,8,3,5,9,7,1,2,6],
+    Out = lists_shuffle(In),
+    ?assert(Expected == Out).
+
+-endif.
