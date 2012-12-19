@@ -102,35 +102,41 @@
 %%% API
 %%%===================================================================
 
-%% start the Cluster Manager
+%% @doc start the Cluster Manager
 -spec(start_link() -> ok).
 start_link() ->
     Args = [],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
-%% register a bootstrap cluster locator that just uses the address passed to it
+%% @doc register a bootstrap cluster locator that just uses the address passed to it
 %% for simple ip addresses and one that looks up clusters by name. This is needed
 %% before the cluster manager is up and running so that the connection supervisior
 %% can kick off some initial connections if some remotes are already known (in the
 %% ring) from previous additions.
+-spec register_cluster_locator() -> 'ok'.
 register_cluster_locator() ->
     register_cluster_addr_locator().
 
-%% Called by riak_repl_leader whenever a leadership election
-%% takes place. Tells us who the leader is.
+%% @doc Tells us who the leader is. Called by riak_repl_leader whenever a
+%% leadership election takes place.
+-spec set_leader(LeaderNode :: node(), _LeaderPid :: pid()) -> 'ok'.
 set_leader(LeaderNode, _LeaderPid) ->
     gen_server:call(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
+-spec get_leader() -> node().
 get_leader() ->
     gen_server:call(?SERVER, leader_node).
 
+%% @doc True if the local manager is the leader.
+-spec get_is_leader() -> boolean().
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader).
 
-%% Register a function that will get called to get out local riak node member's IP addrs.
+%% @doc Register a function that will get called to get out local riak node member's IP addrs.
 %% MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
+-spec register_member_fun(MemberFun :: fun((inet:addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
@@ -140,37 +146,40 @@ register_restore_cluster_targets_fun(ReadClusterFun) ->
 register_save_cluster_members_fun(WriteClusterFun) ->
     gen_server:cast(?SERVER, {register_save_cluster_members_fun, WriteClusterFun}).
 
-%% Specify how to reach a remote cluster, it's name is
+%% @doc Specify how to reach a remote cluster, it's name is
 %% retrieved by asking it via the control channel.
 -spec(add_remote_cluster(ip_addr()) -> ok).
 add_remote_cluster({IP,Port}) ->
     gen_server:cast(?SERVER, {add_remote_cluster, {IP,Port}}).
 
-%% Remove a remote cluster by name
+%% @doc Remove a remote cluster by name
 -spec(remove_remote_cluster(ip_addr() | string()) -> ok).
 remove_remote_cluster(Cluster) ->
     gen_server:cast(?SERVER, {remove_remote_cluster, Cluster}).
 
-%% Retrieve a list of known remote clusters that have been resolved (they responded).
+%% @doc Retrieve a list of known remote clusters that have been resolved (they responded).
 -spec(get_known_clusters() -> {ok,[clustername()]} | term()).
 get_known_clusters() ->
     gen_server:call(?SERVER, get_known_clusters).
 
-%% Retrieve a list of IP,Port tuples we are connected to or trying to connect to
+%% @doc Retrieve a list of IP,Port tuples we are connected to or trying to connect to
 get_connections() ->
     gen_server:call(?SERVER, get_connections).
 
 get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}).
 
-%% Return a list of the known IP addresses of all nodes in the remote cluster.
+%% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
 
+%% @doc stops the local server.
+-spec stop() -> 'ok'.
 stop() ->
     gen_server:call(?SERVER, stop).
 
+-spec set_gc_interval(Interval :: timeout()) -> 'ok'.
 set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
