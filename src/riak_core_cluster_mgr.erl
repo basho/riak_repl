@@ -129,7 +129,7 @@ register_cluster_locator() ->
 %% leadership election takes place.
 -spec set_leader(LeaderNode :: node(), _LeaderPid :: pid()) -> 'ok'.
 set_leader(LeaderNode, _LeaderPid) ->
-    gen_server:call(?SERVER, {set_leader_node, LeaderNode}).
+    gen_server:cast(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
 -spec get_leader() -> node().
@@ -220,17 +220,6 @@ handle_call({get_my_members, MyAddr}, _From, State) ->
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
 
-handle_call({set_leader_node, LeaderNode}, _From, State) ->
-    State2 = State#state{leader_node = LeaderNode},
-    case node() of
-        LeaderNode ->
-            %% oh crap, it's me!
-            {reply, ok, become_leader(State2, LeaderNode)};
-        _ ->
-            %% not me.
-            {reply, ok, become_proxy(State2, LeaderNode)}
-    end;
-
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 
@@ -285,6 +274,17 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
                        NoLeaderResult,
                        State)
     end.
+
+handle_cast({set_leader_node, LeaderNode}, State) ->
+    State2 = State#state{leader_node = LeaderNode},
+    case node() of
+        LeaderNode ->
+            %% oh crap, it's me!
+            {noreply, become_leader(State2, LeaderNode)};
+        _ ->
+            %% not me.
+            {noreply, become_proxy(State2, LeaderNode)}
+    end;
 
 handle_cast({set_gc_interval, Interval}, State) ->
     schedule_gc_timer(Interval),
