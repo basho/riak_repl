@@ -30,7 +30,24 @@
 -define(REMOTE_MEMBERS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
 
 single_node_test_() ->
-    {setup, fun start_link_setup/0, fun(_) -> cleanup() end, fun(_) -> [
+    {setup,
+    fun start_link_setup/0,
+    fun(Pids) ->
+        cleanup(),
+        Mons = [erlang:monitor(process, Pid) || Pid <- Pids],
+        WaitFun = fun
+            ([], _CB) ->
+                ok;
+            (WaitingFor, CB) ->
+                receive
+                    {'DOWN', MonRef, process, _Pid, _Why} ->
+                        WaitingFor2 = lists:delete(MonRef, WaitingFor),
+                        CB(WaitingFor2, CB)
+                end
+        end
+    end,
+
+    fun(_) -> [
 
         {"is leader", ?_assert(riak_core_cluster_mgr:get_is_leader() == false)},
 
@@ -106,8 +123,11 @@ single_node_test_() ->
 
     ] end }.
 
-leader_transfer_test_() ->
+multinode_test_d() ->
     {setup, fun() ->
+        % superman, batman, and wonder woman are all part of the JLA
+        % (Justice League of America). Superman is the defacto leader, with
+        % batman and wonder woman as 2 and 3.
         NodeConfigs = [
             {rt_superman, [{port, 6001}]},
             {rt_batman, [{port, 6002}]},
@@ -125,6 +145,7 @@ leader_transfer_test_() ->
         end || {Name, Props} <- NodeConfigs],
         {Res, Nodes} = lists:unzip(ResAndNode),
         ?debugFmt("Setup result:  ~p", [Res]),
+        [watchit(Pid) || Pid <- lists:flatten(Res)],
         {TearDownHints, Nodes}
     end,
     fun({TDH, Nodes}) ->
@@ -139,6 +160,95 @@ leader_transfer_test_() ->
             [?assertEqual(Superman, L) || L <- Leaders],
             {IsLeaders, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_is_leader, []),
             ?assertEqual([true, false, false], IsLeaders)
+        end},
+
+        {"swap leaders", fun() ->
+            rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [
+                Batman, self()]),
+            {Leaders, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_leader, []),
+            [?assertEqual(Batman, L) || L <- Leaders],
+            {IsLeaders, []} = rpc:multicall(Nodes, riak_core_cluster_mgr,
+                get_is_leader, []),
+            ?assertEqual([false, true, false], IsLeaders),
+
+            % reset the leader to superman for the rest of the tests.
+            rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Superman, self()])
+        end},
+
+        {"register member fun", fun() ->
+            MemberFun = fun ?MODULE:register_member_fun_cb/1,
+            rpc:multicall(Nodes, riak_core_cluster_mgr, register_member_fun, [MemberFun]),
+            {Res, []} = rpc:multicall(Nodes, gen_server, call, [?CLUSTER_MANAGER_SERVER, {get_my_members, {"127.0.0.1", 6001}}]),
+            Expected = repeat(?REMOTE_MEMBERS, 3),
+            ?assertEqual(Expected, Res)
+        end},
+
+        {"get known clusters when empty", fun() ->
+            % need to register member fun and save cluster members first
+            MemberFun = fun ?MODULE:return_ok/2,
+            rpc:multicall(Nodes, riak_core_cluter_mgr, register_save_cluster_members_fun, [MemberFun]),
+
+            % and the restore fun
+            RestoreFun = fun ?MODULE:restore_fun/0,
+            rpc:multicall(Nodes, riak_core_cluster_mgr, register_restore_cluster_targets_fun, [RestoreFun]),
+
+            % and now the test proper.
+            {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
+            Expected = repeat({ok, []}, 3),
+            ?assertEqual(Expected, Res)
+        end},
+
+        {"get ipaddrs of cluster with unknown name", fun() ->
+            {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, ["unknown"]),
+            Expected = repeat({ok, []}, 3),
+            ?assertEqual(Expected, Res)
+        end},
+
+        {"get list of remote cluster names", fun() ->
+            {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
+            Expected = repeat({ok, ["unknown"]}, 3),
+            ?assertEqual(Expected, Res)
+        end},
+
+        {"remove cluster by name from non-leader node", fun() ->
+            rpc:call(Batman, riak_core_cluster_mgr, remove_remote_cluster, ["unknown"]),
+            {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
+            Expected = repeat({ok, []}, 3),
+            ?assertEqual(Expected, Res)
+        end},
+
+        {"add remote cluster from two different non-leader nodes, but still resolve", fun() ->
+            rpc:call(Batman, riak_core_cluster_mgr, add_remote_cluster, [?REMOTE_CLUSTER_ADDR]),
+            ?debugMsg("bing"),
+            {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
+            ?debugMsg("bing"),
+            Expected = repeat({ok, []}, 3),
+            ?debugMsg("bing"),
+            ?assertEqual(Expected, Res),
+            ?debugMsg("bing"),
+            rpc:call(Wonder, riak_core_cluster_mgr, add_remote_cluster, [?REMOTE_CLUSTER_ADDR]),
+            ?debugMsg("bing"),
+            ?assertEqual({Res, []}, rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []))
+            ?debugMsg("bing")
+        end},
+
+        {"connect to remote cluster", fun() ->
+            rpc:call(Batman, ?MODULE, start_fake_remote_cluster_service, []),
+            rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Batman, undefined]),
+            timer:sleep(2000),
+            {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
+            Expected = repeat({ok, [?REMOTE_CLUSTER_NAME]}, 3),
+            ?assertEqual(Expected, Res)
+        end},
+
+        {"get ipaddres of cluster", fun() ->
+            Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
+            Rotated1 = [{"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
+            Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
+            {[R1, R2, R3], []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
+            ?assertEqual({ok, Original}, R1),
+            ?assertEqual({ok, Rotated1}, R2),
+            ?assertEqual({ok, Rotated2}, R3)
         end}
 
     ] end }.
@@ -152,13 +262,29 @@ start_link_setup(ClusterAddr) ->
     %% need to start it here so that a supervision tree will be created.
     ok = application:start(ranch),
     %% we also need to start the other connection servers
-    {ok, _Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
-    {ok, _Pid2} = riak_core_connection_mgr:start_link(),
+    {ok, Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
+    {ok, Pid2} = riak_core_connection_mgr:start_link(),
     {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
     unlink(Pid3),
     %% now start cluster manager
-    {ok, _Pid4 } = riak_core_cluster_mgr:start_link().
+    {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
+    [Pid1, Pid2, Pid3, Pid4].
 
+watchit(Pid) ->
+    proc_lib:spawn(?MODULE, watchit_loop, [Pid]).
+
+watchit_loop(Pid) ->
+    Mon = erlang:monitor(process, Pid),
+    watchit_loop(Pid, Mon).
+
+watchit_loop(Pid, Mon) ->
+    receive
+        {'DOWN', Mon, process, Pid, Cause} ->
+            ?debugFmt("~n== DEATH OF A MONITORED PROCESS ==~n~p died due to ~p", [Pid, Cause]),
+            ok;
+        _ ->
+            watchit_loop(Pid, Mon)
+    end.
 
 %cleanup_test() ->
 cleanup() ->
@@ -234,7 +360,7 @@ start_setup_node(Name, Host) ->
             {error, {Node, Cause}}
     end.
 
-teardown_nodes({Started, Master}, Slaves) ->
+teardown_nodes({Started, _Master}, Slaves) ->
     [ct_slave:stop(S) || S <- Slaves, is_atom(S)],
     case Started of
         kept ->
@@ -242,6 +368,17 @@ teardown_nodes({Started, Master}, Slaves) ->
         started ->
             net_kernel:stop()
     end.
+
+register_member_fun_cb(_Addr) ->
+    ?REMOTE_MEMBERS.
+
+return_ok(_,_) -> ok.
+
+restore_fun() ->
+    [{test_name_locator, ?REMOTE_CLUSTER_ADDR}].
+
+repeat(Term, N) ->
+    [Term || _ <- lists:seq(1, N)].
 
 %%--------------------------
 %% helper functions
