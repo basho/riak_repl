@@ -72,4 +72,4 @@ init([]) ->
 
 make_remote(Remote) ->
     {Remote, {riak_core_cluster_conn, start_link, [Remote]},
-        permanent, ?SHUTDOWN, worker, [riak_core_cluster_conn]}.
+        temporary, ?SHUTDOWN, worker, [riak_core_cluster_conn]}.
