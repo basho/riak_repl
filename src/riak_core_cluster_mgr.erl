@@ -2,35 +2,42 @@
 %%
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
-%% A cluster manager runs on every node. It registers a service via the riak_core_service_mgr
-%% with protocol 'cluster_mgr'. The service will either answer queries (if it's the leader),
-%% or foward them to the leader (if it's not the leader).
+%% A cluster manager runs on every node. It registers a service via the 
+%% riak_core_service_mgr with protocol 'cluster_mgr'. The service will either
+%% answer queries (if it's the leader), or foward them to the leader (if it's
+%% not the leader).
 %%
-%% Every cluster manager instance (one per node in the cluster) is told who the leader is
-%% when there is a leader change. An outside agent is responsible for determining
-%% which instance of cluster manager is the leader. For example, the riak_repl2_leader server
-%% is probably a good place to do this from. Call set_leader_node(node(), pid()).
+%% Every cluster manager instance (one per node in the cluster) is told who the
+%% leader is when there is a leader change. An outside agent is responsible for
+%% determining which instance of cluster manager is the leader. For example,
+%% the riak_repl2_leader server is probably a good place to do this from. Call
+%% set_leader_node(node(), pid()).
 %%
-%% If I'm the leader, I answer local gen_server:call requests from non-leader cluster managers.
-%% I also establish out-bound connections to any IP address added via add_remote_cluster(ip_addr()),
-%% in order to resolve the name of the remote cluster and to collect any additional member addresses
-%% of that cluster. I keep a database of members per named cluster.
+%% If I'm the leader, I answer local gen_server:call requests from non-leader
+%% cluster managers. I also establish out-bound connections to any IP address
+%% added via add_remote_cluster(ip_addr()), in order to resolve the name of the
+%% remote cluster and to collect any additional member addresses of that
+%% cluster. I keep a database of members per named cluster.
 %%
-%% If I am not the leader, I proxy all requests to the actual leader because I probably don't
-%% have the latest inforamtion. I don't make outbound connections either.
+%% If I am not the leader, I proxy all requests to the actual leader because I
+%% probably don't have the latest inforamtion. I don't make outbound
+%% connections either.
 %%
-%% The local cluster's members list is supplied by the members_fun in register_member_fun()
-%% API call. The cluster manager will call the registered function to get a list of the local
-%% cluster members; that function should return a list of {IP,Port} tuples in order of the least
-%% "busy" to most "busy". Busy is probably proportional to the number of connections it has for
-%% replication or handoff. The cluster manager will then hand out the full list to remote cluster
-%% managers when asked for its members, except that each time it hands our the list, it will
-%% rotate the list so that the fist "least busy" is moved to the end, and all others are pushed
-%% up the front of the list. This helps balance the load when the local connection manager
-%% asks the cluster manager for a list of IPs to connect for a single connection request. Thus,
-%% successive calls from the connection manager will appear to round-robin through the last
-%% known list of IPs from the remote cluster. The remote clusters are occasionaly polled to
-%% get a fresh list, which will also help balance the connection load on them.
+%% The local cluster's members list is supplied by the members_fun in
+%% register_member_fun() API call. The cluster manager will call the registered
+%% function to get a list of the local cluster members; that function should
+%% return a list of {IP,Port} tuples in order of the least "busy" to most
+%% "busy". Busy is probably proportional to the number of connections it has for
+%% replication or handoff. The cluster manager will then hand out the full list
+%% to remote cluster managers when asked for its members, except that each time
+%% it hands our the list, it will rotate the list so that the fist "least busy"
+%% is moved to the end, and all others are pushed up the front of the list.
+%% This helps balance the load when the local connection manager asks the
+%% cluster manager for a list of IPs to connect for a single connection request.
+%% Thus, successive calls from the connection manager will appear to round-robin
+%% through the last known list of IPs from the remote cluster. The remote
+%% clusters are occasionaly polled to get a fresh list, which will also help
+%% balance the connection load on them.
 %%
 %% TODO:
 %% 1. should the service side do push notifications to the client when nodes are added/deleted?
@@ -109,11 +116,11 @@ start_link() ->
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
-%% @doc register a bootstrap cluster locator that just uses the address passed to it
-%% for simple ip addresses and one that looks up clusters by name. This is needed
-%% before the cluster manager is up and running so that the connection supervisior
-%% can kick off some initial connections if some remotes are already known (in the
-%% ring) from previous additions.
+%% @doc register a bootstrap cluster locator that just uses the address passed
+%% to it for simple ip addresses and one that looks up clusters by name. This
+%% is needed before the cluster manager is up and running so that the
+%% connection supervisior can kick off some initial connections if some
+%% remotes are already known (in the ring) from previous additions.
 -spec register_cluster_locator() -> 'ok'.
 register_cluster_locator() ->
     register_cluster_addr_locator().
@@ -134,8 +141,8 @@ get_leader() ->
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader).
 
-%% @doc Register a function that will get called to get out local riak node member's IP addrs.
-%% MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
+%% @doc Register a function that will get called to get out local riak node
+%% member's IP addrs. MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
 -spec register_member_fun(MemberFun :: fun((inet:addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
