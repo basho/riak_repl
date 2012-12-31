@@ -276,7 +276,15 @@ get_matching_address(IP, Mask) ->
                                     _Other ->
                                         ?TRACE(lager:info("IP ~p with CIDR ~p masked as ~p",
                                                           [MyIP, CIDR, _Other])),
-                                        Acc
+                                        case {Acc, rfc1918(IP), rfc1918(MyIP)} of
+                                            {undefined, _Rfc, _Rfc} ->
+                                                % we havn't found anything better, and this has a decent match
+                                                ?TRACE(lager:info("Using IP found so far")),
+                                                {MyIP, Port};
+                                            _ ->
+                                                ?TRACE(lager:debug("Either an IP already found, or nat detected")),
+                                                Acc
+                                        end
                                 end
                         end
                 end, undefined, MyIPs); %% TODO if result is undefined, check NAT
