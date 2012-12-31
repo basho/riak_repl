@@ -113,13 +113,14 @@
 %%% API
 %%%===================================================================
 
+%% @doc Starts the manager linked.
 -spec(start_link() -> {ok, pid()}).
 start_link() ->
     Args = [],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
-%% resume() will begin/resume accepting and establishing new connections, in
+%% @doc Begins or resumes accepting and establishing new connections, in
 %% order to maintain the protocols that have been (or continue to be) registered
 %% and unregistered. pause() will not kill any existing connections, but will
 %% cease accepting new requests or retrying lost connections.
@@ -127,19 +128,23 @@ start_link() ->
 resume() ->
     gen_server:cast(?SERVER, resume).
 
+%% @doc Stop accepting / creating new connections; this does not terminated
+%% existing ones.
 -spec(pause() -> ok).
 pause() ->
     gen_server:cast(?SERVER, pause).
 
-%% return paused state
+%% @doc Return paused state
+-spec is_paused() -> boolean().
 is_paused() ->
     gen_server:call(?SERVER, is_paused).
 
-%% reset all backoff delays to zero
+%% @doc Reset all backoff delays to zero.
+-spec reset_backoff() -> 'ok'.
 reset_backoff() ->
     gen_server:cast(?SERVER, reset_backoff).
 
-%% Specify a function that will return the IP/Port of our Cluster Manager.
+%% @doc Specify a function that will return the IP/Port of our Cluster Manager.
 %% Connection Manager will call this function each time it wants to find the
 %% current ClusterManager
 -spec(set_cluster_finder(cluster_finder_fun()) -> ok).
@@ -161,7 +166,7 @@ register_locator(Type, Fun) ->
 apply_locator(Name, Strategy) ->
     gen_server:call(?SERVER, {apply_locator, Name, Strategy}, infinity).
 
-%% Establish a connection to the remote destination. be persistent about it,
+%% @doc Establish a connection to the remote destination. be persistent about it,
 %% but not too annoying to the remote end. Connect by name of cluster or
 %% IP address. Use default strategy to find "best" peer for connection.
 %%
@@ -178,15 +183,23 @@ apply_locator(Name, Strategy) ->
 %% Supervision must be done by the calling process if desired. No supervision
 %% is done here.
 %%
-connect(Target, ClientSpec) ->
-    gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
-
+-spec connect(Target :: string(), ClientSpec :: clientspec(), Strategy :: client_scheduler_strategy()) -> {'ok', reference()}.
 connect(Target, ClientSpec, Strategy) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
 
+%% @doc same as connect(Target, ClientSpec, default).
+%% @see connect/3
+-spec connect(Target :: string(), ClientSpec :: clientspec()) -> {'ok', reference()}.
+connect(Target, ClientSpec) ->
+    gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
+
+%% @doc Disconnect from the remote side.
+-spec disconnect(Target :: string()) -> 'ok'.
 disconnect(Target) ->
     gen_server:cast(?SERVER, {disconnect, Target}).
 
+%% doc Stop the server and sever all connections.
+-spec stop() -> 'ok'.
 stop() ->
     gen_server:call(?SERVER, stop).
 
