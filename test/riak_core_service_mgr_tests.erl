@@ -120,9 +120,9 @@ testService(_Socket, _Transport, {error, _Reason}, _Args, _Props) ->
 testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) ->
     ?TRACE(?debugMsg("testService started")),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
-    ?assert(ExpectedMyVer == MyVer),
-    ?assert(ExpectedRemoteVer == RemoteVer),
-    ?assert(Proto == testproto),
+    ?assertEqual(ExpectedMyVer, MyVer),
+    ?assertEqual(ExpectedRemoteVer, RemoteVer),
+    ?assertEqual(Proto, testproto),
 %%    timer:sleep(2000),
     {ok, self()}.
 
@@ -130,15 +130,15 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) 
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props) ->
     ?TRACE(?debugMsg("testClient started")),
     {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
-    ?assert(Proto == testproto),
-    ?assert(ExpectedMyVer == MyVer),
-    ?assert(ExpectedRemoteVer == RemoteVer),
+    ?assertEqual(Proto, testproto),
+    ?assertEqual(ExpectedMyVer, MyVer),
+    ?assertEqual(ExpectedRemoteVer, RemoteVer),
     timer:sleep(2000).
 
 connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
     case Args of
         expectedToFail ->
-            ?assert(Reason == econnrefused);
+            ?assertEqual(Reason, econnrefused);
         {retry_test, _Stuff} ->
             ?TRACE(?debugFmt("connect_failed: during retry test: ~p", [Reason])),
             ok;
