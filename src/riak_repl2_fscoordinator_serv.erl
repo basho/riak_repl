@@ -98,6 +98,8 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 
 %% @hidden
 init({Socket, Transport, Proto, _Props}) ->
+    Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
+    lager:info("Starting fullsync coordinator server (sink) with max_fssink_node=~p", [Max]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv,
@@ -181,6 +183,7 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
                     {location_down, Partition, Node}
             end;
         busy ->
+            lager:debug("node_reserver returned location_busy for partition ~p on node ~p", [Partition, Node]),
             {location_busy, Partition, Node};
         down ->
             {location_down, Partition, Node}

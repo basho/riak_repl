@@ -431,6 +431,11 @@ modes(NewModes) ->
     set_modes(Modes),
     modes([]).
 
+%% For each of these "max" parameter changes, we need to make an rpc multi-call to every node
+%% so that all nodes have the new value in their application environment. That way, whoever
+%% becomes the fullsync coordinator will have the correct values. TODO: what happens when a
+%% machine bounces and becomes leader? It won't know the new value. Seems like we need a central
+%% place to hold these configuration values.
 max_fssource_node([]) ->
     %% show the default so as not to confuse the user
     io:format("max_fssource_node value = ~p~n",
@@ -438,9 +443,11 @@ max_fssource_node([]) ->
                                   ?DEFAULT_SOURCE_PER_NODE)]);
 max_fssource_node([FSSourceNode]) ->
     NewVal = erlang:list_to_integer(FSSourceNode),
-    application:set_env(riak_repl, max_fssource_node, NewVal),
+    riak_core_util:rpc_every_member(?MODULE, max_fssource_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
     max_fssource_node([]),
-    ok.
+    ok;
+max_fssource_node(NewVal) ->
+    application:set_env(riak_repl, max_fssource_node, NewVal).
 
 max_fssource_cluster([]) ->
     %% show the default so as not to confuse the user
@@ -449,18 +456,22 @@ max_fssource_cluster([]) ->
                                   ?DEFAULT_SOURCE_PER_CLUSTER)]);
 max_fssource_cluster([FSSourceCluster]) ->
     NewVal = erlang:list_to_integer(FSSourceCluster),
-    application:set_env(riak_repl, max_fssource_cluster, NewVal),
+    riak_core_util:rpc_every_member(?MODULE, max_fssource_cluster, [NewVal], ?CONSOLE_RPC_TIMEOUT),
     max_fssource_cluster([]),
-    ok.
+    ok;
+max_fssource_cluster(NewVal) ->
+    application:set_env(riak_repl, max_fssource_cluster, NewVal).
 
 max_fssink_node([]) ->
     io:format("max_fssink_node value = ~p~n",
         [app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE)]);
 max_fssink_node([FSSinkNode]) ->
     NewVal = erlang:list_to_integer(FSSinkNode),
-    application:set_env(riak_repl, max_fssink_node, NewVal),
+    riak_core_util:rpc_every_member(?MODULE, max_fssink_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
     max_fssink_node([]),
-    ok.
+    ok;
+max_fssink_node(NewVal) ->
+    application:set_env(riak_repl, max_fssink_node, NewVal).
 
 %% helper functions
 
