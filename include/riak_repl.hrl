@@ -27,6 +27,7 @@
 -define(RESERVATION_TIMEOUT, (20 * 1000)).
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
 -define(RETRY_WHEREIS_INTERVAL, 1000).
+-define(CONSOLE_RPC_TIMEOUT, 5000).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
