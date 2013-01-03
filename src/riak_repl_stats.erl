@@ -368,11 +368,7 @@ test_populate_stats() ->
     ok = elections_elected(),
     ok = elections_leader_changed(),
     ok = rt_source_errors(),
-    ok = rt_sink_errors(),
-    %% incrementing rt_source_errors + rt_sink_errors 
-    %% should set rt_dirty to 2, then the call to rt_dirty()
-    %% will set it to 3
-    ok = rt_dirty().
+    ok = rt_sink_errors().
 
 test_check_stats() ->
     ?assertEqual([{server_bytes_sent,1000},
@@ -397,7 +393,7 @@ test_check_stats() ->
                   {server_tx_kbps,[]},
                   {rt_source_errors,1},
                   {rt_sink_errors, 1},
-                  {rt_dirty, 3}], get_stats()).
+                  {rt_dirty, 2}], get_stats()).
 
 test_report() ->
     Bytes = 1024 * 60,
