@@ -182,6 +182,7 @@ handle_info({tcp_closed, _S},
         0 ->
             ok;
         NumBytes ->
+            riak_repl_stats:rt_source_errors(),
             lager:warning("Realtime connection ~p to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
@@ -191,6 +192,7 @@ handle_info({tcp_closed, _S},
     {stop, normal, State};
 handle_info({tcp_error, _S, Reason}, 
             State = #state{remote = Remote, cont = Cont}) ->
+    riak_repl_stats:rt_source_errors(),
     lager:warning("Realtime connection ~p to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
     {stop, normal, State};
@@ -222,6 +224,7 @@ recv(TcpBin, State = #state{remote = Name}) ->
             recv(Cont, State);
         {error, Reason} ->
             %% Something bad happened
+            riak_repl_stats:rt_source_errors(),
             {stop, {framing_error, Reason}, State}
     end.
 
@@ -230,5 +233,6 @@ peername(#state{transport = T, socket = S}) ->
         {ok, Res} ->
             Res;
         {error, Reason} ->
+            riak_repl_stats:rt_source_errors(),
             {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
