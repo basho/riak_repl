@@ -148,8 +148,6 @@ connect_failed(_ClientProto, Reason, SourcePid) ->
 %% @hidden
 init(Cluster) ->
     process_flag(trap_exit, true),
-    Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
-    lager:info("Starting fullsync coordinator (source) with max_fssource_node=~p", [Max]),
     TcpOptions = [
         {kepalive, true},
         {nodelay, true},
@@ -236,6 +234,10 @@ handle_cast(start_fullsync,  State) ->
             lager:warning("Fullsync already in progress; ignoring start"),
             {noreply, State};
         false ->
+            MaxSource = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
+            MaxCluster = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
+            lager:info("Starting fullsync (source) with max_fssource_node=~p and max_fssource_cluster=~p",
+                       [MaxSource, MaxCluster]),
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             N = largest_n(Ring),
             Partitions = sort_partitions(Ring),
