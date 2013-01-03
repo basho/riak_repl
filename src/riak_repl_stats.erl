@@ -119,13 +119,12 @@ rt_sink_errors() ->
 rt_dirty() ->
     touch_rt_dirty_file(),
     increment_counter(rt_dirty),
-    %% The first time source or sink errors are reported, notify the coordinator
-    %% of the new state. Don't just trigger this on rt_dirty being 1 as that
-    %% value is persistent. This helps if the coordinator doesn't yet know
-    %% that a node is dirty and the dirty node restarts (which will then
-    %% notify the coordinator).
-    case lookup_stat(rt_source_errors) == 1
-        orelse lookup_stat(rt_sink_errors) == 1 of
+    Stat = lookup_stat(rt_dirty) + 1,  % we know it's at least 1
+    % increment counter is a cast, so if the number is relatively small
+    % then notify the server. otherwise, we don't want to spam the
+    % coordinator. Once this value is reset to 0, we'll notify the
+    % coordinator again.
+    case Stat > 0 andalso Stat < 3 of
         true ->
             %% the coordinator might not be up yet
             lager:info("Notifying coordinator of rt_dirty"),
@@ -306,7 +305,6 @@ remove_rt_dirty_file() ->
 
 clear_rt_dirty() ->
     remove_rt_dirty_file(),
-    register_stat(rt_dirty, counter),
     %% folsom_metrics:notify_existing_metric doesn't support clear yet
     folsom_metrics_counter:clear({riak_repl, rt_dirty}).
 
