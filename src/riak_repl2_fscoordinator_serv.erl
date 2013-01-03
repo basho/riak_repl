@@ -98,6 +98,9 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 
 %% @hidden
 init({Socket, Transport, Proto, _Props}) ->
+    %% ensure that the ring has values for fullsync parameters or load them from the ring
+    %% into our application environment.
+    riak_repl_ring:reconcile_fs_params_with_ring([{max_fssink_node, ?DEFAULT_MAX_SINKS_NODE}]),
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
     lager:info("Starting fullsync coordinator server (sink) with max_fssink_node=~p", [Max]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Socket),
