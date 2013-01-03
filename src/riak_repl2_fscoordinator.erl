@@ -216,15 +216,15 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
     {reply, SelfStats, State};
 
 handle_call(is_running, _From, State) ->
-    IsRunning = is_running_priv(State),
+    IsRunning = is_fullsync_in_progress(State),
     {reply, IsRunning, State};
 
-handle_call({node_dirty, Node}, From,
+handle_call({node_dirty, Node}, _From,
             State = #state{
                 dirty_nodes=DirtyNodes,
                 dirty_nodes_during_fs=DirtyDuringFS}) ->
     NewState =
-        case is_running_priv(State) of
+        case is_fullsync_in_progress(State) of
           true -> lager:info("Node dirty during fullsync from ~p ", [Node]),
                   NewDirty = ordsets:add_element(Node, DirtyDuringFS),
                   State#state{dirty_nodes_during_fs = NewDirty};
@@ -672,21 +672,6 @@ is_fullsync_in_progress(State) ->
         _ ->
             true
     end.
-
-is_running_priv(State) ->
-    RunningSrcs = State#state.running_sources,
-    % are we done?
-    QEmpty = queue:is_empty(State#state.partition_queue),
-    Waiting = State#state.whereis_waiting,
-    case {RunningSrcs, QEmpty, Waiting} of
-        {[], true, []} ->
-            % nothing outstanding, so we can exit.
-            false;
-        _ ->
-            % there's something waiting for a response.
-            true
-    end.
-
 
 % dirty_nodes is the set of nodes that are marked "dirty"
 % due to a realtime repl issue while fullsync isn't running.
