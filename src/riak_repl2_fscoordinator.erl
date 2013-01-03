@@ -148,6 +148,8 @@ connect_failed(_ClientProto, Reason, SourcePid) ->
 %% @hidden
 init(Cluster) ->
     process_flag(trap_exit, true),
+    Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
+    lager:info("Starting fullsync coordinator (source) with max_fssource_node=~p", [Max]),
     TcpOptions = [
         {kepalive, true},
         {nodelay, true},

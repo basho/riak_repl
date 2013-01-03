@@ -83,6 +83,8 @@ handle_call({reserve, Partition}, _From, State) ->
             Reserved2 = [{Partition, Tref} | State#state.reservations],
             {reply, ok, State#state{reservations = Reserved2}};
         true ->
+            lager:debug("Node busy for partition ~p. running=~p reserved=~p max=~p",
+                        [Partition, Running, Reserved, Max]),
             {reply, busy, State}
     end;
 
