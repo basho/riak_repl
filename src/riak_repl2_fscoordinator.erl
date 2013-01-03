@@ -692,6 +692,7 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
             % if there are nodes that are in BOTH sets, then don't notify
             % those nodes below
             NodesToNotify = ordsets:subtract(DirtyNodes, DirtyNodesDuringFS),
+            lager:info("Notifying nodes ~p", [ NodesToNotify]),
             rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
             % TODO: Check return values, only clear those that passed
             State#state{dirty_nodes=ordsets:new()};
@@ -712,5 +713,6 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
         end.
 
 nodeset_to_string_list(Set) ->
-    string:join([erlang:atom_to_list(V) || V <- ordsets:to_list(ordsets:add_element(node(), Set))],",").
+    string:join([erlang:atom_to_list(V) || V <- ordsets:to_list(Set)],",").
+
 

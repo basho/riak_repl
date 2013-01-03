@@ -128,7 +128,7 @@ rt_dirty() ->
         orelse lookup_stat(rt_sink_errors) == 1 of
         true ->
             %% the coordinator might not be up yet
-            lager:info("Notifying coordinator of rt_dirty state"),
+            lager:info("Notifying coordinator of rt_dirty"),
             riak_repl2_fscoordinator:node_dirty(node());
         false -> pass
     end.
