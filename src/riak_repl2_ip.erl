@@ -8,8 +8,8 @@
 -endif.
 
 %% @doc Given the result of inet:getifaddrs() and an IP a client has
-%% connected to, attempt to determine the appropriate subnet mask.  If
-%% the IP the client connected to cannot be found, undefined is returned.
+%%      connected to, attempt to determine the appropriate subnet mask.  If
+%%      the IP the client connected to cannot be found, undefined is returned.
 -spec determine_netmask(Ifaddrs :: [{atom(), any()}], SeekIP :: string() | {integer(), integer(), integer(), integer()}) -> 'undefined' | binary().
 determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
     {ok, NormIP} = riak_repl_util:normalize_ip(SeekIP),
@@ -55,8 +55,8 @@ cidr(<<X:1/bits, Rest/bits>>, Acc) ->
             cidr(Rest, Acc)
     end.
 
-%% get the subnet mask as an integer, stolen from an old post on
-%% erlang-questions
+%% @doc Get the subnet mask as an integer, stolen from an old post on
+%%      erlang-questions.
 mask_address(Addr={_, _, _, _}, Maskbits) ->
     B = list_to_binary(tuple_to_list(Addr)),
     lager:debug("address as binary: ~p ~p", [B,Maskbits]),
@@ -91,7 +91,12 @@ is_rfc1918(IP) ->
             true
     end.
 
-%% find the right address to serve given the IP the node connected to
+%% @doc Find the right address to serve given the IP the node connected to.
+%%      Ideally, it will choose an IP in the same subnet, but it will fall
+%%      back to the 'closest' subnet (at least up to a class A). Then it will
+%%      just try to find anything that matches the IP's RFC 1918 status (ie.
+%%      public or private). Localhost will never be 'guessed', but it can be
+%%      directly matched.
 get_matching_address(IP, CIDR) ->
     {ok, MyIPs} = inet:getifaddrs(),
     get_matching_address(IP, CIDR, MyIPs).
