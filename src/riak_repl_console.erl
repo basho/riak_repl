@@ -26,8 +26,7 @@
 -export([modes/1, set_modes/1, get_modes/0,
          max_fssource_node/1,
          max_fssource_cluster/1,
-         max_fssink_node/1,
-         set_fullsync_param/2]).
+         max_fssink_node/1]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -437,11 +436,6 @@ modes(NewModes) ->
 %% becomes the fullsync coordinator will have the correct values. TODO: what happens when a
 %% machine bounces and becomes leader? It won't know the new value. Seems like we need a central
 %% place to hold these configuration values.
-set_fullsync_param(Param, Value) ->
-    Ring = get_ring(),
-    NewRing = riak_repl_ring:set_simple_param(Ring,Param,Value),
-    maybe_set_ring(Ring, NewRing).
-
 max_fssource_node([]) ->
     %% show the default so as not to confuse the user
     io:format("max_fssource_node value = ~p~n",
@@ -450,7 +444,6 @@ max_fssource_node([]) ->
 max_fssource_node([FSSourceNode]) ->
     NewVal = erlang:list_to_integer(FSSourceNode),
     riak_core_util:rpc_every_member(?MODULE, max_fssource_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
-    set_fullsync_param(max_fssource_node, NewVal),
     max_fssource_node([]),
     ok;
 max_fssource_node(NewVal) ->
@@ -464,7 +457,6 @@ max_fssource_cluster([]) ->
 max_fssource_cluster([FSSourceCluster]) ->
     NewVal = erlang:list_to_integer(FSSourceCluster),
     riak_core_util:rpc_every_member(?MODULE, max_fssource_cluster, [NewVal], ?CONSOLE_RPC_TIMEOUT),
-    set_fullsync_param(max_fssource_cluster, NewVal),
     max_fssource_cluster([]),
     ok;
 max_fssource_cluster(NewVal) ->
@@ -476,7 +468,6 @@ max_fssink_node([]) ->
 max_fssink_node([FSSinkNode]) ->
     NewVal = erlang:list_to_integer(FSSinkNode),
     riak_core_util:rpc_every_member(?MODULE, max_fssink_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
-    set_fullsync_param(max_fssink_node, NewVal),
     max_fssink_node([]),
     ok;
 max_fssink_node(NewVal) ->

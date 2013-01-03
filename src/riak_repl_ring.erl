@@ -34,10 +34,7 @@
          set_modes/2,
          get_modes/1,
          compose/2,
-         multicompose/1,
-         get_simple_param/2,
-         set_simple_param/3,
-         reconcile_fs_params_with_ring/1
+         multicompose/1
          ]).
 
 -ifdef(TEST).
@@ -423,55 +420,6 @@ get_modes(Ring) ->
         error ->
             %% default to mixed modes
             [mode_repl12, mode_repl13]
-    end.
-
-%% Get the ring and iterate over the passed Params, which should be things like
-%% max_fssource_cluster, max_fssink_node, etc. But they can be any replication
-%% parameters really. Each Param is a tuple of {Name, Value} where names are atoms.
-%% This function will check to see if that param is defined in the ring already;
-%% if it is, we set our application environment var to mirror the ring value. If
-%% it isn't set, we set it from our app env using Value as the default.
-%%
-%% So, the result is that the ring wins if it has a value, but gets updated if not.
-reconcile_fs_params_with_ring(Params) ->
-    {ok, Ring0} = riak_core_ring_manager:get_my_ring(),
-    Ring1 = ensure_config(Ring0),
-    lists:foldl(fun({Param, Default}, Ring) ->
-                        case get_simple_param(Param, Ring) of
-                            undefined ->
-                                Max = app_helper:get_env(riak_repl, Param, Default),
-                                F = fun(InRing, ReplConfig) ->
-                                            {new_ring, riak_repl_ring:set_repl_config(InRing, ReplConfig)}
-                                    end,
-                                R = set_simple_param(Ring,Param,Max),
-                                RC = riak_repl_ring:get_repl_config(R),
-                                {ok, NewRing} = riak_core_ring_manager:ring_trans(F, RC),
-                                NewRing;
-                            Value ->
-                                application:set_env(riak_repl, Param, Value),
-                                Ring
-                        end
-                end,
-                Ring1,
-                Params).
-
-%% @doc Update a simple replication parameter in the ring
-set_simple_param(Ring,Param,Value) ->
-    RC = get_repl_config(Ring),
-    %% just overwrite whatever was there before
-    NewRing = riak_core_ring:update_meta(
-                ?MODULE,
-                dict:store(Param, Value, RC),
-                Ring),
-    NewRing.
-
-%% @doc Return a simple replication parameter from the ring or undefined.
-get_simple_param(Param, Ring) ->
-    RC = get_repl_config(Ring),
-    case dict:find(Param, RC) of
-        {ok, Value} -> Value;
-        error ->
-            undefined
     end.
 
 %% Function composition
