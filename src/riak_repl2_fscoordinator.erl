@@ -689,9 +689,10 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
     State1 = case ordsets:size(DirtyNodes) > 0 of
         true ->
             lager:info("Notifying dirty nodes after fullsync"),
-            % if there are nodes that are in BOTH sets, then don't notify
-            % those nodes below
-            NodesToNotify = ordsets:subtract(DirtyNodes, DirtyNodesDuringFS),
+            % notify all nodes in case some weren't registered with the coord
+            AllNodesList = riak_core_node_watcher:nodes(riak_repl),
+            NodesToNotify = lists:subtract(AllNodesList,
+                                           ordsets:to_list(DirtyNodesDuringFS)),
             lager:info("Notifying nodes ~p", [ NodesToNotify]),
             rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
             % TODO: Check return values, only clear those that passed
