@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/2, connected/6, connect_failed/3, start_fullsync/1,
-         stop_fullsync/1, legacy_status/2]).
+         stop_fullsync/1, cluster_name/1, legacy_status/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -38,6 +38,10 @@ start_fullsync(Pid) ->
 
 stop_fullsync(Pid) ->
     gen_server:call(Pid, stop_fullsync).
+
+%% get the cluster name
+cluster_name(Pid) ->
+    gen_server:call(Pid, cluster_name).
 
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
@@ -105,6 +109,14 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
             {socket, SocketStats}
         ],
     {reply, Desc ++ Res, State};
+handle_call(cluster_name, _From, State) ->
+    Name = case State#state.cluster of
+        undefined ->
+            {connecting, State#state.ip};
+        ClusterName ->
+            ClusterName
+    end,
+    {reply, Name, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
