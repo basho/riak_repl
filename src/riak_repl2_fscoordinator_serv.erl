@@ -189,6 +189,10 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
             {location_down, Partition, Node}
     end,
     Transport:send(Socket, term_to_binary(Reply)),
+    State;
+
+handle_protocol_msg({unreserve, Partition}, State) ->
+    riak_repl2_fs_node_reserver:unreserve(Partition),
     State.
 
 get_partition_node(Partition) ->
