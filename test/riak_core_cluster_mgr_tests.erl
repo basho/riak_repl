@@ -360,7 +360,11 @@ sync_paths([D | Tail], Node) ->
 start_setup_node(Name, Host) ->
     Opts = [{monitor_master, true}],
     case ct_slave:start(Host, Name, Opts) of
-        {ok, _SlaveNode} = O ->
+        {ok, SlaveNode} = O ->
+            % to get io:formats and such (body snatch the user proc!)
+            User = rpc:call(SlaveNode, erlang, whereis, [user]),
+            exit(User, kill),
+            rpc:call(SlaveNode, slave, pseudo, [node(), [user]]),
             O;
         {error, Cause, Node} ->
             {error, {Node, Cause}}
