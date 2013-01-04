@@ -102,7 +102,7 @@ exchange_handshakes_with(host, Socket, Transport, MyCaps) ->
                         {?CTRL_ACK, TheirRev, TheirCaps} ->
                             Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
                             {ok,Props};
-                        {error, Reason} = Error ->
+                        {error, _Reason} = Error ->
                             Error;
                         Msg ->
                             {error, Msg}

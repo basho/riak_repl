@@ -160,12 +160,14 @@ handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
             ok;
         NumBytes ->
             %%TODO: Add remote name somehow
+            riak_repl_stats:rt_sink_errors(),
             lager:warning("Realtime connection from ~p closed with partial receive of ~b bytes\n",
                           [peername(State), NumBytes])
     end,
     {stop, normal, State};
 handle_info({tcp_error, _S, Reason}, State= #state{cont = Cont}) ->
     %%TODO: Add remote name somehow
+    riak_repl_stats:rt_sink_errors(),
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Reason, size(Cont)]),
     {stop, normal, State};
@@ -183,6 +185,7 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
                     T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
                     {noreply, State#state{active = true}};
                 {error, Reason} ->
+                    riak_repl_stats:rt_sink_errors(),
                     lager:error("Realtime replication sink for ~p had socket error - ~p\n",
                                 [Remote, Reason]),
                     {stop, normal, State}
@@ -205,6 +208,7 @@ recv(TcpBin, State) ->
             recv(Cont, do_write_objects(Seq, BinObjs, State));
         {error, Reason} ->
             %% TODO: Log Something bad happened
+            riak_repl_stats:rt_sink_errors(),
             {stop, {framing, Reason}, State}
     end.
 
@@ -286,6 +290,7 @@ peername(#state{transport = T, socket = S}) ->
         {ok, Res} ->
             Res;
         {error, Reason} ->
+            riak_repl_stats:rt_sink_errors(),
             {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
             
@@ -296,6 +301,7 @@ schedule_reactivate_socket(State = #state{transport = T,
                                           deactivated = Deactivated}) ->
     case Active of
         true ->
+            riak_repl_stats:rt_sink_errors(),
             lager:debug("Realtime sink overloaded - deactivating transport ~p socket ~p\n",
                         [T, S]),
             T:setopts(S, [{active, false}]),
