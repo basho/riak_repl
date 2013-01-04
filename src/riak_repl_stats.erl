@@ -128,8 +128,9 @@ rt_dirty() ->
         true ->
             %% the coordinator might not be up yet
             lager:debug("Notifying coordinator of rt_dirty"),
-            riak_repl2_fscoordinator:node_dirty(node());
-        false -> pass
+            riak_repl2_fscoordinator:node_dirty(node()),
+            ok;
+        false -> ok
     end.
 
 get_stats() ->
