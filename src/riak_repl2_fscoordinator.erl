@@ -695,7 +695,6 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
                                            ordsets:to_list(DirtyNodesDuringFS)),
             lager:info("Notifying nodes ~p", [ NodesToNotify]),
             rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
-            % TODO: Check return values, only clear those that passed
             State#state{dirty_nodes=ordsets:new()};
         false ->
             lager:info("No dirty nodes before fullsync started"),
