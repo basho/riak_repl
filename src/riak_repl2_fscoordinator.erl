@@ -43,7 +43,10 @@
     running_sources = [],
     successful_exits = 0,
     error_exits = 0,
-    pending_fullsync = false
+    pending_fullsync = false,
+    dirty_nodes = ordsets:new(),          % these nodes should run fullsync
+    dirty_nodes_during_fs = ordsets:new() % these nodes reported realtime errors
+                                          % during an already running fullsync
 }).
 
 %% ------------------------------------------------------------------
@@ -51,7 +54,8 @@
 %% ------------------------------------------------------------------
 
 -export([start_link/1, start_fullsync/1, stop_fullsync/1,
-    status/0, status/1, status/2, is_running/1]).
+    status/0, status/1, status/2, is_running/1,
+        node_dirty/1, node_dirty/2, node_clean/1, node_clean/2]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -128,6 +132,32 @@ is_running(Pid) when is_pid(Pid) ->
 is_running(_Other) ->
     false.
 
+node_dirty(Node) ->
+    %% if fullsync running
+    %% keep 2 lists:
+    %%  1) non-running - clear these out when fullsync finishes, and the node
+    %%  doesn't appear in list 2
+    %%  2) running - don't clear these out when fullsync finishes
+    Leader = riak_core_cluster_mgr:get_leader(),
+    Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
+     [riak_repl2_fscoordinator:node_dirty(Pid, Node) ||
+        {_, Pid} <- Fullsyncs].
+
+node_dirty(Pid, Node) ->
+    gen_server:call(Pid, {node_dirty, Node}, infinity),
+    lager:debug("Node ~p marked dirty and needs a fullsync",[Node]).
+
+node_clean(Node) ->
+    Leader = riak_core_cluster_mgr:get_leader(),
+    Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
+     [riak_repl2_fscoordinator:node_clean(Pid, Node) ||
+        {_, Pid} <- Fullsyncs].
+
+node_clean(Pid, Node) ->
+    gen_server:call(Pid, {node_clean, Node}, infinity),
+    lager:debug("Node ~p marked clean",[Node]).
+
+
 %% ------------------------------------------------------------------
 %% connection manager callbacks
 %% ------------------------------------------------------------------
@@ -177,29 +207,42 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {error_exits, State#state.error_exits},
         {busy_nodes, sets:size(State#state.busy_nodes)},
         {running_stats, SourceStats},
-        {socket, SocketStats}
+        {socket, SocketStats},
+        {fullsync_suggested,
+            nodeset_to_string_list(State#state.dirty_nodes)},
+        {fullsync_suggested_during_fs,
+            nodeset_to_string_list(State#state.dirty_nodes_during_fs)}
     ],
     {reply, SelfStats, State};
 
 handle_call(is_running, _From, State) ->
-    RunningSrcs = State#state.running_sources,
-    % are we done?
-    QEmpty = queue:is_empty(State#state.partition_queue),
-    Waiting = State#state.whereis_waiting,
-    case {RunningSrcs, QEmpty, Waiting} of
-        {[], true, []} ->
-            % nothing outstanding, so we can exit.
-            {reply, false, State};
-        _ ->
-            % there's something waiting for a response.
-            {reply, true, State}
-    end;
+    IsRunning = is_fullsync_in_progress(State),
+    {reply, IsRunning, State};
 
+handle_call({node_dirty, Node}, _From,
+            State = #state{
+                dirty_nodes=DirtyNodes,
+                dirty_nodes_during_fs=DirtyDuringFS}) ->
+    NewState =
+        case is_fullsync_in_progress(State) of
+          true -> lager:debug("Node dirty during fullsync from ~p ", [Node]),
+                  NewDirty = ordsets:add_element(Node, DirtyDuringFS),
+                  State#state{dirty_nodes_during_fs = NewDirty};
+          false -> lager:debug("Node dirty from ~p ", [Node]),
+                   NewDirty = ordsets:add_element(Node, DirtyNodes),
+                   State#state{dirty_nodes = NewDirty}
+        end,
+    {reply, ok, NewState};
+
+handle_call({node_clean, Node}, _From, State = #state{dirty_nodes=DirtyNodes}) ->
+    lager:debug("Marking ~p clean after fullsync", [Node]),
+    NewDirtyNodes = ordsets:del_element(Node, DirtyNodes),
+    NewState = State#state{dirty_nodes=NewDirtyNodes},
+    {reply, ok, NewState};
 
 handle_call(_Request, _From, State) ->
     lager:info("ignoring ~p", [_Request]),
     {reply, ok, State}.
-
 
 %% @hidden
 handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
@@ -298,9 +341,12 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             Waiting = State#state.whereis_waiting,
             case {EmptyRunning, QEmpty, Waiting} of
                 {true, true, []} ->
-                    lager:info("fullsync complete"),
+                    lager:info("Fullsync complete"),
+                    % clear the "rt dirty" stat if it's set,
+                    % otherwise, don't do anything
+                    State3 = notify_rt_dirty_nodes(State),
                     riak_repl_stats:server_fullsyncs(),
-                    {noreply, State2#state{running_sources = Running, busy_nodes = NewBusies}};
+                    {noreply, State3#state{running_sources = Running, busy_nodes = NewBusies}};
                 _ ->
                     % there's something waiting for a response.
                     State3 = start_up_reqs(State2#state{running_sources = Running, busy_nodes = NewBusies}),
@@ -632,3 +678,47 @@ is_fullsync_in_progress(State) ->
         _ ->
             true
     end.
+
+% dirty_nodes is the set of nodes that are marked "dirty"
+% due to a realtime repl issue while fullsync isn't running.
+% dirty_nodes_during_fs is the set of nodes that are marked "dirty"
+% due to a realtime repl issue while fullsync IS running.
+% After a fullsync, notify all dirty_nodes that fullsync is complete
+% and they are now clear/clean. Also, move any nodes that were marked
+% as dirty_nodes_during_fs to dirty_nodes, as they should be cleared out
+% during the next fullsync. If any state is lost in the coordinator,
+% a dirty node won't lose it's dirty state as a persistent file is kept
+% on that node.
+notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
+                                     dirty_nodes_during_fs =
+                                     DirtyNodesDuringFS}) ->
+    State1 = case ordsets:size(DirtyNodes) > 0 of
+        true ->
+            lager:debug("Notifying dirty nodes after fullsync"),
+            % notify all nodes in case some weren't registered with the coord
+            AllNodesList = riak_core_node_watcher:nodes(riak_repl),
+            NodesToNotify = lists:subtract(AllNodesList,
+                                           ordsets:to_list(DirtyNodesDuringFS)),
+            lager:debug("Notifying nodes ~p", [ NodesToNotify]),
+            rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
+            State#state{dirty_nodes=ordsets:new()};
+        false ->
+            lager:debug("No dirty nodes before fullsync started"),
+            State
+    end,
+    case ordsets:size(DirtyNodesDuringFS) > 0 of
+        true ->
+            lager:debug("Nodes marked dirty during fullsync"),
+            % move dirty_nodes_during_fs to dirty_nodes so they will be
+            % cleaned out during the next fullsync
+            State#state{dirty_nodes = DirtyNodesDuringFS,
+                          dirty_nodes_during_fs = ordsets:new()};
+        false ->
+            lager:debug("No nodes marked dirty during fullsync"),
+            State1
+        end.
+
+nodeset_to_string_list(Set) ->
+    string:join([erlang:atom_to_list(V) || V <- ordsets:to_list(Set)],",").
+
+
