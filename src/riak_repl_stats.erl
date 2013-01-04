@@ -128,8 +128,9 @@ rt_dirty() ->
         true ->
             %% the coordinator might not be up yet
             lager:debug("Notifying coordinator of rt_dirty"),
-            riak_repl2_fscoordinator:node_dirty(node());
-        false -> pass
+            riak_repl2_fscoordinator:node_dirty(node()),
+            ok;
+        false -> ok
     end.
 
 get_stats() ->
@@ -325,6 +326,12 @@ repl_stats_test_() ->
     {setup, fun() ->
                     folsom:start(),
                     meck:new(folsom_utils, [passthrough]),
+                    meck:new(riak_core_cluster_mgr, [passthrough]),
+                    meck:new(riak_repl2_fscoordinator_sup, [passthrough]),
+                    meck:expect(riak_core_cluster_mgr, get_leader, fun() ->
+                                node() end),
+                    meck:expect(riak_repl2_fscoordinator_sup, started,
+                        fun(_Node) -> [] end),
                     {ok, _CPid} = riak_core_stat_cache:start_link(),
                     {ok, Pid} = riak_repl_stats:start_link(),
                     tick(1000, 0),
@@ -334,7 +341,9 @@ repl_stats_test_() ->
              folsom:stop(),
              riak_repl_stats:stop(),
              riak_core_stat_cache:stop(),
-             meck:unload(folsom_utils)
+             meck:unload(folsom_utils),
+             meck:unload(riak_core_cluster_mgr),
+             meck:unload(riak_repl2_fscoordinator_sup)
      end,
      [{"Register stats", fun test_register_stats/0},
       {"Populate stats", fun test_populate_stats/0},
