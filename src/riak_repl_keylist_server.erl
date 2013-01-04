@@ -274,12 +274,21 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     %% Since we are the leader, the fact that we have this
     %% new code means we can only choose to use it if
     %% all nodes have been upgraded to use bloom.
-    NextState = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+    %%
+    %% If you do NOT want to use the bloom fold, you can disable it via the
+    %% {bloom_fold, false} app env for riak_repl.
+    NextState = case riak_core_capability:get({riak_repl, bloom_fold}, false) andalso
+                     app_helper:get_env(riak_repl, bloom_fold, true) of
         true ->
             %% all nodes support bloom, yay
 
-            %% don't need the diff stream to pause itself
-            DiffSize = 0,
+            %% Note: ACKS_IN_FLIGHT not relevant here, this is only the
+            %% backpressure for the bloom filter updating
+            %%
+            %% Setting DiffSize to 0 can cause large message queues, so now we
+            %% default it to non-zero. Users can set it back to 0 if they are
+            %% brave.
+            DiffSize = State#state.diff_batch_size,
             {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
             diff_bloom;
         false ->
