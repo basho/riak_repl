@@ -635,8 +635,9 @@ start_fssource(Partition2={Partition,_,_} = PartitionVal, Ip, Port, State) ->
                     lager:error("Failed to start fullsync for partition ~p :"
                         " ~p", [Partition, Reason])
             end,
+            #state{transport = Transport, socket = Socket} = State,
+            Transport:send(Socket, term_to_binary({unreserve, Partition})),
             PQueue = queue:in(Partition2, State#state.partition_queue),
-            %% Micah says don't mess with the busies here...
             State#state{partition_queue=PQueue}
     end.
 
