@@ -123,7 +123,7 @@ single_node_test_() ->
 
     ] end }.
 
-multinode_test_d() ->
+multinode_test_() ->
     {setup, fun() ->
         % superman, batman, and wonder woman are all part of the JLA
         % (Justice League of America). Superman is the defacto leader, with
@@ -212,6 +212,12 @@ multinode_test_d() ->
 
         {"remove cluster by name from non-leader node", fun() ->
             rpc:call(Batman, riak_core_cluster_mgr, remove_remote_cluster, ["unknown"]),
+            % removals are done by casts, and since we're asking for a
+            % removal from a different node, our asking could arrive before
+            % the removal request to the leader occurs, so do it twice
+            % (preferred over timeout because it will scale better to the
+            % speed of the machine running the test).
+            rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
             {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
             Expected = repeat({ok, []}, 3),
             ?assertEqual(Expected, Res)
@@ -228,7 +234,7 @@ multinode_test_d() ->
             ?debugMsg("bing"),
             rpc:call(Wonder, riak_core_cluster_mgr, add_remote_cluster, [?REMOTE_CLUSTER_ADDR]),
             ?debugMsg("bing"),
-            ?assertEqual({Res, []}, rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []))
+            ?assertEqual({Res, []}, rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, [])),
             ?debugMsg("bing")
         end},
 
