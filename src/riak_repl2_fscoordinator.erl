@@ -234,9 +234,11 @@ handle_call({node_dirty, Node}, _From,
         end,
     {reply, ok, NewState};
 
-handle_call({node_clean, Node}, _From, State) ->
+handle_call({node_clean, Node}, _From, State = #state{dirty_nodes=DirtyNodes}) ->
     lager:debug("Marking ~p clean after fullsync", [Node]),
-   {reply, ok, State};
+    NewDirtyNodes = ordsets:del_element(Node, DirtyNodes),
+    NewState = State#state{dirty_nodes=NewDirtyNodes},
+    {reply, ok, NewState};
 
 handle_call(_Request, _From, State) ->
     lager:info("ignoring ~p", [_Request]),
