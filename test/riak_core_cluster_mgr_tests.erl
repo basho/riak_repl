@@ -271,10 +271,12 @@ start_link_setup(ClusterAddr) ->
     {ok, Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
     {ok, Pid2} = riak_core_connection_mgr:start_link(),
     {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
-    unlink(Pid3),
+    %unlink(Pid3),
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
-    [Pid1, Pid2, Pid3, Pid4].
+    Pids = [Pid1, Pid2, Pid3, Pid4],
+    [unlink(P) || P <- Pids],
+    Pids.
 
 watchit(Pid) ->
     proc_lib:spawn(?MODULE, watchit_loop, [Pid]).
