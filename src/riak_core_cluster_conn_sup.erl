@@ -54,7 +54,9 @@ connections() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].
 
 is_connected(Remote) ->
-    not ([] == lists:filter(fun({R,_Pid}) -> R == Remote end, connections())).
+    Connections = connections(),
+    lists:any(fun({R,_Pid}) -> R == Remote end, Connections).
+    %not ([] == lists:filter(fun({R,_Pid}) -> R == Remote end, connections())).
 
 %% @private
 init([]) ->
