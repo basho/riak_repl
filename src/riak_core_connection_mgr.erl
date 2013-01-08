@@ -211,6 +211,7 @@ init([]) ->
     process_flag(trap_exit, true),
     %% install default "identity" locator
     Locator = fun identity_locator/2,
+    ?TRACE(?debugMsg("Starting")),
     {ok, #state{is_paused = false,
                 locators = orddict:store(identity, Locator, orddict:new())
                }}.
@@ -234,9 +235,11 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
     State2 = State#state{pending = lists:keystore(Reference, #req.ref,
                                                   State#state.pending,
                                                   Request)},
+    ?TRACE(?debugFmt("Starting connect request to ~p, ref is ~p", [Target, Reference])),
     {reply, {ok, Reference}, start_request(Request, State2)};
 
 handle_call({get_endpoint_backoff, Addr}, _From, State) ->
+    ?TRACE(?debugFmt("backing off ~p", [Addr])),
     {reply, {ok, get_endpoint_backoff(Addr, State#state.endpoints)}, State};
 
 handle_call({register_locator, Type, Fun}, _From,
@@ -301,6 +304,7 @@ handle_cast({conmgr_no_endpoints, _Ref}, State) ->
 
 %% helper process says it failed to reach an address.
 handle_cast({endpoint_failed, Addr, Reason, ProtocolId}, State) ->
+    ?TRACE(?debugFmt("Failing endpoint ~p for protocol ~p with reason ~p", [Addr, ProtocolId, Reason])),
     %% mark connection as black-listed and start timer for reset
     {noreply, fail_endpoint(Addr, Reason, ProtocolId, State)}.
 
@@ -333,6 +337,8 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
     case lists:keytake(From, #req.pid, Pending) of
         false ->
             %% Must have been something we were linked to, or linked to us
+            ?TRACE(?debugFmt("Connection Manager exiting because linked process ~p exited for reason: ~p",
+                        [From, Reason])),
             lager:error("Connection Manager exiting because linked process ~p exited for reason: ~p",
                         [From, Reason]),
             exit({linked, From, Reason});
@@ -342,6 +348,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 ok ->
                     %% update the stats module
                     Stat = conn_success,
+                    ?TRACE(?debugMsg("Trying for stats update, the connect_endpoint")),
                     riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
                     %% riak_core_connection set up and handlers called
                     {noreply, connect_endpoint(Cur, State#state{pending = Pending2})};
@@ -350,6 +357,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                     %% helper process has been cancelled and has exited nicely.
                     %% update the stats module
                     Stat = conn_cancelled,
+                    ?TRACE(?debugMsg("Trying for stats update")),
                     riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
                     %% toss out the cancelled request from pending.
                     {noreply, State#state{pending = Pending2}};
@@ -362,6 +370,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                             %% oops. that request was cancelled. No retry
                             {noreply, State#state{pending = Pending2}};
                         _ ->
+                            ?TRACE(?debugMsg("Scheduling retry")),
                             {noreply, schedule_retry(?EXHAUSTED_ENDPOINTS_RETRY_INTERVAL, Ref, State)}
                     end;
 
@@ -502,6 +511,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
         true ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
+            ?TRACE(?debugMsg("Attempting riak_core_connection:sync_connect/2")),
             case riak_core_connection:sync_connect(Addr, Protocol) of
                 ok ->
                     ok;
@@ -583,6 +593,7 @@ fail_request(Reason, #req{ref = Ref, spec = Spec},
              State = #state{pending = Pending}) ->
     %% Tell the module it failed
     {Proto, {_TcpOptions, Module,Args}} = Spec,
+    ?TRACE(?debugFmt("module ~p getting connect_failed", [Module])),
     Module:connect_failed(Proto, {error, Reason}, Args),
     %% Remove the request from the pending list
     State#state{pending = lists:keydelete(Ref, #req.ref, Pending)}.
