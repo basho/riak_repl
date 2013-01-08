@@ -28,6 +28,7 @@
 -define(REMOTE_CLUSTER_NAME, "betty").
 -define(REMOTE_CLUSTER_ADDR, {"127.0.0.1", 4097}).
 -define(REMOTE_MEMBERS, [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}]).
+-define(MULTINODE_REMOTE_ADDR, {"127.0.0.1", 6097}).
 
 single_node_test_() ->
     {setup,
@@ -44,7 +45,8 @@ single_node_test_() ->
                         WaitingFor2 = lists:delete(MonRef, WaitingFor),
                         CB(WaitingFor2, CB)
                 end
-        end
+        end,
+        WaitFun(Mons, WaitFun)
     end,
 
     fun(_) -> [
@@ -189,7 +191,8 @@ multinode_test_() ->
             rpc:multicall(Nodes, riak_core_cluter_mgr, register_save_cluster_members_fun, [MemberFun]),
 
             % and the restore fun
-            RestoreFun = fun ?MODULE:restore_fun/0,
+            %RestoreFun = fun ?MODULE:restore_fun/0,
+            RestoreFun = fun ?MODULE:multinode_restore_fun/0,
             rpc:multicall(Nodes, riak_core_cluster_mgr, register_restore_cluster_targets_fun, [RestoreFun]),
 
             % and now the test proper.
@@ -239,9 +242,11 @@ multinode_test_() ->
         end},
 
         {"connect to remote cluster", fun() ->
-            rpc:call(Batman, ?MODULE, start_fake_remote_cluster_service, []),
-            rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Batman, undefined]),
+            rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Superman, undefined]),
+            start_fake_remote_cluster_listener(),
+            rpc:call(Superman, riak_core_cluster_mgr, add_remote_cluster, [?MULTINODE_REMOTE_ADDR]),
             timer:sleep(2000),
+            ?debugFmt("Connections:  ~p", [rpc:call(Superman, riak_core_cluster_conn_sup, connections, [])]),
             {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
             Expected = repeat({ok, [?REMOTE_CLUSTER_NAME]}, 3),
             ?assertEqual(Expected, Res)
@@ -287,6 +292,9 @@ watchit_loop(Pid) ->
 
 watchit_loop(Pid, Mon) ->
     receive
+        {'DOWN', Mon, process, Pid, normal} ->
+            % not going to worry about normal exits
+            ok;
         {'DOWN', Mon, process, Pid, Cause} ->
             ?debugFmt("~n== DEATH OF A MONITORED PROCESS ==~n~p died due to ~p", [Pid, Cause]),
             ok;
@@ -389,6 +397,9 @@ return_ok(_,_) -> ok.
 restore_fun() ->
     [{test_name_locator, ?REMOTE_CLUSTER_ADDR}].
 
+multinode_restore_fun() ->
+    [{test_name_locator, ?MULTINODE_REMOTE_ADDR}].
+
 repeat(Term, N) ->
     [Term || _ <- lists:seq(1, N)].
 
@@ -405,6 +416,75 @@ start_fake_remote_cluster_service() ->
 
 become_leader() ->
     riak_core_cluster_mgr:set_leader(node(), self()).
+
+start_fake_remote_cluster_listener() ->
+    start_fake_remote_cluster_listener(?MULTINODE_REMOTE_ADDR).
+
+start_fake_remote_cluster_listener({IP, Port}) when is_list(IP) ->
+    {ok, IP2} = inet_parse:address(IP),
+    start_fake_remote_cluster_listener({IP2, Port});
+
+start_fake_remote_cluster_listener({IP, Port}) ->
+    proc_lib:spawn_link(fun() ->
+        case gen_tcp:listen(Port, [binary, {ip, IP}, {active, false}, {packet, 4}, {nodelay, true}]) of
+            {ok, Listen} ->
+                fake_remote_cluster_loop(listen, Listen, undefined);
+            What ->
+                ?debugFmt("couldn't get fakey: ~p", [What])
+        end
+    end).
+
+fake_remote_cluster_loop(listen, ListenSock, undefined) ->
+    case gen_tcp:accept(ListenSock, 60000) of
+        {ok, Sock} ->
+            fake_remote_cluster_loop(connected, Sock, undefined);
+        {error, What} ->
+            ?debugFmt("Fake cluster going down: ~p", [What])
+    end;
+
+fake_remote_cluster_loop(connected, Sock, undefined) ->
+    case gen_tcp:recv(Sock, 0, 60000) of
+        {ok, Data} ->
+            Term = binary_to_term(Data),
+            ?debugFmt("data got: ~p", [Term]),
+            fake_remote_cluster_loop(got_hello, Sock, Term);
+        {error, Reason} ->
+            ?debugFmt("Fake cluster in state connected going down: ~p", [Reason])
+    end;
+
+fake_remote_cluster_loop(got_hello, Sock, {?CTRL_HELLO, ?CTRL_REV, Capabilies}) ->
+    gen_tcp:send(Sock, term_to_binary({?CTRL_ACK, ?CTRL_REV, Capabilies})),
+    case gen_tcp:recv(Sock, 0, 60000) of
+        {ok, Data} ->
+            Term = binary_to_term(Data),
+            ?debugFmt("data got: ~p", [Term]),
+            fake_remote_cluster_loop(got_protocol, Sock, Term);
+        What ->
+            ?debugFmt("fake cluster exiting: ~p", [What])
+    end;
+
+fake_remote_cluster_loop(got_protocol, Sock, {test_cluster_mgr, [?CTRL_REV]} = State) ->
+    {Major, Minor} = ?CTRL_REV,
+    gen_tcp:send(Sock, term_to_binary({ok, {test_cluster_mgr, {Major, Minor, Minor}}})),
+    fake_remote_cluster_loop(service_loop, Sock, State);
+
+fake_remote_cluster_loop(service_loop, Sock, {test_cluster_mgr, [?CTRL_REV]} = State) ->
+    case gen_tcp:recv(Sock, 0, 6000) of
+        {ok, ?CTRL_ASK_NAME} ->
+            ?debugMsg("name requested"),
+            gen_tcp:send(Sock, term_to_binary("betty")),
+            fake_remote_cluster_loop(service_loop, Sock, State);
+        {ok, ?CTRL_ASK_MEMBERS} ->
+            ?debugMsg("members requested"),
+            read_ip_address(Sock, gen_tcp, undefined),
+            gen_tcp:send(Sock, term_to_binary(?REMOTE_MEMBERS)),
+            fake_remote_cluster_loop(service_loop, Sock, State);
+        {ok, Data} ->
+            ?debugFmt("Did not understand message: ~p", [Data]);
+        TcpReadErr ->
+            ?debugFmt("fake cluster exiting: ~p", [TcpReadErr])
+    end.
+
 
 %%-----------------------------------
 %% control channel services EMULATION
