@@ -375,8 +375,11 @@ prep_stop(_State) ->
             {ok, _Pid} ->
                 lager:info("Started migration server"),
                 riak_repl_migration:migrate_queue();
-            {error, _} -> lager:error("Can't start replication migration server")
-        end
+            {error, _} ->
+                lager:error("Can't start replication migration server")
+        end,
+        %% stop it cleanly, don't just kill it
+        riak_repl2_rtq:stop()
        catch
         Type:Reason ->
             lager:error("Stopping application riak_api - ~p:~p.\n", [Type, Reason])

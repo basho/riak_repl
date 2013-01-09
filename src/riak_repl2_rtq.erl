@@ -33,6 +33,7 @@
          is_empty/1,
          all_queues_empty/0,
          shutdown/0,
+         stop/0,
          is_running/0]).
 
 -define(SERVER, ?MODULE).
@@ -100,6 +101,9 @@ dumpq() ->
 shutdown() ->
     gen_server:call(?SERVER, shutting_down).
 
+stop() ->
+    gen_server:call(?SERVER, stop).
+
 is_running() ->
     gen_server:call(?SERVER, is_running).
 
@@ -130,6 +134,9 @@ handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
     %% to another host
     riak_repl2_rtq_proxy:start(),
     {reply, ok, State#state{shutting_down = true}};
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
 
 handle_call(is_running, _From,
             State = #state{shutting_down = ShuttingDown}) ->
@@ -212,16 +219,29 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(Reason, #state{cs = Cs}) ->
+    erlang:unregister(?SERVER),
+    flush_pending_pushes(),
     [case DeliverFun of
          undefined ->
              ok;
          _ ->
-             DeliverFun({error, {terminate, Reason}})
+            catch(DeliverFun({error, {terminate, Reason}}))
      end || #c{deliver = DeliverFun} <- Cs],
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+flush_pending_pushes() ->
+    receive
+        {'$gen_cast', {push, NumItems, Bin}} ->
+            riak_repl2_rtq_proxy:push(NumItems, Bin),
+            flush_pending_pushes()
+    after
+        1000 ->
+            ok
+    end.
+
 
 unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
      case lists:keytake(Name, #c.name, Cs) of

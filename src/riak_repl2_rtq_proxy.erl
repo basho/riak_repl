@@ -90,9 +90,7 @@ flush_pending_pushes(State) ->
     receive
         {'$gen_cast', Msg} ->
             {noreply, NewState} = handle_cast(Msg, State),
-            flush_pending_pushes(NewState);
-        _ ->
-            flush_pending_pushes(State)
+            flush_pending_pushes(NewState)
     after
         100 ->
             ok
