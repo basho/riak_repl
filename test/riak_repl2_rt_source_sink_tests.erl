@@ -43,8 +43,11 @@ v1_source_v1_sink_test_() ->
     fun(State) -> [
 
         {"Everything started okay", fun() ->
-            ?assert(is_pid(State#v1_source_v1_sink.sink)),
-            ?assert(is_pid(State#v1_source_v1_sink.source))
+            #v1_source_v1_sink{sink = Sink, source = Source} = State,
+            ?assert(is_pid(Sink)),
+            ?assert(is_pid(Source)),
+            ?assert(is_process_alive(Sink)),
+            ?assert(is_process_alive(Source))
         end}
 
     ] end}.
