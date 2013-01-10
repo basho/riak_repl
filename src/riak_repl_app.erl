@@ -4,7 +4,6 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(application).
 -export([start/2,prep_stop/1,stop/1]).
--export([get_matching_address/2, determine_netmask/2, mask_address/2]).
 
 -include("riak_core_connection.hrl").
 
@@ -135,73 +134,21 @@ cluster_mgr_member_fun({IP, Port}) ->
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
     lager:debug("normIP is ~p", [NormIP]),
-    MyMask = lists:foldl(fun({_IF, Attrs}, Acc) ->
-                case lists:member({addr, NormIP}, Attrs) of
-                    true ->
-                        NetMask = lists:foldl(fun({netmask, NM = {_, _, _, _}}, _) ->
-                                    NM;
-                                (_, Acc2) ->
-                                    Acc2
-                            end, undefined, Attrs),
-                        %% convert the netmask to CIDR
-                        CIDR = cidr(list_to_binary(tuple_to_list(NetMask)),0),
-                        lager:debug("~p is ~p in CIDR", [NetMask, CIDR]),
-                        CIDR;
-                    false ->
-                        Acc
-                end
-        end, undefined, MyIPs),
-    case MyMask of
+    case riak_repl2_ip:determine_netmask(MyIPs, NormIP) of
         undefined ->
             lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
                          [{IP,Port}]),
             %% might as well return the one IP we know will work
             [{IP, Port}];
-        _ ->
-            ?TRACE(lager:notice("Mask is ~p", [MyMask])),
-            AddressMask = mask_address(NormIP, MyMask),
-            ?TRACE(lager:notice("address mask is ~p", [AddressMask])),
+        CIDR ->
+            ?TRACE(lager:notice("CIDR is ~p", [CIDR])),
+            %AddressMask = mask_address(NormIP, MyMask),
+            %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
-            {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl_app,
-                get_matching_address, [NormIP, AddressMask]),
+            {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
+                get_matching_address, [NormIP, CIDR]),
             lists_shuffle(Results)
     end.
-
-%% @doc Given the result of inet:getifaddrs() and an IP a client has
-%% connected to, attempt to determine the appropriate subnet mask.  If
-%% the IP the client connected to cannot be found, undefined is returned.
--spec determine_netmask(Ifaddrs :: [{atom(), any()}], SeekIP :: string() | {integer(), integer(), integer(), integer()}) -> 'undefined' | binary().
-determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
-    {ok, NormIP} = riak_repl_util:normalize_ip(SeekIP),
-    determine_netmask(Ifaddrs, NormIP);
-
-determine_netmask([], _NormIP) ->
-    undefined;
-
-determine_netmask([{_If, Attrs} | Tail], NormIP) ->
-    case lists_pos({addr, NormIP}, Attrs) of
-        not_found ->
-            determine_netmask(Tail, NormIP);
-        N ->
-            case lists:nth(N + 1, Attrs) of
-                {netmask, {_, _, _, _} = NM} ->
-                    cidr(list_to_binary(tuple_to_list(NM)),0);
-                _ ->
-                    determine_netmask(Tail, NormIP)
-            end
-    end.
-
-lists_pos(Needle, Haystack) ->
-    lists_pos(Needle, Haystack, 1).
-
-lists_pos(_Needle, [], _N) ->
-    not_found;
-
-lists_pos(Needle, [Needle | _Haystack], N) ->
-    N;
-
-lists_pos(Needle, [_NotNeedle | Haystack], N) ->
-    lists_pos(Needle, Haystack, N + 1).
 
 lists_shuffle([]) ->
     [];
@@ -214,94 +161,6 @@ lists_shuffle(List) ->
     Keyed = [{random:uniform(Max), E} || E <- List],
     Sorted = lists:sort(Keyed),
     [N || {_, N} <- Sorted].
-
-%% count the number of 1s in netmask to get the CIDR
-%% Maybe there's a better way....?
-cidr(<<>>, Acc) ->
-    Acc;
-cidr(<<X:1/bits, Rest/bits>>, Acc) ->
-    case X of
-        <<1:1>> ->
-            cidr(Rest, Acc + 1);
-        _ ->
-            cidr(Rest, Acc)
-    end.
-
-%% get the subnet mask as an integer, stolen from an old post on
-%% erlang-questions
-mask_address(Addr={_, _, _, _}, Maskbits) ->
-    B = list_to_binary(tuple_to_list(Addr)),
-    ?TRACE(lager:info("address as binary: ~p ~p", [B,Maskbits])),
-    <<Subnet:Maskbits, _Host/bitstring>> = B,
-    Subnet;
-mask_address(_, _) ->
-    %% presumably ipv6, don't have a function for that one yet
-    undefined.
-
-rfc1918({10, _, _, _}) ->
-    true;
-rfc1918({192.168, _, _}) ->
-    true;
-rfc1918(IP={172, _, _, _}) ->
-    %% this one is a /12, not so simple
-    mask_address({172, 16, 0, 0}, 12) == mask_address(IP, 12);
-rfc1918(_) ->
-    false.
-
-%% find the right address to serve given the IP the node connected to
-get_matching_address(IP, Mask) ->
-    {RawListenIP, Port} = app_helper:get_env(riak_core, cluster_mgr),
-    {ok, ListenIP} = riak_repl_util:normalize_ip(RawListenIP),
-    case ListenIP of
-        {0, 0, 0, 0} ->
-            {ok, MyIPs} = inet:getifaddrs(),
-            lists:foldl(fun({_IF, Attrs}, Acc) ->
-                        V4Attrs = lists:filter(fun({addr, {_, _, _, _}}) ->
-                                    true;
-                                ({netmask, {_, _, _, _}}) ->
-                                    true;
-                                (_) ->
-                                    false
-                            end, Attrs),
-                        case V4Attrs of
-                            [] ->
-                                Acc;
-                            _ ->
-                                MyIP = proplists:get_value(addr, V4Attrs),
-                                NetMask = proplists:get_value(netmask, V4Attrs),
-                                CIDR = cidr(list_to_binary(tuple_to_list(NetMask)), 0),
-                                case mask_address(MyIP, CIDR) of
-                                    Mask ->
-                                        {MyIP, Port};
-                                    _Other ->
-                                        ?TRACE(lager:info("IP ~p with CIDR ~p masked as ~p",
-                                                          [MyIP, CIDR, _Other])),
-                                        case {Acc, rfc1918(IP), rfc1918(MyIP)} of
-                                            {undefined, _Rfc, _Rfc} ->
-                                                % we havn't found anything better, and this has a decent match
-                                                ?TRACE(lager:info("Using IP found so far")),
-                                                {MyIP, Port};
-                                            _ ->
-                                                ?TRACE(lager:debug("Either an IP already found, or nat detected")),
-                                                Acc
-                                        end
-                                end
-                        end
-                end, undefined, MyIPs); %% TODO if result is undefined, check NAT
-            _ ->
-                case rfc1918(IP) == rfc1918(ListenIP) of
-                    true ->
-                        %% Both addresses are either internal or external.
-                        %% We'll have to assume the user knows what they're
-                        %% doing
-                        ?TRACE(lager:info("returning speific listen IP ~p",
-                                          [ListenIP])),
-                        {ListenIP, Port};
-                    false ->
-                        lager:warning("NAT detected?"),
-                        undefined
-                end
-        end.
 
 %% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
 name_this_cluster() ->
