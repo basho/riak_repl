@@ -29,6 +29,7 @@ connection_test_() ->
         {ok, RT} = riak_repl2_rt:start_link(),
         {ok, _} = riak_repl2_rtq:start_link(),
         {ok, TCPMon} = riak_core_tcp_mon:start_link(),
+        ?debugFmt("rt: ~p; tcp_mon: ~p", [RT, TCPMon]),
         #connection_tests{tcp_mon = TCPMon, rt = RT}
     end,
     fun(State) ->
@@ -37,18 +38,55 @@ connection_test_() ->
         exit(TCPMon, kill),
         unlink(RT),
         exit(RT, kill),
-        %meck:unload(riak_core_service_mgr),
-        %meck:unload(riak_core_connection_mgr),
-        riak_repl2_rtq:shutdown(),
+        Rtq = whereis(riak_repl2_rtq),
+        unlink(Rtq),
+        exit(Rtq, kill),
+        wait_for_pid(TCPMon),
+        wait_for_pid(RT),
+        wait_for_pid(Rtq),
         meck:unload(gen_tcp)
     end, [
 
-        fun(_) -> {"v1 to v1", fun() ->
+        fun(_) -> {"v1 to v1 connection", fun() ->
             {ok, _ListenPid} = start_sink(?VER1),
             {ok, {Source, Sink}} = start_source(?VER1),
             assert_living_pids([Source, Sink]),
             connection_test_teardown_pids(Source, Sink)
-        end} end
+        end} end,
+
+        fun(_) -> {"v1 to v1 communication", setup,
+            fun() ->
+                ok
+            end,
+            fun(_) ->
+                ok
+            end,
+            fun(_) -> [
+
+                ?_assert(false)
+
+            ] end}
+        end
+
+%        fun(State) -> {"v1 to v1 communication",
+%            setup, fun() ->
+%                ?debugMsg("bing"),
+%                {ok, _ListenPid} = start_sink(?VER1),
+%                ?debugMsg("bing"),
+%                {ok, {Source, Sink}} = start_source(?VER1),
+%                ?debugMsg("bing"),
+%                {State, Source, Sink}
+%            end,
+%            fun({_, Source, Sink}) ->
+%                ?debugMsg("bing"),
+%                connection_test_teardown_pids(Source, Sink)
+%            end,
+%            fun({_, _Source, _Sink}) -> [
+%
+%                ?_assert(false)
+%
+%            ] end}
+%        end
 
     ]}.
 
@@ -129,3 +167,13 @@ start_source(NegotiatedVer) ->
     after 1000 ->
         {error, timeout}
     end.
+
+wait_for_pid(Pid) ->
+    Mref = erlang:monitor(process, Pid),
+    receive
+        {'DOWN',Mref,process,_,_} ->
+            ok
+    after
+        5000 ->
+            {error, didnotexit, Pid, erlang:process_info(Pid)}
+    end. 
