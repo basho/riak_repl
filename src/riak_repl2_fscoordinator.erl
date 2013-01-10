@@ -191,6 +191,7 @@ init(Cluster) ->
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
+            riak_repl_util:schedule_cluster_fullsync(Cluster),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Error} ->
             lager:warning("Error connection to remote"),
@@ -350,6 +351,7 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                     % otherwise, don't do anything
                     State3 = notify_rt_dirty_nodes(State),
                     riak_repl_stats:server_fullsyncs(),
+                    riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster),
                     {noreply, State3#state{running_sources = Running, busy_nodes = NewBusies}};
                 _ ->
                     % there's something waiting for a response.
