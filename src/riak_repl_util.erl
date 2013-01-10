@@ -597,8 +597,10 @@ schedule_fullsync(Pid) ->
     end.
 
 
-start_fullsync_timer(Pid, FullsyncIvalMins) ->
+start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
     FullsyncIval = timer:minutes(FullsyncIvalMins),
+    lager:info("Fullsync for ~p scheduled in ~p minutes",
+               [Cluster, FullsyncIvalMins]),
     spawn(fun() ->
                 timer:sleep(FullsyncIval),
                 gen_server:cast(Pid, start_fullsync)
@@ -617,15 +619,15 @@ schedule_cluster_fullsync(Cluster, Pid) ->
             case proplists:lookup(Cluster, List) of
                 none -> ok;
                 {_, FullsyncIvalMins} ->
-                    start_fullsync_timer(Pid, FullsyncIvalMins),
+                    start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
                     ok
             end;
         {ok, {Cluster, FullsyncIvalMins}} ->
-            start_fullsync_timer(Pid, FullsyncIvalMins);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
         {ok, Tuple} when is_tuple(Tuple) -> ok;
         {ok, FullsyncIvalMins} ->
             %% this will affect ALL clusters that have fullsync enabled
-            start_fullsync_timer(Pid, FullsyncIvalMins)
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster)
     end.
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
