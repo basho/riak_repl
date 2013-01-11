@@ -76,7 +76,7 @@ single_node_test_() ->
             riak_core_cluster_mgr:register_save_cluster_members_fun(Fun)
         end},
 
-        {"regsiter restor cluster members fun", fun() ->
+        {"regsiter restore cluster members fun", fun() ->
             Fun = fun() -> [{test_name_locator,?REMOTE_CLUSTER_ADDR}] end,
             riak_core_cluster_mgr:register_restore_cluster_targets_fun(Fun),
             ok
