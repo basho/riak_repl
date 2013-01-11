@@ -54,16 +54,20 @@ connection_test_() ->
             connection_test_teardown_pids(Source, Sink)
         end} end,
 
-        fun(_) -> {"v1 to v1 communication", setup,
+        fun(State) -> {"v1 to v1 communication", setup,
             fun() ->
-                ok
+                {ok, _ListenPid} = start_sink(?VER1),
+                {ok, {Source, Sink}} = start_source(?VER1),
+                {State, Source, Sink}
             end,
-            fun(_) ->
-                ok
+            fun({_State, Source, Sink}) ->
+                connection_test_teardown_pids(Source, Sink)
             end,
-            fun(_) -> [
+            fun({_State, Source, Sink}) -> [
 
-                ?_assert(false)
+                {"everything started okay", fun() ->
+                    assert_living_pids([Source, Sink])
+                end}
 
             ] end}
         end
@@ -104,7 +108,9 @@ connection_test_teardown_pids(Source, Sink) ->
     meck:unload(riak_core_service_mgr),
     meck:unload(riak_core_connection_mgr),
     riak_repl2_rtsource_conn:stop(Source),
-    riak_repl2_rtsink_conn:stop(Sink).
+    riak_repl2_rtsink_conn:stop(Sink),
+    wait_for_pid(Source),
+    wait_for_pid(Sink).
 
 abstract_gen_tcp() ->
     meck:new(gen_tcp, [unstick, passthrough]),
