@@ -35,7 +35,7 @@ service_test_() ->
         case whereis(riak_core_service_manager) of
             Pid when is_pid(Pid) ->
                 riak_core_service_mgr:stop(),
-                {ok, Mon} = erlang:monitor(process, Pid),
+                {ok, _Mon} = erlang:monitor(process, Pid),
                 receive
                     {'DOWN', _, _, _, _} ->
                         ok
