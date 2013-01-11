@@ -109,9 +109,16 @@ single_node_test_() ->
         {"connect to remote cluster", fun() ->
             start_fake_remote_cluster_service(),
             become_leader(),
-            timer:sleep(2000),
-            %% should have resolved the remote cluster by now
-            ?assert({ok,[?REMOTE_CLUSTER_NAME]} == riak_core_cluster_mgr:get_known_clusters())
+            DoneFun = fun() ->
+                case riak_core_cluster_mgr:get_known_clusters() of
+                    {ok, [?REMOTE_CLUSTER_NAME]} = Out ->
+                        {done, Out};
+                    _ ->
+                        busy
+                end
+            end,
+            Knowners = wait_for(DoneFun),
+            ?assertEqual({ok, [?REMOTE_CLUSTER_NAME]}, Knowners)
         end},
 
         {"get ipaddres of cluster", fun() ->
@@ -124,6 +131,26 @@ single_node_test_() ->
         end}
 
     ] end }.
+
+wait_for(Fun) ->
+    wait_for(Fun, 2000, 10).
+
+wait_for(Fun, Remaining, Interval) when Remaining =< 0 ->
+    case Fun() of
+        {done, Out} ->
+            Out;
+        busy ->
+            {error, timeout}
+    end;
+
+wait_for(Fun, Remaining, Interval) ->
+    case Fun() of
+        {done, Out} ->
+            Out;
+        busy ->
+            timer:sleep(Interval),
+            wait_for(Fun, Remaining - Interval, Interval)
+    end.
 
 multinode_test_() ->
     {setup, fun() ->
