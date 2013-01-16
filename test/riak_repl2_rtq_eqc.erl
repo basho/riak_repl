@@ -16,16 +16,16 @@
 
 -record(state, {rtq,
                 items=0, %% Number of items created
-                tout_no_clients = [],
-                %pcs=[a, b, c, d, e, f, g],
-                pcs=[a, b],
-                cs=[]}).
+                tout_no_clients = [], % No clients available to pull
+                pcs=[a, b, c, d, e, f, g],
+                cs=[],
+                max_bytes=0}).
 
 %% Test consumer record
--record(tc, {name,    %% Name
+-record(tc, {name,       %% Name
              tout=[],    %% outstanding items in queue
              trec=[],    %% received items
-             tack=[]}).  %% acked items
+             tack=[]}).    %% acked items
 
 
 -ifdef(TEST).
@@ -39,22 +39,24 @@ rtq_test_() ->
 -endif.
 
 
-prop_main() ->
-    ?FORALL(Cmds, noshrink(commands(?MODULE)),
-            aggregate(command_names(Cmds),
-            begin
-                {_H, S, Res} = run_commands(?MODULE,Cmds),
-                catch(exit(S#state.rtq, kill)),
-                ?WHENFAIL(begin
-                              io:format(user, "Test Failed\n~p\n",
-                                        [command_names(Cmds)]),
-                              io:format(user, "State: ~p\nRes: ~p\n",
-                                        [S, Res])
-                          end,
-                          %% Generate statistics
-                          Res == ok)
-            end)).
+max_bytes() ->
+    ?LET(MaxBytes, nat(), (MaxBytes+1) * 512).
 
+prop_main() ->
+    %?FORALL({Cmds, Bytes}, {noshrink(commands(?MODULE)),
+    ?FORALL(Cmds, commands(?MODULE),
+            aggregate(command_names(Cmds),
+                      begin
+                      ok = meck:new(riak_repl_stats, [passthrough]),
+                      ok = meck:expect(riak_repl_stats, rt_source_errors,
+                                       fun() -> ok end),
+                      ok = meck:expect(riak_repl_stats, rt_sink_errors,
+                                       fun() -> ok end),
+                      {H, S, Res} = run_commands(?MODULE,Cmds),
+                      meck:unload(riak_repl_stats),
+                      catch(exit(S#state.rtq, kill)),
+                      pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok)
+                      end)).
 
 %% ====================================================================
 %% eqc_statem callbacks
@@ -63,8 +65,13 @@ prop_main() ->
 initial_state() ->
     #state{}.
 
+%% start the RTQ *and* set the max bytes for the queue
+test_init(MaxBytes) ->
+    application:set_env(riak_repl, rtq_max_bytes, MaxBytes),
+    riak_repl2_rtq:start_test().
+
 command(#state{rtq=undefined}) ->
-        {call, riak_repl2_rtq, start_test, []};
+        {call, ?MODULE, test_init, [max_bytes()]};
 command(S) ->
     oneof([{call, ?MODULE, push, [make_item(), S#state.rtq]}] ++
           [{call, ?MODULE, new_consumer, [elements(S#state.pcs), S#state.rtq]} ||
@@ -82,14 +89,17 @@ command(S) ->
           []
     ).
 
+
 precondition(S,{call,riak_repl2_rtq,start_test,_}) ->
     S#state.rtq == undefined;
 precondition(S,{call,?MODULE,new_consumer, [Name, _]}) ->
     lists:member(Name, S#state.pcs);
 precondition(S,{call,?MODULE,pull, [Name, _]}) ->
-    not lists:member(Name, S#state.pcs);
+    %not lists:member(Name, S#state.pcs);
+    lists:member(Name, S#state.pcs);
 precondition(_S,{call,_,_,_}) ->
     true.
+
 
 postcondition(_S,{call,?MODULE,pull,[C, _]},R) ->
     %Client = find_client(Name, S),
@@ -100,10 +110,16 @@ postcondition(_S,{call,?MODULE,pull,[C, _]},R) ->
             hd(C#tc.tout) == {Size, Item} orelse {not_match, C#tc.name, hd(C#tc.tout),
             {Size, Item}}
     end;
+postcondition(S,{call,?MODULE,push,[_Item, Q]},_R) ->
+    % guarantee that the queue size never grows above max_bytes
+    lists:foldl(fun(_TC, Acc) ->
+                QBytes = get_rtq_bytes(Q),
+                ((S#state.max_bytes =< QBytes) == Acc)
+        end, true, S#state.cs);
 postcondition(_S,{call,_,_,_},_R) ->
     true.
 
-next_state(S,V,{call, riak_repl2_rtq, start_test, []}) ->
+next_state(S,V,{call, _, test_init, [_B]}) ->
     S#state{rtq={call, erlang, element, [2, V]}};
 next_state(S,_V,{call, _, new_consumer, [Name, _Q]}) ->
     %% IF there's other clients, this client's outstanding messages will
@@ -112,6 +128,7 @@ next_state(S,_V,{call, _, new_consumer, [Name, _Q]}) ->
     Tout = lists:foldl(fun(#tc{trec = Trec, tout=Tout}, Longest) ->
                     Q = strip_seq(Trec) ++ Tout,
                     lager:info("Q is ~p~n", [Trec]),
+                     %case qbytes(QTab) > MaxBytes 
                     case length(Q) > length(Longest) of
                         true ->
                             Q;
@@ -127,7 +144,9 @@ next_state(S,_V,{call, _, rm_consumer, [Client, _Q]}) ->
     delete_client(Client, S#state{pcs=[Client#tc.name|S#state.pcs]});
 next_state(S,_V,{call, _, replace_consumer, [Client, _Q]}) ->
     %% anything we didn't ack will be considered dropped by the queue
-    NewClient = Client#tc{tack=[], trec=[], tout=strip_seq(Client#tc.trec)
+    NewClient = Client#tc{tack=[],
+                          trec=[],
+                          tout=strip_seq(Client#tc.trec)
                           ++ Client#tc.tout},
     update_client(NewClient, S);
 next_state(S,_V,{call, _, push, [Item, _Q]}) ->
@@ -181,6 +200,11 @@ rm_consumer(#tc{name=Name}, Q) ->
 replace_consumer(#tc{name=Name}, Q) ->
     lager:info("replacing ~p", [Name]),
     gen_server:call(Q, {register, Name}).
+
+get_rtq_bytes(Q) ->
+    Stats = gen_server:call(Q, status),
+    proplists:get_value(bytes, Stats).
+
 
 pull(#tc{name=Name}, Q) ->
     lager:info("~p pulling from ~p~n", [Name, Q]),
@@ -240,7 +264,6 @@ gen_seq(C) ->
         N ->
             choose(1, N)
     end.
-
 
 -endif.
 
