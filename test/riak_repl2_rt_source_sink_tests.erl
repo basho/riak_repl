@@ -94,12 +94,17 @@ connection_test_() ->
 
         fun(State) -> {"v2 to v1 communication", setup,
             fun() ->
+                %?debugMsg("BING!"),
                 {ok, _ListenPid} = start_sink(?VER1),
+                %?debugMsg("BING!"),
                 {ok, {Source, Sink}} = start_source(?VER2),
+                %?debugMsg("BING!"),
                 meck:new(poolboy, [passthrough]),
+                %?debugMsg("BING!"),
                 meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
                     spawn(fun() -> ok end)
                 end),
+                %?debugMsg("BING!"),
                 {State, Source, Sink}
             end,
             fun({_State, Source, Sink}) ->
@@ -158,7 +163,7 @@ start_sink(Version) ->
     meck:new(riak_core_service_mgr, [passthrough]),
     meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
-        {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary | TcpOpts]),
+        {ok, Listen} = try_to_listen(?SINK_PORT, [binary | TcpOpts]),
         TellMe ! sink_listening,
         {ok, Socket} = gen_tcp:accept(Listen),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link(?PROTOCOL(Version), "source_cluster"),
@@ -177,6 +182,22 @@ start_sink(Version) ->
 
 listen_sink() ->
     riak_repl2_rtsink_conn:register_service().
+
+% a previous test may not have closed the port as quickly as we like, so we
+% try to open it a few times before giving up.
+try_to_listen(Port, Opts) ->
+    try_to_listen(Port, Opts, 0).
+
+try_to_listen(Port, Opts, N) ->
+    case gen_tcp:listen(Port, Opts) of
+        {ok, _Listen} = Out ->
+            Out;
+        _Err when N < 10 ->
+            erlang:yeild(), % let the port close if it needs to
+            try_to_listen(Port, Opts, N + 1);
+        Err ->
+            Err
+    end.
 
 start_source() ->
     start_source(?VER1).
