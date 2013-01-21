@@ -47,50 +47,49 @@ connection_test_() ->
         meck:unload(gen_tcp)
     end, [
 
-        fun(_) -> {"v1 to v1 connection", fun() ->
-            {ok, _ListenPid} = start_sink(?VER1),
-            {ok, {Source, Sink}} = start_source(?VER1),
-            assert_living_pids([Source, Sink]),
-            connection_test_teardown_pids(Source, Sink)
-        end} end,
-
         fun(State) -> {"v1 to v1 communication", setup,
             fun() ->
                 {ok, _ListenPid} = start_sink(?VER1),
                 {ok, {Source, Sink}} = start_source(?VER1),
+                meck:new(poolboy, [passthrough]),
+                meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
+                        spawn(fun() -> ok end)
+                end),
                 {State, Source, Sink}
             end,
             fun({_State, Source, Sink}) ->
+                meck:unload(poolboy),
                 connection_test_teardown_pids(Source, Sink)
             end,
             fun({_State, Source, Sink}) -> [
 
                 {"everything started okay", fun() ->
                     assert_living_pids([Source, Sink])
+                end},
+
+                {"sending objects", fun() ->
+                    Self = self(),
+                    meck:new(riak_repl_fullsync_worker),
+                    meck:expect(riak_repl_fullsync_worker, do_binputs, fun(_Worker, <<"der object">>, DoneFun, riak_repl2_rtsink_pool) ->
+                        Self ! continue,
+                        Self ! {state, DoneFun},
+                        ok
+                    end),
+                    riak_repl2_rtq:push(1, <<"der object">>),
+                    MeckOk = wait_for_continue(),
+                    ?assertEqual(ok, MeckOk),
+                    meck:unload(riak_repl_fullsync_worker)
+                end},
+
+                {"assert done", fun() ->
+                    {ok, DoneFun} = extract_state_msg(),
+                    %?assert(is_function(DoneFun)),
+                    DoneFun(),
+                    ?assert(riak_repl2_rtq:all_queues_empty())
                 end}
 
             ] end}
         end
-
-%        fun(State) -> {"v1 to v1 communication",
-%            setup, fun() ->
-%                ?debugMsg("bing"),
-%                {ok, _ListenPid} = start_sink(?VER1),
-%                ?debugMsg("bing"),
-%                {ok, {Source, Sink}} = start_source(?VER1),
-%                ?debugMsg("bing"),
-%                {State, Source, Sink}
-%            end,
-%            fun({_, Source, Sink}) ->
-%                ?debugMsg("bing"),
-%                connection_test_teardown_pids(Source, Sink)
-%            end,
-%            fun({_, _Source, _Sink}) -> [
-%
-%                ?_assert(false)
-%
-%            ] end}
-%        end
 
     ]}.
 
@@ -132,7 +131,7 @@ start_sink(Version) ->
     meck:new(riak_core_service_mgr, [passthrough]),
     meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
-        {ok, Listen} = gen_tcp:listen(?SINK_PORT, TcpOpts),
+        {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary | TcpOpts]),
         TellMe ! sink_listening,
         {ok, Socket} = gen_tcp:accept(Listen),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link(?PROTOCOL(Version), "source_cluster"),
@@ -160,7 +159,7 @@ start_source(NegotiatedVer) ->
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
-            {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, TcpOpts),
+            {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
             ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(?VER1), Pid, [])
         end),
         {ok, make_ref()}
@@ -183,3 +182,24 @@ wait_for_pid(Pid) ->
         5000 ->
             {error, didnotexit, Pid, erlang:process_info(Pid)}
     end. 
+
+wait_for_continue() ->
+    wait_for_continue(1000).
+
+wait_for_continue(Timeout) ->
+    receive
+        continue ->
+            ok
+    after Timeout ->
+        {error, timeout}
+    end.
+
+% yes, this is nasty hack to get side effects between tests.
+extract_state_msg() ->
+    receive
+        {state, Data} ->
+            {ok, Data}
+    after 0 ->
+        {error, nostate}
+    end.
+
