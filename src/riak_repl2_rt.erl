@@ -140,12 +140,14 @@ postcommit(RObj) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
         Objects when is_list(Objects) ->
             BinObjs = term_to_binary(Objects),
-            case whereis(riak_repl2_rtq) of
+            %% try the proxy first, avoids race conditions with unregister()
+            %% during shutdown
+            case whereis(riak_repl2_rtq_proxy) of
                 undefined ->
-                    %% we're shutting down and repl is stopped...
-                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs);
+                    riak_repl2_rtq:push(length(Objects), BinObjs);
                 _ ->
-                    riak_repl2_rtq:push(length(Objects), BinObjs)
+                    %% we're shutting down and repl is stopped or stopping...
+                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs)
             end;
         cancel -> % repl helper callback requested not to send over realtime
             ok
