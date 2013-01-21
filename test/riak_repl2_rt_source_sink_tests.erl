@@ -11,6 +11,7 @@
 -define(SINK_PORT, 5007).
 -define(SOURCE_PORT, 4007).
 -define(VER1, {1,0}).
+-define(VER2, {2,0}).
 -define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
 -define(PROTOCOL_V1, ?PROTOCOL(?VER1)).
 -define(PROTO_V1_SOURCE_V1_SINK, ?PROTOCOL(?VER1)).
@@ -89,6 +90,32 @@ connection_test_() ->
                 end}
 
             ] end}
+        end,
+
+        fun(State) -> {"v2 to v1 communication", setup,
+            fun() ->
+                {ok, _ListenPid} = start_sink(?VER1),
+                {ok, {Source, Sink}} = start_source(?VER2),
+                meck:new(poolboy, [passthrough]),
+                meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
+                    spawn(fun() -> ok end)
+                end),
+                {State, Source, Sink}
+            end,
+            fun({_State, Source, Sink}) ->
+                meck:unload(poolboy),
+                connection_test_teardown_pids(Source, Sink)
+            end,
+            fun({_State, Source, Sink}) -> [
+
+                {"everything started okay", fun() ->
+                    assert_living_pids([Source, Sink])
+                end},
+
+                {"mc fail", ?_assert(false)}
+
+            ] end}
+
         end
 
     ]}.
