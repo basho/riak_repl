@@ -9,10 +9,11 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-define(TRACE(Stmt),Stmt).
+-else.
+-define(TRACE(Stmt),ok).
 -endif.
 
-%%-define(TRACE(Stmt),Stmt).
--define(TRACE(Stmt),ok).
 
 %% public API
 -export([connect/2,

@@ -2,35 +2,42 @@
 %%
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
-%% A cluster manager runs on every node. It registers a service via the riak_core_service_mgr
-%% with protocol 'cluster_mgr'. The service will either answer queries (if it's the leader),
-%% or foward them to the leader (if it's not the leader).
+%% A cluster manager runs on every node. It registers a service via the 
+%% riak_core_service_mgr with protocol 'cluster_mgr'. The service will either
+%% answer queries (if it's the leader), or foward them to the leader (if it's
+%% not the leader).
 %%
-%% Every cluster manager instance (one per node in the cluster) is told who the leader is
-%% when there is a leader change. An outside agent is responsible for determining
-%% which instance of cluster manager is the leader. For example, the riak_repl2_leader server
-%% is probably a good place to do this from. Call set_leader_node(node(), pid()).
+%% Every cluster manager instance (one per node in the cluster) is told who the
+%% leader is when there is a leader change. An outside agent is responsible for
+%% determining which instance of cluster manager is the leader. For example,
+%% the riak_repl2_leader server is probably a good place to do this from. Call
+%% set_leader_node(node(), pid()).
 %%
-%% If I'm the leader, I answer local gen_server:call requests from non-leader cluster managers.
-%% I also establish out-bound connections to any IP address added via add_remote_cluster(ip_addr()),
-%% in order to resolve the name of the remote cluster and to collect any additional member addresses
-%% of that cluster. I keep a database of members per named cluster.
+%% If I'm the leader, I answer local gen_server:call requests from non-leader
+%% cluster managers. I also establish out-bound connections to any IP address
+%% added via add_remote_cluster(ip_addr()), in order to resolve the name of the
+%% remote cluster and to collect any additional member addresses of that
+%% cluster. I keep a database of members per named cluster.
 %%
-%% If I am not the leader, I proxy all requests to the actual leader because I probably don't
-%% have the latest inforamtion. I don't make outbound connections either.
+%% If I am not the leader, I proxy all requests to the actual leader because I
+%% probably don't have the latest inforamtion. I don't make outbound
+%% connections either.
 %%
-%% The local cluster's members list is supplied by the members_fun in register_member_fun()
-%% API call. The cluster manager will call the registered function to get a list of the local
-%% cluster members; that function should return a list of {IP,Port} tuples in order of the least
-%% "busy" to most "busy". Busy is probably proportional to the number of connections it has for
-%% replication or handoff. The cluster manager will then hand out the full list to remote cluster
-%% managers when asked for its members, except that each time it hands our the list, it will
-%% rotate the list so that the fist "least busy" is moved to the end, and all others are pushed
-%% up the front of the list. This helps balance the load when the local connection manager
-%% asks the cluster manager for a list of IPs to connect for a single connection request. Thus,
-%% successive calls from the connection manager will appear to round-robin through the last
-%% known list of IPs from the remote cluster. The remote clusters are occasionaly polled to
-%% get a fresh list, which will also help balance the connection load on them.
+%% The local cluster's members list is supplied by the members_fun in
+%% register_member_fun() API call. The cluster manager will call the registered
+%% function to get a list of the local cluster members; that function should
+%% return a list of {IP,Port} tuples in order of the least "busy" to most
+%% "busy". Busy is probably proportional to the number of connections it has for
+%% replication or handoff. The cluster manager will then hand out the full list
+%% to remote cluster managers when asked for its members, except that each time
+%% it hands our the list, it will rotate the list so that the fist "least busy"
+%% is moved to the end, and all others are pushed up the front of the list.
+%% This helps balance the load when the local connection manager asks the
+%% cluster manager for a list of IPs to connect for a single connection request.
+%% Thus, successive calls from the connection manager will appear to round-robin
+%% through the last known list of IPs from the remote cluster. The remote
+%% clusters are occasionaly polled to get a fresh list, which will also help
+%% balance the connection load on them.
 %%
 %% TODO:
 %% 1. should the service side do push notifications to the client when nodes are added/deleted?
@@ -102,35 +109,41 @@
 %%% API
 %%%===================================================================
 
-%% start the Cluster Manager
+%% @doc start the Cluster Manager
 -spec(start_link() -> ok).
 start_link() ->
     Args = [],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
-%% register a bootstrap cluster locator that just uses the address passed to it
-%% for simple ip addresses and one that looks up clusters by name. This is needed
-%% before the cluster manager is up and running so that the connection supervisior
-%% can kick off some initial connections if some remotes are already known (in the
-%% ring) from previous additions.
+%% @doc register a bootstrap cluster locator that just uses the address passed
+%% to it for simple ip addresses and one that looks up clusters by name. This
+%% is needed before the cluster manager is up and running so that the
+%% connection supervisior can kick off some initial connections if some
+%% remotes are already known (in the ring) from previous additions.
+-spec register_cluster_locator() -> 'ok'.
 register_cluster_locator() ->
     register_cluster_addr_locator().
 
-%% Called by riak_repl_leader whenever a leadership election
-%% takes place. Tells us who the leader is.
+%% @doc Tells us who the leader is. Called by riak_repl_leader whenever a
+%% leadership election takes place.
+-spec set_leader(LeaderNode :: node(), _LeaderPid :: pid()) -> 'ok'.
 set_leader(LeaderNode, _LeaderPid) ->
-    gen_server:call(?SERVER, {set_leader_node, LeaderNode}).
+    gen_server:cast(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
+-spec get_leader() -> node().
 get_leader() ->
     gen_server:call(?SERVER, leader_node).
 
+%% @doc True if the local manager is the leader.
+-spec get_is_leader() -> boolean().
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader).
 
-%% Register a function that will get called to get out local riak node member's IP addrs.
-%% MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
+%% @doc Register a function that will get called to get out local riak node
+%% member's IP addrs. MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
+-spec register_member_fun(MemberFun :: fun((inet:addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
@@ -140,37 +153,40 @@ register_restore_cluster_targets_fun(ReadClusterFun) ->
 register_save_cluster_members_fun(WriteClusterFun) ->
     gen_server:cast(?SERVER, {register_save_cluster_members_fun, WriteClusterFun}).
 
-%% Specify how to reach a remote cluster, it's name is
+%% @doc Specify how to reach a remote cluster, it's name is
 %% retrieved by asking it via the control channel.
 -spec(add_remote_cluster(ip_addr()) -> ok).
 add_remote_cluster({IP,Port}) ->
     gen_server:cast(?SERVER, {add_remote_cluster, {IP,Port}}).
 
-%% Remove a remote cluster by name
+%% @doc Remove a remote cluster by name
 -spec(remove_remote_cluster(ip_addr() | string()) -> ok).
 remove_remote_cluster(Cluster) ->
     gen_server:cast(?SERVER, {remove_remote_cluster, Cluster}).
 
-%% Retrieve a list of known remote clusters that have been resolved (they responded).
+%% @doc Retrieve a list of known remote clusters that have been resolved (they responded).
 -spec(get_known_clusters() -> {ok,[clustername()]} | term()).
 get_known_clusters() ->
     gen_server:call(?SERVER, get_known_clusters).
 
-%% Retrieve a list of IP,Port tuples we are connected to or trying to connect to
+%% @doc Retrieve a list of IP,Port tuples we are connected to or trying to connect to
 get_connections() ->
     gen_server:call(?SERVER, get_connections).
 
 get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}).
 
-%% Return a list of the known IP addresses of all nodes in the remote cluster.
+%% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
 
+%% @doc stops the local server.
+-spec stop() -> 'ok'.
 stop() ->
     gen_server:call(?SERVER, stop).
 
+-spec set_gc_interval(Interval :: timeout()) -> 'ok'.
 set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
@@ -203,17 +219,6 @@ handle_call({get_my_members, MyAddr}, _From, State) ->
 
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
-
-handle_call({set_leader_node, LeaderNode}, _From, State) ->
-    State2 = State#state{leader_node = LeaderNode},
-    case node() of
-        LeaderNode ->
-            %% oh crap, it's me!
-            {reply, ok, become_leader(State2, LeaderNode)};
-        _ ->
-            %% not me.
-            {reply, ok, become_proxy(State2, LeaderNode)}
-    end;
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -269,6 +274,17 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
                        NoLeaderResult,
                        State)
     end.
+
+handle_cast({set_leader_node, LeaderNode}, State) ->
+    State2 = State#state{leader_node = LeaderNode},
+    case node() of
+        LeaderNode ->
+            %% oh crap, it's me!
+            {noreply, become_leader(State2, LeaderNode)};
+        _ ->
+            %% not me.
+            {noreply, become_proxy(State2, LeaderNode)}
+    end;
 
 handle_cast({set_gc_interval, Interval}, State) ->
     schedule_gc_timer(Interval),

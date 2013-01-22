@@ -36,6 +36,7 @@
 %% supervisior will restart it.
 -spec(start_link(term()) -> {ok,pid()}).
 start_link(Remote) ->
+    ?TRACE(?debugFmt("connecting to ~p", [Remote])),
     Members = [],
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlClientProcess,
@@ -67,6 +68,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             From ! {self(), connecting, Remote},
             ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connect_failed, Error}} ->
+            ?TRACE(?debugFmt("ClusterManager Client: connect_failed to ~p because ~p. Will retry.", [Remote, Error])),
             lager:warning("ClusterManager Client: connect_failed to ~p because ~p. Will retry.",
                           [Remote, Error]),
             %% This is fatal! We are being supervised by conn_sup and if we
@@ -74,6 +76,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             {error, Error};
         {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
+            ?TRACE(?debugFmt("Cluster Manager control channel client connected to remote ~p at ~p named ~p", [Remote, Addr, RemoteName])),
             lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
                        [Remote, Addr, RemoteName]),
             %% ask it's name and member list, even if it's a previously
