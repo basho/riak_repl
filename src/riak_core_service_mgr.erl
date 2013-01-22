@@ -2,6 +2,19 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 
+%% @doc Listens on a single TCP port and negotiates which protocol to start
+%% on a new connection. Ranch is used to create a connection pool and accept
+%% new socket connections. When a connection is accepted, the client supplies
+%% a hello with thier revision and capabilities. The server replies in kind.
+%% The client then sends the service they wish to use, and which versions of
+%% the service they support. The server will find the highest major version in
+%% common, and highest major version in common. If there is no major version in
+%% common, the connectin fails. Minor versions do not need to match. On a
+%% success, the server sends the Major version, Client minor version, and
+%% Host minor version to the client. After that, the registered
+%% module:function/5 is called and control of the socket passed to it.
+
+
 -module(riak_core_service_mgr).
 -behaviour(gen_server).
 
@@ -50,7 +63,7 @@
 %%% API
 %%%===================================================================
 
-%% start the Service Manager on the default/configured Ip Address and Port.
+%% @doc Start the Service Manager on the default/configured Ip Address and Port.
 %% All sub-protocols will be dispatched from there.
 -spec(start_link() -> {ok, pid()}).
 start_link() ->
@@ -64,38 +77,44 @@ start_link() ->
     end,
     start_link(ServiceAddr).
 
-%% start the Service Manager on the given Ip Address and Port.
+%% @doc Start the Service Manager on the given Ip Address and Port.
 %% All sub-protocols will be dispatched from there.
 -spec(start_link(ip_addr()) -> {ok, pid()}).
-start_link({IP,Port}) ->
-    ?TRACE(?debugFmt("Starting Core Service Manager at ~p", [{IP,Port}])),
-    lager:info("Starting Core Service Manager at ~p", [{IP,Port}]),
-    Args = [{IP,Port}],
-    Options = [],
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
+start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
+    case valid_host_ip(IP) of
+        false ->
+            erlang:error({badarg, invalid_ip});
+        true ->
+            ?TRACE(?debugFmt("Starting Core Service Manager at ~p", [{IP,Port}])),
+            lager:info("Starting Core Service Manager at ~p", [{IP,Port}]),
+            Args = [{IP,Port}],
+            Options = [],
+            gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options)
+    end.
 
-%% Once a protocol specification is registered, it will be kept available by the
-%% Service Manager.
-%% Note that the callee is responsible for taking ownership of the socket via
-%% Transport:controlling_process(Socket, Pid)
+%% @doc Once a protocol specification is registered, it will be kept available
+%% by the Service Manager. Note that the callee is responsible for taking
+%% ownership of the socket via Transport:controlling_process(Socket, Pid).
+%% Only the strategy of `round_robin' is supported; it's arg is ignored.
 -spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
 register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
     gen_server:cast(?SERVER, {register_service, HostProtocol, Strategy}).
 
-%% Unregister the given protocol-id.
-%% Existing connections for this protocol are not killed. New connections
-%% for this protocol will not be accepted until re-registered.
+%% @doc Unregister the given protocol-id. Existing connections for this
+%% protocol are not killed. New connections for this protocol will not be
+%% accepted until re-registered.
 -spec(unregister_service(proto_id()) -> ok).
 unregister_service(ProtocolId) ->
     gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
 
+%% @doc True if the given protocal id is registered.
 -spec(is_registered(proto_id()) -> boolean()).
 is_registered(ProtocolId) ->
     gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
 
-%% Register a callback function that will get called periodically or
+%% @doc Register a callback function that will get called periodically or
 %% when the connection status of services changes. The function will
 %% receive a list of tuples: {<protocol-id>, <stats>} where stats
 %% holds the number of open connections that have been accepted  for that
@@ -103,13 +122,17 @@ is_registered(ProtocolId) ->
 %% connected-ness, for each protocol type, to remote clusters, e.g.,
 %% making it possible for schedulers to balance the number of
 %% connections across a cluster.
+-spec register_stats_fun(Fun :: fun(([{proto_id(), non_neg_integer()}]) -> any())) -> 'ok'.
 register_stats_fun(Fun) ->
     gen_server:cast(?SERVER, {register_stats_fun, Fun}).
 
+%% @doc Number of open connections for each protocol id.
+-spec get_stats() -> [{proto_id(), non_neg_integer()}].
 get_stats() ->
     gen_server:call(?SERVER, get_stats).
 
-%% abrubtly kill all connections and stop disptaching services
+%% @doc Stop the ranch listener, and then exit the server normally.
+-spec stop() -> 'ok'.
 stop() ->
     gen_server:call(?SERVER, stop).
 
@@ -222,6 +245,7 @@ incr_count_for_protocol_id(ProtocolId, Incr, ServiceStatus) ->
              end,
     orddict:store(ProtocolId, Stats2, ServiceStatus).
 
+%% @private
 %% Host callback function, called by ranch for each accepted connection by way of
 %% of the ranch:start_listener() call above, specifying this module.
 start_link(Listener, Socket, Transport, SubProtocols) ->
@@ -403,15 +427,9 @@ normalize_ip(IP) when is_tuple(IP) ->
 
 -spec(start_dispatcher(ip_addr(), non_neg_integer(), [hostspec()]) -> {ok, pid()}).
 start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
-    case valid_host_ip(IP) of
-        true ->
-            {ok, RawAddress} = inet_parse:address(IP),
-            {ok, Pid} = ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
-                                      [{ip, RawAddress}, {port, Port}],
-                                      ?MODULE, SubProtocols),
-            lager:info("Service manager: listening on ~s:~p", [IP, Port]),
-            {ok, Pid};
-        _ ->
-            lager:error("Service Mananger: failed to start on ~s:~p - invalid address.",
-                        [IP, Port])
-    end.
+    {ok, RawAddress} = inet_parse:address(IP),
+    {ok, Pid} = ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
+                                [{ip, RawAddress}, {port, Port}],
+                                ?MODULE, SubProtocols),
+    lager:info("Service manager: listening on ~s:~p", [IP, Port]),
+    {ok, Pid}.

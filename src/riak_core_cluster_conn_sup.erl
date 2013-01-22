@@ -54,7 +54,9 @@ connections() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].
 
 is_connected(Remote) ->
-    not ([] == lists:filter(fun({R,_Pid}) -> R == Remote end, connections())).
+    Connections = connections(),
+    lists:any(fun({R,_Pid}) -> R == Remote end, Connections).
+    %not ([] == lists:filter(fun({R,_Pid}) -> R == Remote end, connections())).
 
 %% @private
 init([]) ->
@@ -72,4 +74,4 @@ init([]) ->
 
 make_remote(Remote) ->
     {Remote, {riak_core_cluster_conn, start_link, [Remote]},
-        permanent, ?SHUTDOWN, worker, [riak_core_cluster_conn]}.
+        temporary, ?SHUTDOWN, worker, [riak_core_cluster_conn]}.
