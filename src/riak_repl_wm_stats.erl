@@ -109,6 +109,8 @@ get_stats() ->
 
 jsonify_stats([], Acc) ->
     lists:flatten(lists:reverse(Acc));
+jsonify_stats([{fullsync, Num, _Left}|T], Acc) ->
+    jsonify_stats(T, [{"partitions_left", Num} | Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
     jsonify_stats(T, [{K,list_to_binary(riak_repl_util:safe_pid_to_list(V))}|Acc]);
 jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
