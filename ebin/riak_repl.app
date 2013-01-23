@@ -34,6 +34,7 @@
                   'riak_repl2_fssink',
                   'riak_repl2_fssink_sup',
                   'riak_repl2_leader',
+                  'riak_repl2_ip',
                   'riak_repl_leader',
                   'riak_repl_leader_helper',
                   'riak_repl_listener_sup',

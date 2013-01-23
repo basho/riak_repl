@@ -189,6 +189,10 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
             {location_down, Partition, Node}
     end,
     Transport:send(Socket, term_to_binary(Reply)),
+    State;
+
+handle_protocol_msg({unreserve, Partition}, State) ->
+    riak_repl2_fs_node_reserver:unreserve(Partition),
     State.
 
 get_partition_node(Partition) ->
@@ -200,8 +204,8 @@ get_node_ip_port(Node, ConnIP) ->
     {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
-    Subnet = riak_repl_app:determine_netmask(IfAddrs, NormIP),
-    Masked = riak_repl_app:mask_address(NormIP, Subnet),
+    Subnet = riak_repl2_ip:determine_netmask(IfAddrs, NormIP),
+    Masked = riak_repl2_ip:mask_address(NormIP, Subnet),
     case get_matching_address(Node, NormIP, Masked) of
         {ok, {ListenIP, _}} ->
             {ok, {ListenIP, Port}};
@@ -210,11 +214,11 @@ get_node_ip_port(Node, ConnIP) ->
     end.
 
 get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
-    Res = riak_repl_app:get_matching_address(NormIP, Masked),
+    Res = riak_repl2_ip:get_matching_address(NormIP, Masked),
     {ok, Res};
 
 get_matching_address(Node, NormIP, Masked) ->
-    case rpc:call(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
+    case rpc:call(Node, riak_repl2_ip, get_matching_address, [NormIP, Masked]) of
         {badrpc, Err} ->
             {error, Err};
         Res ->
