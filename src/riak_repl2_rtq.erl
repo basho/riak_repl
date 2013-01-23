@@ -54,66 +54,128 @@
             errs = 0,  % delivery errors
             deliver  % deliver function if pending, otherwise undefined
            }).
+
 %% API
+%% @doc Start linked, registeres to module name.
+-spec start_link() -> {ok, pid()}.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+%% @doc Test helper, starts unregistered and unlinked.
+-spec start_test() -> {ok, pid()}.
 start_test() ->
     gen_server:start(?MODULE, [], []).
 
+%% @doc Register a consumer with the given name. The Name of the consumer is
+%% the name of the remote cluster by convention. Returns the oldest unack'ed
+%% sequence number.
+-spec register(Name :: string()) -> {'ok', number()}.
 register(Name) ->
     gen_server:call(?SERVER, {register, Name}).
 
+%% @doc Removes a consumer.
+-spec unregister(Name :: string()) -> 'ok' | {'error', 'not_registered'}.
 unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}).
 
-
+%% @doc True if the given consumer has no items to consume.
+-spec is_empty(Name :: string()) -> boolean().
 is_empty(Name) ->
     gen_server:call(?SERVER, {is_empty, Name}).
 
+%% @doc True if no consumer has items to consume.
+-spec all_queues_empty() -> boolean().
 all_queues_empty() ->
     gen_server:call(?SERVER, all_queues_empty).
 
-%% Set the maximum number of bytes to use - could take a while to return
-%% on a big queue
+%% @doc Set the maximum number of bytes to use - could take a while to return
+%% on a big queue. The maximum is for the backend data structure used itself,
+%% not just the raw size of the objects. This was chosen to keep a situation
+%% where overhead of stored objects would cause more memory to be used than
+%% expected just looking at MaxBytes.
+-spec set_max_bytes(MaxBytes :: pos_integer() | 'undefined') -> 'ok'.
 set_max_bytes(MaxBytes) ->
+    % TODO if it always returns 'ok' it should likely be a cast, eg:
+    % why are we blocking the caller while it trims the queue?
     gen_server:call(?SERVER, {set_max_bytes, MaxBytes}, infinity).
 
-%% Push an item onto the queue
+%% @doc Push an item onto the queue. Bin should be the list of objects to push
+%% run through term_to_binary, while NumItems is the length of that list
+%% before being turned to a binary.
+-spec push(NumItems :: pos_integer(), Bin :: binary()) -> 'ok'.
 push(NumItems, Bin) ->
     gen_server:cast(?SERVER, {push, NumItems, Bin}).
 
+%% @doc Using the given DeliverFun, send an item to the consumer Name
+%% asynchonously.
+-type queue_entry() :: {pos_integer(), pos_integer(), binary()}.
+-type not_reg_error() :: {'error', 'not_registered'}.
+-type deliver_fun() :: fun((queue_entry() | not_reg_error()) -> 'ok').
+-spec pull(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull(Name, DeliverFun) ->
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
+%% @doc Block the caller while the pull is done.
+-spec pull_sync(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull_sync(Name, DeliverFun) ->
     gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}).
 
+%% @doc Asynchronously acknowldge delivery of all objects with a sequence
+%% equal or lower to Seq for the consumer.
+-spec ack(Name :: string(), Seq :: pos_integer()) -> 'ok'.
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
 
+%% @doc Same as ack/2, but blocks the caller.
+-spec ack_sync(Name :: string(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
     gen_server:call(?SERVER, {ack_sync, Name, Seq}).
 
+%% @doc The status of the queue.
+%% <dl>
+%% <dt>bytes</dt><dd>Size of the data store backend</dd>
+%% <dt>max_bytes</dt><dd>Maximum size of the data store backend</dd>
+%% <dt>consumers</dt><dd>Key - Value pair of the consumer stats, key is the
+%% consumer name.</dd>
+%% </dl>
+%%
+%% The consumers have the following data:
+%% <dl>
+%% <dt>pending</dt><dd>Number of queue items left to send.</dd>
+%% <dt>unacked</dt><dd>Number of queue items that are sent, but not yet acked</dd>
+%% <dt>drops</dt><dd>Dropped entries due to max_bytes</dd>
+%% <dt>errs</dt><dd>Number of non-ok returns from deliver fun</dd>
+%% </dl>
+-spec status() -> [any()].
 status() ->
     gen_server:call(?SERVER, status).
 
+%% @doc return the data store as a list.
+-spec dumpq() -> [any()].
 dumpq() ->
     gen_server:call(?SERVER, dumpq).
 
+%% @doc Signal that this node is doing down, and so a proxy process needs to
+%% start to avoid dropping, or aborting unacked results.
+-spec shutdown() -> 'ok'.
 shutdown() ->
     gen_server:call(?SERVER, shutting_down).
 
+%% @doc Will explode if the server is not started, but will tell you if it's
+%% in shutdown.
+-spec is_running() -> boolean().
 is_running() ->
     gen_server:call(?SERVER, is_running).
 
 
 %% Internals
+%% @private
 init([]) ->
     %% Default maximum realtime queue size to 100Mb
     MaxBytes = app_helper:get_env(riak_repl, rtq_max_bytes, 100*1024*1024),
     {ok, #state{max_bytes = MaxBytes}}. % lots of initialization done by defaults
 
+%% @private
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                                           qseq = QSeq, cs = Cs}) ->
     Consumers =
@@ -191,6 +253,7 @@ handle_call({ack_sync, Name, Seq}, _From, State) ->
 handle_cast({push, NumItems, Bin}, State) ->
     {noreply, push(NumItems, Bin, State)};
 
+%% @private
 handle_cast({pull, Name, DeliverFun}, State) ->
      {noreply, pull(Name, DeliverFun, State)};
 
@@ -215,9 +278,11 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
 
 
 
+%% @private
 handle_info(_Msg, State) ->
     {noreply, State}.
 
+%% @private
 terminate(Reason, #state{cs = Cs}) ->
     [case DeliverFun of
          undefined ->
@@ -227,6 +292,7 @@ terminate(Reason, #state{cs = Cs}) ->
      end || #c{deliver = DeliverFun} <- Cs],
     ok.
 
+%% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
