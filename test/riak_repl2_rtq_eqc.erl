@@ -224,7 +224,7 @@ make_item() ->
 
 push({NumItems, Bin}, Q) ->
     lager:info("pushed item ~p~n to ~p~n", [Bin, Q]),
-    riak_repl2_rtq:push(NumItems, Bin, []).
+    riak_repl2_rtq:push(NumItems, Bin).
 
 push({NumItems, Bin}, RoutedClusters, _Q) ->
     riak_repl2_rtq:push(NumItems, Bin, [{routed_clusters, RoutedClusters}]).
