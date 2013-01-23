@@ -24,6 +24,7 @@
          register/1,
          unregister/1,
          set_max_bytes/1,
+         push/3,
          push/2,
          pull/2,
          pull_sync/2,
@@ -101,14 +102,21 @@ set_max_bytes(MaxBytes) ->
 
 %% @doc Push an item onto the queue. Bin should be the list of objects to push
 %% run through term_to_binary, while NumItems is the length of that list
-%% before being turned to a binary.
+%% before being turned to a binary. Meta is an orddict() of data about the
+%% queued item. The key `routed_clusters' is a list of the clusters the item
+%% has received and ack for.
+-spec push(NumItems :: pos_integer(), Bin :: binary(), Meta :: orddict:orddict()) -> 'ok'.
+push(NumItems, Bin, Meta) ->
+    gen_server:cast(?SERVER, {push, NumItems, Bin, Meta}).
+
+%% @doc Like push/3, only Meta is orddict:new/0.
 -spec push(NumItems :: pos_integer(), Bin :: binary()) -> 'ok'.
 push(NumItems, Bin) ->
-    gen_server:cast(?SERVER, {push, NumItems, Bin}).
+    push(NumItems, Bin, []).
 
 %% @doc Using the given DeliverFun, send an item to the consumer Name
 %% asynchonously.
--type queue_entry() :: {pos_integer(), pos_integer(), binary()}.
+-type queue_entry() :: {pos_integer(), pos_integer(), binary(), orddict:orddict()}.
 -type not_reg_error() :: {'error', 'not_registered'}.
 -type deliver_fun() :: fun((queue_entry() | not_reg_error()) -> 'ok').
 -spec pull(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
@@ -244,14 +252,14 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
     {reply, ok, pull(Name, DeliverFun, State)};
 
-handle_call({push, NumItems, Bin}, _From, State) ->
-    {reply, ok, push(NumItems, Bin, State)};
+handle_call({push, NumItems, Bin, Meta}, _From, State) ->
+    {reply, ok, push(NumItems, Bin, Meta, State)};
 
 handle_call({ack_sync, Name, Seq}, _From, State) ->
     {reply, ok, ack_seq(Name, Seq, State)}.
 
-handle_cast({push, NumItems, Bin}, State) ->
-    {noreply, push(NumItems, Bin, State)};
+handle_cast({push, NumItems, Bin, Meta}, State) ->
+    {noreply, push(NumItems, Bin, Meta, State)};
 
 %% @private
 handle_cast({pull, Name, DeliverFun}, State) ->
@@ -320,16 +328,16 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
-push(NumItems, Bin, State = #state{qtab = QTab, qseq = QSeq,
+push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
                                                   cs = Cs, shutting_down = false}) ->
     QSeq2 = QSeq + 1,
-    QEntry = {QSeq2, NumItems, Bin},
+    QEntry = {QSeq2, NumItems, Bin, Meta},
     %% Send to any pending consumers
     Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
     ets:insert(QTab, QEntry),
     trim_q(State#state{qseq = QSeq2, cs = Cs2});
-push(NumItems, Bin, State = #state{shutting_down = true}) ->
-    riak_repl2_rtq_proxy:push(NumItems, Bin),
+push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
+    riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
