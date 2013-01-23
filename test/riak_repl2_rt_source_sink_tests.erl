@@ -92,19 +92,14 @@ connection_test_() ->
             ] end}
         end,
 
-        fun(State) -> {"v2 to v1 communication", setup,
+        fun(State) -> {"v2 to v2 communication", setup,
             fun() ->
-                %?debugMsg("BING!"),
-                {ok, _ListenPid} = start_sink(?VER1),
-                %?debugMsg("BING!"),
+                {ok, _ListenPid} = start_sink(?VER2),
                 {ok, {Source, Sink}} = start_source(?VER2),
-                %?debugMsg("BING!"),
                 meck:new(poolboy, [passthrough]),
-                %?debugMsg("BING!"),
                 meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
                     spawn(fun() -> ok end)
                 end),
-                %?debugMsg("BING!"),
                 {State, Source, Sink}
             end,
             fun({_State, Source, Sink}) ->
@@ -115,6 +110,20 @@ connection_test_() ->
 
                 {"everything started okay", fun() ->
                     assert_living_pids([Source, Sink])
+                end},
+
+                {"sending objects", fun() ->
+                    Self = self(),
+                    meck:new(riak_repl_fullsync_worker),
+                    meck:expect(riak_repl_fullsync_worker, do_binputs, fun(_Worker, <<"der object">>, DoneFun, riak_repl2_rtsink_pool) ->
+                        Self ! continue,
+                        Self ! {state, DoneFun},
+                        ok
+                    end),
+                    riak_repl2_rtq:push(1, <<"der object">>, []),
+                    MeckOk = wait_for_continue(),
+                    ?assertEqual(ok, MeckOk),
+                    meck:unload(riak_repl_fullsync_worker)
                 end},
 
                 {"mc fail", ?_assert(false)}
