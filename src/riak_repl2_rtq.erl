@@ -20,6 +20,7 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/0,
+         start_test/0,
          register/1,
          unregister/1,
          set_max_bytes/1,
@@ -56,6 +57,9 @@
 %% API
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+start_test() ->
+    gen_server:start(?MODULE, [], []).
 
 register(Name) ->
     gen_server:call(?SERVER, {register, Name}).
@@ -177,6 +181,9 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
 
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
     {reply, ok, pull(Name, DeliverFun, State)};
+
+handle_call({push, NumItems, Bin}, _From, State) ->
+    {reply, ok, push(NumItems, Bin, State)};
 
 handle_call({ack_sync, Name, Seq}, _From, State) ->
     {reply, ok, ack_seq(Name, Seq, State)}.
