@@ -63,17 +63,34 @@ prop_main() ->
 %% ====================================================================
 
 initial_state() ->
+    kill_and_wait(riak_repl2_rtq),
     #state{}.
+
+kill_and_wait(undefined) ->
+    ok;
+kill_and_wait(Atom) when is_atom(Atom) ->
+    kill_and_wait(whereis(Atom));
+kill_and_wait(Pid) when is_pid(Pid) ->
+    unlink(Pid),
+    MonRef = erlang:monitor(process, Pid),
+    exit(Pid, kill),
+    receive
+        {'DOWN', MonRef, process, Pid, _} ->
+            ok
+    end.
 
 %% start the RTQ *and* set the max bytes for the queue
 test_init(MaxBytes) ->
     application:set_env(riak_repl, rtq_max_bytes, MaxBytes),
-    riak_repl2_rtq:start_test().
+    {ok, Pid} = riak_repl2_rtq:start_link(),
+    unlink(Pid),
+    Pid.
 
 command(#state{rtq=undefined}) ->
         {call, ?MODULE, test_init, [max_bytes()]};
 command(S) ->
     oneof([{call, ?MODULE, push, [make_item(), S#state.rtq]}] ++
+          [{call, ?MODULE, push, [make_item(), routed_clusters(S#state.cs), S#state.rtq]}] ++
           [{call, ?MODULE, new_consumer, [elements(S#state.pcs), S#state.rtq]} ||
             S#state.pcs /= []] ++
           [{call, ?MODULE, rm_consumer, [elements(S#state.cs), S#state.rtq]} ||
@@ -116,11 +133,14 @@ postcondition(S,{call,?MODULE,push,[_Item, Q]},_R) ->
                 QBytes = get_rtq_bytes(Q),
                 ((S#state.max_bytes =< QBytes) == Acc)
         end, true, S#state.cs);
+postcondition(S,{call,?MODULE,push,[_Item,_RotuedClusters,Q]},_R) ->
+    % same postcondition as call/2, so no duplicate code here!
+    postcondition(S,{call,?MODULE,push,[undefined, Q]},undefined);
 postcondition(_S,{call,_,_,_},_R) ->
     true.
 
 next_state(S,V,{call, _, test_init, [_B]}) ->
-    S#state{rtq={call, erlang, element, [2, V]}};
+    S#state{rtq=V};
 next_state(S,_V,{call, _, new_consumer, [Name, _Q]}) ->
     %% IF there's other clients, this client's outstanding messages will
     %% be the longest REC+OUT queue from one of the other consumers.
@@ -159,6 +179,9 @@ next_state(S,_V,{call, _, push, [Item, _Q]}) ->
                     end, S#state.cs),
             S#state{cs=Clients}
     end;
+next_state(S, _V, {call, _, push, [Item, RoutedClusters, Q]}) ->
+    Item2 = set_meta(Item, routed_clusters, RoutedClusters),
+    next_state(S, undefined, {call, ?MODULE, push, [Item2, Q]});
 next_state(S,V,{call, _, pull, [Client, _Q]}) ->
     %lager:info("tout is ~p~n", [Client#tc.tout]),
     {Tout, Trec} = case Client#tc.tout of
@@ -182,27 +205,44 @@ next_state(S,_V,{call, _, ack, [{Client,N}, _Q]}) ->
 next_state(S,_V,{call, _, _, _}) ->
     S.
 
+set_meta({A, B}, Key, Value) ->
+    set_meta({A, B, []}, Key, Value);
+set_meta({A, B, MetaDict}, Key, Value) ->
+    MetaDict2 = orddict:store(Key, Value, MetaDict),
+    {A, B, MetaDict2}.
+
+routed_clusters([]) ->
+    [];
+routed_clusters(Consumers) ->
+    Names = [C#tc.name || C <- Consumers],
+    ?LET(NamesList, list(elements(Names)),
+        ordsets:from_list(NamesList)
+    ).
+
 make_item() ->
     ?LAZY({1, term_to_binary([make_ref()])}).
 
 push({NumItems, Bin}, Q) ->
     lager:info("pushed item ~p~n to ~p~n", [Bin, Q]),
-    gen_server:call(Q, {push, NumItems, Bin}).
+    riak_repl2_rtq:push(NumItems, Bin, []).
+
+push({NumItems, Bin}, RoutedClusters, _Q) ->
+    riak_repl2_rtq:push(NumItems, Bin, [{routed_clusters, RoutedClusters}]).
 
 new_consumer(Name, Q) ->
     lager:info("registering ~p to ~p~n", [Name, Q]),
-    gen_server:call(Q, {register, Name}).
+    riak_repl2_rtq:register(Name).
 
-rm_consumer(#tc{name=Name}, Q) ->
+rm_consumer(#tc{name=Name}, _Q) ->
     lager:info("unregistering ~p", [Name]),
-    gen_server:call(Q, {unregister, Name}).
+    riak_repl2_rtq:unregister(Name).
 
-replace_consumer(#tc{name=Name}, Q) ->
+replace_consumer(#tc{name=Name}, _Q) ->
     lager:info("replacing ~p", [Name]),
-    gen_server:call(Q, {register, Name}).
+    riak_repl2_rtq:register(Name).
 
-get_rtq_bytes(Q) ->
-    Stats = gen_server:call(Q, status),
+get_rtq_bytes(_Q) ->
+    Stats = riak_repl2_rtq:status(),
     proplists:get_value(bytes, Stats).
 
 
@@ -221,7 +261,7 @@ pull(#tc{name=Name}, Q) ->
                     error
             end
     end,
-    gen_server:cast(Q, {pull, Name, F}),
+    riak_repl2_rtq:pull(Name, F),
     receive
         {Ref, {Seq, Size, Item}} ->
             lager:info("~p got ~p size ~p seq ~p~n", [Name, Item, Size, Seq]),
@@ -234,7 +274,7 @@ pull(#tc{name=Name}, Q) ->
             none
     end.
 
-ack({C=#tc{name=Name}, N}, Q) ->
+ack({C=#tc{name=Name}, N}, _Q) ->
     case C#tc.trec of
         [] ->
             lager:info("~p has nothing to ACK~n", [Name]),
@@ -243,7 +283,7 @@ ack({C=#tc{name=Name}, N}, Q) ->
             {H, _} = lists:split(N, Trec),
             {Seq, _, _} = I = lists:last(H),
             lager:info("~p ACKing ~p (~p of ~p)~n", [Name, Seq, N, length(Trec)]),
-            gen_server:call(Q, {ack_sync, Name, Seq}),
+            riak_repl2_rtq:ack_sync(Name, Seq),
             I
     end.
 
