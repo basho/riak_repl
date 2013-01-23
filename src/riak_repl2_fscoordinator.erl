@@ -615,15 +615,31 @@ remote_node_available({_Partition, _, undefined}, _Busies) ->
 remote_node_available({_Partition, _, RemoteNode}, Busies) ->
     not sets:is_element(RemoteNode, Busies).
 
-start_fssource({Partition,_,_} = PartitionVal, Ip, Port, State) ->
+start_fssource(Partition2={Partition,_,_} = PartitionVal, Ip, Port, State) ->
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
     lager:info("starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
             Ip]),
-    {ok, Pid} = riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}),
-    link(Pid),
-    Running = orddict:store(Pid, PartitionVal, State#state.running_sources),
-    State#state{running_sources = Running}.
+    case riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}) of
+        {ok, Pid} ->
+            link(Pid),
+            Running = orddict:store(Pid, PartitionVal, State#state.running_sources),
+            State#state{running_sources = Running};
+        {error, Reason} ->
+            case Reason of
+                {already_started, OtherPid} ->
+                    lager:notice("A fullsync for partition ~p is already in"
+                        " progress for ~p", [Partition,
+                            riak_repl2_fssource:cluster_name(OtherPid)]);
+                _ ->
+                    lager:error("Failed to start fullsync for partition ~p :"
+                        " ~p", [Partition, Reason])
+            end,
+            #state{transport = Transport, socket = Socket} = State,
+            Transport:send(Socket, term_to_binary({unreserve, Partition})),
+            PQueue = queue:in(Partition2, State#state.partition_queue),
+            State#state{partition_queue=PQueue}
+    end.
 
 largest_n(Ring) ->
     Defaults = app_helper:get_env(riak_core, default_bucket_props, []),
