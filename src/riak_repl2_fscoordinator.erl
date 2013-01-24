@@ -140,7 +140,7 @@ node_dirty(Node) ->
     %%  2) running - don't clear these out when fullsync finishes
     case riak_core_cluster_mgr:get_leader() of
         undefined ->
-            lager:info("rt_dirty status updated locally, but not registered with leader");
+            lager:debug("rt_dirty status updated locally, but not registered with leader");
         Leader ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             [riak_repl2_fscoordinator:node_dirty(Pid, Node) ||

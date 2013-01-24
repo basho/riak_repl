@@ -137,7 +137,7 @@ rt_dirty() ->
                         riak_repl2_fscoordinator:node_dirty(node())
                       catch
                         _:_ ->
-                         lager:warning("Failed to notify coordinator of rt_dirty status")
+                         lager:debug("Failed to notify coordinator of rt_dirty status")
                       end
             end),
             ok;
