@@ -172,7 +172,7 @@ start_sink(Version) ->
     meck:new(riak_core_service_mgr, [passthrough]),
     meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
-        {ok, Listen} = try_to_listen(?SINK_PORT, [binary | TcpOpts]),
+        {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
         TellMe ! sink_listening,
         {ok, Socket} = gen_tcp:accept(Listen),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link(?PROTOCOL(Version), "source_cluster"),
@@ -192,22 +192,6 @@ start_sink(Version) ->
 listen_sink() ->
     riak_repl2_rtsink_conn:register_service().
 
-% a previous test may not have closed the port as quickly as we like, so we
-% try to open it a few times before giving up.
-try_to_listen(Port, Opts) ->
-    try_to_listen(Port, Opts, 0).
-
-try_to_listen(Port, Opts, N) ->
-    case gen_tcp:listen(Port, Opts) of
-        {ok, _Listen} = Out ->
-            Out;
-        _Err when N < 10 ->
-            erlang:yeild(), % let the port close if it needs to
-            try_to_listen(Port, Opts, N + 1);
-        Err ->
-            Err
-    end.
-
 start_source() ->
     start_source(?VER1).
 
@@ -217,7 +201,7 @@ start_source(NegotiatedVer) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
-            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(?VER1), Pid, [])
+            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, [])
         end),
         {ok, make_ref()}
     end),
