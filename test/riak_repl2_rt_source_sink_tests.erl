@@ -27,6 +27,7 @@
 connection_test_() ->
     {foreach, fun() ->
         abstract_gen_tcp(),
+        abstract_stats(),
         {ok, RT} = riak_repl2_rt:start_link(),
         {ok, _} = riak_repl2_rtq:start_link(),
         {ok, TCPMon} = riak_core_tcp_mon:start_link(),
@@ -45,7 +46,8 @@ connection_test_() ->
         wait_for_pid(TCPMon),
         wait_for_pid(RT),
         wait_for_pid(Rtq),
-        meck:unload(gen_tcp)
+        meck:unload(gen_tcp),
+        meck:unload(riak_repl_stats)
     end, [
 
         fun(State) -> {"v1 to v1 communication", setup,
@@ -126,7 +128,11 @@ connection_test_() ->
                     meck:unload(riak_repl_fullsync_worker)
                 end},
 
-                {"mc fail", ?_assert(false)}
+                {"assert done", fun() ->
+                    {ok, DoneFun} = extract_state_msg(),
+                    DoneFun(),
+                    ?assert(riak_repl2_rtq:all_queues_empty())
+                end}
 
             ] end}
 
@@ -163,6 +169,11 @@ abstract_rt() ->
     meck:expect(riak_repl2_rt, register_sink, fun(_SinkPid) ->
         ok
     end).
+
+abstract_stats() ->
+    meck:new(riak_repl_stats),
+    meck:expect(riak_repl_stats, rt_source_errors, fun() -> ok end),
+    meck:expect(riak_repl_stats, objects_sent, fun() -> ok end).
 
 start_sink() ->
     start_sink(?VER1).

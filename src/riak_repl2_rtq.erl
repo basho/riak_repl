@@ -370,7 +370,7 @@ maybe_deliver_item(C = #c{deliver = DeliverFun}, QEntry) ->
             deliver_item(C, DeliverFun, QEntry)
     end.
 
-deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin} = QEntry) ->
+deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         ok = DeliverFun(QEntry),
