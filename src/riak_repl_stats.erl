@@ -128,10 +128,22 @@ rt_dirty() ->
         true ->
             %% the coordinator might not be up yet
             lager:debug("Notifying coordinator of rt_dirty"),
-            riak_repl2_fscoordinator:node_dirty(node()),
+            % notify the coordinator at a later time, hopefully
+            % after the fscoordinator is started. If it's not, then just
+            % log a warning.
+            spawn(fun() ->
+                      timer:sleep(30000),
+                      try
+                        riak_repl2_fscoordinator:node_dirty(node())
+                      catch
+                        _:_ ->
+                         lager:debug("Failed to notify coordinator of rt_dirty status")
+                      end
+            end),
             ok;
         false -> ok
     end.
+
 
 get_stats() ->
     case riak_core_stat_cache:get_stats(?APP) of
