@@ -13,6 +13,13 @@
     sources = [] % {remote_name(), {source_pid(), sink_pid(), [object_to_ack()]}}
     }).
 
+-record(src_state, {
+    src_pid,
+    sink_pid,
+    version,
+    unacked_objects = []
+}).
+
 prop_test_() ->
     {timeout, 30, fun() ->
         ?assert(eqc:quickcheck(?MODULE:prop_main()))
@@ -36,7 +43,7 @@ command(S) ->
         [{call, ?MODULE, connect_to_v2, [remote_name(S)]} || S#state.remotes_available /= []] ++
         [{call, ?MODULE, disconnect, [elements(S#state.sources)]} || S#state.sources /= []] ++
         % push an object that may already have been rt'ed
-        [{call, ?MODULE, push_object, [g_unique_remotes()]}] ++
+        [{call, ?MODULE, push_object, [g_unique_remotes(), binary()]}] ++
         [{call, ?MODULE, ack_object, [elements(S#state.sources)]} || S#state.sources /= []]
     ).
 
@@ -86,7 +93,7 @@ next_state(S, _Res, {call, _, disconnect, [Source]}) ->
     Sources = lists:delete(Source, S#state.sources),
     S#state{sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
-next_state(S, Res, {call, _, push_object, [Remotes]}) ->
+next_state(S, Res, {call, _, push_object, [Remotes, _Binary]}) ->
     Sources = update_unacked_objects(Remotes, Res, S#state.sources),
     S#state{sources = Sources};
 
@@ -120,7 +127,7 @@ decode_res_connect_v2(_Remote, Res) ->
 update_unacked_objects(Remotes, Res, Sources) ->
     update_unacked_objects(Remotes, Res, Sources, []).
 
-update_unacked_objects(_Remotes, _REs, [], Acc) ->
+update_unacked_objects(_Remotes, _Res, [], Acc) ->
     lists:reverse(Acc);
 
 update_unacked_objects(Remotes, Res, [{Remote, Source} = KV | Tail], Acc) ->
@@ -132,13 +139,13 @@ update_unacked_objects(Remotes, Res, [{Remote, Source} = KV | Tail], Acc) ->
             update_unacked_objects(Remotes, Res, Tail, [{Remote, Entry} | Acc])
     end.
 
-model_push_object(Res, {Source, Sink, ObjQueue}) ->
-    {Source, Sink, ObjQueue ++ [Res]}.
+model_push_object(Res, SrcState = #src_state{unacked_objects = ObjQueue}) ->
+    SrcState#src_state{unacked_objects = ObjQueue ++ [Res]}.
 
-model_ack_object({_Source, _Sink, []} = SourceState) ->
+model_ack_object(#src_state{unacked_objects = []} = SourceState) ->
     SourceState;
-model_ack_object({Source, Sink, [_Acked | Rest]}) ->
-    {Source, Sink, Rest}.
+model_ack_object(#src_state{unacked_objects = [_Acked | Rest]} = SrcState) ->
+    SrcState#src_state{unacked_objects = Rest}.
 
 %% ====================================================================
 %% postcondition
@@ -147,21 +154,22 @@ model_ack_object({Source, Sink, [_Acked | Rest]}) ->
 postcondition(_State, {call, _, connect_to_v1, [_RemoteName]}, {error, _}) ->
     false;
 postcondition(_State, {call, _, connect_to_v1, [_RemoteName]}, Res) ->
-    {Source, Sink, []} = Res,
+    #src_state{src_pid = Source, sink_pid = Sink} = Res,
     is_pid(Source) andalso is_pid(Sink);
 
 postcondition(_State, {call, _, connect_to_v2, [_RemoteName]}, {error, _}) ->
     false;
 postcondition(_State, {call, _, connect_to_v2, [_RemoteName]}, Res) ->
-    {Source, Sink, []} = Res,
+    #src_state{src_pid = Source, sink_pid = Sink} = Res,
     is_pid(Source) andalso is_pid(Sink);
 
 postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
     lists:all(fun(ok) -> true; (_) -> false end, Waits);
 
-postcondition(_State, {call, _, push_object, [_Remotes]}, _Res) ->
-    % TODO make a true postcondition.
-    true;
+postcondition(State, {call, _, push_object, [Remotes, _Binary]}, Res) ->
+    % need to give the fake sinks time to get the messages.
+    timer:sleep(100),
+    assert_sink_recvs(State#state.sources, Remotes, Res);
 
 postcondition(_State, {call, _, ack_object, [_Source]}, _Res) ->
     % TODO make a true postcondition.
@@ -169,6 +177,29 @@ postcondition(_State, {call, _, ack_object, [_Source]}, _Res) ->
 
 postcondition(_S, _C, _R) ->
     false.
+
+assert_sink_recvs(Sources, Remotes, Expected) ->
+    lists:all(fun(Elem) ->
+        assert_sink_recv(Elem, Remotes, Expected)
+    end, Sources).
+
+assert_sink_recv({Remote, SrcState}, Remotes, Created) ->
+    Sink = SrcState#src_state.sink_pid,
+    LastGot = gen_server:call(Sink, last_data),
+    case lists:member(Remote, Remotes) of
+        true ->
+            LastGot == undefined;
+        false ->
+            {_NumObj, ObjBin, Meta} = Created,
+            case {SrcState#src_state.version, LastGot} of
+                {1, {objects, {_Seq, ObjBin}}} ->
+                    true;
+                {2, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
+                    true;
+                _ ->
+                    false
+            end
+    end.
 
 %% ====================================================================
 %% test callbacks
@@ -180,7 +211,7 @@ connect_to_v1(RemoteName) ->
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
     receive
         {sink_started, SinkPid} ->
-            {SourcePid, SinkPid, []}
+            #src_state{src_pid = SourcePid, sink_pid = SinkPid, version = 1}
     after 1000 ->
         {error, timeout}
     end.
@@ -191,36 +222,31 @@ connect_to_v2(RemoteName) ->
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
     receive
         {sink_started, SinkPid} ->
-            {SourcePid, SinkPid, []}
+            #src_state{src_pid = SourcePid, sink_pid = SinkPid, version = 2}
     after 1000 ->
         {error, timeout}
     end.
 
 disconnect(ConnectState) ->
-    {Remote, {Source, Sink, _Objects}} = ConnectState,
+    {_Remote, SrcState} = ConnectState,
+    #src_state{src_pid = Source, sink_pid = Sink} = SrcState,
     riak_repl2_rtsource_conn:stop(Source),
     [wait_for_pid(P, 3000) || P <- [Source, Sink]].
 
-push_object(Remotes) ->
-    BinObjects = term_to_binary([<<"der object">>]),
+push_object(Remotes, Binary) ->
+    BinObjects = term_to_binary([Binary]),
     Meta = [{routed_clusters, Remotes}],
     riak_repl2_rtq:push(1, BinObjects, Meta),
     {1, BinObjects, Meta}.
 
-ack_object({_Remote, {_Source, _Sink, []}}) ->
+ack_object({_Remote, #src_state{unacked_objects = []}}) ->
     [];
 ack_object(SourceState) ->
-    {_Remote, {_Source, Sink, Objects}} = SourceState,
+    {_Remote, SrcState} = SourceState,
+    #src_state{unacked_objects = Objects, sink_pid = Sink} = SrcState,
     Sink ! ack_object,
     [_Acked | Objects2] = Objects,
     Objects2.
-
-%        [{call, ?MODULE, connect_to_v1, [remote_name()]}] ++
-%        [{call, ?MODULE, connect_to_v2, [remote_name()]}] ++
-%        [{call, ?MODULE, disconnect, [elements(S#state.sources)]} || S#state.sources /= []] ++
-%        % push an object that may already have been rt'ed
-%        [{call, ?MODULE, push_object, [g_unique_remotes()]}] ++
-%        [{call, ?MODULE, ack_object, [elements(S#state.sources)]} || S#state.sources /= []]
 
 %% ====================================================================
 %% helpful utility functions
@@ -296,25 +322,29 @@ sink_listener(TcpOpts, WhoToTell) ->
 sink_acceptor(Listen, WhoToTell) ->
     {ok, Socket} = gen_tcp:accept(Listen),
     Version = stateful:version(),
-    Pid = proc_lib:spawn_link(?MODULE, fake_sink, [Socket, Version, undefined]),
+    Pid = proc_lib:spawn_link(?MODULE, fake_sink, [Socket, Version, undefined, []]),
     ok = gen_tcp:controlling_process(Socket, Pid),
     Pid ! start,
     WhoToTell ! {sink_started, Pid},
     sink_acceptor(Listen, WhoToTell).
 
-fake_sink(Socket, Version, LastData) ->
+fake_sink(Socket, Version, LastData, History) ->
     receive
         start ->
             inet:setopts(Socket, [{active, once}]),
-            fake_sink(Socket, Version, LastData);
+            fake_sink(Socket, Version, LastData, History);
         stop ->
             ok;
+        {'$gen_call', From, last_data} ->
+            gen_server:reply(From, LastData),
+            fake_sink(Socket, Version, undefined, History);
         {'$gen_call', From, _Msg} ->
-            gen_server:reply(From, {error, nyi}),
-            fake_sink(Socket, Version, LastData);
+            gen_server:reply(From, {error, badcall}),
+            fake_sink(Socket, Version, LastData, History);
         {tcp, Socket, Bin} ->
+            {ok, Frame, _Rest} = riak_repl2_rtframe:decode(Bin),
             inet:setopts(Socket, [{active, once}]),
-            fake_sink(Socket, Version, Bin);
+            fake_sink(Socket, Version, Frame, [Frame | History]);
         {tcp_error, Socket, Err} ->
             exit(Err);
         {tcp_closed, Socket} ->
