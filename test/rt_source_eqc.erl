@@ -149,8 +149,26 @@ postcondition(_State, {call, _, connect_to_v1, [_RemoteName]}, {error, _}) ->
 postcondition(_State, {call, _, connect_to_v1, [_RemoteName]}, Res) ->
     {Source, Sink, []} = Res,
     is_pid(Source) andalso is_pid(Sink);
+
+postcondition(_State, {call, _, connect_to_v2, [_RemoteName]}, {error, _}) ->
+    false;
+postcondition(_State, {call, _, connect_to_v2, [_RemoteName]}, Res) ->
+    {Source, Sink, []} = Res,
+    is_pid(Source) andalso is_pid(Sink);
+
+postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
+    lists:all(fun(ok) -> true; (_) -> false end, Waits);
+
+postcondition(_State, {call, _, push_object, [_Remotes]}, _Res) ->
+    % TODO make a true postcondition.
+    true;
+
+postcondition(_State, {call, _, ack_object, [_Source]}, _Res) ->
+    % TODO make a true postcondition.
+    true;
+
 postcondition(_S, _C, _R) ->
-    true.
+    false.
 
 %% ====================================================================
 %% test callbacks
@@ -179,9 +197,9 @@ connect_to_v2(RemoteName) ->
     end.
 
 disconnect(ConnectState) ->
-    {Remote, {Source, _Sink, _Objects}} = ConnectState,
+    {Remote, {Source, Sink, _Objects}} = ConnectState,
     riak_repl2_rtsource_conn:stop(Source),
-    Remote.
+    [wait_for_pid(P, 3000) || P <- [Source, Sink]].
 
 push_object(Remotes) ->
     BinObjects = term_to_binary([<<"der object">>]),
@@ -280,17 +298,22 @@ sink_acceptor(Listen, WhoToTell) ->
     Version = stateful:version(),
     Pid = proc_lib:spawn_link(?MODULE, fake_sink, [Socket, Version, undefined]),
     ok = gen_tcp:controlling_process(Socket, Pid),
+    Pid ! start,
     WhoToTell ! {sink_started, Pid},
     sink_acceptor(Listen, WhoToTell).
 
 fake_sink(Socket, Version, LastData) ->
     receive
+        start ->
+            inet:setopts(Socket, [{active, once}]),
+            fake_sink(Socket, Version, LastData);
         stop ->
             ok;
         {'$gen_call', From, _Msg} ->
             gen_server:reply(From, {error, nyi}),
             fake_sink(Socket, Version, LastData);
         {tcp, Socket, Bin} ->
+            inet:setopts(Socket, [{active, once}]),
             fake_sink(Socket, Version, Bin);
         {tcp_error, Socket, Err} ->
             exit(Err);
@@ -318,8 +341,16 @@ kill_and_wait(Atom) when is_atom(Atom) ->
 kill_and_wait(Pid) when is_pid(Pid) ->
     unlink(Pid),
     exit(Pid, stupify),
+    wait_for_pid(Pid).
+
+wait_for_pid(Pid) ->
+    wait_for_pid(Pid, infinity).
+
+wait_for_pid(Pid, Timeout) ->
     Mon = erlang:monitor(process, Pid),
     receive
         {'DOWN', Mon, process, Pid, _Why} ->
             ok
+    after Timeout ->
+        {error, timeout}
     end.
