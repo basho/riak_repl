@@ -31,7 +31,6 @@ prop_main() ->
 %% ====================================================================
 
 command(S) ->
-    ?debugMsg("Narn"),
     oneof(
         [{call, ?MODULE, connect_to_v1, [remote_name(S)]} || S#state.remotes_available /= []] ++
         [{call, ?MODULE, connect_to_v2, [remote_name(S)]} || S#state.remotes_available /= []] ++
@@ -66,7 +65,6 @@ precondition(_S, _Call) ->
 
 initial_state() ->
     process_flag(trap_exit, true),
-    ?debugFmt("I am the lizard queen! ~p", [self()]),
     abstract_gen_tcp(),
     abstract_stats(),
     abstract_stateful(),
@@ -267,8 +265,6 @@ start_fake_sink() ->
 
 sink_listener(TcpOpts, WhoToTell) ->
     TcpOpts2 = [binary, {reuseaddr, true} | TcpOpts],
-    ?debugFmt("starting fake sink with opts ~p", [TcpOpts2]),
-    Self = self(),
     Pid = proc_lib:spawn_link(fun() ->
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, TcpOpts2),
         proc_lib:spawn(?MODULE, sink_acceptor, [Listen, WhoToTell]),
@@ -317,12 +313,10 @@ kill_and_wait(undefined) ->
     ok;
 
 kill_and_wait(Atom) when is_atom(Atom) ->
-    ?debugFmt("looking up dude: ~p", [Atom]),
     kill_and_wait(whereis(Atom));
 
 kill_and_wait(Pid) when is_pid(Pid) ->
     unlink(Pid),
-    ?debugFmt("Murdering a soul: ~p", [Pid]),
     exit(Pid, stupify),
     Mon = erlang:monitor(process, Pid),
     receive
