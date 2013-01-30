@@ -564,7 +564,7 @@ determine_best_partition(State) ->
     determine_best_partition(SeedPart, Busies, Owners, Waiting, queue:new()).
 
 determine_best_partition({empty, _Q}, _Business, _Owners, _Waiting, AccQ) ->
-    lager:info("no partition"),
+    lager:info("No partition in the queue that will not exceed a limit; will try again later."),
     % there is no best partition, try again later
     {undefined, AccQ};
 
