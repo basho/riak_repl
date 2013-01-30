@@ -74,6 +74,8 @@ precondition(S, {call, _, ack_objects, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, push_object, _Args}) ->
     S#state.sources /= [];
+precondition(S, {call, _, Connect, [Remote, _]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
+    lists:member(Remote, S#state.remotes_available);
 precondition(_S, _Call) ->
     true.
 
@@ -93,25 +95,29 @@ initial_state() ->
     {ok, _FakeSinkPid} = start_fake_sink(),
     #state{}.
 
-next_state(S, Res, {call, _, connect_to_v1, [Remote, _S]}) ->
+next_state(S, Res, {call, _, connect_to_v1, [Remote, _MQ]}) ->
+    ?debugFmt("v1 con: Remote: ~p; Avail: ~p", [Remote, S#state.remotes_available]),
     SrcState = #src_state{pids = Res, version = 1},
     next_state_connect(Remote, SrcState, S);
 
-next_state(S, Res, {call, _, connect_to_v2, [Remote, _S]}) ->
+next_state(S, Res, {call, _, connect_to_v2, [Remote, _MQ]}) ->
+    ?debugFmt("v2 con: Remote: ~p; Avail: ~p", [Remote, S#state.remotes_available]),
     SrcState = #src_state{pids = Res, version = 2},
     next_state_connect(Remote, SrcState, S);
 
-next_state(S, _Res, {call, _, disconnect, [Source]}) ->
-    {Remote, _} = Source,
-    Sources = lists:delete(Source, S#state.sources),
+next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
+    ?debugFmt("disconnecting ~p", [Remote]),
+    Sources = lists:keydelete(Remote, 1, S#state.sources),
     S#state{sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
 next_state(S, Res, {call, _, push_object, [Remotes, Binary, _S]}) ->
+    ?debugFmt("push: Remotes: ~p; Bin: ~p", [Remotes, Binary]),
     Sources = update_unacked_objects(Remotes, Res, S#state.sources),
     Master = S#state.master_queue,
     S#state{sources = Sources, master_queue = [{Remotes, Binary, Res} | Master]};
 
 next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
+    ?debugFmt("ack: NumAcked: ~p; Remote: ~p", [NumAcked, Remote]),
     case lists:keytake(Remote, 1, S#state.sources) of
         false ->
             S;
@@ -304,8 +310,12 @@ ack_objects(NumToAck, {_Remote, SrcState}) ->
 
 wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
     NewQueue = [Queued || {RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
-    BugLength = length(NewQueue),
-    gen_server:call(Pid, {block_until, BugLength}).
+    if
+        length(NewQueue) > 0 ->
+            gen_server:call(Pid, {block_until, 1}, 30000);
+        true ->
+            ok
+    end.
 
 plant_bugs(_Remotes, []) ->
     ok;
