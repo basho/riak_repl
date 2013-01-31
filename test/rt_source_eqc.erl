@@ -95,29 +95,25 @@ initial_state() ->
     {ok, _FakeSinkPid} = start_fake_sink(),
     #state{}.
 
-next_state(S, Res, {call, _, connect_to_v1, [Remote, _MQ]}) ->
-    ?debugFmt("v1 con: Remote: ~p; Avail: ~p", [Remote, S#state.remotes_available]),
+next_state(S, Res, {call, _, connect_to_v1, [Remote, MQ]}) ->
     SrcState = #src_state{pids = Res, version = 1},
     next_state_connect(Remote, SrcState, S);
 
-next_state(S, Res, {call, _, connect_to_v2, [Remote, _MQ]}) ->
-    ?debugFmt("v2 con: Remote: ~p; Avail: ~p", [Remote, S#state.remotes_available]),
+next_state(S, Res, {call, _, connect_to_v2, [Remote, MQ]}) ->
     SrcState = #src_state{pids = Res, version = 2},
     next_state_connect(Remote, SrcState, S);
 
 next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
-    ?debugFmt("disconnecting ~p", [Remote]),
     Sources = lists:keydelete(Remote, 1, S#state.sources),
     S#state{sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
 next_state(S, Res, {call, _, push_object, [Remotes, Binary, _S]}) ->
-    ?debugFmt("push: Remotes: ~p; Bin: ~p", [Remotes, Binary]),
     Sources = update_unacked_objects(Remotes, Res, S#state.sources),
     Master = S#state.master_queue,
-    S#state{sources = Sources, master_queue = [{Remotes, Binary, Res} | Master]};
+    Master2 = [{Remotes, Binary, Res} | Master],
+    S#state{sources = Sources, master_queue = Master2};
 
 next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
-    ?debugFmt("ack: NumAcked: ~p; Remote: ~p", [NumAcked, Remote]),
     case lists:keytake(Remote, 1, S#state.sources) of
         false ->
             S;
@@ -157,7 +153,7 @@ update_unacked_objects(Remotes, Res, [{Remote, Source} = KV | Tail], Acc) ->
     end.
 
 model_push_object(Res, SrcState = #src_state{unacked_objects = ObjQueue}) ->
-    SrcState#src_state{unacked_objects = ObjQueue ++ [Res]}.
+    SrcState#src_state{unacked_objects = [Res | ObjQueue]}.
 
 model_ack_objects(_Num, []) ->
     [];
@@ -188,7 +184,7 @@ postcondition(_State, {call, _, push_object, [Remotes, _Binary, State]}, Res) ->
 
 postcondition(_State, {call, _, ack_objects, [NumAck, {_Remote, Source}]}, AckedStack) ->
     #src_state{unacked_objects = UnAcked} = Source,
-    {Acked, _} = lists:split(NumAck, UnAcked),
+    {_, Acked} = lists:split(length(UnAcked) - NumAck, UnAcked),
     if
         length(Acked) =/= length(AckedStack) ->
             false;
@@ -312,7 +308,7 @@ wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
     NewQueue = [Queued || {RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
     if
         length(NewQueue) > 0 ->
-            gen_server:call(Pid, {block_until, 1}, 30000);
+            gen_server:call(Pid, {block_until, length(NewQueue)}, 30000);
         true ->
             ok
     end.
@@ -424,29 +420,38 @@ fake_sink(Socket, Version, Bug, History) ->
             fake_sink(Socket, Version, Bug, History);
         {'$gen_call', From, {block_until, HistoryLength}} ->
             fake_sink(Socket, Version, {block_until, From, HistoryLength}, History);
-        {'$gen_call', From, _Msg} ->
+        {'$gen_call', From, Msg} ->
+            ?debugFmt("~n    Your bad call: ~p;~n    My History: ~p~n    My Bug: ~p~n    My Version~p", [Msg, History, Bug, Version]),
             gen_server:reply(From, {error, badcall}),
             fake_sink(Socket, Version, Bug, History);
         {tcp, Socket, Bin} ->
-            {ok, Frame, _Rest} = riak_repl2_rtframe:decode(Bin),
+            History2 = fake_sink_nom_frames(Bin, History),
             NewBug = case Bug of
                 {once_bug, Target} ->
                     Self = self(),
+                    [Frame | _] = History2,
                     Target ! {got_data, Self, Frame},
                     undefined;
-                {block_until, From, Length} when length(History) + 1 >= Length ->
+                {block_until, From, Length} when length(History2) >= Length ->
                     gen_server:reply(From, ok),
                     undefined;
                 _ ->
                     Bug
             end,
             inet:setopts(Socket, [{active, once}]),
-            fake_sink(Socket, Version, NewBug, [Frame | History]);
+            fake_sink(Socket, Version, NewBug, History2);
         {tcp_error, Socket, Err} ->
             exit(Err);
         {tcp_closed, Socket} ->
             ok
     end.
+
+fake_sink_nom_frames({ok, undefined, _Rest}, History) ->
+    History;
+fake_sink_nom_frames({ok, Frame, Rest}, History) ->
+    fake_sink_nom_frames(Rest, [Frame | History]);
+fake_sink_nom_frames(Bin, History) ->
+    fake_sink_nom_frames(riak_repl2_rtframe:decode(Bin), History).
 
 reset_meck(Mod) ->
     reset_meck(Mod, []).
