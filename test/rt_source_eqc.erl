@@ -68,6 +68,10 @@ remote_name(#state{remotes_available = []}) ->
 remote_name(#state{remotes_available = Remotes}) ->
     oneof(Remotes).
 
+precondition(#state{sources = []}, {call, _, disconnect, _Args}) ->
+    false;
+precondition(#state{sources = Sources}, {call, _, disconnect, [{Remote, _}]}) ->
+    is_tuple(lists:keyfind(Remote, 1, Sources));
 precondition(S, {call, _, disconnect, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, ack_objects, _Args}) ->
