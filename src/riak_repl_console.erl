@@ -601,17 +601,13 @@ leader_stats() ->
 
 client_stats() ->
     %% NOTE: rpc:multicall to all clients removed
-    Stats = riak_repl_console:client_stats_rpc(),
-    [{sinks, lists:flatten(lists:filter(fun({badrpc, _}) ->
-                false;
-            (_) -> true
-        end, Stats))}].
+    riak_repl_console:client_stats_rpc().
 
 client_stats_rpc() ->
     RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
           [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
-    [client_stats(P) || P <- Pids] ++ RT2.
+    [{client_stats, [client_stats(P) || P <- Pids]}, {sinks, RT2}].
 
 server_stats() ->
     RT2 = [rt2_source_stats(P) || {_R,P} <-
@@ -621,8 +617,9 @@ server_stats() ->
         undefined ->
             [{sources, RT2}];
         _ ->
-            [{sources, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
-                                     [])++RT2}]
+            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
+                        [])},
+             {sources, RT2}]
     end.
 
 server_stats_rpc() ->
