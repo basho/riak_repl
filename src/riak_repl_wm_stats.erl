@@ -101,7 +101,7 @@ get_stats() ->
     jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
-    ++ RTQ 
+    ++ RTQ
     ++ jsonify_stats(Coord,[])
     ++ jsonify_stats(CoordSrv,[]).
 
@@ -155,54 +155,56 @@ jsonify_stats([{K,V}|T], Acc) ->
 -ifdef(TEST).
 
 jsonify_stats_test_() ->
-    [{"fullsync partitions left", fun() ->
-      Stats = [{fullsync,63,left},
-        {partition,251195593916248939066258330623111144003363405824},
-        {partition_start,0.88},{stage_start,0.88}],
-      Expected = [{"partitions_left",63},
-        {partition,251195593916248939066258330623111144003363405824},
-        {partition_start,0.88}, {stage_start,0.88}],
-      ?assertEqual(Expected, jsonify_stats(Stats, []))
-    end}].
-
-jsonify_stats_test_2() ->
-    [{"legacy server_stats and client_stats", fun() ->
-                DummyPid = self(),
-                Stats = [{server_stats,
-                          [{DummyPid,
-                            {message_queue_len,0},
-                            {status,
-                             [{node,'dev1@127.0.0.1'},
-                              {site,"foo"},
-                              {strategy,riak_repl_keylist_server},
-                              {fullsync_worker,DummyPid},
-                              {queue_pid,DummyPid},
-                              {dropped_count,0},
-                              {queue_length,0},
-                              {queue_byte_size,0},
-                              {queue_max_size,104857600},
-                              {queue_percentage,0},
-                              {queue_pending,0},
-                              {queue_max_pending,5},
-                              {state,wait_for_partition}]}}]},
-                         {sources,[]}],
-                Expected = [{server_pid,DummyPid},
-                            {status,[{node,'dev1@127.0.0.1'},
-                                     {site,"foo"},
-                                     {strategy,riak_repl_keylist_server},
-                                     {fullsync_worker,DummyPid},
-                                     {queue_pid,DummyPid},
-                                     {dropped_count,0},
-                                     {queue_length,0},
-                                     {queue_byte_size,0},
-                                     {queue_max_size,104857600},
-                                     {queue_percentage,0},
-                                     {queue_pending,0},
-                                     {queue_max_pending,5},
-                                     {state,wait_for_partition}]},
-                            {message_queue_len,0},
-                            {sources,<<>>}],
-                ?assertEqual(Expected, jsonify_stats(Stats, []))
-        end}].
+    [{"fullsync partitions left",
+      fun() ->
+              Stats = [{fullsync,63,left},
+                       {partition,251195593916248939066258330623111144003363405824},
+                       {partition_start,0.88},{stage_start,0.88}],
+              Expected = [{"partitions_left",63},
+                          {partition,251195593916248939066258330623111144003363405824},
+                          {partition_start,0.88}, {stage_start,0.88}],
+              ?assertEqual(Expected, jsonify_stats(Stats, []))
+      end},
+     {"legacy server_stats and client_stats",
+      fun() ->
+              DummyPid = self(),
+              Stats = [{server_stats,
+                        [{DummyPid,
+                          {message_queue_len,0},
+                          {status,
+                           [{node,'dev1@127.0.0.1'},
+                            {site,"foo"},
+                            {strategy,riak_repl_keylist_server},
+                            {fullsync_worker,DummyPid},
+                            {queue_pid,DummyPid},
+                            {dropped_count,0},
+                            {queue_length,0},
+                            {queue_byte_size,0},
+                            {queue_max_size,104857600},
+                            {queue_percentage,0},
+                            {queue_pending,0},
+                            {queue_max_pending,5},
+                            {state,wait_for_partition}]}}]},
+                       {sources,[]}],
+              FormattedPid = format_pid(DummyPid),
+              Expected =
+                  [{server_pid,FormattedPid},
+                   {message_queue_len,0},
+                   {status,[{node,'dev1@127.0.0.1'},
+                            {site,<<"foo">>},
+                            {strategy,riak_repl_keylist_server},
+                            {fullsync_worker,FormattedPid},
+                            {queue_pid,FormattedPid},
+                            {dropped_count,0},
+                            {queue_length,0},
+                            {queue_byte_size,0},
+                            {queue_max_size,104857600},
+                            {queue_percentage,0},
+                            {queue_pending,0},
+                            {queue_max_pending,5},
+                            {state,wait_for_partition}]},
+                   {sources,<<>>}],
+                  ?assertEqual(Expected, jsonify_stats(Stats, []))
+      end}].
 
 -endif.
