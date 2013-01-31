@@ -44,7 +44,7 @@ command(S) ->
         [{call, ?MODULE, connect_to_v2, [remote_name(S), S#state.master_queue]} || S#state.remotes_available /= []] ++
         [{call, ?MODULE, disconnect, [elements(S#state.sources)]} || S#state.sources /= []] ++
         % push an object that may already have been rt'ed
-        % TODO while pushing before remotes up is supported, disabling that
+        % todo while pushing before remotes up is supported, disabling that
         % condition for ease of testing (for now)
         [{call, ?MODULE, push_object, [g_unique_remotes(), binary(), S]} || S#state.sources /= []] ++
         [?LET({_Remote, SrcState} = Source, elements(S#state.sources), {call, ?MODULE, ack_objects, [g_up_to_length(SrcState#src_state.unacked_objects), Source]}) || S#state.sources /= []]
@@ -133,13 +133,19 @@ next_state_connect(Remote, SrcState, State) ->
     case lists:keyfind(Remote, 1, State#state.sources) of
         false ->
             Remotes = lists:delete(Remote, State#state.remotes_available),
-            NewQueue = [Queued || {RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
+            NewQueue = [{call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]} || {RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
             SrcState2 = SrcState#src_state{unacked_objects = NewQueue},
             Sources = [{Remote, SrcState2} | State#state.sources],
             State#state{sources = Sources, remotes_available = Remotes};
         _Tuple ->
             State
     end.
+
+fix_unacked_from_master(Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
+    Active = [A || {A, _} <- Sources],
+    Routed = lists:usort(RoutedRemotes ++ Active ++ [Remote]),
+    Meta2 = orddict:store(routed_clusters, Routed, Meta),
+    {N, Bin, Meta2}.
 
 update_unacked_objects(Remotes, Res, Sources) ->
     update_unacked_objects(Remotes, Res, Sources, []).
@@ -191,47 +197,53 @@ postcondition(_State, {call, _, ack_objects, [NumAck, {_Remote, Source}]}, Acked
     {_, Acked} = lists:split(length(UnAcked) - NumAck, UnAcked),
     if
         length(Acked) =/= length(AckedStack) ->
+            ?debugMsg("Acked length is not the same as AckedStack length"),
             false;
         true ->
             assert_sink_ackings(Source#src_state.version, Acked, AckedStack)
     end;
 
 postcondition(_S, _C, _R) ->
+    ?debugMsg("fall through postcondition"),
     false.
 
 assert_sink_bugs(Object, Remotes, Sources) ->
-    assert_sink_bugs(Object, Remotes, Sources, []).
+    Active = [A || {A, _} <- Sources],
+    assert_sink_bugs(Object, Remotes, Active, Sources, []).
 
-assert_sink_bugs(_Object, _Remotes, [], Acc) ->
+assert_sink_bugs(_Object, _Remotes, _Active, [], Acc) ->
     lists:all(fun(true) -> true; (_) -> false end, Acc);
 
-assert_sink_bugs(Object, Remotes, [{Remote, SrcState} | Tail], Acc) ->
-    Truthiness = assert_sink_bug(Object, Remotes, Remote, SrcState),
-    assert_sink_bugs(Object, Remotes, Tail, [Truthiness | Acc]).
+assert_sink_bugs(Object, Remotes, Active, [{Remote, SrcState} | Tail], Acc) ->
+    Truthiness = assert_sink_bug(Object, Remotes, Remote, Active, SrcState),
+    assert_sink_bugs(Object, Remotes, Active, Tail, [Truthiness | Acc]).
 
-assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, SrcState) ->
+assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, _Active, SrcState) ->
     {_, Sink} = SrcState#src_state.pids,
-    BugGot = receive
-        {got_data, Sink, Frame} ->
-            Frame
-    after 3000 ->
-        {error, timeout}
-    end,
-    ShouldSkip = lists:member(Remote, Remotes),
     Version = SrcState#src_state.version,
-    case {ShouldSkip, Version, BugGot} of
-        {true, _, {error, timeout}} ->
+    History = gen_server:call(Sink, history),
+    ShouldSkip = lists:member(Remote, Remotes),
+    if
+        ShouldSkip andalso length(History) == length(SrcState#src_state.unacked_objects) ->
             true;
-        {false, 1, {objects, {_Seq, ObjBin}}} ->
-            true;
-        % TODO this clause below is to be removed as soon as cascading rt is 
-        % ready to be implemented.
-        {false, 2, {objects, {_Seq, ObjBin}}} ->
-            true;
-        {false, 2, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
-            true;
-        _ ->
-            false
+        true ->
+            Frame = hd(History),
+            case {Version, Frame} of
+                {1, {objects, {_Seq, ObjBin}}} ->
+                    true;
+                {2, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
+                    true;
+                _ ->
+                    ?debugFmt("assert sink bug failure!~n"
+                        "    Remote: ~p~n"
+                        "    Remotes: ~p~n"
+                        "    ObjBin: ~p~n"
+                        "    Meta: ~p~n"
+                        "    ShouldSkip: ~p~n"
+                        "    Version: ~p~n"
+                        "    Frame: ~p", [Remote, Remotes, ObjBin, Meta, ShouldSkip, Version, Frame]),
+                    false
+            end
     end.
 
 assert_sink_ackings(Version, Expecteds, Gots) ->
@@ -248,13 +260,10 @@ assert_sink_acking(Version, {1, ObjBin, Meta}, Got) ->
     case {Version, Got} of
         {1, {objects, {_Seq, ObjBin}}} ->
             true;
-        % TODO clause below needs to be removed as soon as cascading rt is ready
-        % for implementation
-        {2, {objects, {_Seq, ObjBin}}} ->
-            true;
         {2, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
             true;
         _ ->
+            ?debugFmt("Sink ack failure!~n    Version: ~p~n    ObjBin: ~p~n    Meta: ~p~n    Got: ~p", [Version, ObjBin, Meta, Got]),
             false
     end.
 
@@ -269,6 +278,7 @@ connect_to_v1(RemoteName, MasterQueue) ->
     receive
         {sink_started, SinkPid} ->
             wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
+            ok = ensure_registered(RemoteName),
             {SourcePid, SinkPid}
     after 1000 ->
         {error, timeout}
@@ -281,6 +291,7 @@ connect_to_v2(RemoteName, MasterQueue) ->
     receive
         {sink_started, SinkPid} ->
             wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
+            ok = ensure_registered(RemoteName),
             {SourcePid, SinkPid}
     after 1000 ->
         {error, timeout}
@@ -293,11 +304,14 @@ disconnect(ConnectState) ->
     [wait_for_pid(P, 3000) || P <- [Source, Sink]].
 
 push_object(Remotes, BinObjects, State) ->
-    %BinObjects = term_to_binary([Binary]),
     Meta = [{routed_clusters, Remotes}],
-    plant_bugs(Remotes, State#state.sources),
+    Active = [A || {A, _} <- State#state.sources],
+    ExpectedRouted = lists:usort(Remotes ++ Active),
+    ExpectedMeta = [{routed_clusters, ExpectedRouted}],
+    %plant_bugs(Remotes, State#state.sources),
     riak_repl2_rtq:push(1, BinObjects, Meta),
-    {1, BinObjects, Meta}.
+    wait_for_pushes(State, Remotes),
+    {1, BinObjects, ExpectedMeta}.
 
 ack_objects(NumToAck, {_Remote, SrcState}) ->
     {_, Sink} = SrcState#src_state.pids,
@@ -308,6 +322,22 @@ ack_objects(NumToAck, {_Remote, SrcState}) ->
 %% helpful utility functions
 %% ====================================================================
 
+ensure_registered(RemoteName) ->
+    ensure_registered(RemoteName, 10).
+
+ensure_registered(_RemoteName, N) when N < 1 ->
+    {error, registration_timeout};
+ensure_registered(RemoteName, N) ->
+    Status = riak_repl2_rtq:status(),
+    Consumers = proplists:get_value(consumers, Status),
+    case proplists:get_value(RemoteName, Consumers) of
+        undefined ->
+            timer:sleep(100),
+            ensure_registered(RemoteName, N - 1);
+        _ ->
+            ok
+    end.
+
 wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
     NewQueue = [Queued || {RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
     if
@@ -315,6 +345,18 @@ wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
             gen_server:call(Pid, {block_until, length(NewQueue)}, 30000);
         true ->
             ok
+    end.
+
+wait_for_pushes(State, Remotes) ->
+    [wait_for_push(SrcState, Remotes) || SrcState <- State#state.sources].
+
+wait_for_push({Remote, SrcState}, Remotes) ->
+    case lists:member(Remote, Remotes) of
+        true -> ok;
+        _ ->
+            WaitLength = length(SrcState#src_state.unacked_objects) + 1,
+            {_, Sink} = SrcState#src_state.pids,
+            gen_server:call(Sink, {block_until, WaitLength}, 3000)
     end.
 
 plant_bugs(_Remotes, []) ->
@@ -412,6 +454,9 @@ fake_sink(Socket, Version, Bug, History) ->
             fake_sink(Socket, Version, Bug, History);
         stop ->
             ok;
+        {'$gen_call', From, history} ->
+            gen_server:reply(From, History),
+            fake_sink(Socket, Version, Bug, History);
         {'$gen_call', From, {ack, Num}} when Num =< length(History) ->
             {NewHistory, Return} = lists:split(length(History) - Num, History),
             gen_server:reply(From, {ok, Return}),
@@ -450,7 +495,10 @@ fake_sink(Socket, Version, Bug, History) ->
             ok
     end.
 
-fake_sink_nom_frames({ok, undefined, _Rest}, History) ->
+fake_sink_nom_frames({ok, undefined, <<>>}, History) ->
+    History;
+fake_sink_nom_frames({ok, undefined, Rest}, History) ->
+    ?debugFmt("Fame issues: binary left over: ~p", [Rest]),
     History;
 fake_sink_nom_frames({ok, Frame, Rest}, History) ->
     fake_sink_nom_frames(Rest, [Frame | History]);
