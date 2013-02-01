@@ -104,7 +104,10 @@ set_max_bytes(MaxBytes) ->
 %% run through term_to_binary, while NumItems is the length of that list
 %% before being turned to a binary. Meta is an orddict() of data about the
 %% queued item. The key `routed_clusters' is a list of the clusters the item
-%% has received and ack for.
+%% has received and ack for. The key `local_forwards' is added automatically.
+%% It is a list of the remotes this cluster forwards to. It is intended to be
+%% used by consumers to alter the `routed_clusters' key before being sent to
+%% the sink.
 -spec push(NumItems :: pos_integer(), Bin :: binary(), Meta :: orddict:orddict()) -> 'ok'.
 push(NumItems, Bin, Meta) ->
     gen_server:cast(?SERVER, {push, NumItems, Bin, Meta}).
@@ -333,28 +336,32 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin, Meta},
     %% Send to any pending consumers
-    Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
-    ets:insert(QTab, QEntry),
+    CsNames = [Consumer#c.name || Consumer <- Cs],
+    QEntry2 = set_local_forwards_meta(CsNames, QEntry),
+    Cs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+    ets:insert(QTab, QEntry2),
     trim_q(State#state{qseq = QSeq2, cs = Cs2});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
 
 pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+    CsNames = [Consumer#c.name || Consumer <- Cs],
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, DeliverFun) | Cs2];
+                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
                 false ->
                     DeliverFun({error, not_registered})
             end,
     State#state{cs = UpdCs}.
 
-maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, DeliverFun) ->
+maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
             [QEntry] = ets:lookup(QTab, CSeq2),
-            deliver_item(C, DeliverFun, QEntry);
+            QEntry2 = set_local_forwards_meta(CsNames, QEntry),
+            deliver_item(C, DeliverFun, QEntry2);
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
@@ -381,6 +388,13 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.
+
+set_local_forwards_meta(LocalForwards, QEntry) ->
+    set_meta(QEntry, local_forwards, LocalForwards).
+
+set_meta({_Seq, _NumItems, _Bin, Meta} = QEntry, Key, Value) ->
+    Meta2 = orddict:store(Key, Value, Meta),
+    setelement(4, QEntry, Meta2).
 
 %% Cleanup until the start of the table
 cleanup(_QTab, '$end_of_table') ->

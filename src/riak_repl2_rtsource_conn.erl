@@ -151,7 +151,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
     %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
     case Transport:send(Socket, <<>>) of
         ok ->
-            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
+            {_, ClientVer, _} = Proto,
+            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
             SocketTag = riak_repl_util:generate_socket_tag("rt_source", Socket),
             lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
