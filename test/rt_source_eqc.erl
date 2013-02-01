@@ -76,8 +76,11 @@ precondition(S, {call, _, disconnect, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, ack_objects, _Args}) ->
     S#state.sources /= [];
-precondition(S, {call, _, push_object, _Args}) ->
+precondition(S, {call, _, push_object, [_, _, S]}) ->
     S#state.sources /= [];
+precondition(S, {call, _, push_object, [_, _, NotS]}) ->
+    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
+    false;
 precondition(S, {call, _, Connect, [Remote, _]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
     lists:member(Remote, S#state.remotes_available);
 precondition(_S, _Call) ->
@@ -218,7 +221,7 @@ assert_sink_bugs(Object, Remotes, Active, [{Remote, SrcState} | Tail], Acc) ->
     Truthiness = assert_sink_bug(Object, Remotes, Remote, Active, SrcState),
     assert_sink_bugs(Object, Remotes, Active, Tail, [Truthiness | Acc]).
 
-assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, _Active, SrcState) ->
+assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, Active, SrcState) ->
     {_, Sink} = SrcState#src_state.pids,
     Version = SrcState#src_state.version,
     History = gen_server:call(Sink, history),
@@ -237,11 +240,12 @@ assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, _Active, SrcState) ->
                     ?debugFmt("assert sink bug failure!~n"
                         "    Remote: ~p~n"
                         "    Remotes: ~p~n"
+                        "    Active: ~p~n"
                         "    ObjBin: ~p~n"
                         "    Meta: ~p~n"
                         "    ShouldSkip: ~p~n"
                         "    Version: ~p~n"
-                        "    Frame: ~p", [Remote, Remotes, ObjBin, Meta, ShouldSkip, Version, Frame]),
+                        "    Frame: ~p", [Remote, Remotes, Active, ObjBin, Meta, ShouldSkip, Version, Frame]),
                     false
             end
     end.
@@ -311,6 +315,7 @@ push_object(Remotes, BinObjects, State) ->
     %plant_bugs(Remotes, State#state.sources),
     riak_repl2_rtq:push(1, BinObjects, Meta),
     wait_for_pushes(State, Remotes),
+    ?debugFmt("pushed. Meta: ~p; ExpectedMeta: ~p", [Meta, ExpectedMeta]),
     {1, BinObjects, ExpectedMeta}.
 
 ack_objects(NumToAck, {_Remote, SrcState}) ->
