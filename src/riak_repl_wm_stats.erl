@@ -169,6 +169,13 @@ jsonify_stats([{K,V}|T], Acc) ->
 
 -ifdef(TEST).
 
+% The lines line the following:
+%
+% _Result = mochijson2:encode({struct, Expected})
+%
+% are there to test for faulty json-ables. If the result cannot be
+% jsonified, it will crash, causing the test to fail.
+
 jsonify_stats_test_() ->
     [
      %% simple stats w/out a ton of useful data
@@ -177,7 +184,7 @@ jsonify_stats_test_() ->
               Actual = [{client_stats,[]},{sinks,[]}],
               Expected = [{sinks,<<>>}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -208,7 +215,7 @@ jsonify_stats_test_() ->
                           {fullsync_suggested,<<"dev1@127.0.0.1">>},
                           {fullsync_suggested_during_fs,<<>>}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
      {"Coordsrv, empty",
@@ -216,7 +223,7 @@ jsonify_stats_test_() ->
               Actual = [{fullsync_coordinator_srv,[]}],
               Expected = [{fullsync_coordinator_srv,<<>>}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -225,7 +232,7 @@ jsonify_stats_test_() ->
               Actual = [{fullsync_enabled,"bar"},{fullsync_running,[]}],
               Expected = [{fullsync_enabled,<<"bar">>},{fullsync_running,<<>>}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -234,7 +241,7 @@ jsonify_stats_test_() ->
               Actual = [{realtime_enabled,"bar"},{realtime_started,"bar"}],
               Expected = [{realtime_enabled,<<"bar">>},{realtime_started,<<"bar">>}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -257,7 +264,7 @@ jsonify_stats_test_() ->
                                     {pid,<<"<0.2157.0>">>},
                                     {connected,false}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
      {"cmstats",
@@ -265,7 +272,7 @@ jsonify_stats_test_() ->
               Actual = [{cluster_name,<<"foo">>},
                         {cluster_leader,'dev1@127.0.0.1'},
                         {connected_clusters,[<<"bar">>]}],
-               _Result = mochijson2:encode({struct, Actual})
+               _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
 
      {"leaderstats",
@@ -283,7 +290,7 @@ jsonify_stats_test_() ->
                           {minor_gcs,0}]},
                         {"local_leader_message_queue_len",0},
                         {"local_leader_heap_size",233}],
-              _Result = mochijson2:encode({struct, Actual})
+              _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
 
      {"rtqstats",
@@ -297,7 +304,7 @@ jsonify_stats_test_() ->
                               {unacked,0},
                               {drops,0},
                               {errs,0}]}]}]}],
-              _Result = mochijson2:encode({struct, Actual})
+              _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
 
      {"general stats",
@@ -325,7 +332,7 @@ jsonify_stats_test_() ->
                         {rt_source_errors,0},
                         {rt_sink_errors,0},
                         {rt_dirty,1}],
-              _Result = mochijson2:encode({struct, Actual})
+              _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
 
      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -378,7 +385,7 @@ jsonify_stats_test_() ->
                               {fullsync_suggested,<<"dev1@127.0.0.1">>},
                               {fullsync_suggested_during_fs,<<>>}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-               _Result = mochijson2:encode({struct, Expected})
+               _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
      {"FSRemotes - busy",
@@ -386,7 +393,7 @@ jsonify_stats_test_() ->
               Actual = [{fullsync_enabled,"bar"},{fullsync_running,"bar"}],
               Expected = [{fullsync_enabled,<<"bar">>},{fullsync_running,<<"bar">>}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -477,7 +484,7 @@ jsonify_stats_test_() ->
                          {sent_seq,9841},
                          {objects,9841}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
      {"General Stats - busy",
@@ -505,7 +512,7 @@ jsonify_stats_test_() ->
                         {rt_source_errors,0},
                         {rt_sink_errors,0},
                         {rt_dirty,1}],
-              _Result = mochijson2:encode({struct, Actual})
+              _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
 
      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -622,7 +629,7 @@ jsonify_stats_test_() ->
                                 {acked_seq,933},
                                 {pending,1}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
      {"CoordSrv - busy, sink side",
@@ -654,7 +661,7 @@ jsonify_stats_test_() ->
                                 {send_kbps,<<"[0, 0, 0, 0, 0, 0]">>},
                                 {send_pend,<<"[0, 0, 0, 0, 0, 0, 0]">>}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -757,7 +764,7 @@ jsonify_stats_test_() ->
                          {sent_seq,229},
                          {objects,229}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -876,7 +883,7 @@ jsonify_stats_test_() ->
                      {sockname,<<"127.0.0.1:10046">>}]},
                 {state,request_partition}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -935,7 +942,7 @@ jsonify_stats_test_() ->
                             {state,wait_for_partition}]},
                    {sources,<<>>}],
                   ?assertEqual(Expected, jsonify_stats(Stats, [])),
-                  _Result = mochijson2:encode({struct, Expected})
+                  _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
 
@@ -964,7 +971,7 @@ jsonify_stats_test_() ->
                                          {connecting_ip,<<"127.0.0.1:5666">>}]}]},
                    {sinks,<<>>}],
               ?assertEqual(Expected, jsonify_stats(Stats, [])),
-              _Result = mochijson2:encode({struct, Expected})
+              _Result = mochijson2:encode({struct, Expected}) % fail if crash
             end
             },
      {"mochijson test",
@@ -1048,7 +1055,7 @@ jsonify_stats_test_() ->
                             {fullsync_suggested_during_fs,<<>>}]}]},
                         {fullsync_coordinator_srv,<<>>}],
               %% This shouldn't blow up
-              mochijson2:encode({struct, Stats})
+              mochijson2:encode({struct, Stats}) % fail if crash
 end}
                   ].
 
