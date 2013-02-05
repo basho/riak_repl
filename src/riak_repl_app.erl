@@ -82,7 +82,7 @@ start(_Type, _StartArgs) ->
             riak_repl2_rtsink_conn:register_service(),
             riak_repl2_fssink:register_service(),
             riak_repl2_fscoordinator_serv:register_service(),
-
+            riak_repl2_pg_block_requester:register_service(),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

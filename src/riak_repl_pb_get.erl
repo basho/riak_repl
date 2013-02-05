@@ -21,7 +21,8 @@
 -define(PB_MSG_RESP_CLUSTER_ID, 130).
 
 -record(state, {
-        client    % local client
+        client,    % local client
+        modes
     }).
 
 %% @doc init/0 callback. Returns the service internal start
@@ -29,7 +30,13 @@
 -spec init() -> any().
 init() ->
     {ok, C} = riak:local_client(),
-    #state{client=C}.
+
+    % get the current repl modes and stash them in the state
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_ring:ensure_config(Ring),
+    Modes = riak_repl_ring:get_modes(Ring),
+
+    #state{client=C, modes=Modes}.
 
 %% @doc decode/2 callback. Decodes an incoming message.
 decode(?PB_MSG_PROXY_GET, Bin) ->
