@@ -302,10 +302,19 @@ connect_to_v2(RemoteName, MasterQueue) ->
     end.
 
 disconnect(ConnectState) ->
-    {_Remote, SrcState} = ConnectState,
+    {Remote, SrcState} = ConnectState,
     #src_state{pids = {Source, Sink}} = SrcState,
-    riak_repl2_rtsource_conn:stop(Source),
-    [wait_for_pid(P, 3000) || P <- [Source, Sink]].
+    %Trapping = process_flag(trap_exit, true),
+    %unlink(Source),
+    %unlink(Sink),
+    %riak_repl2_rtsource_conn:stop(Source),
+    riak_repl2_rtq:unregister(Remote),
+    ?debugMsg("bing"),
+    Out = [wait_for_pid(P, 3000) || P <- [Source, Sink]],
+    ?debugMsg("bing"),
+    %process_flag(trap_exit, Trapping),
+    ?debugMsg("bing"),
+    Out.
 
 push_object(Remotes, BinObjects, State) ->
     Meta = [{routed_clusters, Remotes}],
