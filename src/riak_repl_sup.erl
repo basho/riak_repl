@@ -49,8 +49,15 @@ init([]) ->
                   permanent, infinity, supervisor, [riak_repl2_fssource_sup]},
 
                  {riak_repl2_fssink_sup, {riak_repl2_fssink_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_repl2_fssink_sup]}
-        ],
+                  permanent, infinity, supervisor, [riak_repl2_fssink_sup]},
+
+                 {riak_repl2_pg_proxy_sup, {riak_repl2_pg_proxy_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_pg_proxy_sup]},
+
+                 {riak_repl2_pg_sup, {riak_repl2_pg_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_pg_sup]}
+
+                ],
 
     {ok, {{one_for_one, 9, 10}, Processes}}.
 

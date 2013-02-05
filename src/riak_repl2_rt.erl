@@ -46,8 +46,8 @@ disable(Remote) ->
 enabled() ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     riak_repl_ring:rt_enabled(Ring).
-        
-%% Enable 
+
+%% Enable
 start(Remote) ->
     F = fun(Ring, Remote1) ->
                 case lists:member(Remote, riak_repl_ring:rt_enabled(Ring)) of
@@ -58,7 +58,7 @@ start(Remote) ->
                 end
         end,
     do_ring_trans(F, Remote).
-                                                 
+
 %% Disable realtime replication
 stop(Remote) ->
     do_ring_trans(fun riak_repl_ring:rt_stop_trans/2, Remote).
@@ -124,7 +124,6 @@ register_remote_locator() ->
             riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
     end,
     ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
-
 
 %% Register an active realtime sink (supervised under ranch)
 register_sink(Pid) ->
@@ -198,7 +197,7 @@ handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
     {noreply, State#state{sinks = Sinks2}};
 handle_info(Msg, State) ->
     %%TODO: Log unhandled message - e.g. timed out status result
-    lager:warn("unhandled message - e.g. timed out status result: ~p", Msg),
+    lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
     
 terminate(_Reason, _State) ->
