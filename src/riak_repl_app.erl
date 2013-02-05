@@ -51,7 +51,6 @@ start(_Type, _StartArgs) ->
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
 
-
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
@@ -82,7 +81,7 @@ start(_Type, _StartArgs) ->
             riak_repl2_rtsink_conn:register_service(),
             riak_repl2_fssink:register_service(),
             riak_repl2_fscoordinator_serv:register_service(),
-
+            riak_repl2_pg_block_requester:register_service(),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

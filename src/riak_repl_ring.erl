@@ -34,7 +34,10 @@
          set_modes/2,
          get_modes/1,
          compose/2,
-         multicompose/1
+         multicompose/1,
+         pg_enable_trans/2,
+         pg_disable_trans/2,
+         pg_enabled/1
          ]).
 
 -ifdef(TEST).
@@ -292,6 +295,17 @@ get_clusters(Ring) ->
         error ->
             []
     end.
+
+
+% TODO: comments
+pg_enable_trans(Ring, Remote) ->
+    add_list_trans(Remote, pg_enabled, Ring).
+
+pg_disable_trans(Ring, Remote) ->
+    del_list_trans(Remote, pg_enabled, Ring).
+
+pg_enabled(Ring) ->
+    get_list(pg_enabled, Ring).
 
 %% Enable replication for the remote (queue will start building)
 rt_enable_trans(Ring, Remote) ->

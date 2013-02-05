@@ -50,7 +50,11 @@
          peername/2,
          sockname/2,
          deduce_wire_version_from_proto/1,
-         encode_obj_msg/2
+         encode_obj_msg/2,
+         make_pg_proxy_name/1,
+         make_pg_name/1,
+         mode_12_enabled/1,
+         mode_13_enabled/1
      ]).
 
 -export([wire_version/1,
@@ -679,6 +683,11 @@ get_hooks_for_modes() ->
     [ proplists:get_value(K,?REPL_MODES)
      || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
 
+mode_12_enabled(ReplModes) ->
+    lists:member(mode_repl12, ReplModes).
+mode_13_enabled(ReplModes) ->
+    lists:member(mode_repl13, ReplModes).
+
 format_ip_and_port(Ip, Port) when is_list(Ip) ->
     lists:flatten(io_lib:format("~s:~p",[Ip,Port]));
 format_ip_and_port(Ip, Port) when is_tuple(Ip) ->
@@ -707,6 +716,12 @@ sockname(Socket, Transport) ->
             %% just return a string so JSON doesn't blow up
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
+
+make_pg_proxy_name(Remote) ->
+    list_to_atom("pg_proxy_" ++ Remote).
+
+make_pg_name(Remote) ->
+    list_to_atom("pg_requester_" ++ Remote).
 
 deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
     %% if common protocols are both >= 1.1, then we know the new binary wire protocol
@@ -876,3 +891,5 @@ do_wire_list_w1_test() ->
     ?assert(Decoded == Objs).
 
 -endif.
+
+
