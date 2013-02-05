@@ -1,8 +1,8 @@
 %% Riak EnterpriseDS
-%% Copyright 2007-2012 Basho Technologies, Inc. All Rights Reserved.
+%% Copyright 2007-2013 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_pg_block_provider_sup).
 -behaviour(supervisor).
--export([start_link/0, enable/3, disable/2, enabled/0, enabled/1]).
+-export([start_link/0, enable/1, enabled/0, disable/1]).
 -export([init/1]).
 
 -define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
@@ -10,30 +10,28 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%%TODO: Rename enable/disable something better - start/stop is a bit overloaded
-enable(Node, Partition, IP) ->
-    lager:info("Starting replication fullsync source for ~p from ~p to ~p",
-        [Partition, Node, IP]),
-    ChildSpec = make_childspec(Partition, IP),
-    supervisor:start_child({?MODULE, Node}, ChildSpec).
+enable(Remote) ->
+    ChildSpec = make_remote(Remote),
+    supervisor:start_child(?MODULE, ChildSpec).
 
-disable(Node, Partition) ->
-    lager:info("Stopping replication fullsync source for ~p", [Partition]),
-    supervisor:terminate_child({?MODULE, Node}, Partition),
-    supervisor:delete_child({?MODULE, Node}, Partition).
+disable(Remote) ->
+    supervisor:terminate_child(?MODULE, Remote),
+    supervisor:delete_child(?MODULE, Remote).
 
 enabled() ->
-    [{Remote, Pid} || {Remote, Pid, _, _} <-
-        supervisor:which_children(?MODULE), is_pid(Pid)].
-
-enabled(Node) ->
-    [{Partition, Pid} || {Partition, Pid, _, _} <-
-        supervisor:which_children({?MODULE, Node}), is_pid(Pid)].
+    [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].
 
 %% @private
 init([]) ->
-    {ok, {{one_for_one, 10, 10}, []}}.
+    riak_repl2_pg:register_remote_locator(),
 
-make_childspec(Partition, IP) ->
-    {Partition, {riak_repl2_fssource, start_link, [Partition, IP]},
-        temporary, ?SHUTDOWN, worker, [riak_repl2_fssource]}.
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    Remotes = riak_repl_ring:pg_enabled(Ring),
+    Children = [make_remote(Remote) || Remote <- Remotes],
+    {ok, {{one_for_one, 10, 10}, Children}}.
+
+
+make_remote(Remote) ->
+    {Remote, {riak_repl2_pg_block_provider, start_link, [Remote]},
+        permanent, ?SHUTDOWN, worker, [riak_repl2_pg_block_provider]}.
+
