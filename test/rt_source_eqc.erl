@@ -11,6 +11,7 @@
 
 -record(state, {
     remotes_available = ?all_remotes,
+    seq = 0,
     master_queue = [],
     sources = [] % [#src_state{}]
     }).
@@ -112,13 +113,20 @@ next_state(S, Res, {call, _, connect_to_v2, [Remote, MQ]}) ->
 
 next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
     Sources = lists:keydelete(Remote, 1, S#state.sources),
-    S#state{sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
+    Master = if
+        Sources == [] ->
+            [];
+        true ->
+            S#state.master_queue
+    end,
+    S#state{master_queue = Master, sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
 next_state(S, Res, {call, _, push_object, [Remotes, Binary, _S]}) ->
-    Sources = update_unacked_objects(Remotes, Res, S#state.sources),
+    Seq = S#state.seq + 1,
+    Sources = update_unacked_objects(Remotes, {Seq, Res}, S#state.sources),
     Master = S#state.master_queue,
-    Master2 = [{Remotes, Binary, Res} | Master],
-    S#state{sources = Sources, master_queue = Master2};
+    Master2 = [{Seq, Remotes, Binary, Res} | Master],
+    S#state{sources = Sources, master_queue = Master2, seq = Seq};
 
 next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
     case lists:keytake(Remote, 1, S#state.sources) of
@@ -126,17 +134,19 @@ next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
             S;
         {value, {Remote, RealSource}, Sources} ->
             UnAcked = RealSource#src_state.unacked_objects,
-            Updated = model_ack_objects(NumAcked, UnAcked),
+            {Updated, Chopped} = model_ack_objects(NumAcked, UnAcked),
             SrcState2 = RealSource#src_state{unacked_objects = Updated},
             Sources2 = [{Remote, SrcState2} | Sources],
-            S#state{sources = Sources2}
+            Master2 = remove_fully_acked(S#state.master_queue, Chopped, Sources2),
+            S#state{sources = Sources2, master_queue = Master2}
     end.
 
 next_state_connect(Remote, SrcState, State) ->
     case lists:keyfind(Remote, 1, State#state.sources) of
         false ->
             Remotes = lists:delete(Remote, State#state.remotes_available),
-            NewQueue = [{call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]} || {RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
+            NewQueue = [{call, ?MODULE, fix_unacked_from_master, [Seq, Remote, Queued, RoutedRemotes, State]} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
+            ?debugFmt("Der new queue for ~p: ~p", [Remote, NewQueue]),
             SrcState2 = SrcState#src_state{unacked_objects = NewQueue},
             Sources = [{Remote, SrcState2} | State#state.sources],
             State#state{sources = Sources, remotes_available = Remotes};
@@ -144,11 +154,33 @@ next_state_connect(Remote, SrcState, State) ->
             State
     end.
 
-fix_unacked_from_master(Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
+fix_unacked_from_master(Seq, Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
     Active = [A || {A, _} <- Sources],
     Routed = lists:usort(RoutedRemotes ++ Active ++ [Remote]),
     Meta2 = orddict:store(routed_clusters, Routed, Meta),
-    {N, Bin, Meta2}.
+    {Seq, {N, Bin, Meta2}}.
+
+remove_fully_acked(Master, [], _Sources) ->
+    Master;
+
+remove_fully_acked(Master, [{Seq, _} | Chopped], Sources) ->
+    case is_in_a_source(Seq, Sources) of
+        true ->
+            remove_fully_acked(Master, Chopped, Sources);
+        false ->
+            Master2 = lists:keydelete(Seq, 1, Master),
+            remove_fully_acked(Master2, Chopped, Sources)
+    end.
+
+is_in_a_source(_Seq, []) ->
+    false;
+is_in_a_source(Seq, [{_Remote, #src_state{unacked_objects = UnAcked}} | Tail]) ->
+    case lists:keymember(Seq, 1, UnAcked) of
+        true ->
+            true;
+        false ->
+            is_in_a_source(Seq, Tail)
+    end.
 
 update_unacked_objects(Remotes, Res, Sources) ->
     update_unacked_objects(Remotes, Res, Sources, []).
@@ -169,11 +201,10 @@ model_push_object(Res, SrcState = #src_state{unacked_objects = ObjQueue}) ->
     SrcState#src_state{unacked_objects = [Res | ObjQueue]}.
 
 model_ack_objects(_Num, []) ->
-    [];
+    {[], []};
 model_ack_objects(NumAcked, Unacked) when length(Unacked) >= NumAcked ->
     NewLength = length(Unacked) - NumAcked,
-    {NewList, _} = lists:split(NewLength, Unacked),
-    NewList.
+    lists:split(NewLength, Unacked).
 
 %% ====================================================================
 %% postcondition
@@ -195,10 +226,13 @@ postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
 postcondition(_State, {call, _, push_object, [Remotes, _Binary, State]}, Res) ->
     assert_sink_bugs(Res, Remotes, State#state.sources);
 
-postcondition(_State, {call, _, ack_objects, [NumAck, {_Remote, Source}]}, AckedStack) ->
+postcondition(State, {call, _, ack_objects, [NumAck, {Remote, Source}]}, AckedStack) ->
+    RemoteLives = is_tuple(lists:keyfind(Remote, 1, State#state.sources)),
     #src_state{unacked_objects = UnAcked} = Source,
     {_, Acked} = lists:split(length(UnAcked) - NumAck, UnAcked),
     if
+        RemoteLives == false ->
+            AckedStack == [];
         length(Acked) =/= length(AckedStack) ->
             ?debugMsg("Acked length is not the same as AckedStack length"),
             false;
@@ -245,7 +279,9 @@ assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, Active, SrcState) ->
                         "    Meta: ~p~n"
                         "    ShouldSkip: ~p~n"
                         "    Version: ~p~n"
-                        "    Frame: ~p", [Remote, Remotes, Active, ObjBin, Meta, ShouldSkip, Version, Frame]),
+                        "    Frame: ~p~n"
+                        "    Length Sink Hist: ~p~n"
+                        "    Length Model Hist: ~p", [Remote, Remotes, Active, ObjBin, Meta, ShouldSkip, Version, Frame, length(History), length(SrcState#src_state.unacked_objects)]),
                     false
             end
     end.
@@ -260,7 +296,7 @@ assert_sink_ackings(Version, [Expected | ETail], [Got | GotTail], Acc) ->
     AHead = assert_sink_acking(Version, Expected, Got),
     assert_sink_ackings(Version, ETail, GotTail, [AHead | Acc]).
 
-assert_sink_acking(Version, {1, ObjBin, Meta}, Got) ->
+assert_sink_acking(Version, {_SomeSeq, {1, ObjBin, Meta}}, Got) ->
     case {Version, Got} of
         {1, {objects, {_Seq, ObjBin}}} ->
             true;
@@ -327,10 +363,24 @@ push_object(Remotes, BinObjects, State) ->
     ?debugFmt("pushed. Meta: ~p; ExpectedMeta: ~p", [Meta, ExpectedMeta]),
     {1, BinObjects, ExpectedMeta}.
 
-ack_objects(NumToAck, {_Remote, SrcState}) ->
+ack_objects(NumToAck, {Remote, SrcState}) ->
     {_, Sink} = SrcState#src_state.pids,
-    {ok, Acked} = gen_server:call(Sink, {ack, NumToAck}),
-    Acked.
+    ProcessAlive = is_process_alive(Sink),
+    if
+        ProcessAlive ->
+            {ok, Acked} = gen_server:call(Sink, {ack, NumToAck}),
+            case Acked of
+                [] ->
+                    ok;
+                [{objects_and_meta, {Seq, _, _}} | _] ->
+                    riak_repl2_rtq:ack(Remote, Seq);
+                [{objects, {Seq, _}} | _] ->
+                    riak_repl2_rtq:ack(Remote, Seq)
+            end,
+            Acked;
+        true ->
+            []
+    end.
 
 %% ====================================================================
 %% helpful utility functions
@@ -353,7 +403,7 @@ ensure_registered(RemoteName, N) ->
     end.
 
 wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
-    NewQueue = [Queued || {RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
+    NewQueue = [{Seq, Queued} || {Seq, RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
     if
         length(NewQueue) > 0 ->
             gen_server:call(Pid, {block_until, length(NewQueue)}, 30000);
@@ -479,9 +529,11 @@ fake_sink(Socket, Version, Bug, History) ->
             gen_server:reply(From, ok),
             fake_sink(Socket, Version, {once_bug, NewBug}, History);
         {'$gen_call', From, {block_until, HistoryLength}} when length(History) >= HistoryLength ->
+            ?debugFmt("Quicky bug reply, hist length already ~p", [HistoryLength]),
             gen_server:reply(From, ok),
             fake_sink(Socket, Version, Bug, History);
         {'$gen_call', From, {block_until, HistoryLength}} ->
+            ?debugFmt("blocking until hist length is ~p", [HistoryLength]),
             fake_sink(Socket, Version, {block_until, From, HistoryLength}, History);
         {'$gen_call', From, Msg} ->
             ?debugFmt("~n    Your bad call: ~p;~n    My History: ~p~n    My Bug: ~p~n    My Version~p", [Msg, History, Bug, Version]),
@@ -496,9 +548,11 @@ fake_sink(Socket, Version, Bug, History) ->
                     Target ! {got_data, Self, Frame},
                     undefined;
                 {block_until, From, Length} when length(History2) >= Length ->
+                    ?debugMsg("unblocking"),
                     gen_server:reply(From, ok),
                     undefined;
                 _ ->
+                    ?debugMsg("no bug action"),
                     Bug
             end,
             inet:setopts(Socket, [{active, once}]),

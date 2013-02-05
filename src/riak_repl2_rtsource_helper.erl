@@ -19,6 +19,14 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-define(dbg(Msg), ?debugMsg(Msg)).
+-define(dbg(Fmt,Args),?debugFmt(Fmt, Args)).
+-else.
+-define(dbg(_Msg),ok).
+-define(dbg(_Fmt,_Arg),ok).
+-endif.
 
 -record(state, {remote,     % remote site name
                 transport,  % erlang module to use for transport
@@ -94,14 +102,14 @@ maybe_send(Transport, Socket, QEntry, State) ->
     Routed = get_routed(Meta),
     case lists:member(Remote, Routed) of
         true ->
-            %?dbg("Didn't forward cause I'm lazy: ~p", [QEntry]),
+            ?dbg("Didn't forward to ~p cause I'm lazy: ~p", [Remote, QEntry]),
             % TODO and if we haven't acked actual sends?
-            riak_repl2_rtq:ack(Remote, Seq),
+            %riak_repl2_rtq:ack(Remote, Seq),
             State;
         false ->
             QEntry2 = fix_meta(QEntry, Remote),
             Encoded = encode(QEntry2, State#state.proto),
-            %?dbg("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
+            ?dbg("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
             Transport:send(Socket, Encoded),
             State
     end.
