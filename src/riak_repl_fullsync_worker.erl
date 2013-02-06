@@ -12,6 +12,7 @@
 -export([do_binputs_internal/3]). %% Used for unit/integration testing, not public interface
 
 -record(state, {
+          ver :: riak_object:r_object_vsn()  %% greatest shared obj version
     }).
 
 start_link(_Args) ->
@@ -32,7 +33,7 @@ do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
 
 
 init([]) ->
-    {ok, #state{}}.
+    {ok, #state{ver=v0}}. %% initially use legacy riak_object format as "common" ver
 
 handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     %% unblock the caller
@@ -43,12 +44,21 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
+            Ver = v0,
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
-                    riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
+                    %% Cindy: Santa, why can we encode our own binary object?
+                    %% Santa: Because, Cindy, the send() function accepts
+                    %%        either a binary or a term.
+                    [riak_repl_tcp_server:send(Transport, Socket,
+                                               {fs_diff_obj,
+                                                riak_object:to_binary(Ver, O)})
+                     || O <- Objects],
+                    riak_repl_tcp_server:send(Transport, Socket,
+                                              {fs_diff_obj,
+                                               riak_object:to_binary(Ver, RObj)})
             end,
             ok;
         {error, notfound} ->
@@ -59,6 +69,8 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
+%% Handle a get() request by sending the named object via the tcp server back
+%% to the tcp client.
 handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
@@ -78,6 +90,10 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
         {raw, ReqID, self()},
         riak_kv_vnode_master),
 
+    %% Cindy: Why Santa? Why send the highest common riak_object version we agree on?
+    %% Santa: Because, Cindy, it will save energy with the most efficient binary form!
+    Ver = State#state.ver,
+
     receive
         {ReqID, Reply} ->
             case Reply of
@@ -89,8 +105,16 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                         cancel ->
                             skipped;
                         Objects when is_list(Objects) ->
-                            [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
-                            riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
+                            %% Cindy: Santa, why can we encode our own binary object?
+                            %% Santa: Because, Cindy, the send() function accepts
+                            %%        either a binary or a term.
+                            [riak_repl_tcp_server:send(Transport, Socket,
+                                                       {fs_diff_obj,
+                                                        riak_object:to_binary(Ver, O)})
+                             || O <- Objects],
+                            riak_repl_tcp_server:send(Transport, Socket,
+                                                      {fs_diff_obj,
+                                                       riak_object:to_binary(Ver, RObj)})
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->
@@ -138,8 +162,15 @@ code_change(_OldVsn, State, _Extra) ->
 do_binputs_internal(BinObjs, DoneFun, Pool) ->
    % io:format("Called do_binputs_internal\n"),
     %% TODO: add mechanism for detecting put failure so 
-    %% we can drop rtsink an have it resent
-    [riak_repl_util:do_repl_put(Obj) || Obj <- binary_to_term(BinObjs)],
+    %% we can drop rtsink and have it resent
+    Ver = v0,
+    Objects = case Ver of
+                  %% old-ish repl sends term_to_binary([RObjs])
+                  v0 -> binary_to_term(BinObjs);
+                  %% new-ish repl sends term
+                  _V -> [riak_object:from_binary(BObj) || BObj <- BinObjs]
+              end,
+    [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
     poolboy:checkin(Pool, self()),
     %% let the caller know
     DoneFun().

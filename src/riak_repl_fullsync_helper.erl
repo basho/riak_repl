@@ -364,7 +364,9 @@ unpack_key(K) ->
 %% Hash an object, making sure the vclock is in sorted order
 %% as it varies depending on whether it has been pruned or not
 hash_object(RObjBin) ->
-    RObj = binary_to_term(RObjBin),
+    %% Cindy: Why Santa? Why don't we just use term_to_binary() any more?
+    %% Santa: Remember, Cindy, that we support multiple object formats now.
+    RObj = riak_object:from_binary(RObjBin), % converts from all r_object versions
     Vclock = riak_object:vclock(RObj),
     UpdObj = riak_object:set_vclock(RObj, lists:sort(Vclock)),
     erlang:phash2(term_to_binary(UpdObj)).
