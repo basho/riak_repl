@@ -4,6 +4,12 @@
 -author('Andy Gross <andy@basho.com>').
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("riak_repl.hrl").
+
+-ifdef(TEST).
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([make_peer_info/0,
          make_fake_peer_info/0,
          validate_peer_info/2,
@@ -49,6 +55,13 @@
          to_wire/4,
          from_wire/1
         ]).
+
+%% Defines for Wire format encode/decode
+-define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
+-define(W1_VER, 1). %% first non-just-term-to-binary wire format
+-type wire_version() :: w0 | w1.
+
+-export_type([wire_version/0]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -693,10 +706,6 @@ sockname(Socket, Transport) ->
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
--define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
--define(W1_VER, 1). %% first non-just-term-to-binary wire format
--type wire_version() :: w0 | w1.
-
 %% @doc Create a new binary wire formatted replication blob, complete with
 %%      bucket and key for reconstruction on the other end. BinObj should be
 %%      in the new format as obtained from riak_object:to_binary(v1, RObj).
@@ -729,7 +738,9 @@ to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
 to_wire(w1, B, K, <<_/binary>>=Bin) ->
     new_w1(B, K, Bin);
 to_wire(w1, B, K, RObj) ->
-    new_w1(B, K, riak_object:to_binary(v1, RObj)).
+    new_w1(B, K, riak_object:to_binary(v1, RObj));
+to_wire(_W, _B, _K, _RObj) ->
+    {error, unsupported_wire_version}.
 
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
@@ -740,3 +751,65 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
     riak_object:from_binary(B, K, BinObj);
 from_wire(_) ->
     {error, unknown_wire_format}.
+
+%% Some eunit tests
+-ifdef(TEST).
+
+do_wire_old_format_test() ->
+    %% old wire format is just term_to_binary of the riak object,
+    %% so encoded should be the same sa the binary object.
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    BObj = term_to_binary(RObj),
+    %% cover to_wire(... binary-Obj)
+    EncodedBinObj = to_wire(w0, Bucket, Key, BObj),
+    ?assert(EncodedBinObj == BObj),
+    %% cover to_wire(... non-binary-Obj)
+    EncodedObj = to_wire(w0, Bucket, Key, RObj),
+    ?assert(EncodedObj == BObj),
+    DecodedBinObj = from_wire(EncodedBinObj),
+    ?assert(DecodedBinObj == RObj),
+    DecodedObj = from_wire(EncodedObj),
+    ?assert(DecodedObj == RObj).
+
+do_wire_new_format_binary_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    %% encode new binary form of riak object
+    BObj = riak_object:to_binary(v1, RObj),
+    Encoded = to_wire(w1, Bucket, Key, BObj),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == RObj).
+
+do_wire_new_format_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    %% encode record version of riak object
+    Encoded = to_wire(w1, Bucket, Key, RObj),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == RObj).
+
+do_wire_new_format_old_object_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    %% encode old binary form of riak object
+    BObj = riak_object:to_binary(v0, RObj),
+    ?assert(BObj == term_to_binary(RObj)),
+    Encoded = to_wire(w1, Bucket, Key, BObj),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == RObj).
+
+do_wire_unknown_format_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    Encoded = to_wire(w9, Bucket, Key, term_to_binary(RObj)),
+    ?assert(Encoded == {error, unsupported_wire_version}),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == {error, unknown_wire_format}).
+
+-endif.
