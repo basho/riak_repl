@@ -15,7 +15,9 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
--record(state, {sinks = []}).
+-record(state, {sinks = [],
+                ver = v0 :: riak_object:r_object_vsn()  % highest common version
+               }).
 
 %% API - is there any state? who watches ring events?
 start_link() ->
@@ -139,7 +141,15 @@ get_sink_pids() ->
 postcommit(RObj) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
         Objects when is_list(Objects) ->
-            BinObjs = term_to_binary(Objects),
+            %% map riak objects to their wire format, according to the highest
+            %% commonly supported object format between the two clusters.
+            Ver = v0,
+            BinObjs = case Ver of
+                          v0 -> term_to_binary(Objects);
+                          _V ->
+                              BObjs = [riak_object:to_binary(Ver,O) || O <- Objects],
+                              term_to_binary(BObjs)
+                      end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of

@@ -503,8 +503,16 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             skipped;
         Objects when is_list(Objects) ->
             %% server -> client : fs_diff_obj
-            [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
-            riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
+            Ver = v0,
+            %% binarize here instead of in the send() so that our wire
+            %% format for the riak_object is more compact.
+            [riak_repl_tcp_server:send(Transport, Socket,
+                                       {fs_diff_obj,
+                                        riak_object:to_binary(Ver, O)})
+             || O <- Objects],
+            riak_repl_tcp_server:send(Transport, Socket,
+                                      {fs_diff_obj,
+                                       riak_object:to_binary(Ver, RObj)})
     end,
     {reply, ok, diff_bloom, State}.
 
