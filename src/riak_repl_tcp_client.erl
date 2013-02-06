@@ -288,7 +288,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %% ====================================================================
 
-do_diff_obj_and_reply(Obj, State) ->
+do_diff_obj_and_reply(Msg, State) ->
     case Msg of
         {diff_obj, RObj} ->
             %% realtime diff object, or a fullsync diff object from legacy
