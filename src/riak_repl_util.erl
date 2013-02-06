@@ -45,6 +45,11 @@
          sockname/2
      ]).
 
+-export([wire_version/1,
+         to_wire/4,
+         from_wire/1
+        ]).
+
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     SafeRing = riak_core_ring:downgrade(1, Ring),
@@ -688,3 +693,50 @@ sockname(Socket, Transport) ->
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
+-define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
+-define(W1_VER, 1). %% first non-just-term-to-binary wire format
+-type wire_version() :: w0 | w1.
+
+%% @doc Create a new binary wire formatted replication blob, complete with
+%%      bucket and key for reconstruction on the other end. BinObj should be
+%%      in the new format as obtained from riak_object:to_binary(v1, RObj).
+new_w1(B, K, BinObj) when is_binary(B), is_binary(K), is_binary(BinObj) ->
+    KLen = byte_size(K),
+    BLen = byte_size(B),
+    <<?MAGIC:8/integer, ?W1_VER:8/integer,
+      BLen:32/integer, B:BLen/binary,
+      KLen:32/integer, K:KLen/binary, BinObj/binary>>.
+
+%% @doc Return the wire format version of the given wire blob
+wire_version(<<131, _Rest/binary>>) ->
+    w0;
+wire_version(<<?MAGIC:8/integer, ?W1_VER:8/integer, _Rest/binary>>) ->
+    w1;
+wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
+    %% TODO: convert to an atom like atom_of('w' + N)
+    N.
+
+%% @doc Convert a plain or binary riak object to repl wire format.
+%%      Bucket and Key will only be added if the new riak_object
+%%      binary format is supplied (because it doesn't contain them).
+to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
+    Bin;
+to_wire(w0, _B, _K, RObj) when not is_binary(RObj) ->
+    term_to_binary(RObj);
+to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
+    %% no need to wrap a full old object. just use w0 format
+    to_wire(w0, B, K, Bin);
+to_wire(w1, B, K, <<_/binary>>=Bin) ->
+    new_w1(B, K, Bin);
+to_wire(w1, B, K, RObj) ->
+    new_w1(B, K, riak_object:to_binary(v1, RObj)).
+
+%% @doc Convert from wire format to non-binary riak_object form
+from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
+    binary_to_term(BinObjTerm);
+from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
+            BLen:32/integer, B:BLen/binary,
+            KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
+    riak_object:from_binary(B, K, BinObj);
+from_wire(_) ->
+    {error, unknown_wire_format}.
