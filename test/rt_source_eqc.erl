@@ -75,6 +75,15 @@ precondition(#state{sources = Sources}, {call, _, disconnect, [{Remote, _}]}) ->
     is_tuple(lists:keyfind(Remote, 1, Sources));
 precondition(S, {call, _, disconnect, _Args}) ->
     S#state.sources /= [];
+precondition(#state{sources = []}, {call, _, ack_objects, _Args}) ->
+    false;
+precondition(#state{sources = Sources}, {call, _, ack_objects, [NumAck, {Remote, _}]}) ->
+    case lists:keyfind(Remote, 1, Sources) of
+        {_, #src_state{unacked_objects = UnAcked}} when length(UnAcked) >= NumAck ->
+            true;
+        _ ->
+            false
+    end;
 precondition(S, {call, _, ack_objects, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, push_object, [_, _, S]}) ->
@@ -117,7 +126,18 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
         Sources == [] ->
             [];
         true ->
-            S#state.master_queue
+            MasterKeys = [Seq || {Seq, _, _, _} <- S#state.master_queue],
+            SourceQueues = [Source#src_state.unacked_objects || {_, Source} <- Sources],
+            ExtractSeqs = fun(Elem, Acc) ->
+                SrcSeqs = [SeqNum || {SeqNum, _} <- Elem],
+                lists:usort(Acc ++ SrcSeqs)
+            end,
+            ActiveSeqs = lists:foldl(ExtractSeqs, [], SourceQueues),
+            RemoveSeqs = MasterKeys -- ActiveSeqs,
+            UpdateMaster = fun(RemoveSeq, Acc) ->
+                lists:keydelete(RemoveSeq, 1, Acc)
+            end,
+            lists:foldl(UpdateMaster, S#state.master_queue, RemoveSeqs)
     end,
     S#state{master_queue = Master, sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
@@ -138,6 +158,12 @@ next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
             SrcState2 = RealSource#src_state{unacked_objects = Updated},
             Sources2 = [{Remote, SrcState2} | Sources],
             Master2 = remove_fully_acked(S#state.master_queue, Chopped, Sources2),
+            ?debugFmt("~n"
+                "    UnAcked: ~p~n"
+                "    Sources2: ~p~n"
+                "    Length updated: ~p~n"
+                "    Length Chopped: ~p~n"
+                "    NumAcked: ~p", [UnAcked, Sources2, length(Updated), length(Chopped), NumAcked]),
             S#state{sources = Sources2, master_queue = Master2}
     end.
 
