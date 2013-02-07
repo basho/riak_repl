@@ -171,7 +171,7 @@ next_state_connect(Remote, SrcState, State) ->
     case lists:keyfind(Remote, 1, State#state.sources) of
         false ->
             Remotes = lists:delete(Remote, State#state.remotes_available),
-            NewQueue = [{call, ?MODULE, fix_unacked_from_master, [Seq, Remote, Queued, RoutedRemotes, State]} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
+            NewQueue = [{Seq, {call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]}} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
             ?debugFmt("Der new queue for ~p: ~p", [Remote, NewQueue]),
             SrcState2 = SrcState#src_state{unacked_objects = NewQueue},
             Sources = [{Remote, SrcState2} | State#state.sources],
@@ -180,11 +180,11 @@ next_state_connect(Remote, SrcState, State) ->
             State
     end.
 
-fix_unacked_from_master(Seq, Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
+fix_unacked_from_master(Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
     Active = [A || {A, _} <- Sources],
     Routed = lists:usort(RoutedRemotes ++ Active ++ [Remote]),
     Meta2 = orddict:store(routed_clusters, Routed, Meta),
-    {Seq, {N, Bin, Meta2}}.
+    {N, Bin, Meta2}.
 
 remove_fully_acked(Master, [], _Sources) ->
     Master;
@@ -289,6 +289,16 @@ assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, Active, SrcState) ->
     if
         ShouldSkip andalso length(History) == length(SrcState#src_state.unacked_objects) ->
             true;
+        ShouldSkip ->
+            ?debugFmt("assert sink history length failure!~n"
+                "    Remote: ~p~n"
+                "    Length Sink Hist: ~p~n"
+                "    Length Model Hist: ~p~n"
+                "    Sink:~n"
+                "~p~n"
+                "    Model:~n"
+                "~p",[Remote, length(History), length(SrcState#src_state.unacked_objects), History, SrcState#src_state.unacked_objects]),
+            false;
         true ->
             Frame = hd(History),
             case {Version, Frame} of
@@ -429,6 +439,7 @@ ensure_registered(RemoteName, N) ->
     end.
 
 wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
+    ?debugMsg("Wait for sink history"),
     NewQueue = [{Seq, Queued} || {Seq, RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
     if
         length(NewQueue) > 0 ->
@@ -441,6 +452,7 @@ wait_for_pushes(State, Remotes) ->
     [wait_for_push(SrcState, Remotes) || SrcState <- State#state.sources].
 
 wait_for_push({Remote, SrcState}, Remotes) ->
+    ?debugMsg("Wait for push..."),
     case lists:member(Remote, Remotes) of
         true -> ok;
         _ ->

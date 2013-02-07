@@ -51,6 +51,7 @@
 -record(c, {name,      % consumer name
             aseq = 0,  % last sequence acked
             cseq = 0,  % last sequence sent
+            skip_seqs = [], % sequences not sent due to routed by another cluster
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
             deliver  % deliver function if pending, otherwise undefined
@@ -278,7 +279,7 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         fun(C, {Cs2, MinSeq2}) ->
                                 case C#c.name of
                                     Name ->
-                                        {[C#c{aseq = Seq} | Cs2], min(Seq, MinSeq2)};
+                                        {[c_update_skipped_seq(C#c{aseq = Seq}) | Cs2], min(Seq, MinSeq2)};
                                     _ ->
                                         {[C | Cs2], min(C#c.aseq, MinSeq2)}
                                 end
@@ -287,7 +288,22 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     cleanup(QTab, MinSeq),
     State#state{cs = UpdCs}.
 
+c_update_skipped_seq(#c{aseq = Seq, cseq = Seq} = C) ->
+    C#c{skip_seqs = []};
+c_update_skipped_seq(C) ->
+    #c{aseq = ASeq, skip_seqs = Skipped} = C,
+    Filter = fun(Elem) -> Elem > ASeq end,
+    Skipped2 = lists:filter(Filter, Skipped),
+    % using the skipped2, can we walk the ack up to current?
+    {ASeq2, Skipped3} = c_forward_ack(ASeq, lists:reverse(Skipped2)),
+    C#c{skip_seqs = Skipped3, aseq = ASeq2}.
 
+c_forward_ack(ASeq, []) ->
+    {ASeq, []};
+c_forward_ack(ASeq, [Skipped | Tail]) when ASeq + 1 == Skipped ->
+    {Skipped, lists:reverse(Tail)};
+c_forward_ack(ASeq, Skipped) ->
+    {ASeq, lists:reverse(Skipped)}.
 
 %% @private
 handle_info(_Msg, State) ->
@@ -326,6 +342,7 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                      end,
             cleanup(QTab, MinSeq),
             NewState = State#state{cs = Cs2},
+            clear_non_deliverables(QTab, Cs2),
             {ok, NewState};
         false ->
             {{error, not_registered}, State}
@@ -338,7 +355,10 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
     %% Send to any pending consumers
     CsNames = [Consumer#c.name || Consumer <- Cs],
     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-    Cs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+    Cs2 = [begin
+        {_DeliverResult, NewC} = maybe_deliver_item(C, QEntry2),
+        NewC
+    end || C <- Cs],
     ets:insert(QTab, QEntry2),
     trim_q(State#state{qseq = QSeq2, cs = Cs2});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
@@ -359,22 +379,49 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
-            [QEntry] = ets:lookup(QTab, CSeq2),
-            QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-            deliver_item(C, DeliverFun, QEntry2);
+            case ets:lookup(QTab, CSeq2) of
+                [] -> % entry removed, due to previously being unroutable
+                    C2 = C#c{cseq = CSeq2},
+                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
+                [QEntry] ->
+                    QEntry2 = set_local_forwards_meta(CsNames, QEntry),
+                    %deliver_item(C, DeliverFun, QEntry2);
+                    % if the item can't be delivered due to cascading rt, 
+                    % just keep trying.
+                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
+                        {skipped, C2} ->
+                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
+                        {_WorkedOrNoFun, C2} ->
+                            C2
+                    end
+            end;
         false ->
             %% consumer is up to date with head, keep deliver function
             %% until something pushed
             C#c{deliver = DeliverFun}
     end.
 
-
-maybe_deliver_item(C = #c{deliver = DeliverFun}, QEntry) ->
-    case DeliverFun of
-        undefined ->
-            C;
-        _ ->
-            deliver_item(C, DeliverFun, QEntry)
+maybe_deliver_item(C = #c{deliver = undefined}, _QEntry) ->
+    {no_fun, C};
+maybe_deliver_item(C, QEntry) ->
+    {Seq, _NumItem, _Bin, Meta} = QEntry,
+    #c{name = Name} = C,
+    Routed = case orddict:find(routed_clusters, Meta) of
+        error -> [];
+        {ok, V} -> V
+    end,
+    case lists:member(Name, Routed) of
+        true ->
+            Skipped = [Seq | C#c.skip_seqs],
+            if
+                C#c.cseq == C#c.aseq ->
+                    % it's up to date, no need to dirty it.
+                    {skipped, C#c{cseq = Seq, aseq = Seq, skip_seqs = []}};
+                true ->
+                    {skipped, C#c{skip_seqs = Skipped, cseq = Seq}}
+            end;
+        false ->
+            {delivered, deliver_item(C, C#c.deliver, QEntry)}
     end.
 
 deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
@@ -402,6 +449,28 @@ cleanup(_QTab, '$end_of_table') ->
 cleanup(QTab, Seq) ->
     ets:delete(QTab, Seq),
     cleanup(QTab, ets:prev(QTab, Seq)).
+
+clear_non_deliverables(QTab, ActiveConsumers) ->
+    io:format("Active consumers: ~p~n", [ActiveConsumers]),
+    Accumulator = fun(QEntry, Acc) ->
+        {Seq, _, _, Meta} = QEntry,
+        io:format("~p meta: ~p~n", [Seq, Meta]),
+        Routed = case orddict:find(routed_clusters, Meta) of
+            error -> [];
+            {ok, V} -> V
+        end,
+        RoutableActives = [AC || AC <- ActiveConsumers, AC#c.aseq < Seq, not lists:member(AC#c.name, Routed)],
+        if
+            RoutableActives == [] ->
+                [Seq | Acc];
+            true ->
+                Acc
+        end
+    end,
+    ToDelete = ets:foldl(Accumulator, [], QTab),
+    io:format("ToDelete: ~p~n", [ToDelete]),
+    [ets:delete(QTab, Key) || Key <- ToDelete],
+    ToDelete.
 
 %% Trim the queue if necessary
 trim_q(State = #state{max_bytes = undefined}) ->
