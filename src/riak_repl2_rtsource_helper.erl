@@ -19,14 +19,14 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--define(dbg(Msg), ?debugMsg(Msg)).
--define(dbg(Fmt,Args),?debugFmt(Fmt, Args)).
--else.
+%-ifdef(TEST).
+%-include_lib("eunit/include/eunit.hrl").
+%-define(dbg(Msg), ?debugMsg(Msg)).
+%-define(dbg(Fmt,Args),?debugFmt(Fmt, Args)).
+%-else.
 -define(dbg(_Msg),ok).
 -define(dbg(_Fmt,_Arg),ok).
--endif.
+%-endif.
 
 -record(state, {remote,     % remote site name
                 transport,  % erlang module to use for transport

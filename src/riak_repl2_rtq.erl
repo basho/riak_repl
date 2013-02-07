@@ -412,9 +412,6 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
 maybe_deliver_item(C = #c{deliver = undefined}, _QEntry) ->
     {no_fun, C};
 maybe_deliver_item(C, QEntry) ->
-    io:format("Determine if valid consumer.~n"
-        "    Consumer: ~p~n"
-        "    QEntry: ~p~n", [C,QEntry]),
     {Seq, _NumItem, _Bin, Meta} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
@@ -423,19 +420,15 @@ maybe_deliver_item(C, QEntry) ->
     end,
     case lists:member(Name, Routed) of
         true ->
-            io:format("Already routed!~n"),
             Skipped = [Seq | C#c.skip_seqs],
             if
                 C#c.cseq == C#c.aseq ->
                     % it's up to date, no need to dirty it.
-                    io:format("fast-forward aseq~n"),
                     {skipped, C#c{cseq = Seq, aseq = Seq, skip_seqs = []}};
                 true ->
-                    io:format("Ker slapple!~n"),
                     {skipped, C#c{skip_seqs = Skipped, cseq = Seq}}
             end;
         false ->
-            io:format("oh fuck~n"),
             {delivered, deliver_item(C, C#c.deliver, QEntry)}
     end.
 
@@ -466,10 +459,8 @@ cleanup(QTab, Seq) ->
     cleanup(QTab, ets:prev(QTab, Seq)).
 
 clear_non_deliverables(QTab, ActiveConsumers) ->
-    io:format("Active consumers: ~p~n", [ActiveConsumers]),
     Accumulator = fun(QEntry, Acc) ->
         {Seq, _, _, Meta} = QEntry,
-        io:format("~p meta: ~p~n", [Seq, Meta]),
         Routed = case orddict:find(routed_clusters, Meta) of
             error -> [];
             {ok, V} -> V
@@ -483,7 +474,6 @@ clear_non_deliverables(QTab, ActiveConsumers) ->
         end
     end,
     ToDelete = ets:foldl(Accumulator, [], QTab),
-    io:format("ToDelete: ~p~n", [ToDelete]),
     [ets:delete(QTab, Key) || Key <- ToDelete],
     ToDelete.
 

@@ -164,12 +164,6 @@ next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
             SrcState2 = RealSource#src_state{unacked_objects = Updated},
             Sources2 = [{Remote, SrcState2} | Sources],
             Master2 = remove_fully_acked(S#state.master_queue, Chopped, Sources2),
-            ?debugFmt("~n"
-                "    UnAcked: ~p~n"
-                "    Sources2: ~p~n"
-                "    Length updated: ~p~n"
-                "    Length Chopped: ~p~n"
-                "    NumAcked: ~p", [UnAcked, Sources2, length(Updated), length(Chopped), NumAcked]),
             S#state{sources = Sources2, master_queue = Master2}
     end.
 
@@ -178,7 +172,6 @@ next_state_connect(Remote, SrcState, State) ->
         false ->
             Remotes = lists:delete(Remote, State#state.remotes_available),
             NewQueue = [{Seq, {call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]}} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
-            ?debugFmt("Der new queue for ~p: ~p", [Remote, NewQueue]),
             SrcState2 = SrcState#src_state{unacked_objects = NewQueue},
             Sources = [{Remote, SrcState2} | State#state.sources],
             State#state{sources = Sources, remotes_available = Remotes};
@@ -382,16 +375,8 @@ connect_to_v2(RemoteName, MasterQueue) ->
 disconnect(ConnectState) ->
     {Remote, SrcState} = ConnectState,
     #src_state{pids = {Source, Sink}} = SrcState,
-    %Trapping = process_flag(trap_exit, true),
-    %unlink(Source),
-    %unlink(Sink),
-    %riak_repl2_rtsource_conn:stop(Source),
     riak_repl2_rtq:unregister(Remote),
-    ?debugMsg("bing"),
     Out = [wait_for_pid(P, 3000) || P <- [Source, Sink]],
-    ?debugMsg("bing"),
-    %process_flag(trap_exit, Trapping),
-    ?debugMsg("bing"),
     Out.
 
 push_object(Remotes, BinObjects, State) ->
@@ -399,10 +384,8 @@ push_object(Remotes, BinObjects, State) ->
     Active = [A || {A, _} <- State#state.sources],
     ExpectedRouted = lists:usort(Remotes ++ Active),
     ExpectedMeta = [{routed_clusters, ExpectedRouted}],
-    %plant_bugs(Remotes, State#state.sources),
     riak_repl2_rtq:push(1, BinObjects, Meta),
     wait_for_pushes(State, Remotes),
-    ?debugFmt("pushed. Meta: ~p; ExpectedMeta: ~p", [Meta, ExpectedMeta]),
     {1, BinObjects, ExpectedMeta}.
 
 ack_objects(NumToAck, {Remote, SrcState}) ->
@@ -445,7 +428,6 @@ ensure_registered(RemoteName, N) ->
     end.
 
 wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
-    ?debugMsg("Wait for sink history"),
     NewQueue = [{Seq, Queued} || {Seq, RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
     if
         length(NewQueue) > 0 ->
@@ -458,7 +440,6 @@ wait_for_pushes(State, Remotes) ->
     [wait_for_push(SrcState, Remotes) || SrcState <- State#state.sources].
 
 wait_for_push({Remote, SrcState}, Remotes) ->
-    ?debugFmt("Wait for push to ~p...", [Remote]),
     case lists:member(Remote, Remotes) of
         true -> ok;
         _ ->
@@ -573,14 +554,11 @@ fake_sink(Socket, Version, Bug, History) ->
             gen_server:reply(From, ok),
             fake_sink(Socket, Version, {once_bug, NewBug}, History);
         {'$gen_call', From, {block_until, HistoryLength}} when length(History) >= HistoryLength ->
-            ?debugFmt("Quicky bug reply, hist length already ~p", [HistoryLength]),
             gen_server:reply(From, ok),
             fake_sink(Socket, Version, Bug, History);
         {'$gen_call', From, {block_until, HistoryLength}} ->
-            ?debugFmt("blocking until hist length is ~p", [HistoryLength]),
             fake_sink(Socket, Version, {block_until, From, HistoryLength}, History);
         {'$gen_call', From, Msg} ->
-            ?debugFmt("~n    Your bad call: ~p;~n    My History: ~p~n    My Bug: ~p~n    My Version~p", [Msg, History, Bug, Version]),
             gen_server:reply(From, {error, badcall}),
             fake_sink(Socket, Version, Bug, History);
         {tcp, Socket, Bin} ->
@@ -592,11 +570,9 @@ fake_sink(Socket, Version, Bug, History) ->
                     Target ! {got_data, Self, Frame},
                     undefined;
                 {block_until, From, Length} when length(History2) >= Length ->
-                    ?debugMsg("unblocking"),
                     gen_server:reply(From, ok),
                     undefined;
                 _ ->
-                    ?debugMsg("no bug action"),
                     Bug
             end,
             inet:setopts(Socket, [{active, once}]),
@@ -610,7 +586,7 @@ fake_sink(Socket, Version, Bug, History) ->
 fake_sink_nom_frames({ok, undefined, <<>>}, History) ->
     History;
 fake_sink_nom_frames({ok, undefined, Rest}, History) ->
-    ?debugFmt("Fame issues: binary left over: ~p", [Rest]),
+    ?debugFmt("Frame issues: binary left over: ~p", [Rest]),
     History;
 fake_sink_nom_frames({ok, Frame, Rest}, History) ->
     fake_sink_nom_frames(Rest, [Frame | History]);
