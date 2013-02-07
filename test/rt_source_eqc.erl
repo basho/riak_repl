@@ -144,8 +144,14 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
 next_state(S, Res, {call, _, push_object, [Remotes, Binary, _S]}) ->
     Seq = S#state.seq + 1,
     Sources = update_unacked_objects(Remotes, {Seq, Res}, S#state.sources),
-    Master = S#state.master_queue,
-    Master2 = [{Seq, Remotes, Binary, Res} | Master],
+    RoutingSources = [R || {R, _} <- Sources, not lists:member(R, Remotes)],
+    Master2 = case RoutingSources of
+        [] ->
+            S#state.master_queue;
+        _ ->
+            Master = S#state.master_queue,
+            [{Seq, Remotes, Binary, Res} | Master]
+    end,
     S#state{sources = Sources, master_queue = Master2, seq = Seq};
 
 next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
@@ -452,7 +458,7 @@ wait_for_pushes(State, Remotes) ->
     [wait_for_push(SrcState, Remotes) || SrcState <- State#state.sources].
 
 wait_for_push({Remote, SrcState}, Remotes) ->
-    ?debugMsg("Wait for push..."),
+    ?debugFmt("Wait for push to ~p...", [Remote]),
     case lists:member(Remote, Remotes) of
         true -> ok;
         _ ->

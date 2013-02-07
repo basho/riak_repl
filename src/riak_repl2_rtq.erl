@@ -286,6 +286,7 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
     cleanup(QTab, MinSeq),
+    clear_non_deliverables(QTab, UpdCs),
     State#state{cs = UpdCs}.
 
 c_update_skipped_seq(#c{aseq = Seq, cseq = Seq} = C) ->
@@ -355,11 +356,18 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
     %% Send to any pending consumers
     CsNames = [Consumer#c.name || Consumer <- Cs],
     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-    Cs2 = [begin
-        {_DeliverResult, NewC} = maybe_deliver_item(C, QEntry2),
-        NewC
-    end || C <- Cs],
-    ets:insert(QTab, QEntry2),
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+    {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
+    AllSkipped = lists:all(fun
+        (skipped) -> true;
+        (_) -> false
+    end, DeliverResults),
+    if
+        AllSkipped ->
+            ok;
+        true ->
+            ets:insert(QTab, QEntry2)
+    end,
     trim_q(State#state{qseq = QSeq2, cs = Cs2});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
@@ -404,6 +412,9 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
 maybe_deliver_item(C = #c{deliver = undefined}, _QEntry) ->
     {no_fun, C};
 maybe_deliver_item(C, QEntry) ->
+    io:format("Determine if valid consumer.~n"
+        "    Consumer: ~p~n"
+        "    QEntry: ~p~n", [C,QEntry]),
     {Seq, _NumItem, _Bin, Meta} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
@@ -412,15 +423,19 @@ maybe_deliver_item(C, QEntry) ->
     end,
     case lists:member(Name, Routed) of
         true ->
+            io:format("Already routed!~n"),
             Skipped = [Seq | C#c.skip_seqs],
             if
                 C#c.cseq == C#c.aseq ->
                     % it's up to date, no need to dirty it.
+                    io:format("fast-forward aseq~n"),
                     {skipped, C#c{cseq = Seq, aseq = Seq, skip_seqs = []}};
                 true ->
+                    io:format("Ker slapple!~n"),
                     {skipped, C#c{skip_seqs = Skipped, cseq = Seq}}
             end;
         false ->
+            io:format("oh fuck~n"),
             {delivered, deliver_item(C, C#c.deliver, QEntry)}
     end.
 
