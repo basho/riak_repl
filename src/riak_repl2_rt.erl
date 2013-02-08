@@ -145,10 +145,8 @@ postcommit(RObj) ->
             %% commonly supported object format between the two clusters.
             Ver = v0,
             BinObjs = case Ver of
-                          v0 -> term_to_binary(Objects);
-                          _V ->
-                              BObjs = [riak_object:to_binary(Ver,O) || O <- Objects],
-                              term_to_binary(BObjs)
+                          v0 -> riak_repl_util:to_wire(w0, Objects);
+                          _V -> riak_repl_util:to_wire(w1, Objects)
                       end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown

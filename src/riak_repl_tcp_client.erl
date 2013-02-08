@@ -138,10 +138,8 @@ handle_call({proxy_get, Bucket, Key, Options}, From, State) ->
     {noreply, State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets]}};
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
-
 handle_cast(_Event, State) ->
     {noreply, State}.
-
 handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
     lager:info("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
@@ -199,23 +197,11 @@ handle_info({Proto, Socket, Data},
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
-    %% Cindy: Why Santa? Why do we match binary riak objects now, even after we
-    %%        have already called binary_to_term() on them?
-    %% Santa: Because, Cindy, with new riak object formats, we don't always encode
-    %%        the message as term_to_binary({diff_obj, r_object()}). We can also
-    %%        receive a message that was encoded as term_to_binary({diff_obj,
-    %%        riak_object:to_binary(Version, r_object()}).
-    Reply = case Msg of
-        {diff_obj, BObj} when is_binary(BObj) ->
-            RObj = riak_object:from_binary(BObj),
+    Reply = case decode_obj_msg(Msg) of
+        {diff_obj, RObj} ->
             do_diff_obj_and_reply({diff_obj, RObj}, State);
-        {diff_obj, _RObj} ->
-            do_diff_obj_and_reply(Msg, State);
-        {fs_diff_obj, BObj} when is_binary(BObj) ->
-            RObj = riak_object:from_binary(BObj),
+        {fs_diff_obj, RObj} ->
             do_diff_obj_and_reply({fs_diff_obj, RObj}, State);
-        {fs_diff_obj, _RObj} ->
-            do_diff_obj_and_reply(Msg, State);
         {proxy_get_resp, Ref, Resp} ->
             case lists:keytake(Ref, 1, State#state.proxy_gets) of
                 false ->
@@ -234,8 +220,8 @@ handle_info({Proto, Socket, Data},
             {noreply, State};
         {peerinfo, TheirPI, Capability} ->
             handle_peerinfo(State, TheirPI, Capability);
-        _ ->
-            gen_fsm:send_event(State#state.fullsync_worker, Msg),
+        Other ->
+            gen_fsm:send_event(State#state.fullsync_worker, Other),
             {noreply, State}
     end,
     case State#state.keepalive_time of
@@ -287,6 +273,29 @@ code_change(_OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+decode_obj_msg(Data) ->
+    Msg = binary_to_term(Data),
+    %% Cindy: Why Santa? Why do we match binary riak objects now, even after we
+    %%        have already called binary_to_term() on them?
+    %% Santa: Because, Cindy, with new riak object formats, we don't always encode
+    %%        the message as term_to_binary({diff_obj, r_object()}). We can also
+    %%        receive a message that was encoded as term_to_binary({diff_obj,
+    %%        riak_object:to_binary(Version, r_object()}).
+    case Msg of
+        {diff_obj, BObj} when is_binary(BObj) ->
+            RObj = riak_repl_util:from_wire(BObj),
+            {diff_obj, RObj};
+        {diff_obj, _RObj} ->
+            Msg;
+        {fs_diff_obj, BObj} when is_binary(BObj) ->
+            RObj = riak_repl_util:from_wire(BObj),
+            {fs_diff_obj, RObj};
+        {fs_diff_obj, _RObj} ->
+            Msg;
+        Other ->
+            Other
+    end.
 
 do_diff_obj_and_reply(Msg, State) ->
     case Msg of
