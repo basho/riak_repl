@@ -49,7 +49,8 @@
         fullsync_worker :: pid() | undefined,
         fullsync_strategy :: atom(),
         election_timeout :: undefined | reference(), % reference for the election timeout
-        keepalive_time :: undefined | integer()
+        keepalive_time :: undefined | integer(),
+        ver = v0
     }).
 
 make_state(Sitename, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -123,12 +124,23 @@ handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 
+encode_obj_msg(V, {diff_obj, RObj}) ->
+    case V of
+        v0 ->
+            term_to_binary({diff_obj, RObj});
+        v1 ->
+            K = riak_object:key(RObj),
+            B = riak_object:bucket(RObj),
+            BObj = riak_repl_util:to_wire(w1,B,K,RObj),
+            term_to_binary({diff_obj, BObj})
+    end.
+
 handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when State#state.q == undefined ->
+    V = State#state.ver,
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         Objects when is_list(Objects) ->
-            [send(Transport, Socket, term_to_binary({diff_obj, O})) || O <-
-                Objects],
-            send(Transport, Socket, term_to_binary({diff_obj, RObj})),
+            [send(Transport, Socket, encode_obj_msg(V, {diff_obj, O})) || O <- Objects],
+            send(Transport, Socket,encode_obj_msg(V, {diff_obj, RObj})),
             {noreply, State};
         cancel ->
             {noreply, State}

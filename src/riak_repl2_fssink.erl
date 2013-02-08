@@ -99,10 +99,14 @@ handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
-    case Msg of
-        {fs_diff_obj, Obj} ->
+    V = v0,
+    case {V,Msg} of
+        {v0, {fs_diff_obj, Obj}} ->
             riak_repl_util:do_repl_put(Obj);
-        _ ->
+        {_V, {fs_diff_obj, BObj}} ->
+            Obj = riak_repl_util:from_wire(BObj),
+            riak_repl_util:do_repl_put(Obj);
+        {_V,_} ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg)
     end,
     {noreply, State};

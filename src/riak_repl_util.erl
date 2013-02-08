@@ -52,8 +52,10 @@
      ]).
 
 -export([wire_version/1,
+         to_wire/1,
          to_wire/4,
-         from_wire/1
+         from_wire/1,
+         from_wire/2
         ]).
 
 %% Defines for Wire format encode/decode
@@ -728,6 +730,23 @@ wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
 %% @doc Convert a plain or binary riak object to repl wire format.
 %%      Bucket and Key will only be added if the new riak_object
 %%      binary format is supplied (because it doesn't contain them).
+to_wire(w0, Objects) when is_list(Objects) ->
+    term_to_binary(Objects);
+to_wire(w1, Objects) when is_list(Objects) ->
+    BObjs = [to_wire(w1,O) || O <- Objects],
+    term_to_binary(BObjs);
+to_wire(w1, Object) ->
+    B = riak_object:bucket(Object),
+    K = riak_object:key(Object),
+    to_wire(w1, B, K, Object).
+
+%% When the wire format is known and objects are packed in a list of binaries
+from_wire(w0, BinObjList) ->
+      binary_to_term(BinObjList);
+from_wire(w1, BinObjList) ->
+    BinObjs = binary_to_term(BinObjList),
+    [from_wire(BObj) || BObj <- BinObjs].
+
 to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
     Bin;
 to_wire(w0, _B, _K, RObj) when not is_binary(RObj) ->
@@ -741,6 +760,9 @@ to_wire(w1, B, K, RObj) ->
     new_w1(B, K, riak_object:to_binary(v1, RObj));
 to_wire(_W, _B, _K, _RObj) ->
     {error, unsupported_wire_version}.
+
+to_wire(Obj) ->
+    to_wire(w0, unused, unused, Obj).
 
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
@@ -811,5 +833,23 @@ do_wire_unknown_format_test() ->
     ?assert(Encoded == {error, unsupported_wire_version}),
     Decoded = from_wire(Encoded),
     ?assert(Decoded == {error, unknown_wire_format}).
+
+do_wire_list_w0_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    Objs = [RObj, RObj, RObj],
+    Encoded = to_wire(w0, Objs),
+    Decoded = from_wire(w0, Encoded),
+    ?assert(Decoded == Objs).
+
+do_wire_list_w1_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    Objs = [RObj, RObj, RObj],
+    Encoded = to_wire(w1, Objs),
+    Decoded = from_wire(w1, Encoded),
+    ?assert(Decoded == Objs).
 
 -endif.

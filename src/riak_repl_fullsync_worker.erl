@@ -44,21 +44,25 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
-            Ver = v0,
+            W = case State#state.ver of
+                    v0 -> w0;
+                    v1 -> w1;
+                    _V -> bah
+                end,
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
                     %% Cindy: Santa, why can we encode our own binary object?
-                    %% Santa: Because, Cindy, the send() function accepts
-                    %%        either a binary or a term.
+                    %% Santa: Because the send() function will convert our tuple
+                    %%        to a binary
                     [riak_repl_tcp_server:send(Transport, Socket,
                                                {fs_diff_obj,
-                                                riak_object:to_binary(Ver, O)})
+                                                riak_repl_util:to_wire(W, O)})
                      || O <- Objects],
                     riak_repl_tcp_server:send(Transport, Socket,
                                               {fs_diff_obj,
-                                               riak_object:to_binary(Ver, RObj)})
+                                               riak_repl_util:to_wire(W, RObj)})
             end,
             ok;
         {error, notfound} ->
@@ -90,10 +94,6 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
         {raw, ReqID, self()},
         riak_kv_vnode_master),
 
-    %% Cindy: Why Santa? Why send the highest common riak_object version we agree on?
-    %% Santa: Because, Cindy, it will save energy with the most efficient binary form!
-    Ver = State#state.ver,
-
     receive
         {ReqID, Reply} ->
             case Reply of
@@ -101,6 +101,11 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                     %% we don't actually have the vclock to compare, so just send the
                     %% key and let the other side sort things out.
                     {ok, Client} = riak:local_client(),
+                    W = case State#state.ver of
+                            v0 -> w0;
+                            v1 -> w1;
+                            _V -> bah
+                        end,
                     case riak_repl_util:repl_helper_send(RObj, Client) of
                         cancel ->
                             skipped;
@@ -110,11 +115,11 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                             %%        either a binary or a term.
                             [riak_repl_tcp_server:send(Transport, Socket,
                                                        {fs_diff_obj,
-                                                        riak_object:to_binary(Ver, O)})
+                                                        riak_repl_util:to_wire(W, O)})
                              || O <- Objects],
                             riak_repl_tcp_server:send(Transport, Socket,
                                                       {fs_diff_obj,
-                                                       riak_object:to_binary(Ver, RObj)})
+                                                       riak_repl_util:to_wire(W, RObj)})
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->
@@ -132,9 +137,9 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({put, Obj, Pool}, State) ->
+handle_cast({put, RObj, Pool}, State) ->
     %% do the put
-    riak_repl_util:do_repl_put(Obj),
+    riak_repl_util:do_repl_put(RObj),
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
@@ -166,9 +171,9 @@ do_binputs_internal(BinObjs, DoneFun, Pool) ->
     Ver = v0,
     Objects = case Ver of
                   %% old-ish repl sends term_to_binary([RObjs])
-                  v0 -> binary_to_term(BinObjs);
-                  %% new-ish repl sends term
-                  _V -> [riak_object:from_binary(BObj) || BObj <- BinObjs]
+                  v0 -> riak_repl_util:from_wire(w0, BinObjs);
+                  %% new-ish repl sends binaried list of {K, B, and BinObject}
+                  _V -> riak_repl_util:from_wire(w1, BinObjs)
               end,
     [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
     poolboy:checkin(Pool, self()),
