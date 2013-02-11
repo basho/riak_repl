@@ -122,6 +122,7 @@ status2(Verbose) ->
     Stats1 = lists:sort(riak_repl_stats:get_stats()),
     RTRemotesStatus = rt_remotes_status(),
     FSRemotesStatus = fs_remotes_status(),
+    PGRemotesStatus = pg_remotes_status(),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
@@ -130,7 +131,7 @@ status2(Verbose) ->
     CMgrStats = cluster_mgr_stats(),
     RTQStats = rtq_stats(),
     All =
-          RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
+          RTRemotesStatus ++ FSRemotesStatus ++ PGRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
           CoordStats++CoordSrvStats++CMgrStats++RTQStats,
     if Verbose ->
@@ -138,6 +139,13 @@ status2(Verbose) ->
        true ->
             All
     end.
+
+pg_remotes_status() ->
+    Ring = get_ring(),
+    Enabled = string:join(riak_repl_ring:pg_enabled(Ring),", "),
+    Started = string:join(riak_repl_ring:pg_started(Ring),", "),
+    [{proxy_get_enabled, Enabled},
+     {proxy_get_started, Started}].
 
 rt_remotes_status() ->
     Ring = get_ring(),
