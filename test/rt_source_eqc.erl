@@ -102,9 +102,9 @@ precondition(_S, _Call) ->
 
 initial_state() ->
     process_flag(trap_exit, true),
-    abstract_gen_tcp(),
-    abstract_stats(),
-    abstract_stateful(),
+    riak_repl_test_util:abstract_gen_tcp(),
+    riak_repl_test_util:abstract_stats(),
+    riak_repl_test_util:abstract_stateful(),
     abstract_connection_mgr(),
     {ok, _RTPid} = start_rt(),
     {ok, _RTQPid} = start_rtq(),
@@ -376,7 +376,7 @@ disconnect(ConnectState) ->
     {Remote, SrcState} = ConnectState,
     #src_state{pids = {Source, Sink}} = SrcState,
     riak_repl2_rtq:unregister(Remote),
-    Out = [wait_for_pid(P, 3000) || P <- [Source, Sink]],
+    Out = [riak_repl_test_util:wait_for_pid(P, 3000) || P <- [Source, Sink]],
     Out.
 
 push_object(Remotes, BinObjects, State) ->
@@ -460,29 +460,8 @@ plant_bugs(Remotes, [{Remote, SrcState} | Tail]) ->
             plant_bugs(Remotes, Tail)
     end.
 
-abstract_gen_tcp() ->
-    reset_meck(gen_tcp, [unstick, passthrough]),
-    meck:expect(gen_tcp, setopts, fun(Socket, Opts) ->
-        inet:setopts(Socket, Opts)
-    end).
-
-abstract_stats() ->
-    reset_meck(riak_repl_stats),
-    meck:expect(riak_repl_stats, rt_source_errors, fun() -> ok end),
-    meck:expect(riak_repl_stats, objects_sent, fun() -> ok end).
-
-abstract_stateful() ->
-    reset_meck(stateful),
-    meck:expect(stateful, set, fun(Key, Val) ->
-        Fun = fun() -> Val end,
-        meck:expect(stateful, Key, Fun)
-    end),
-    meck:expect(stateful, delete, fun(Key) ->
-        meck:delete(stateful, Key, 0)
-    end).
-
 abstract_connection_mgr() ->
-    reset_meck(riak_core_connection_mgr, [passthrough]),
+    riak_repl_test_util:reset_meck(riak_core_connection_mgr, [passthrough]),
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         proc_lib:spawn_link(fun() ->
             Version = stateful:version(),
@@ -494,22 +473,22 @@ abstract_connection_mgr() ->
     end).
 
 start_rt() ->
-    kill_and_wait(riak_repl2_rt),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl2_rt:start_link().
 
 start_rtq() ->
-    kill_and_wait(riak_repl2_rtq),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
     riak_repl2_rtq:start_link().
 
 start_tcp_mon() ->
-    kill_and_wait(riak_core_tcp_mon),
+    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     riak_core_tcp_mon:start_link().
 
 start_fake_sink() ->
-    reset_meck(riak_core_service_mgr, [passthrough]),
+    riak_repl_test_util:reset_meck(riak_core_service_mgr, [passthrough]),
     WhoToTell = self(),
     meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
-        kill_and_wait(fake_sink),
+        riak_repl_test_util:kill_and_wait(fake_sink),
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArgs}} = HostSpec,
         sink_listener(TcpOpts, WhoToTell)
     end),
@@ -592,37 +571,3 @@ fake_sink_nom_frames({ok, Frame, Rest}, History) ->
     fake_sink_nom_frames(Rest, [Frame | History]);
 fake_sink_nom_frames(Bin, History) ->
     fake_sink_nom_frames(riak_repl2_rtframe:decode(Bin), History).
-
-reset_meck(Mod) ->
-    reset_meck(Mod, []).
-
-reset_meck(Mod, Opts) ->
-    try meck:unload(Mod) of
-        ok -> ok
-    catch
-        error:{not_mocked, Mod} -> ok
-    end,
-    meck:new(Mod, Opts).
-
-kill_and_wait(undefined) ->
-    ok;
-
-kill_and_wait(Atom) when is_atom(Atom) ->
-    kill_and_wait(whereis(Atom));
-
-kill_and_wait(Pid) when is_pid(Pid) ->
-    unlink(Pid),
-    exit(Pid, stupify),
-    wait_for_pid(Pid).
-
-wait_for_pid(Pid) ->
-    wait_for_pid(Pid, infinity).
-
-wait_for_pid(Pid, Timeout) ->
-    Mon = erlang:monitor(process, Pid),
-    receive
-        {'DOWN', Mon, process, Pid, _Why} ->
-            ok
-    after Timeout ->
-        {error, timeout}
-    end.
