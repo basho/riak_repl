@@ -363,12 +363,11 @@ unpack_key(K) ->
 
 %% Hash an object, making sure the vclock is in sorted order
 %% as it varies depending on whether it has been pruned or not
-hash_object(RObjBin) ->
-    %% Cindy: Why Santa? Why don't we just use term_to_binary() any more?
-    %% Santa: Because we support multiple object formats now.
-    RObj = riak_object:from_binary(RObjBin), % converts from all r_object versions
+hash_object(B,K,RObjBin) ->
+    RObj = riak_object:from_binary(B,K,RObjBin),
     Vclock = riak_object:vclock(RObj),
     UpdObj = riak_object:set_vclock(RObj, lists:sort(Vclock)),
+    %% can't use the new binary version yet
     erlang:phash2(term_to_binary(UpdObj)).
 
 open_couchdb(Filename) ->
@@ -482,15 +481,15 @@ missing_key(PBKey, DiffState) ->
 %% modules are not the same.
 %%
 %% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
-merkle_fold(K, V, Pid) ->
-    riak_core_gen_server:cast(Pid, {merkle, K, hash_object(V)}),
+merkle_fold({B,Key}=K, V, Pid) ->
+    riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)}),
     Pid.
 
 %% @private
 %%
 %% @doc Visting function for building keylists. Similar to merkle_fold.
-keylist_fold(K, V, {MPid, Count, Total}) ->
-    H = hash_object(V),
+keylist_fold({B,Key}=K, V, {MPid, Count, Total}) ->
+    H = hash_object(B,Key,V),
     Bin = term_to_binary({pack_key(K), H}),
     %% write key/value hash to file
     riak_core_gen_server:cast(MPid, {keylist, Bin}),
@@ -503,8 +502,8 @@ keylist_fold(K, V, {MPid, Count, Total}) ->
             {MPid, Count+1, Total+1}
     end;
 %% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
-keylist_fold(K, V, {MPid, Count}) ->
-    H = hash_object(V),
+keylist_fold({B,Key}=K, V, {MPid, Count}) ->
+    H = hash_object(B,Key,V),
     Bin = term_to_binary({pack_key(K), H}),
     %% write key/value hash to file
     riak_core_gen_server:cast(MPid, {keylist, Bin}),

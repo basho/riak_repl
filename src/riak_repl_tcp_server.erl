@@ -129,9 +129,7 @@ encode_obj_msg(V, {diff_obj, RObj}) ->
         v0 ->
             term_to_binary({diff_obj, RObj});
         v1 ->
-            K = riak_object:key(RObj),
-            B = riak_object:bucket(RObj),
-            BObj = riak_repl_util:to_wire(w1,B,K,RObj),
+            BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({diff_obj, BObj})
     end.
 

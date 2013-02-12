@@ -53,6 +53,7 @@
 
 -export([wire_version/1,
          to_wire/1,
+         to_wire/2,
          to_wire/4,
          from_wire/1,
          from_wire/2
@@ -732,10 +733,12 @@ wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
 %%      binary format is supplied (because it doesn't contain them).
 to_wire(w0, Objects) when is_list(Objects) ->
     term_to_binary(Objects);
+to_wire(w0, Object) ->
+    term_to_binary(Object);
 to_wire(w1, Objects) when is_list(Objects) ->
     BObjs = [to_wire(w1,O) || O <- Objects],
     term_to_binary(BObjs);
-to_wire(w1, Object) ->
+to_wire(w1, Object) when not is_binary(Object) ->
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
     to_wire(w1, B, K, Object).
@@ -750,7 +753,7 @@ from_wire(w1, BinObjList) ->
 to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
     Bin;
 to_wire(w0, _B, _K, RObj) when not is_binary(RObj) ->
-    term_to_binary(RObj);
+    to_wire(w0, RObj);
 to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
     %% no need to wrap a full old object. just use w0 format
     to_wire(w0, B, K, Bin);

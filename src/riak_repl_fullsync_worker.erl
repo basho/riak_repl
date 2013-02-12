@@ -35,6 +35,15 @@ do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
 init([]) ->
     {ok, #state{ver=v0}}. %% initially use legacy riak_object format as "common" ver
 
+encode_obj_msg(V, {fs_diff_obj, RObj}) ->
+    case V of
+        v0 ->
+            term_to_binary({fs_diff_obj, RObj});
+        v1 ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({fs_diff_obj, BObj})
+    end.
+
 handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
@@ -44,11 +53,7 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
-            W = case State#state.ver of
-                    v0 -> w0;
-                    v1 -> w1;
-                    _V -> bah
-                end,
+            V = State#state.ver,
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
                     skipped;
@@ -57,12 +62,10 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
                     %% Santa: Because the send() function will convert our tuple
                     %%        to a binary
                     [riak_repl_tcp_server:send(Transport, Socket,
-                                               {fs_diff_obj,
-                                                riak_repl_util:to_wire(W, O)})
+                                               encode_obj_msg(V,{fs_diff_obj,O}))
                      || O <- Objects],
                     riak_repl_tcp_server:send(Transport, Socket,
-                                              {fs_diff_obj,
-                                               riak_repl_util:to_wire(W, RObj)})
+                                              encode_obj_msg(V,{fs_diff_obj,RObj}))
             end,
             ok;
         {error, notfound} ->
@@ -101,11 +104,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                     %% we don't actually have the vclock to compare, so just send the
                     %% key and let the other side sort things out.
                     {ok, Client} = riak:local_client(),
-                    W = case State#state.ver of
-                            v0 -> w0;
-                            v1 -> w1;
-                            _V -> bah
-                        end,
+                    V = State#state.ver,
                     case riak_repl_util:repl_helper_send(RObj, Client) of
                         cancel ->
                             skipped;
@@ -114,12 +113,10 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                             %% Santa: Because, Cindy, the send() function accepts
                             %%        either a binary or a term.
                             [riak_repl_tcp_server:send(Transport, Socket,
-                                                       {fs_diff_obj,
-                                                        riak_repl_util:to_wire(W, O)})
+                                                       encode_obj_msg(V,{fs_diff_obj,O}))
                              || O <- Objects],
                             riak_repl_tcp_server:send(Transport, Socket,
-                                                      {fs_diff_obj,
-                                                       riak_repl_util:to_wire(W, RObj)})
+                                                      encode_obj_msg(V,{fs_diff_obj,RObj}))
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->

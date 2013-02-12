@@ -144,10 +144,11 @@ postcommit(RObj) ->
             %% map riak objects to their wire format, according to the highest
             %% commonly supported object format between the two clusters.
             Ver = v0,
-            BinObjs = case Ver of
-                          v0 -> riak_repl_util:to_wire(w0, Objects);
-                          _V -> riak_repl_util:to_wire(w1, Objects)
-                      end,
+            W = case Ver of
+                    v0 -> w0;
+                    _V -> w1
+                end,
+            BinObjs = riak_repl_util:to_wire(W, Objects),
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of

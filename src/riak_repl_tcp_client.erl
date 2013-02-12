@@ -195,9 +195,8 @@ handle_info({ssl_error, Socket, Reason}, #state{socket = Socket} = State) ->
 handle_info({Proto, Socket, Data},
         State=#state{transport=Transport,socket=Socket}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
-    Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
-    Reply = case decode_obj_msg(Msg) of
+    Reply = case decode_obj_msg(Data) of
         {diff_obj, RObj} ->
             do_diff_obj_and_reply({diff_obj, RObj}, State);
         {fs_diff_obj, RObj} ->
@@ -281,7 +280,7 @@ decode_obj_msg(Data) ->
     %% Santa: Because, Cindy, with new riak object formats, we don't always encode
     %%        the message as term_to_binary({diff_obj, r_object()}). We can also
     %%        receive a message that was encoded as term_to_binary({diff_obj,
-    %%        riak_object:to_binary(Version, r_object()}).
+    %%        riak_object: to_binary(Version, r_object()}).
     case Msg of
         {diff_obj, BObj} when is_binary(BObj) ->
             RObj = riak_repl_util:from_wire(BObj),
