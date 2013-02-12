@@ -87,7 +87,8 @@
         bloom_pid,
         num_diffs,
         generator_paused = false,
-        pending_acks = 0
+        pending_acks = 0,
+        ver = v0
     }).
 
 %% -define(TRACE(Stmt),Stmt).
@@ -495,6 +496,15 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
 %% end of bloom states
 %% --------------------------------------------------------------------------
 
+encode_obj_msg(V, {fs_diff_obj, RObj}) ->
+    case V of
+        v0 ->
+            term_to_binary({fs_diff_obj, RObj});
+        v1 ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({fs_diff_obj, BObj})
+    end.
+
 %% server <- bloom_fold : diff_obj 'recv a diff object from bloom folder
 diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
                                            socket=Socket} = State) ->
@@ -502,17 +512,15 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
         cancel ->
             skipped;
         Objects when is_list(Objects) ->
+            V = State#state.ver,
             %% server -> client : fs_diff_obj
-            Ver = v0,
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
             [riak_repl_tcp_server:send(Transport, Socket,
-                                       {fs_diff_obj,
-                                        riak_object:to_binary(Ver, O)})
+                                       encode_obj_msg(V,{fs_diff_obj,O}))
              || O <- Objects],
             riak_repl_tcp_server:send(Transport, Socket,
-                                      {fs_diff_obj,
-                                       riak_object:to_binary(Ver, RObj)})
+                                      encode_obj_msg(V,{fs_diff_obj,RObj}))
     end,
     {reply, ok, diff_bloom, State}.
 
@@ -609,7 +617,7 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
                 true ->
-                    RObj = binary_to_term(V),
+                    RObj = riak_object:from_binary(B,K,V),
                     gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity),
                     NSent0 - 1;
                 false ->
