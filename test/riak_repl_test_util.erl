@@ -2,7 +2,8 @@
 
 -export([reset_meck/1, reset_meck/2]).
 -export([abstract_gen_tcp/0, abstract_stats/0, abstract_stateful/0]).
--export([kill_and_wait/1, wait_for_pid/1, wait_for_pid/2]).
+-export([kill_and_wait/1, kill_and_wait/2]).
+-export([wait_for_pid/1, wait_for_pid/2]).
 
 abstract_gen_tcp() ->
     reset_meck(gen_tcp, [unstick, passthrough]),
@@ -36,15 +37,18 @@ reset_meck(Mod, Opts) ->
     end,
     meck:new(Mod, Opts).
 
-kill_and_wait(undefined) ->
+kill_and_wait(Victem) ->
+    kill_and_wait(Victem, stupify).
+
+kill_and_wait(undefined, _Cause) ->
     ok;
 
-kill_and_wait(Atom) when is_atom(Atom) ->
-    kill_and_wait(whereis(Atom));
+kill_and_wait(Atom, Cause) when is_atom(Atom) ->
+    kill_and_wait(whereis(Atom), Cause);
 
-kill_and_wait(Pid) when is_pid(Pid) ->
+kill_and_wait(Pid, Cause) when is_pid(Pid) ->
     unlink(Pid),
-    exit(Pid, stupify),
+    exit(Pid, Cause),
     wait_for_pid(Pid).
 
 wait_for_pid(Pid) ->
