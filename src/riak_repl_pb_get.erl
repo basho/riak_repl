@@ -12,7 +12,7 @@
          process/2,
          process_stream/3]).
 
--export([client_cluster_names/0]).
+-export([client_cluster_names_12/0, client_cluster_names_13/0]).
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
@@ -22,7 +22,8 @@
 
 -record(state, {
         client,    % local client
-        modes
+        repl_modes,
+        cluster_id
     }).
 
 %% @doc init/0 callback. Returns the service internal start
@@ -32,11 +33,13 @@ init() ->
     {ok, C} = riak:local_client(),
 
     % get the current repl modes and stash them in the state
+    % I suppose riak_repl_pb_get would need to be restarted if these values
+    % changed
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterID = riak_core_ring:cluster_name(Ring),
     riak_repl_ring:ensure_config(Ring),
     Modes = riak_repl_ring:get_modes(Ring),
-
-    #state{client=C, modes=Modes}.
+    #state{client=C, repl_modes=Modes, cluster_id=ClusterID}.
 
 %% @doc decode/2 callback. Decodes an incoming message.
 decode(?PB_MSG_PROXY_GET, Bin) ->
@@ -83,7 +86,8 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             %% find connection by cluster_id
-            CNames = get_client_cluster_names(),
+            CNames = get_client_cluster_names_12(),
+            _CNamesBNW = get_client_cluster_names_13(),
             lager:debug("Cnames ~p", [CNames]),
             case lists:keyfind(CName, 2, CNames) of
                 false ->
@@ -93,8 +97,17 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 {ClientPid, CName} ->
                     lager:debug("Client ~p is connected to cluster ~p",
                         [ClientPid, CName]),
-                    case riak_repl_tcp_client:proxy_get(ClientPid, B, K,
-                            GetOptions) of
+
+                    Result = case lists:member(mode_repl13,
+                                               State#state.repl_modes) of
+                        true ->
+                            riak_repl2_pg_block_requester_sup:proxy_get(B, K,
+                                                                        GetOptions);
+                        false ->
+                            riak_repl_tcp_client:proxy_get(ClientPid, B, K,
+                                                                GetOptions)
+                    end,
+                    case Result of
                         {ok, O} ->
                             spawn(riak_repl_util, do_repl_put, [O]),
                             make_object_response(O, VClock, Head, State);
@@ -118,9 +131,6 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
 process_stream(_,_,State) ->
     {ignore, State}.
 
-client_cluster_names() ->
-    [{P, client_cluster_name(P)} || {_,P,_,_} <-
-        supervisor:which_children(riak_repl_client_sup), P /= undefined].
 
 %%%%%%%%%%%%%%%%%%%%%
 %% Internal functions
@@ -148,13 +158,6 @@ erlify_rpbvc(PbVc) ->
 pbify_rpbvc(Vc) ->
     zlib:zip(term_to_binary(Vc)).
 
-get_client_cluster_names() ->
-    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv),
-        riak_repl_pb_get, client_cluster_names, []),
-    lists:flatten(CNames).
-
-client_cluster_name(Client) ->
-    catch(riak_repl_tcp_client:cluster_name(Client)).
 
 make_object_response(O, VClock, Head, State) ->
     case erlify_rpbvc(VClock) == riak_object:vclock(O) of
@@ -175,4 +178,32 @@ make_object_response(O, VClock, Head, State) ->
             {reply, #rpbgetresp{content = PbContent,
                     vclock = pbify_rpbvc(riak_object:vclock(O))}, State}
     end.
+
+%% proxy_get for 1.2 repl
+
+get_client_cluster_names_12() ->
+    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv),
+        riak_repl_pb_get, client_cluster_names_12, []),
+    lists:flatten(CNames).
+
+client_cluster_name_12(Client) ->
+    catch(riak_repl_tcp_client:cluster_name(Client)).
+
+client_cluster_names_12() ->
+    [{P, client_cluster_name_12(P)} || {_,P,_,_} <-
+        supervisor:which_children(riak_repl_client_sup), P /= undefined].
+
+%% proxy_get for 1.3 repl
+
+get_client_cluster_names_13() ->
+    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv),
+        riak_repl_pb_get, client_cluster_names_13, []),
+    lists:flatten(CNames).
+
+client_cluster_name_13(Client) ->
+    catch(riak_core_cluster_mgr:get_cluster_id()).
+
+client_cluster_names_13() ->
+    [{P, client_cluster_name_13(P)} || {_,P,_,_} <-
+        supervisor:which_children(riak_repl_client_sup), P /= undefined].
 
