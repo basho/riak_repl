@@ -77,7 +77,8 @@
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
                 balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
-                clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
+                clusters = orddict:new() :: orddict:orddict(),  % resolved clusters by name
+                cluster_id :: term()
                }).
 
 -export([start_link/0,
@@ -93,7 +94,8 @@
          get_connections/0,
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
-         stop/0
+         stop/0,
+         get_cluster_id/0
          ]).
 
 %% gen_server callbacks
@@ -190,6 +192,14 @@ stop() ->
 set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
+
+%% @doc gets the cached cluster_id. This value is different than the
+%% bravenewworld clustername. It's a unique identifier generated when
+%% the ring is created.
+-spec get_cluster_id() -> term().
+get_cluster_id() ->
+    gen_server:call(?SERVER, get_cluster_id).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -204,12 +214,18 @@ init([]) ->
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterID = riak_core_ring:cluster_name(Ring),
     {ok, #state{is_leader=false,
-                balancer_fun=BalancerFun
+                balancer_fun=BalancerFun,
+                cluster_id=ClusterID
                }}.
 
 handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
+
+handle_call(get_cluster_id, _From, State) ->
+    {reply, State#state.cluster_id, State};
 
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to call the leader.
