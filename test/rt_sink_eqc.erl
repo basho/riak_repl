@@ -180,7 +180,7 @@ abstract_ring_manager() ->
 
 sink_listener(Ip, Port, Opts) ->
     ?debugFmt("prelisten arg dump: ~p, ~p, ~p", [Ip, Port, Opts]),
-    {ok, Sock} = gen_tcp:listen(Port, [{ip, Ip}, binary, {reuseaddr, true} | Opts]),
+    {ok, Sock} = gen_tcp:listen(Port, [{ip, Ip}, binary, {reuseaddr, true}, {active, false} | Opts]),
     ?debugFmt("Listening on ~p:~p", [Ip, Port]),
     sink_listener(Sock).
 
