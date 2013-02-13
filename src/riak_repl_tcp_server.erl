@@ -50,7 +50,7 @@
         fullsync_strategy :: atom(),
         election_timeout :: undefined | reference(), % reference for the election timeout
         keepalive_time :: undefined | integer(),
-        ver = v0
+        ver = w0
     }).
 
 make_state(Sitename, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -126,9 +126,9 @@ handle_cast(_Event, State) ->
 
 encode_obj_msg(V, {diff_obj, RObj}) ->
     case V of
-        v0 ->
+        w0 ->
             term_to_binary({diff_obj, RObj});
-        v1 ->
+        _W ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({diff_obj, BObj})
     end.
