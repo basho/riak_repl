@@ -117,7 +117,12 @@ next_state_connect(Remote, SrcState, State) ->
 %% postcondition
 %% ====================================================================
 
-postcondition(S, C, R) ->
+postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {error, _Reses}) ->
+    false;
+postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {Source, Sink}) ->
+    is_pid(Source) andalso is_pid(Sink);
+
+postcondition(_S, _C, _R) ->
     ?debugMsg("post condition"),
     true.
 
@@ -128,9 +133,14 @@ postcondition(S, C, R) ->
 connect_from_v1(Remote) ->
     ?debugMsg("connect v1"),
     stateful:set(symbolic_clustername, Remote),
-    {ok, Source} = connect_source({1,0}),
-    {ok, Sink} = read_rt_bug(),
-    {Source, Sink}.
+    SourceRes = connect_source({1,0}),
+    SinkRes = read_rt_bug(),
+    case {SourceRes, SinkRes} of
+        {{ok, Source}, {ok, Sink}} ->
+            {Source, Sink};
+        _ ->
+            {error, {SourceRes, SinkRes}}
+    end.
 
 connect_from_v2(_Remotes) ->
     ?debugMsg("connect v2 test"),
