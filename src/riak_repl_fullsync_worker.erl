@@ -9,7 +9,7 @@
         code_change/3]).
 -export([start_link/1, do_put/3, do_binputs/4, do_get/6, do_get/7]).
 
--export([do_binputs_internal/3]). %% Used for unit/integration testing, not public interface
+-export([do_binputs_internal/4]). %% Used for unit/integration testing, not public interface
 
 -record(state, {
           ver :: riak_object:r_object_vsn()  %% greatest shared obj version
@@ -33,13 +33,13 @@ do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
 
 
 init([]) ->
-    {ok, #state{ver=v0}}. %% initially use legacy riak_object format as "common" ver
+    {ok, #state{ver=w0}}. %% initially use legacy riak_object format as "common" ver
 
 encode_obj_msg(V, {fs_diff_obj, RObj}) ->
     case V of
-        v0 ->
+        w0 ->
             term_to_binary({fs_diff_obj, RObj});
-        v1 ->
+        w1 ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({fs_diff_obj, BObj})
     end.
@@ -141,7 +141,8 @@ handle_cast({put, RObj, Pool}, State) ->
     poolboy:checkin(Pool, self()),
     {noreply, State};
 handle_cast({puts, BinObjs, DoneFun, Pool}, State) ->
-    ?MODULE:do_binputs_internal(BinObjs, DoneFun, Pool), % so it can be mecked
+    V = State#state.ver,
+    ?MODULE:do_binputs_internal(BinObjs, DoneFun, Pool, V), % so it can be mecked
     {noreply, State};
 handle_cast(_Event, State) ->
     {noreply, State}.
@@ -161,17 +162,11 @@ code_change(_OldVsn, State, _Extra) ->
 %% Put a list of objects b2d, reinsert back in the pool and call DoneFun.
 %% TODO: rename external 'do_blah' functions.  rest of riak uses do_blah
 %% for internal work
-do_binputs_internal(BinObjs, DoneFun, Pool) ->
+do_binputs_internal(BinObjs, DoneFun, Pool, Ver) ->
    % io:format("Called do_binputs_internal\n"),
     %% TODO: add mechanism for detecting put failure so 
     %% we can drop rtsink and have it resent
-    Ver = v0,
-    Objects = case Ver of
-                  %% old-ish repl sends term_to_binary([RObjs])
-                  v0 -> riak_repl_util:from_wire(w0, BinObjs);
-                  %% new-ish repl sends binaried list of {K, B, and BinObject}
-                  _V -> riak_repl_util:from_wire(w1, BinObjs)
-              end,
+    Objects = riak_repl_util:from_wire(Ver, BinObjs),
     [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
     poolboy:checkin(Pool, self()),
     %% let the caller know

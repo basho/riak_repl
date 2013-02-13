@@ -15,9 +15,7 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
--record(state, {sinks = [],
-                ver = v0 :: riak_object:r_object_vsn()  % highest common version
-               }).
+-record(state, {sinks = []}).
 
 %% API - is there any state? who watches ring events?
 start_link() ->
@@ -140,15 +138,11 @@ get_sink_pids() ->
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
+        %% always put the objects onto the shared queue in the new format; we'll
+        %% down-convert if we have to before sending them to the RT sinks (based
+        %% on what the RT source and sink negotiated as the common version).
         Objects when is_list(Objects) ->
-            %% map riak objects to their wire format, according to the highest
-            %% commonly supported object format between the two clusters.
-            Ver = v0,
-            W = case Ver of
-                    v0 -> w0;
-                    _V -> w1
-                end,
-            BinObjs = riak_repl_util:to_wire(W, Objects),
+            BinObjs = riak_repl_util:to_wire(w1, Objects),
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of

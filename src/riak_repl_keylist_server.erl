@@ -88,7 +88,7 @@
         num_diffs,
         generator_paused = false,
         pending_acks = 0,
-        ver = v0
+        ver = w0
     }).
 
 %% -define(TRACE(Stmt),Stmt).
@@ -498,9 +498,9 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
 
 encode_obj_msg(V, {fs_diff_obj, RObj}) ->
     case V of
-        v0 ->
+        w0 ->
             term_to_binary({fs_diff_obj, RObj});
-        v1 ->
+        _W ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({fs_diff_obj, BObj})
     end.

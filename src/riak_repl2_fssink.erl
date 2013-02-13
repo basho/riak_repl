@@ -14,7 +14,8 @@
         socket,
         cluster,
         fullsync_worker,
-        work_dir
+        work_dir,
+        ver              % highest common wire protocol in common with fs source
     }).
 
 start_link(Socket, Transport, Proto, Props) ->
@@ -56,7 +57,7 @@ init([Socket, Transport, _Proto, Props]) ->
     {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster,
         Transport, Socket, WorkDir),
     {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
-            fullsync_worker=FullsyncWorker, work_dir=WorkDir}}.
+            fullsync_worker=FullsyncWorker, work_dir=WorkDir, Ver=w0}}.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->
@@ -99,9 +100,9 @@ handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
-    V = v0,
+    V = State#state.ver,
     case {V,Msg} of
-        {v0, {fs_diff_obj, Obj}} ->
+        {w0, {fs_diff_obj, Obj}} ->
             riak_repl_util:do_repl_put(Obj);
         {_V, {fs_diff_obj, BObj}} ->
             Obj = riak_repl_util:from_wire(BObj),
