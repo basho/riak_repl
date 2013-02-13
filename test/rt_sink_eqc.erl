@@ -153,7 +153,7 @@ abstract_ranch() ->
     ?debugMsg("abstracting ranch"),
     riak_repl_test_util:reset_meck(ranch),
     meck:expect(ranch, accept_ack, fun(_Listener) -> ok end),
-    meck:expect(ranch, start_listener, fun(IpPort, _MaxListeners, _RanchTCP, RanchOpts, _Module, _SubProtos) ->
+    meck:expect(ranch, start_listener, fun(_IpPort, _MaxListeners, _RanchTCP, RanchOpts, _Module, _SubProtos) ->
         riak_repl_test_util:kill_and_wait(sink_listener),
         ?debugMsg("ranch start listener"),
         IP = proplists:get_value(ip, RanchOpts),
