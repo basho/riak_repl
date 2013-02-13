@@ -188,7 +188,8 @@ sink_listener(ListenSock) ->
     ?debugMsg("preaccept"),
     {ok, Socket} = gen_tcp:accept(ListenSock),
     ?debugMsg("post accept"),
-    riak_core_service_mgr:start_link(sink_listener, Socket, gen_tcp, []),
+    {ok, Pid} = riak_core_service_mgr:start_link(sink_listener, Socket, gen_tcp, []),
+    gen_tcp:controlling_process(Socket, Pid),
     ?debugMsg("post start link"),
     sink_listener(ListenSock).
 
@@ -200,7 +201,9 @@ bug_rt() ->
         ?debugFmt("Sending bug to ~p", [WhoToTell]),
         WhoToTell ! {sink_pid, SinkPid},
         meck:passthrough([SinkPid])
-    end).
+    end),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
+    riak_repl2_rt:start_link().
 
 read_rt_bug() ->
     read_rt_bug(3000).
