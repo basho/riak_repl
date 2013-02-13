@@ -7,13 +7,11 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
--export([start_link/1, do_put/3, do_binputs/4, do_get/6, do_get/7]).
+-export([start_link/1, do_put/3, do_binputs/5, do_get/7, do_get/8]).
 
 -export([do_binputs_internal/4]). %% Used for unit/integration testing, not public interface
 
--record(state, {
-          ver :: riak_object:r_object_vsn()  %% greatest shared obj version
-    }).
+-record(state, {}).
 
 start_link(_Args) ->
     gen_server:start_link(?MODULE, [], []).
@@ -21,19 +19,20 @@ start_link(_Args) ->
 do_put(Pid, Obj, Pool) ->
     gen_server:cast(Pid, {put, Obj, Pool}).
 
-do_binputs(Pid, BinObjs, DoneFun, Pool) ->
+do_binputs(Pid, BinObjs, DoneFun, Pool, Ver) ->
     %% safe to cast as the pool size will add backpressure on the sink
-    gen_server:cast(Pid, {puts, BinObjs, DoneFun, Pool}).
+    gen_server:cast(Pid, {puts, BinObjs, DoneFun, Pool, Ver}).
 
-do_get(Pid, Bucket, Key, Transport, Socket, Pool) ->
-    gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool}, infinity).
+do_get(Pid, Bucket, Key, Transport, Socket, Pool, Ver) ->
+    gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool, Ver}, infinity).
 
-do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition) ->
-    gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool, Partition}, infinity).
+do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition, Ver) ->
+    gen_server:call(Pid, {get, Bucket, Key, Transport, Socket, Pool, Partition, Ver},
+                    infinity).
 
 
 init([]) ->
-    {ok, #state{ver=w0}}. %% initially use legacy riak_object format as "common" ver
+    {ok, #state{}}.
 
 encode_obj_msg(V, {fs_diff_obj, RObj}) ->
     case V of
@@ -44,7 +43,7 @@ encode_obj_msg(V, {fs_diff_obj, RObj}) ->
             term_to_binary({fs_diff_obj, BObj})
     end.
 
-handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
+handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
     %% do the get and send it to the client
@@ -53,7 +52,6 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
-            V = State#state.ver,
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
                     skipped;
@@ -62,10 +60,10 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
                     %% Santa: Because the send() function will convert our tuple
                     %%        to a binary
                     [riak_repl_tcp_server:send(Transport, Socket,
-                                               encode_obj_msg(V,{fs_diff_obj,O}))
+                                               encode_obj_msg(Ver,{fs_diff_obj,O}))
                      || O <- Objects],
                     riak_repl_tcp_server:send(Transport, Socket,
-                                              encode_obj_msg(V,{fs_diff_obj,RObj}))
+                                              encode_obj_msg(Ver,{fs_diff_obj,RObj}))
             end,
             ok;
         {error, notfound} ->
@@ -78,7 +76,7 @@ handle_call({get, B, K, Transport, Socket, Pool}, From, State) ->
     {noreply, State};
 %% Handle a get() request by sending the named object via the tcp server back
 %% to the tcp client.
-handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
+handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
 
@@ -104,7 +102,6 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                     %% we don't actually have the vclock to compare, so just send the
                     %% key and let the other side sort things out.
                     {ok, Client} = riak:local_client(),
-                    V = State#state.ver,
                     case riak_repl_util:repl_helper_send(RObj, Client) of
                         cancel ->
                             skipped;
@@ -113,10 +110,10 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition}, From, State) ->
                             %% Santa: Because, Cindy, the send() function accepts
                             %%        either a binary or a term.
                             [riak_repl_tcp_server:send(Transport, Socket,
-                                                       encode_obj_msg(V,{fs_diff_obj,O}))
+                                                       encode_obj_msg(Ver,{fs_diff_obj,O}))
                              || O <- Objects],
                             riak_repl_tcp_server:send(Transport, Socket,
-                                                      encode_obj_msg(V,{fs_diff_obj,RObj}))
+                                                      encode_obj_msg(Ver,{fs_diff_obj,RObj}))
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->
@@ -140,9 +137,8 @@ handle_cast({put, RObj, Pool}, State) ->
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
     {noreply, State};
-handle_cast({puts, BinObjs, DoneFun, Pool}, State) ->
-    V = State#state.ver,
-    ?MODULE:do_binputs_internal(BinObjs, DoneFun, Pool, V), % so it can be mecked
+handle_cast({puts, BinObjs, DoneFun, Pool, Ver}, State) ->
+    ?MODULE:do_binputs_internal(BinObjs, DoneFun, Pool, Ver), % so it can be mecked
     {noreply, State};
 handle_cast(_Event, State) ->
     {noreply, State}.

@@ -8,7 +8,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/3,
+-export([start_link/4,
          stop/1,
          status/1, status/2]).
 
@@ -27,8 +27,8 @@
                 sent_seq,   % last sequence sent
                 objects = 0}).   % number of objects sent - really number of pulls as could be multiobj
 
-start_link(Remote, Transport, Socket) ->
-    gen_server:start_link(?MODULE, [Remote, Transport, Socket], []).
+start_link(Remote, Transport, Socket, Ver) ->
+    gen_server:start_link(?MODULE, [Remote, Transport, Socket, Ver], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop).
@@ -39,12 +39,12 @@ status(Pid) ->
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
-init([Remote, Transport, Socket]) ->
+init([Remote, Transport, Socket, Ver]) ->
     riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
     Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}) end,
     State = #state{remote = Remote, transport = Transport, 
-                   socket = Socket, deliver_fun = Deliver},
+                   socket = Socket, deliver_fun = Deliver, ver = Ver},
     async_pull(State),
     {ok, State}.
 
