@@ -20,7 +20,7 @@
     }).
 
 prop_test_() ->
-    {timeout, 30, fun() ->
+    {timeout, 60000, fun() ->
         ?assert(eqc:quickcheck(?MODULE:prop_main()))
     end}.
 
