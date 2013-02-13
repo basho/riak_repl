@@ -774,7 +774,8 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
             BLen:32/integer, B:BLen/binary,
             KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
     riak_object:from_binary(B, K, BinObj);
-from_wire(_) ->
+from_wire(X) ->
+    lager:error("unknown wire format: ~p", [X]),
     {error, unknown_wire_format}.
 
 %% Some eunit tests

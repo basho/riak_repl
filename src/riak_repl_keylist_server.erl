@@ -322,16 +322,17 @@ diff_keylist(Command, #state{diff_pid=Pid} = State)
     {next_state, wait_for_partition, State};
 %% @plu server <-- diff_stream : merkle_diff
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
-        transport=Transport, socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
+        transport=Transport, socket=Socket, diff_ref=Ref, pool=Pool, ver=Ver} = State) ->
     Worker = poolboy:checkout(Pool, true, infinity),
     case State#state.vnode_gets of
         true ->
             %% do a direct get against the vnode, not a regular riak client
             %% get().
             ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
-                State#state.partition);
+                                                  State#state.partition, Ver);
         _ ->
-            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool)
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
+                                                  Ver)
     end,
     {next_state, diff_keylist, State};
 %% @plu server <-- key-lister: diff_paused

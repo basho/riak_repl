@@ -23,7 +23,8 @@ start_link(Socket, Transport, Proto, Props) ->
 
 %% Register with service manager
 register_service() ->
-    ProtoPrefs = {fullsync,[{1,0}]},
+    %% use 1,1 proto for new binary object
+    ProtoPrefs = {fullsync,[{1,1}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, false},
@@ -44,7 +45,10 @@ legacy_status(Pid, Timeout) ->
 
 %% gen server
 
-init([Socket, Transport, _Proto, Props]) ->
+init([Socket, Transport, OKProto, Props]) ->
+    %% TODO: remove annoying 'ok' from service mgr proto
+    {ok, Proto} = OKProto,
+    Ver = deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
@@ -57,7 +61,18 @@ init([Socket, Transport, _Proto, Props]) ->
     {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster,
         Transport, Socket, WorkDir),
     {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
-            fullsync_worker=FullsyncWorker, work_dir=WorkDir, Ver=w0}}.
+            fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}}.
+
+deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
+    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
+    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
+        true ->
+            %% new sink. yay! new wire protocol supported.
+            w1;
+        _False ->
+            %% old sink mandates old wire protocol only.
+            w0
+    end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->
@@ -99,16 +114,11 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
 handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
-    Msg = binary_to_term(Data),
-    V = State#state.ver,
-    case {V,Msg} of
-        {w0, {fs_diff_obj, Obj}} ->
-            riak_repl_util:do_repl_put(Obj);
-        {_V, {fs_diff_obj, BObj}} ->
-            Obj = riak_repl_util:from_wire(BObj),
-            riak_repl_util:do_repl_put(Obj);
-        {_V,_} ->
-            gen_fsm:send_event(State#state.fullsync_worker, Msg)
+    case decode_obj_msg(Data) of
+        {fs_diff_obj, RObj} ->
+            riak_repl_util:do_repl_put(RObj);
+        Other ->
+            gen_fsm:send_event(State#state.fullsync_worker, Other)
     end,
     {noreply, State};
 handle_info(init_ack, State=#state{socket=Socket, transport=Transport}) ->
@@ -116,6 +126,18 @@ handle_info(init_ack, State=#state{socket=Socket, transport=Transport}) ->
     {noreply, State};
 handle_info(_Msg, State) ->
     {noreply, State}.
+
+decode_obj_msg(Data) ->
+    Msg = binary_to_term(Data),
+    case Msg of
+        {fs_diff_obj, BObj} when is_binary(BObj) ->
+            RObj = riak_repl_util:from_wire(BObj),
+            {fs_diff_obj, RObj};
+        {fs_diff_obj, _RObj} ->
+            Msg;
+        Other ->
+            Other
+    end.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
     case is_pid(FSW) of

@@ -18,7 +18,8 @@
         cluster,
         connection_ref,
         fullsync_worker,
-        work_dir
+        work_dir,
+        ver
     }).
 
 start_link(Partition, IP) ->
@@ -53,7 +54,7 @@ init([Partition, IP]) ->
                   {nodelay, true},
                   {packet, 4},
                   {active, false}],
-    ClientSpec = {{fullsync,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
+    ClientSpec = {{fullsync,[{1,1}]}, {TcpOptions, ?MODULE, self()}},
 
     %% TODO: check for bad remote name
     lager:info("connecting to remote ~p", [IP]),
@@ -66,8 +67,20 @@ init([Partition, IP]) ->
             {stop, Reason}
     end.
 
-handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
+deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
+    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
+    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
+        true ->
+            %% new sink. yay! new wire protocol supported.
+            w1;
+        _False ->
+            %% old sink mandates old wire protocol only.
+            w0
+    end.
+
+handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
         State=#state{ip=IP, partition=Partition}) ->
+    Ver = deduce_wire_version_from_proto(Proto),
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
@@ -85,7 +98,7 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
     riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
     {reply, ok, State#state{transport=Transport, socket=Socket,
             cluster=Cluster,
-            fullsync_worker=FullsyncWorker, work_dir=WorkDir}};
+            fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
     riak_repl_keylist_server:start_fullsync(FSW),
     {reply, ok, State};

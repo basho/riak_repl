@@ -27,6 +27,7 @@
                 transport,        %% Module for sending
                 socket,           %% Socket
                 proto,            %% Protocol version negotiated
+                ver,              %% wire format agreed with rt source
                 max_pending,      %% Maximum number of operations
                 active = true,    %% If socket is set active
                 deactivated = 0,  %% Count of times deactivated
@@ -41,7 +42,8 @@
 
 %% Register with service manager
 register_service() ->
-    ProtoPrefs = {realtime,[{1,0}]},
+    %% protocol version >= 1.1 speaks new binary object format
+    ProtoPrefs = {realtime,[{1,1}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -83,11 +85,27 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 %% Callbacks
-init([Proto, Remote]) ->
+init([OkProto, Remote]) ->
+    %% TODO: remove annoying 'ok' from service mgr proto
+    {ok, Proto} = OkProto,
+    Ver = deduce_wire_version_from_proto(Proto),
+    lager:info("Negotiated ~p wire format", [Ver]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
-    {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending, helper = Helper}}.
+    {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending,
+                helper = Helper, ver = Ver}}.
+
+deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
+    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
+    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
+        true ->
+            %% new sink. yay! new wire protocol supported.
+            w1;
+        _False ->
+            %% old sink mandates old wire protocol only.
+            w0
+    end.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = _S, helper = Helper,
@@ -217,10 +235,11 @@ do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
                                               helper = Helper,
                                               seq_ref = Ref,
                                               expect_seq = Seq,
-                                              acked_seq = AckedSeq}) ->
+                                              acked_seq = AckedSeq,
+                                              ver = Ver}) ->
     Me = self(),
     DoneFun = fun() -> gen_server:cast(Me, {ack, Ref, Seq}) end,
-    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun),
+    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver),
     State2 = case AckedSeq of
                  undefined ->
                      %% Handle first received sequence number

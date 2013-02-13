@@ -12,7 +12,7 @@
 %% API
 -export([start_link/1,
          stop/1,
-         write_objects/3]).
+         write_objects/4]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -27,8 +27,8 @@ start_link(Parent) ->
 stop(Pid) ->
     gen_server:call(Pid, stop, infinity).
 
-write_objects(Pid, BinObjs, DoneFun) ->
-    gen_server:cast(Pid, {write_objects, BinObjs, DoneFun}).
+write_objects(Pid, BinObjs, DoneFun, Ver) ->
+    gen_server:cast(Pid, {write_objects, BinObjs, DoneFun, Ver}).
 
 %% Callbacks
 init([Parent]) ->
@@ -38,8 +38,8 @@ init([Parent]) ->
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
-handle_cast({write_objects, BinObjs, DoneFun}, State) ->
-    do_write_objects(BinObjs, DoneFun),
+handle_cast({write_objects, BinObjs, DoneFun, Ver}, State) ->
+    do_write_objects(BinObjs, DoneFun, Ver),
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
@@ -58,7 +58,8 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Receive TCP data - decode framing and dispatch
-do_write_objects(BinObjs, DoneFun) ->
+do_write_objects(BinObjs, DoneFun, Ver) ->
     Worker = poolboy:checkout(riak_repl2_rtsink_pool, true, infinity),
     monitor(process, Worker),
-    ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun, riak_repl2_rtsink_pool).
+    ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun,
+                                              riak_repl2_rtsink_pool, Ver).
