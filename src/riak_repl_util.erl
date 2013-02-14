@@ -64,9 +64,6 @@
 %% Defines for Wire format encode/decode
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
--type wire_version() :: w0 | w1.
-
--export_type([wire_version/0]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -748,8 +745,7 @@ wire_version(<<131, _Rest/binary>>) ->
 wire_version(<<?MAGIC:8/integer, ?W1_VER:8/integer, _Rest/binary>>) ->
     w1;
 wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
-    %% TODO: convert to an atom like atom_of('w' + N)
-    N.
+    list_to_atom(lists:flatten(io_lib:format("w~p", [N]))).
 
 %% @doc Convert a plain or binary riak object to repl wire format.
 %%      Bucket and Key will only be added if the new riak_object
