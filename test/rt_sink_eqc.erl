@@ -17,7 +17,8 @@
 
 -record(src_state, {
     pids,
-    version
+    version,
+    ack_queue = []
     }).
 
 prop_test_() ->
@@ -37,12 +38,12 @@ prop_main() ->
 %% ====================================================================
 
 command(S) ->
-    oneof(
-        [{call, ?MODULE, connect_from_v1, [remote_name(S)]} || S#state.remotes_available /= []] ++
-        [{call, ?MODULE, connect_from_v2, [remote_name(S)]} || S#state.remotes_available /= []] ++
-        [{call, ?MODULE, disconnect, [elements(S#state.sources)]} || S#state.sources /= []] ++
-        [{call, ?MODULE, push_object, [elements(S#state.sources), binary(), g_unique(?all_remotes)]} || S#state.sources /= []] ++
-        [{call, ?MODULE, ack_objects, [elements(S#state.sources)]} || S#state.sources /= []]
+    frequency(
+        [{1, {call, ?MODULE, connect_from_v1, [remote_name(S)]}} || S#state.remotes_available /= []] ++
+        [{1, {call, ?MODULE, connect_from_v2, [remote_name(S)]}} || S#state.remotes_available /= []] ++
+        [{2, {call, ?MODULE, disconnect, [elements(S#state.sources)]}} || S#state.sources /= []] ++
+        [{5, {call, ?MODULE, push_object, [elements(S#state.sources), binary(), g_unique(?all_remotes)]}} || S#state.sources /= []] ++
+        [{3, {call, ?MODULE, ack_objects, [elements(S#state.sources)]}} || S#state.sources /= []]
         ).
 
 g_unique(Possibilites) ->
@@ -80,6 +81,7 @@ initial_state() ->
     riak_repl_test_util:abstract_stateful(),
     abstract_ring_manager(),
     abstract_ranch(),
+    abstract_rtsink_helper(),
     riak_repl_test_util:abstract_gen_tcp(),
     bug_rt(),
     start_service_manager(),
@@ -104,10 +106,13 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
     Avails = [Remote | S#state.remotes_available],
     S#state{sources = Sources2, remotes_available = Avails};
 
-next_state(S, _Res, {call, _, push_object, [{Remote, SrcState}, Binary, PreviouslyRouted]}) ->
+next_state(S, Res, {call, _, push_object, [{Remote, SrcState}, Binary, PreviouslyRouted]}) ->
     case SrcState#src_state.version of
         1 ->
-            S;
+            AckQueue2 = [{call, ?MODULE, extract_ack_fun, [Res]} | SrcState#src_state.ack_queue],
+            SrcState2 = SrcState#src_state{ack_queue = AckQueue2},
+            Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
+            S#state{sources = Sources2};
         2 ->
             % TODO on version 2, this will actually need logic.
             S
@@ -123,6 +128,11 @@ next_state_connect(Remote, SrcState, State) ->
     Avails = lists:delete(Remote, State#state.remotes_available),
     State#state{sources = Sources2, remotes_available = Avails}.
 
+extract_ack_fun({_QRes, {ok, DoneFun}}) ->
+    DoneFun;
+extract_ack_fun({_QRes, What}) ->
+    erlang:error(What).
+
 %% ====================================================================
 %% postcondition
 %% ====================================================================
@@ -135,8 +145,20 @@ postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {Source, Sink}) ->
 postcondition(_S, {call, _, disconnect, [_Remote]}, {Source, Sink}) ->
     not ( is_process_alive(Source) orelse is_process_alive(Sink) );
 
-postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1}}, _Binary, _AlreadyRouted]}, {error, timeout}) ->
-    true;
+postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = SrcState}, _Binary, _AlreadyRouted]}, Reses) ->
+    {RTQRes, HelperRes} = Reses,
+    case RTQRes of
+        {error, timeout} ->
+            case HelperRes of
+                {ok, _Other} ->
+                    {Source, Sink} = SrcState#src_state.pids,
+                    is_process_alive(Source) andalso is_process_alive(Sink);
+                _HelperWhat ->
+                    false
+            end;
+        _QWhat ->
+            false
+    end;
 postcondition(_S, {call, _, push_object, _Args}, {error, _What}) ->
     false;
 
@@ -179,7 +201,9 @@ push_object({_Remote, #src_state{version = 2}}, _, _) ->
 push_object({Remote, SrcState}, Binary, AlreadyRouted) ->
     {Source, _Sink} = SrcState#src_state.pids,
     ok = fake_source_push_obj(Source, Binary, AlreadyRouted),
-    read_fake_rtq_bug().
+    RTQRes = read_fake_rtq_bug(),
+    HelperRes = read_rtsink_helper_donefun(),
+    {RTQRes, HelperRes}.
 
 ack_objects(_) ->
     ok.
@@ -216,6 +240,31 @@ abstract_ring_manager() ->
         (Key, Ring) ->
             meck:passthrough([Key, Ring])
     end).
+
+abstract_rtsink_helper() ->
+    riak_repl_test_util:reset_meck(riak_repl2_rtsink_helper),
+    ReturnTo = self(),
+    meck:expect(riak_repl2_rtsink_helper, start_link, fun(_Parent) ->
+        {ok, sink_helper}
+    end),
+    meck:expect(riak_repl2_rtsink_helper, stop, fun(sink_helper) ->
+        ok
+    end),
+    meck:expect(riak_repl2_rtsink_helper, write_objects, fun(sink_helper, BinObjs, DoneFun) ->
+        ReturnTo ! {rtsink_helper, done_fun, DoneFun},
+        ok
+    end).
+
+read_rtsink_helper_donefun() ->
+    read_rtsink_helper_donefun(3000).
+
+read_rtsink_helper_donefun(Timeout) ->
+    receive
+        {rtsink_helper, done_fun, DoneFun} ->
+            {ok, DoneFun}
+    after Timeout ->
+        {error, timeout}
+    end.
 
 sink_listener(Ip, Port, Opts) ->
     ?debugFmt("prelisten arg dump: ~p, ~p, ~p", [Ip, Port, Opts]),
@@ -358,6 +407,7 @@ fake_source_loop(Socket, Version, Seq) ->
             gen_server:reply(From, {error, badcall}),
             exit({badcall, Aroo});
         {tcp, Socket, Bin} ->
+            ?debugFmt("tcp nom: ~p", [Bin]),
             inet:setopts(Socket, [{active, once}]),
             fake_source_loop(Socket, Version)
     end.
