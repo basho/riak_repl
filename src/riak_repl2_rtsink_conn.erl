@@ -88,24 +88,13 @@ legacy_status(Pid, Timeout) ->
 init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OkProto,
-    Ver = deduce_wire_version_from_proto(Proto),
-    lager:info("Negotiated ~p wire format", [Ver]),
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    lager:debug("Negotiated ~p wire format", [Ver]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
     {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending,
                 helper = Helper, ver = Ver}}.
-
-deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
-    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
-        true ->
-            %% new sink. yay! new wire protocol supported.
-            w1;
-        _False ->
-            %% old sink mandates old wire protocol only.
-            w0
-    end.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = _S, helper = Helper,

@@ -48,7 +48,7 @@ legacy_status(Pid, Timeout) ->
 init([Socket, Transport, OKProto, Props]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OKProto,
-    Ver = deduce_wire_version_from_proto(Proto),
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
@@ -62,17 +62,6 @@ init([Socket, Transport, OKProto, Props]) ->
         Transport, Socket, WorkDir),
     {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
             fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}}.
-
-deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
-    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
-        true ->
-            %% new sink. yay! new wire protocol supported.
-            w1;
-        _False ->
-            %% old sink mandates old wire protocol only.
-            w0
-    end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->

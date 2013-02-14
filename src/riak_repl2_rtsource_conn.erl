@@ -153,8 +153,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
     %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
     case Transport:send(Socket, <<>>) of
         ok ->
-            Ver = deduce_wire_version_from_proto(Proto),
-            lager:info("Negotiated ~p wire format", [Ver]),
+            Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+            lager:debug("Negotiated ~p wire format", [Ver]),
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote,
                                                                     Transport, Socket,
                                                                     Ver),
@@ -171,17 +171,6 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
                                     helper_pid = HelperPid}};
         ER ->
             {reply, ER, State}
-    end.
-
-deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
-    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
-        true ->
-            %% new sink. yay! new wire protocol supported.
-            w1;
-        _False ->
-            %% old sink mandates old wire protocol only.
-            w0
     end.
 
 %% Connection manager failed to make connection

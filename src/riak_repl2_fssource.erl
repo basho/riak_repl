@@ -67,20 +67,10 @@ init([Partition, IP]) ->
             {stop, Reason}
     end.
 
-deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
-    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
-        true ->
-            %% new sink. yay! new wire protocol supported.
-            w1;
-        _False ->
-            %% old sink mandates old wire protocol only.
-            w0
-    end.
-
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
         State=#state{ip=IP, partition=Partition}) ->
-    Ver = deduce_wire_version_from_proto(Proto),
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    lager:debug("Negotiated ~p wire format", [Ver]),
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
