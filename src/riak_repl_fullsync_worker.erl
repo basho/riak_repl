@@ -34,15 +34,6 @@ do_get(Pid, Bucket, Key, Transport, Socket, Pool, Partition, Ver) ->
 init([]) ->
     {ok, #state{}}.
 
-encode_obj_msg(V, {fs_diff_obj, RObj}) ->
-    case V of
-        w0 ->
-            term_to_binary({fs_diff_obj, RObj});
-        w1 ->
-            BObj = riak_repl_util:to_wire(w1,RObj),
-            term_to_binary({fs_diff_obj, BObj})
-    end.
-
 handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
     %% unblock the caller
     gen_server:reply(From, ok),
@@ -60,10 +51,12 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
                     %% Santa: Because the send() function will convert our tuple
                     %%        to a binary
                     [riak_repl_tcp_server:send(Transport, Socket,
-                                               encode_obj_msg(Ver,{fs_diff_obj,O}))
+                                               riak_repl_util:encode_obj_msg(
+                                                 Ver,{fs_diff_obj,O}))
                      || O <- Objects],
                     riak_repl_tcp_server:send(Transport, Socket,
-                                              encode_obj_msg(Ver,{fs_diff_obj,RObj}))
+                                              riak_repl_util:encode_obj_msg(
+                                                Ver,{fs_diff_obj,RObj}))
             end,
             ok;
         {error, notfound} ->
@@ -110,10 +103,12 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
                             %% Santa: Because, Cindy, the send() function accepts
                             %%        either a binary or a term.
                             [riak_repl_tcp_server:send(Transport, Socket,
-                                                       encode_obj_msg(Ver,{fs_diff_obj,O}))
+                                                       riak_repl_util:encode_obj_msg(
+                                                         Ver,{fs_diff_obj,O}))
                              || O <- Objects],
                             riak_repl_tcp_server:send(Transport, Socket,
-                                                      encode_obj_msg(Ver,{fs_diff_obj,RObj}))
+                                                      riak_repl_util:encode_obj_msg(
+                                                        Ver,{fs_diff_obj,RObj}))
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->

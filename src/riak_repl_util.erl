@@ -48,7 +48,9 @@
          format_ip_and_port/2,
          safe_pid_to_list/1,
          peername/2,
-         sockname/2
+         sockname/2,
+         deduce_wire_version_from_proto/1,
+         encode_obj_msg/2
      ]).
 
 -export([wire_version/1,
@@ -707,6 +709,27 @@ sockname(Socket, Transport) ->
         {error, Reason} ->
             %% just return a string so JSON doesn't blow up
             lists:flatten(io_lib:format("error:~p", [Reason]))
+    end.
+
+deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
+    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
+    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
+        true ->
+            %% new sink. yay! new wire protocol supported.
+            w1;
+        _False ->
+            %% old sink mandates old wire protocol only.
+            w0
+    end.
+
+%% Typically, Cmd :: fs_diff_obj | diff_obj
+encode_obj_msg(V, {Cmd, RObj}) ->
+    case V of
+        w0 ->
+            term_to_binary({Cmd, RObj});
+        _W ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({Cmd, BObj})
     end.
 
 %% @doc Create a new binary wire formatted replication blob, complete with

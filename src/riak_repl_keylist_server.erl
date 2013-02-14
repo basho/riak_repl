@@ -497,15 +497,6 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
 %% end of bloom states
 %% --------------------------------------------------------------------------
 
-encode_obj_msg(V, {fs_diff_obj, RObj}) ->
-    case V of
-        w0 ->
-            term_to_binary({fs_diff_obj, RObj});
-        _W ->
-            BObj = riak_repl_util:to_wire(w1,RObj),
-            term_to_binary({fs_diff_obj, BObj})
-    end.
-
 %% server <- bloom_fold : diff_obj 'recv a diff object from bloom folder
 diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
                                            socket=Socket} = State) ->
@@ -518,10 +509,10 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
             [riak_repl_tcp_server:send(Transport, Socket,
-                                       encode_obj_msg(V,{fs_diff_obj,O}))
+                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
              || O <- Objects],
             riak_repl_tcp_server:send(Transport, Socket,
-                                      encode_obj_msg(V,{fs_diff_obj,RObj}))
+                                      riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj}))
     end,
     {reply, ok, diff_bloom, State}.
 
