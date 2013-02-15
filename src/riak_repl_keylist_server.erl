@@ -578,7 +578,7 @@ bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent,
     {ok, Bloom} = ebloom:deserialize(SBloom),
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz});
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
-    Monitor = riak_core_vnode:monitor(MPid),
+    Monitor = erlang:monitor(process, MPid),
     ?TRACE(lager:info("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
     gen_fsm:send_event(MPid, {self(), bloom_paused}),
     %% wait for a message telling us to stop, or to continue.
