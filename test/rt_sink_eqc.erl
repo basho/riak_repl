@@ -21,6 +21,13 @@
     ack_queue = []
     }).
 
+-record(fake_source, {
+    socket,
+    version,
+    seq = 1,
+    tcp_bug = undefined
+    }).
+
 prop_test_() ->
     {timeout, 60000, fun() ->
         ?assert(eqc:quickcheck(?MODULE:prop_main()))
@@ -118,9 +125,13 @@ next_state(S, Res, {call, _, push_object, [{Remote, SrcState}, Binary, Previousl
             S
     end;
 
-next_state(S, _Res, {call, _, ack_objects, _Args}) ->
-    ?debugMsg("next state ack objects"),
-    S.
+next_state(S, _Res, {call, _, ack_objects, [{_Remote, #src_state{ack_queue = []}}]}) ->
+    S;
+next_state(S, _Res, {call, _, ack_objects, [{Remote, SrcState}]}) ->
+    [_Done | AckQueue2] = SrcState#src_state.ack_queue,
+    SrcState2 = SrcState#src_state{ack_queue = AckQueue2},
+    Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
+    S#state{sources = Sources2}.
 
 next_state_connect(Remote, SrcState, State) ->
     Sources = State#state.sources,
@@ -161,6 +172,13 @@ postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = Sr
     end;
 postcondition(_S, {call, _, push_object, _Args}, {error, _What}) ->
     false;
+
+postcondition(_S, {call, _, ack_objects, _Args}, {error, _What}) ->
+    false;
+postcondition(_S, {call, _, ack_objects, [{_Remote, #src_state{ack_queue = []}}]}, {ok, empty}) ->
+    true;
+postcondition(_S, {call, _, ack_objects, _Args}, _Res) ->
+    true;
 
 postcondition(_S, _C, _R) ->
     ?debugMsg("post condition"),
@@ -205,8 +223,14 @@ push_object({Remote, SrcState}, Binary, AlreadyRouted) ->
     HelperRes = read_rtsink_helper_donefun(),
     {RTQRes, HelperRes}.
 
-ack_objects(_) ->
-    ok.
+ack_objects({_Remote, #src_state{ack_queue = []}}) ->
+    {ok, empty};
+ack_objects({Remote, SrcState}) ->
+    DoneFun = lists:last(SrcState#src_state.ack_queue),
+    O = DoneFun(),
+    ?debugFmt("Der donefun res: ~p", [O]),
+    {Source, _Sink} = SrcState#src_state.pids,
+    fake_source_tcp_bug(Source).
 
 %% ====================================================================
 %% helpful utility functions
@@ -322,7 +346,6 @@ abstract_fake_source() ->
             "    Pid: ~p~n"
             "    Props: ~p", [Socket, Transport, Endpoint, Proto, Pid, Props]),
         Transport:controlling_process(Socket, Pid),
-        Transport:setopts(Socket, [{active, once}]),
         gen_server:call(Pid, {connected, Socket, Endpoint, Proto})
     end).
 
@@ -379,35 +402,71 @@ connect_source(Version) ->
 fake_source_push_obj(Source, Binary, AlreadyRouted) ->
     gen_server:call(Source, {push, Binary, AlreadyRouted}).
 
+fake_source_tcp_bug(Source) ->
+    gen_server:call(Source, bug).
+
 fake_source_loop(undefined, Version) ->
     ?debugMsg("fake loop, no socket"),
+    State = #fake_source{version = Version},
+    fake_source_loop(State).
+
+fake_source_loop(#fake_source{socket = undefined} = State) ->
+    #fake_source{version = Version} = State,
     receive
         {'$gen_call', From, {connected, Socket, _EndPoint, {realtime, Version, Version}}} ->
             ?debugFmt("Connection achieved with valid version: ~p", [Version]),
+            inet:setopts(Socket, [{active, once}]),
             gen_server:reply(From, ok),
-            fake_source_loop(Socket, Version, 1);
+            fake_source_loop(State#fake_source{socket = Socket});
         {'$gen_call', From, Aroo} ->
             ?debugFmt("Cannot handle request: ~p", [Aroo]),
             gen_server:reply(From, {error, badcall}),
             exit({badcall, Aroo});
         What ->
             ?debugFmt("lolwut? ~p", [What]),
-            fake_source_loop(undefined, Version)
-    end.
-
-fake_source_loop(Socket, Version, Seq) ->
+            fake_source_loop(State)
+    end;
+fake_source_loop(State) ->
     receive
-        {'$gen_call', From, {push, Binary, AlreadyRouted}} when Version == {1,0} ->
+        {'$gen_call', From, {push, Binary, AlreadyRouted}} when State#fake_source.version == {1,0} ->
+            #fake_source{socket = Socket, seq = Seq} = State,
             Payload = riak_repl2_rtframe:encode(objects, {Seq, Binary}),
             gen_tcp:send(Socket, Payload),
             gen_server:reply(From, ok),
-            fake_source_loop(Socket, Version, Seq + 1);
+            fake_source_loop(State#fake_source{seq = Seq + 1});
+        {'$gen_call', From, bug} ->
+            NewBug = case State#fake_source.tcp_bug of
+                {data, Bin} ->
+                    ?debugMsg("Quicky bug reply"),
+                    gen_server:reply(From, {ok, Bin}),
+                    undefined;
+                _ ->
+                    ?debugMsg("Stashing bug for later"),
+                    {bug, From}
+            end,
+            fake_source_loop(State#fake_source{tcp_bug = NewBug});
         {'$gen_call', From, Aroo} ->
             ?debugFmt("Cannot handle request: ~p", [Aroo]),
             gen_server:reply(From, {error, badcall}),
             exit({badcall, Aroo});
         {tcp, Socket, Bin} ->
             ?debugFmt("tcp nom: ~p", [Bin]),
+            #fake_source{socket = Socket} = State,
             inet:setopts(Socket, [{active, once}]),
-            fake_source_loop(Socket, Version)
+            NewBug = case State#fake_source.tcp_bug of
+                {bug, From} ->
+                    ?debugMsg("replying to tcp bug"),
+                    gen_server:reply(From, {ok, Bin}),
+                    undefined;
+                _ ->
+                    ?debugMsg("Stashing for later tcp bug (maybe)"),
+                    {data, Bin}
+            end,
+            fake_source_loop(State#fake_source{tcp_bug = NewBug});
+        {tcp_closed, Socket} when Socket == State#fake_source.socket ->
+            ?debugMsg("exit as the socket closed"),
+            ok;
+        What ->
+            ?debugFmt("lolwut? ~p", [What]),
+            fake_source_loop(State)
     end.
