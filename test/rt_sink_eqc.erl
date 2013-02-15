@@ -128,7 +128,8 @@ next_state(S, Res, {call, _, push_object, [{Remote, SrcState}, Binary, Previousl
 next_state(S, _Res, {call, _, ack_objects, [{_Remote, #src_state{ack_queue = []}}]}) ->
     S;
 next_state(S, _Res, {call, _, ack_objects, [{Remote, SrcState}]}) ->
-    [_Done | AckQueue2] = SrcState#src_state.ack_queue,
+    Length = length(SrcState#src_state.ack_queue),
+    {AckQueue2, _Done} = lists:split(Length - 1, SrcState#src_state.ack_queue),
     SrcState2 = SrcState#src_state{ack_queue = AckQueue2},
     Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
     S#state{sources = Sources2}.
