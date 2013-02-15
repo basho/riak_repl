@@ -153,6 +153,10 @@ postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {error, _Reses}) ->
     false;
 postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {Source, Sink}) ->
     is_pid(Source) andalso is_pid(Sink);
+postcondition(_S, {call, _, connect_from_v2, [_Remote]}, {error, _Reses}) ->
+    false;
+postcondition(_S, {call, _, connect_from_v2, [_Remote]}, {Source, Sink}) ->
+    is_pid(Source) andalso is_pid(Sink);
 
 postcondition(_S, {call, _, disconnect, [_Remote]}, {Source, Sink}) ->
     not ( is_process_alive(Source) orelse is_process_alive(Sink) );
@@ -201,12 +205,17 @@ connect_from_v1(Remote) ->
             {error, {SourceRes, SinkRes}}
     end.
 
-connect_from_v2(_Remotes) ->
+connect_from_v2(Remote) ->
     ?debugMsg("connect v2 test"),
-    % TODO make real tests.
-    Source = spawn(fun() -> ok end),
-    Sink = spawn(fun() -> ok end),
-    {Source, Sink}.
+    stateful:set(symbolic_clustername, Remote),
+    SourceRes = connect_source({2,0}),
+    SinkRes = read_rt_bug(),
+    case {SourceRes, SinkRes} of
+        {{ok, Source}, {ok, Sink}} ->
+            {Source, Sink};
+        _ ->
+            {error, {SourceRes, SinkRes}}
+    end.
 
 disconnect({_Remote, State}) ->
     {Source, Sink} = State#src_state.pids,
