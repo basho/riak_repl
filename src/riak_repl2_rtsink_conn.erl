@@ -206,20 +206,36 @@ recv(TcpBin, State) ->
             {noreply, State#state{cont = Cont}};
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
             recv(Cont, do_write_objects(Seq, BinObjs, State));
+        {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
+            recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
         {error, Reason} ->
             %% TODO: Log Something bad happened
             riak_repl_stats:rt_sink_errors(),
             {stop, {framing, Reason}, State}
     end.
 
+make_donefun({Binary, Meta}, Me, Ref, Seq) ->
+    Done = fun() ->
+        gen_server:cast(Me, {ack, Ref, Seq}),
+        List = binary_to_term(Binary),
+        io:format("THIS! IS! DONEFUN!!!!!!!~n"),
+        riak_repl2_rtq:push(length(List), Binary, Meta)
+    end,
+    {Done, Binary};
+make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
+    Done = fun() ->
+        gen_server:cast(Me, {ack, Ref, Seq})
+    end,
+    {Done, Binary}.
+
 %% Note match on Seq
-do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
+do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               helper = Helper,
                                               seq_ref = Ref,
                                               expect_seq = Seq,
                                               acked_seq = AckedSeq}) ->
     Me = self(),
-    DoneFun = fun() -> gen_server:cast(Me, {ack, Ref, Seq}) end,
+    {DoneFun, BinObjs} = make_donefun(BinObjsMeta, Me, Ref, Seq),
     riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun),
     State2 = case AckedSeq of
                  undefined ->

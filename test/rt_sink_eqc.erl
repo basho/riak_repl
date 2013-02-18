@@ -50,9 +50,12 @@ command(S) ->
         [{1, {call, ?MODULE, connect_from_v1, [remote_name(S)]}} || S#state.remotes_available /= []] ++
         [{1, {call, ?MODULE, connect_from_v2, [remote_name(S)]}} || S#state.remotes_available /= []] ++
         [{2, {call, ?MODULE, disconnect, [elements(S#state.sources)]}} || S#state.sources /= []] ++
-        [{5, {call, ?MODULE, push_object, [elements(S#state.sources), binary(), g_unique(?all_remotes)]}} || S#state.sources /= []] ++
+        [{5, {call, ?MODULE, push_object, [elements(S#state.sources), obj_binary(), g_unique(?all_remotes)]}} || S#state.sources /= []] ++
         [{3, {call, ?MODULE, ack_objects, [elements(S#state.sources)]}} || S#state.sources /= []]
         ).
+
+obj_binary() ->
+    ?LET(Binary, binary(), term_to_binary([Binary])).
 
 g_unique(Possibilites) ->
     ?LET(List, list(elements(Possibilites)), lists:usort(List)).
@@ -241,8 +244,8 @@ postcondition(_S, _C, _R) ->
 
 connect_from_v1(Remote) ->
     ?debugMsg("connect v1"),
-    stateful:set(symbolic_clustername, Remote),
-    SourceRes = connect_source({1,0}),
+    %stateful:set(symbolic_clustername, Remote),
+    SourceRes = connect_source({1,0}, Remote),
     SinkRes = read_rt_bug(),
     case {SourceRes, SinkRes} of
         {{ok, Source}, {ok, Sink}} ->
@@ -253,8 +256,8 @@ connect_from_v1(Remote) ->
 
 connect_from_v2(Remote) ->
     ?debugMsg("connect v2 test"),
-    stateful:set(symbolic_clustername, Remote),
-    SourceRes = connect_source({2,0}),
+    %stateful:set(symbolic_clustername, Remote),
+    SourceRes = connect_source({2,0}, Remote),
     SinkRes = read_rt_bug(),
     case {SourceRes, SinkRes} of
         {{ok, Source}, {ok, Sink}} ->
@@ -319,7 +322,7 @@ abstract_ring_manager() ->
     riak_repl_test_util:reset_meck(riak_core_ring, [passthrough]),
     meck:expect(riak_core_ring, get_meta, fun
         (symbolic_clustername, fake_ring) ->
-            {ok, stateful:symbolic_clustername()};
+            {ok, "sink_cluster"};
         (_Key, fake_ring) ->
             undefined;
         (Key, Ring) ->
@@ -448,9 +451,9 @@ read_fake_rtq_bug(Timeout) ->
         {error, timeout}
     end.
 
-connect_source(Version) ->
+connect_source(Version, Remote) ->
     ?debugFmt("starting fake source version ~p", [Version]),
-    Pid = proc_lib:spawn_link(?MODULE, fake_source_loop, [undefined, Version]),
+    Pid = proc_lib:spawn_link(?MODULE, fake_source_loop, [undefined, Version, Remote]),
     TcpOptions = [{keepalive, true}, {nodelay, true}, {packet, 0},
         {active, false}],
     ClientSpec = {{realtime, [Version]}, {TcpOptions, fake_source, Pid}},
@@ -468,9 +471,9 @@ fake_source_push_obj(Source, Binary, AlreadyRouted) ->
 fake_source_tcp_bug(Source) ->
     gen_server:call(Source, bug).
 
-fake_source_loop(undefined, Version) ->
+fake_source_loop(undefined, Version, Cluster) ->
     ?debugMsg("fake loop, no socket"),
-    Cluster = stateful:symbolic_clustername(),
+    %Cluster = stateful:symbolic_clustername(),
     State = #fake_source{version = Version, clustername = Cluster},
     fake_source_loop(State).
 
