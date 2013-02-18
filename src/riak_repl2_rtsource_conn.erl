@@ -30,6 +30,7 @@
                 transport, % transport module 
                 socket,    % socket to use with transport 
                 proto,     % protocol version negotiated
+                ver,       % wire format negotiated
                 helper_pid,% riak_repl2_rtsource_helper pid
                 cont = <<>>}). % continuation from previous TCP buffer
 
@@ -72,7 +73,8 @@ init([Remote]) ->
                   {nodelay, true},
                   {packet, 0},
                   {active, false}],
-    ClientSpec = {{realtime,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
+    %% protocol version >= 1.1 speaks new binary object format
+    ClientSpec = {{realtime,[{1,1}]}, {TcpOptions, ?MODULE, self()}},
 
     %% Todo: check for bad remote name
     lager:debug("connecting to remote ~p", [Remote]),
@@ -151,15 +153,21 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
     %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
     case Transport:send(Socket, <<>>) of
         ok ->
-            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket),
+            Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+            lager:debug("Negotiated ~p wire format", [Ver]),
+            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote,
+                                                                    Transport, Socket,
+                                                                    Ver),
             SocketTag = riak_repl_util:generate_socket_tag("rt_source", Socket),
             lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
                                                SocketTag}, Transport),
+            
             {reply, ok, State#state{transport = Transport, 
                                     socket = Socket,
                                     address = EndPoint,
                                     proto = Proto,
+                                    ver = Ver,
                                     helper_pid = HelperPid}};
         ER ->
             {reply, ER, State}

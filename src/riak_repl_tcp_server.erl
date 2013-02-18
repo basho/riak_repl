@@ -49,7 +49,8 @@
         fullsync_worker :: pid() | undefined,
         fullsync_strategy :: atom(),
         election_timeout :: undefined | reference(), % reference for the election timeout
-        keepalive_time :: undefined | integer()
+        keepalive_time :: undefined | integer(),
+        ver = w0
     }).
 
 make_state(Sitename, Transport, Socket, MyPI, WorkDir, Client) ->
@@ -124,11 +125,12 @@ handle_cast(_Event, State) ->
     {noreply, State}.
 
 handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when State#state.q == undefined ->
+    V = State#state.ver,
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         Objects when is_list(Objects) ->
-            [send(Transport, Socket, term_to_binary({diff_obj, O})) || O <-
-                Objects],
-            send(Transport, Socket, term_to_binary({diff_obj, RObj})),
+            [send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, O}))
+             || O <- Objects],
+            send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, RObj})),
             {noreply, State};
         cancel ->
             {noreply, State}
