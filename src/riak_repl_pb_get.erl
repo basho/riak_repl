@@ -108,7 +108,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                                                State#state.repl_modes) of
                         true ->
                             lager:info("BNW PROXY GET"),
-                            riak_repl2_pg_block_requester_sup:proxy_get(B, K,
+                            riak_repl2_pg_block_requester:proxy_get(ClientPid, B, K,
                                                                         GetOptions);
                         false ->
                             lager:info("1.2 PROXY GET"),
@@ -204,17 +204,14 @@ client_cluster_names_12() ->
 %% proxy_get for 1.3 repl
 
 get_client_cluster_names_13() ->
-    lager:info("GET CLIENT CLUSTER NAMES 13"),
     {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_repl),
         riak_repl_pb_get, client_cluster_names_13, []),
     lists:flatten(CNames).
 
 client_cluster_name_13(Pid) ->
-    lager:info("CLIENT CLUSTER NAME 13"),
     catch(riak_repl2_pg_block_requester:provider_cluster_id(Pid)).
 
 client_cluster_names_13() ->
-    lager:info("CLIENT CLUSTER NAMES 13"),
     [{P, client_cluster_name_13(P)} || {_,P,_,_} <-
         supervisor:which_children(riak_repl2_pg_block_requester_sup), P /= undefined].
 
