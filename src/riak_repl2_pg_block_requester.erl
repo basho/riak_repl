@@ -105,7 +105,6 @@ handle_info({Proto, Socket, Data},
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
 %    riak_repl_stats:client_bytes_recv(size(Data)),
-    lager:info("Response = ~p", [Msg]),
     Reply = case Msg of
        {proxy_get_resp, Ref, Resp} ->
             case lists:keytake(Ref, 1, State#state.proxy_gets) of
@@ -118,9 +117,8 @@ handle_info({Proto, Socket, Data},
                     {noreply, State#state{proxy_gets=ProxyGets}}
             end;
         {get_cluster_id_resp, ClusterID} ->
-            lager:info("RECEIVED A CLUSTER ID ~p", [ClusterID]),
+            lager:info("Received a cluster id ~p", [ClusterID]),
             RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
-            lager:info("FORMATTED CLUSTER ID ~p", [RemoteClusterID]),
             {noreply, State#state{remote_cluster_id=RemoteClusterID}};
         _ ->
             {noreply, State}
