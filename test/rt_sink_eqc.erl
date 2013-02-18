@@ -166,16 +166,39 @@ extract_q_res({What, _DoneFun}) ->
 %% ====================================================================
 
 postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {error, _Reses}) ->
+    ?debugMsg("postcontition failure"),
     false;
 postcondition(_S, {call, _, connect_from_v1, [_Remote]}, {Source, Sink}) ->
-    is_pid(Source) andalso is_pid(Sink);
+    Out = is_pid(Source) andalso is_pid(Sink),
+    case Out of
+        true ->
+            ok;
+        _ ->
+            ?debugMsg("postcontition failure")
+    end,
+    Out;
 postcondition(_S, {call, _, connect_from_v2, [_Remote]}, {error, _Reses}) ->
+    ?debugMsg("postcontition failure"),
     false;
 postcondition(_S, {call, _, connect_from_v2, [_Remote]}, {Source, Sink}) ->
-    is_pid(Source) andalso is_pid(Sink);
+    Out = is_pid(Source) andalso is_pid(Sink),
+    case Out of
+        true ->
+            ok;
+        _ ->
+            ?debugMsg("postcontition failure")
+    end,
+    Out;
 
 postcondition(_S, {call, _, disconnect, [_Remote]}, {Source, Sink}) ->
-    not ( is_process_alive(Source) orelse is_process_alive(Sink) );
+    Out = not ( is_process_alive(Source) orelse is_process_alive(Sink) ),
+    case Out of
+        true ->
+            ok;
+        _ ->
+            ?debugMsg("postcontition failure")
+    end,
+    Out;
 
 postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = SrcState}, _Binary, _AlreadyRouted]}, Reses) ->
     {RTQRes, HelperRes} = Reses,
@@ -186,12 +209,14 @@ postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = Sr
                     {Source, Sink} = SrcState#src_state.pids,
                     is_process_alive(Source) andalso is_process_alive(Sink);
                 _HelperWhat ->
+                    ?debugMsg("postcontition failure"),
                     false
             end;
         _QWhat ->
+            ?debugMsg("postcontition failure"),
             false
     end;
-postcondition(_S, {call, _, push_object, [{Remote, #src_state{version = 2} = SrcState}, Binary, AlreadyRouted]}, Res) ->
+postcondition(S, {call, _, push_object, [{Remote, #src_state{version = 2} = SrcState}, Binary, AlreadyRouted]}, Res) ->
     {RTQRes, HelperRes} = Res,
     Routed = lists:member(Remote, AlreadyRouted),
     case {Routed, RTQRes, HelperRes} of
@@ -200,9 +225,18 @@ postcondition(_S, {call, _, push_object, [{Remote, #src_state{version = 2} = Src
         {false, {error, timeout}, {ok, _DoneFun}} ->
             true;
         _ ->
+            ?debugMsg("postcontition failure"),
+            ?debugFmt("it's a bughunt!~n"
+                "    S: ~p~n"
+                "    Remote: ~p~n"
+                "    SrcState: ~p~n"
+                "    Binary: ~p~n"
+                "    AlreadyRouted: ~p~n"
+                "    Res: ~p", [S, Remote, SrcState, Binary, AlreadyRouted, Res]),
             false
     end;
 postcondition(_S, {call, _, push_object, _Args}, {error, _What}) ->
+    ?debugMsg("postcontition failure"),
     false;
 
 postcondition(_S, {call, _, ack_objects, [{_Remote, #src_state{ack_queue = []}}]}, {ok, empty}) ->
@@ -220,6 +254,7 @@ postcondition(_S, {call, _, ack_objects, [{Remote, SrcState}]}, Res) ->
                 {Expected, {ok, {ack, _SomeSeq}, <<>>}} ->
                     true;
                 _ ->
+                    ?debugMsg("postcontition failure"),
                     false
             end;
         {1, {{error, timeout}, {ok, TCPBin}}} ->
@@ -228,9 +263,11 @@ postcondition(_S, {call, _, ack_objects, [{Remote, SrcState}]}, Res) ->
                     true;
                 FrameDecode ->
                     ?debugFmt("Frame decoded: ~p", [FrameDecode]),
+                    ?debugMsg("postcontition failure"),
                     false
             end;
         _ ->
+            ?debugMsg("postcontition failure"),
             false
     end;
 
@@ -441,7 +478,7 @@ fake_rtq(Bug, Queue) ->
     end.
 
 read_fake_rtq_bug() ->
-    read_fake_rtq_bug(3000).
+    read_fake_rtq_bug(5000).
 
 read_fake_rtq_bug(Timeout) ->
     receive
