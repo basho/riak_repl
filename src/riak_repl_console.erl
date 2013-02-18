@@ -11,7 +11,7 @@
 
 -export([clustername/1, clusters/1,clusterstats/1,
          connect/1, disconnect/1, connections/1,
-         realtime/1, fullsync/1
+         realtime/1, fullsync/1, proxy_get/1
         ]).
 -export([rt_remotes_status/0,
          fs_remotes_status/0]).
@@ -429,6 +429,42 @@ fullsync([Cmd]) ->
                 Fullsyncs]
     end,
     ok.
+
+proxy_get([Cmd, Remote]) ->
+    Leader = riak_core_cluster_mgr:get_leader(),
+    case Cmd of
+        "enable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:pg_enable_trans/2, Remote),
+            ok;
+        "disable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:pg_disable_trans/2, Remote),
+            ok;
+        "start" ->
+            ProxyGets = riak_repl2_pg_block_requester_sup:started(Leader),
+            case proplists:get_value(Remote, ProxyGets) of
+                undefined ->
+                    io:format("Proxy-get not enabled for cluster ~p~n", [Remote]),
+                    io:format("Use 'proxy-get enable ~p' before start~n", [Remote]),
+                    {error, not_enabled};
+                _Pid ->
+                    riak_core_ring_manager:ring_trans(fun
+                      riak_repl_ring:pg_start_trans/2, Remote),
+                    ok
+            end;
+        "stop" ->
+            ProxyGets = riak_repl2_pg_block_requester_sup:started(Leader),
+            case proplists:get_value(Remote, ProxyGets) of
+                undefined ->
+                    %% proxy_get is not enabled, but carry on quietly.
+                    ok;
+                _Pid ->
+                    riak_core_ring_manager:ring_trans(fun
+                      riak_repl_ring:pg_stop_trans/2, Remote),
+                    ok
+            end
+    end.
 
 modes([]) ->
     CurrentModes = get_modes(),
