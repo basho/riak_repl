@@ -89,6 +89,14 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
+handle_msg(get_cluster_id, State=#state{transport=Transport, socket=Socket}) ->
+    lager:info("Getting cluster id"),
+    ClusterID = riak_core_cluster_mgr:get_cluster_id(),
+    lager:info("CLUSTERID=~p",[ClusterID]),
+    Data = term_to_binary({get_cluster_id_resp, ClusterID}),
+    Transport:send(Socket, Data),
+    {noreply, State};
+
 handle_msg({proxy_get, Ref, Bucket, Key, Options},
             State=#state{transport=Transport, socket=Socket}) ->
     lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),

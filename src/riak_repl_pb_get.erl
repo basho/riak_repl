@@ -31,7 +31,7 @@
 -spec init() -> any().
 init() ->
     {ok, C} = riak:local_client(),
-
+    lager:info("RIAK REPL PB GET INIT"),
     % get the current repl modes and stash them in the state
     % I suppose riak_repl_pb_get would need to be restarted if these values
     % changed
@@ -59,6 +59,7 @@ encode(#rpbreplgetclusteridresp{} = Msg) ->
 %% @doc Return Cluster Id of the local cluster
 process(#rpbreplgetclusteridreq{}, State) ->
     %% get cluster id from local ring manager and format as string
+    lager:info("GET CLUSTER ID"),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
         io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
@@ -71,6 +72,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
+    lager:info("PROXY GET!"),
     lager:debug("doing replicated GET using cluster id ~p", [CName]),
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
@@ -86,24 +88,30 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             %% find connection by cluster_id
-            CNames = get_client_cluster_names_12(),
-            _CNamesBNW = get_client_cluster_names_13(),
-            lager:debug("Cnames ~p", [CNames]),
+            CNames = case lists:member(mode_repl13,
+                                       State#state.repl_modes) of
+                true -> get_client_cluster_names_13();
+                false -> get_client_cluster_names_12()
+            end,
+            lager:info("Cnames ~p", [CNames]),
+            lager:info("Looking for CName ~p", [CName]),
             case lists:keyfind(CName, 2, CNames) of
                 false ->
-                    lager:debug("not connected to cluster ~p", [CName]),
+                    lager:info("not connected to cluster ~p", [CName]),
                     %% not connected to that cluster, return notfound
                     {reply, #rpbgetresp{}, State};
                 {ClientPid, CName} ->
-                    lager:debug("Client ~p is connected to cluster ~p",
+                    lager:info("Client ~p is connected to cluster ~p",
                         [ClientPid, CName]),
 
                     Result = case lists:member(mode_repl13,
                                                State#state.repl_modes) of
                         true ->
+                            lager:info("BNW PROXY GET"),
                             riak_repl2_pg_block_requester_sup:proxy_get(B, K,
                                                                         GetOptions);
                         false ->
+                            lager:info("1.2 PROXY GET"),
                             riak_repl_tcp_client:proxy_get(ClientPid, B, K,
                                                                 GetOptions)
                     end,
@@ -196,14 +204,18 @@ client_cluster_names_12() ->
 %% proxy_get for 1.3 repl
 
 get_client_cluster_names_13() ->
-    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv),
+    lager:info("GET CLIENT CLUSTER NAMES 13"),
+    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_repl),
         riak_repl_pb_get, client_cluster_names_13, []),
     lists:flatten(CNames).
 
-client_cluster_name_13(Client) ->
-    catch(riak_core_cluster_mgr:get_cluster_id()).
+client_cluster_name_13(Pid) ->
+    lager:info("CLIENT CLUSTER NAME 13"),
+    catch(riak_repl2_pg_block_requester:provider_cluster_id(Pid)).
 
 client_cluster_names_13() ->
+    lager:info("CLIENT CLUSTER NAMES 13"),
     [{P, client_cluster_name_13(P)} || {_,P,_,_} <-
-        supervisor:which_children(riak_repl_client_sup), P /= undefined].
+        supervisor:which_children(riak_repl2_pg_block_requester_sup), P /= undefined].
+
 
