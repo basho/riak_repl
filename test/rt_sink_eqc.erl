@@ -23,6 +23,7 @@
 
 -record(fake_source, {
     socket,
+    clustername,
     version,
     seq = 1,
     tcp_bug = undefined
@@ -116,13 +117,20 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
 next_state(S, Res, {call, _, push_object, [{Remote, SrcState}, Binary, PreviouslyRouted]}) ->
     case SrcState#src_state.version of
         1 ->
-            AckQueue2 = [{call, ?MODULE, extract_ack_fun, [Res]} | SrcState#src_state.ack_queue],
+            AckQueue2 = [{{call, ?MODULE, extract_ack_fun, [Res]}, Binary, PreviouslyRouted} | SrcState#src_state.ack_queue],
             SrcState2 = SrcState#src_state{ack_queue = AckQueue2},
             Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
             S#state{sources = Sources2};
         2 ->
-            % TODO on version 2, this will actually need logic.
-            S
+            case lists:member(Remote, PreviouslyRouted) of
+                true ->
+                    S;
+                false ->
+                    AckQueue2 = [{{call, ?MODULE, extract_ack_fun, [Res]}, Binary, PreviouslyRouted} | SrcState#src_state.ack_queue],
+                    SrcState2 = SrcState#src_state{ack_queue = AckQueue2},
+                    Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
+                    S#state{sources = Sources2}
+            end
     end;
 
 next_state(S, _Res, {call, _, ack_objects, [{_Remote, #src_state{ack_queue = []}}]}) ->
@@ -143,6 +151,11 @@ next_state_connect(Remote, SrcState, State) ->
 extract_ack_fun({_QRes, {ok, DoneFun}}) ->
     DoneFun;
 extract_ack_fun({_QRes, What}) ->
+    erlang:error(What).
+
+extract_q_res({{ok, QRes}, _DoneFun}) ->
+    QRes;
+extract_q_res({What, _DoneFun}) ->
     erlang:error(What).
 
 %% ====================================================================
@@ -175,15 +188,48 @@ postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = Sr
         _QWhat ->
             false
     end;
+postcondition(_S, {call, _, push_object, [{Remote, #src_state{version = 2} = SrcState}, Binary, AlreadyRouted]}, Res) ->
+    {RTQRes, HelperRes} = Res,
+    Routed = lists:member(Remote, AlreadyRouted),
+    case {Routed, RTQRes, HelperRes} of
+        {true, {error, timeout}, {error, timeout}} ->
+            true;
+        {false, {error, timeout}, {ok, _DoneFun}} ->
+            true;
+        _ ->
+            false
+    end;
 postcondition(_S, {call, _, push_object, _Args}, {error, _What}) ->
     false;
 
-postcondition(_S, {call, _, ack_objects, _Args}, {error, _What}) ->
-    false;
 postcondition(_S, {call, _, ack_objects, [{_Remote, #src_state{ack_queue = []}}]}, {ok, empty}) ->
     true;
-postcondition(_S, {call, _, ack_objects, _Args}, _Res) ->
-    true;
+postcondition(_S, {call, _, ack_objects, [{Remote, SrcState}]}, Res) ->
+    {_DoneFun, Binary, AlreadyRouted} = lists:last(SrcState#src_state.ack_queue),
+    Version = SrcState#src_state.version,
+    case {Version, Res} of
+        {2, {{ok, {push, _NumItems, Binary, Meta}}, {ok, TcpBin}}} ->
+            Routed2 = orddict:fetch(routed_clusters, Meta),
+            Got = ordsets:from_list(Routed2),
+            Expected = ordsets:from_list([Remote | AlreadyRouted]),
+            Frame = riak_repl2_rtframe:decode(TcpBin),
+            case {Got, Frame} of
+                {Expected, {ok, {ack, _SomeSeq}, <<>>}} ->
+                    true;
+                _ ->
+                    false
+            end;
+        {1, {{error, timeout}, {ok, TCPBin}}} ->
+            case riak_repl2_rtframe:decode(TCPBin) of
+                {ok, {ack, _SomeSeq}, <<>>} ->
+                    true;
+                FrameDecode ->
+                    ?debugFmt("Frame decoded: ~p", [FrameDecode]),
+                    false
+            end;
+        _ ->
+            false
+    end;
 
 postcondition(_S, _C, _R) ->
     ?debugMsg("post condition"),
@@ -223,9 +269,13 @@ disconnect({_Remote, State}) ->
     riak_repl_test_util:wait_for_pid(Sink),
     {Source, Sink}.
 
-push_object({_Remote, #src_state{version = 2}}, _, _) ->
-    % TODO v2 on the way, baby!
-    ok;
+push_object({Remote, #src_state{version = 2} = SrcState}, Binary, AlreadyRouted) ->
+    {Source, _Sink} = SrcState#src_state.pids,
+    ok = fake_source_push_obj(Source, Binary, AlreadyRouted),
+    RTQRes = read_fake_rtq_bug(),
+    HelperRes = read_rtsink_helper_donefun(),
+    {RTQRes, HelperRes};
+
 push_object({Remote, SrcState}, Binary, AlreadyRouted) ->
     {Source, _Sink} = SrcState#src_state.pids,
     ok = fake_source_push_obj(Source, Binary, AlreadyRouted),
@@ -236,11 +286,12 @@ push_object({Remote, SrcState}, Binary, AlreadyRouted) ->
 ack_objects({_Remote, #src_state{ack_queue = []}}) ->
     {ok, empty};
 ack_objects({Remote, SrcState}) ->
-    DoneFun = lists:last(SrcState#src_state.ack_queue),
-    O = DoneFun(),
-    ?debugFmt("Der donefun res: ~p", [O]),
+    {DoneFun, _Bin, _AlreadyRouted} = lists:last(SrcState#src_state.ack_queue),
+    DoneFun(),
     {Source, _Sink} = SrcState#src_state.pids,
-    fake_source_tcp_bug(Source).
+    AckRes = fake_source_tcp_bug(Source),
+    RTQRes = read_fake_rtq_bug(),
+    {RTQRes,AckRes}.
 
 %% ====================================================================
 %% helpful utility functions
@@ -371,14 +422,16 @@ start_fake_rtq() ->
     {ok, Pid}.
 
 fake_rtq(Bug) ->
+    ?debugFmt("fake rtq started with bug ~p", [Bug]),
     fake_rtq(Bug, []).
 
 fake_rtq(Bug, Queue) ->
     receive
-        {'$gen_cast', {push, NumItems, Bin, Meta}} ->
-            Bug ! {push, NumItems, Bin, Meta},
+        {'$gen_cast', {push, NumItems, Bin, Meta} = Got} ->
+            ?debugFmt("Der fake rtq casted: ~p", [Got]),
+            Bug ! Got,
             Queue2 = [{NumItems, Bin, Meta} | Queue],
-            fake_rtq(Bug, Queue);
+            fake_rtq(Bug, Queue2);
         Else ->
             ?debugFmt("I don't even...~p", [Else]),
             ok
@@ -417,7 +470,8 @@ fake_source_tcp_bug(Source) ->
 
 fake_source_loop(undefined, Version) ->
     ?debugMsg("fake loop, no socket"),
-    State = #fake_source{version = Version},
+    Cluster = stateful:symbolic_clustername(),
+    State = #fake_source{version = Version, clustername = Cluster},
     fake_source_loop(State).
 
 fake_source_loop(#fake_source{socket = undefined} = State) ->
@@ -442,6 +496,19 @@ fake_source_loop(State) ->
             #fake_source{socket = Socket, seq = Seq} = State,
             Payload = riak_repl2_rtframe:encode(objects, {Seq, Binary}),
             gen_tcp:send(Socket, Payload),
+            gen_server:reply(From, ok),
+            fake_source_loop(State#fake_source{seq = Seq + 1});
+        {'$gen_call', From, {push, Binary, AlreadyRouted}} when State#fake_source.version == {2,0} ->
+            #fake_source{seq = Seq, clustername = ClusterName} = State,
+            case lists:member(ClusterName, AlreadyRouted) of
+                true ->
+                    ok;
+                false ->
+                    Socket = State#fake_source.socket,
+                    Meta = [{routed_clusters, [ClusterName | AlreadyRouted]}],
+                    Payload = riak_repl2_rtframe:encode(objects_and_meta, {Seq, Binary, Meta}),
+                    gen_tcp:send(Socket, Payload)
+            end,
             gen_server:reply(From, ok),
             fake_source_loop(State#fake_source{seq = Seq + 1});
         {'$gen_call', From, bug} ->
