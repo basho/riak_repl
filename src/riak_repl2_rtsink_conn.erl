@@ -301,7 +301,6 @@ schedule_reactivate_socket(State = #state{transport = T,
                                           deactivated = Deactivated}) ->
     case Active of
         true ->
-            riak_repl_stats:rt_sink_errors(),
             lager:debug("Realtime sink overloaded - deactivating transport ~p socket ~p\n",
                         [T, S]),
             T:setopts(S, [{active, false}]),
