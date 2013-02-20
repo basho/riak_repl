@@ -31,7 +31,7 @@
 -spec init() -> any().
 init() ->
     {ok, C} = riak:local_client(),
-    lager:info("RIAK REPL PB GET INIT"),
+    lager:debug("Riak repl pb get init"),
     % get the current repl modes and stash them in the state
     % I suppose riak_repl_pb_get would need to be restarted if these values
     % changed
@@ -59,7 +59,6 @@ encode(#rpbreplgetclusteridresp{} = Msg) ->
 %% @doc Return Cluster Id of the local cluster
 process(#rpbreplgetclusteridreq{}, State) ->
     %% get cluster id from local ring manager and format as string
-    lager:info("GET CLUSTER ID"),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
         io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
@@ -72,8 +71,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
-    lager:info("PROXY GET!"),
-    lager:debug("doing replicated GET using cluster id ~p", [CName]),
+    lager:info("doing replicated GET using cluster id ~p", [CName]),
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
@@ -93,8 +91,6 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 true -> get_client_cluster_names_13();
                 false -> get_client_cluster_names_12()
             end,
-            lager:info("Cnames ~p", [CNames]),
-            lager:info("Looking for CName ~p", [CName]),
             case lists:keyfind(CName, 2, CNames) of
                 false ->
                     lager:info("not connected to cluster ~p", [CName]),

@@ -37,10 +37,7 @@
          multicompose/1,
          pg_enable_trans/2,
          pg_disable_trans/2,
-         pg_enabled/1,
-         pg_start_trans/2,
-         pg_stop_trans/2,
-         pg_started/1
+         pg_enabled/1
          ]).
 
 -ifdef(TEST).
@@ -307,19 +304,8 @@ pg_enable_trans(Ring, Remote) ->
 pg_disable_trans(Ring, Remote) ->
     del_list_trans(Remote, pg_enabled, Ring).
 
-pg_start_trans(Ring, Remote) ->
-    add_list_trans(Remote, pg_started, Ring).
-
-pg_stop_trans(Ring, Remote) ->
-    del_list_trans(Remote, pg_started, Ring).
-
 pg_enabled(Ring) ->
     get_list(pg_enabled, Ring).
-
-pg_started(Ring) ->
-    get_list(pg_started, Ring).
-
-
 
 
 %% Enable replication for the remote (queue will start building)
