@@ -40,7 +40,7 @@ init(Cluster) ->
             {packet, 4},
             {active, false}],
     ClientSpec = {{proxy_get,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
-    
+
     lager:info("proxy_get connecting to remote ~p", [Cluster]),
     case riak_core_connection_mgr:connect({proxy_get, Cluster}, ClientSpec) of
         {ok, Ref} ->
@@ -55,12 +55,12 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
             State=#state{other_cluster=OtherCluster}) ->
     Cluster = proplists:get_value(clustername, Props),
     lager:debug("proxy_get to ~p", [OtherCluster]),
-    
+
     %SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
     %lager:debug("Keeping stats for " ++ SocketTag),
     %riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
     %                                   SocketTag}, Transport),
-    
+
     Transport:setopts(Socket, [{active, once}]),
     {ok, Client} = riak:local_client(),
     {reply, ok, State#state{
@@ -90,9 +90,8 @@ handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
 handle_msg(get_cluster_id, State=#state{transport=Transport, socket=Socket}) ->
-    lager:info("Getting cluster id"),
     ClusterID = riak_core_cluster_mgr:get_cluster_id(),
-    lager:info("CLUSTERID=~p",[ClusterID]),
+    lager:info("ClusterID=~p",[ClusterID]),
     Data = term_to_binary({get_cluster_id_resp, ClusterID}),
     Transport:send(Socket, Data),
     {noreply, State};
@@ -132,7 +131,6 @@ handle_info({Proto, Socket, Data},
             State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
-    lager:info("Message = ~p", [Msg]),
     handle_msg(Msg, State);
 
 handle_info(_Msg, State) ->

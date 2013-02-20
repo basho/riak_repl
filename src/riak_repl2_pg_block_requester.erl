@@ -26,7 +26,7 @@ start_link(Socket, Transport, Proto, Props) ->
 
 %% Register with service manager
 register_service() ->
-    lager:info("Registering proxy_get requester service"),
+    lager:debug("Registering proxy_get requester service"),
     ProtoPrefs = {proxy_get,[{1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
@@ -37,7 +37,7 @@ register_service() ->
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->
-    lager:info("Proxy get start service!"),
+    lager:info("Proxy get service enabled"),
     {ok, Pid} = riak_repl2_pg_block_requester_sup:start_child(Socket, Transport,
         Proto, Props),
     ok = Transport:controlling_process(Socket, Pid),
@@ -117,7 +117,6 @@ handle_info({Proto, Socket, Data},
                     {noreply, State#state{proxy_gets=ProxyGets}}
             end;
         {get_cluster_id_resp, ClusterID} ->
-            lager:info("Received a cluster id ~p", [ClusterID]),
             RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
             {noreply, State#state{remote_cluster_id=RemoteClusterID}};
         _ ->

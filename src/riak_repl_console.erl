@@ -143,9 +143,7 @@ status2(Verbose) ->
 pg_remotes_status() ->
     Ring = get_ring(),
     Enabled = string:join(riak_repl_ring:pg_enabled(Ring),", "),
-    Started = string:join(riak_repl_ring:pg_started(Ring),", "),
-    [{proxy_get_enabled, Enabled},
-     {proxy_get_started, Started}].
+    [{proxy_get_enabled, Enabled}].
 
 rt_remotes_status() ->
     Ring = get_ring(),
@@ -431,7 +429,7 @@ fullsync([Cmd]) ->
     ok.
 
 proxy_get([Cmd, Remote]) ->
-    Leader = riak_core_cluster_mgr:get_leader(),
+    %Leader = riak_core_cluster_mgr:get_leader(),
     case Cmd of
         "enable" ->
             riak_core_ring_manager:ring_trans(fun
@@ -440,30 +438,7 @@ proxy_get([Cmd, Remote]) ->
         "disable" ->
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:pg_disable_trans/2, Remote),
-            ok;
-        "start" ->
-            ProxyGets = riak_repl2_pg_block_requester_sup:started(Leader),
-            case proplists:get_value(Remote, ProxyGets) of
-                undefined ->
-                    io:format("Proxy-get not enabled for cluster ~p~n", [Remote]),
-                    io:format("Use 'proxy-get enable ~p' before start~n", [Remote]),
-                    {error, not_enabled};
-                _Pid ->
-                    riak_core_ring_manager:ring_trans(fun
-                      riak_repl_ring:pg_start_trans/2, Remote),
-                    ok
-            end;
-        "stop" ->
-            ProxyGets = riak_repl2_pg_block_requester_sup:started(Leader),
-            case proplists:get_value(Remote, ProxyGets) of
-                undefined ->
-                    %% proxy_get is not enabled, but carry on quietly.
-                    ok;
-                _Pid ->
-                    riak_core_ring_manager:ring_trans(fun
-                      riak_repl_ring:pg_stop_trans/2, Remote),
-                    ok
-            end
+            ok
     end.
 
 modes([]) ->

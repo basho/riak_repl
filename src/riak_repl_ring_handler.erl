@@ -182,12 +182,12 @@ rt_update_events(Ring) ->
     riak_repl:install_hook().
 
 pg_update_events(Ring) ->
-    riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring),
-                            riak_repl_ring:pg_started(Ring)),
+    riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring)),
+    
     %% ensure_rt sets this
-    RTEnabled = app_helper:get_env(riak_repl, pgenabled, false),
+    _PGEnabled = app_helper:get_env(riak_repl, pgenabled, false),
 
-    RC = case riak_repl_ring:get_repl_config(Ring) of
+    _RC = case riak_repl_ring:get_repl_config(Ring) of
         undefined ->
             riak_repl_ring:initial_config();
         R ->

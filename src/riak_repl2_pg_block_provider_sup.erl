@@ -24,14 +24,12 @@ enabled() ->
 %% @private
 init([]) ->
     riak_repl2_pg:register_remote_locator(),
-
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Remotes = riak_repl_ring:pg_enabled(Ring),
     Children = [make_remote(Remote) || Remote <- Remotes],
     {ok, {{one_for_one, 10, 10}, Children}}.
 
-
 make_remote(Remote) ->
     {Remote, {riak_repl2_pg_block_provider, start_link, [Remote]},
-        permanent, ?SHUTDOWN, worker, [riak_repl2_pg_block_provider]}.
+        transient, ?SHUTDOWN, worker, [riak_repl2_pg_block_provider]}.
 

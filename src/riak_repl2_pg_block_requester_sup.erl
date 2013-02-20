@@ -14,14 +14,6 @@ start_child(Socket, Transport, Proto, Props) ->
 started() ->
     [Pid || {_, Pid, _, _} <- supervisor:which_children(?MODULE)].
 
-%proxy_get(Bucket, Key, Options) ->
-%    [riak_repl2_pg_block_requester:proxy_get(Pid, Bucket, Key, Options)
-%     || {_, Pid, _, _} <- supervisor:which_children(?MODULE)].
-
-%provider_cluster_ids() ->
-%    lists:usort([riak_repl2_pg_block_requester:provider_cluster_id(Pid)
-%                 || {_, Pid, _, _} <- supervisor:which_children(?MODULE)]).
-
 %% @private
 init([]) ->
     ChildSpec = {riak_repl2_pg_block_requester, {riak_repl2_pg_block_requester, start_link, []},
