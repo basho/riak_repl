@@ -20,7 +20,7 @@ init([]) ->
   [ {riak_repl2_pg_block_provider_sup,
     { riak_repl2_pg_block_provider_sup, start_link, []},
     permanent, infinity, supervisor, [
-    riak_repl_pg_block_provuder_sup]},
+    riak_repl_pg_block_provider_sup]},
 
   {riak_repl2_pg_block_requester_sup,
     {riak_repl2_pg_block_requester_sup, start_link, []},
