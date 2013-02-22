@@ -45,8 +45,9 @@
     error_exits = 0,
     pending_fullsync = false,
     dirty_nodes = ordsets:new(),          % these nodes should run fullsync
-    dirty_nodes_during_fs = ordsets:new() % these nodes reported realtime errors
+    dirty_nodes_during_fs = ordsets:new(), % these nodes reported realtime errors
                                           % during an already running fullsync
+    fullsyncs_completed = 0
 }).
 
 %% ------------------------------------------------------------------
@@ -350,12 +351,17 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                     % clear the "rt dirty" stat if it's set,
                     % otherwise, don't do anything
                     State3 = notify_rt_dirty_nodes(State),
-                    riak_repl_stats:server_fullsyncs(),
+                    TotalFullsyncs = State#state.fullsyncs_completed + 1,
+
                     riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster),
-                    {noreply, State3#state{running_sources = Running, busy_nodes = NewBusies}};
+                    {noreply, State3#state{running_sources = Running,
+                                           busy_nodes = NewBusies,
+                                           fullsyncs_completed = TotalFullsyncs
+                                          }};
                 _ ->
                     % there's something waiting for a response.
-                    State3 = start_up_reqs(State2#state{running_sources = Running, busy_nodes = NewBusies}),
+                    State3 = start_up_reqs(State2#state{running_sources = Running,
+                                                        busy_nodes = NewBusies}),
                     {noreply, State3}
             end
     end;
