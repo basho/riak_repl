@@ -139,16 +139,20 @@ handle_cast({ack, Ref, Seq}, State = #state{transport = T, socket = S,
                                             completed = Completed}) ->
     %% Worker pool has completed the put, check the completed
     %% list and work out where we can ack back to
+    %io:format("ACKERMAN STATE!~n    State: ~p~n", [State]),
     case ack_to(AckedTo, ordsets:add_element(Seq, Completed)) of
         {AckedTo, Completed2} ->
+            %io:format("ACK FOR ~p IS NOT SENT! ~p ref ~p~n", [Seq, AckedTo, Ref]),
             {noreply, State#state{completed = Completed2}};
         {AckTo, Completed2}  ->
+            %io:format("SENDIN ACK FOR ~p FOOS! ~p ref ~p~n", [Seq, AckTo, Ref]),
             TcpIOL = riak_repl2_rtframe:encode(ack, AckTo),
             T:send(S, TcpIOL),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
     end;
 handle_cast({ack, Ref, Seq}, State) ->
     %% Nothing to send, it's old news.
+    %io:format("old news seq (ack) ~p with ref ~p~n    State: ~p~n", [Seq, Ref, State]),
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
     {noreply, State}.
 
@@ -218,12 +222,14 @@ make_donefun({Binary, Meta}, Me, Ref, Seq) ->
     Done = fun() ->
         gen_server:cast(Me, {ack, Ref, Seq}),
         List = binary_to_term(Binary),
-        io:format("THIS! IS! DONEFUN!!!!!!!~n"),
-        riak_repl2_rtq:push(length(List), Binary, Meta)
+        %io:format("requeue donefun to pid ~p alive is ~p~n", [Me, is_process_alive(Me)]),
+        Meta2 = orddict:erase(skip_count, Meta),
+        riak_repl2_rtq:push(length(List), Binary, Meta2)
     end,
     {Done, Binary};
 make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
     Done = fun() ->
+        %io:format("quite donefun to pid ~p alive is ~p~n", [Me, is_process_alive(Me)]),
         gen_server:cast(Me, {ack, Ref, Seq})
     end,
     {Done, Binary}.
@@ -253,8 +259,18 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
         _ ->
             State2
     end;
-do_write_objects(Seq, BinObjs, State = #state{expect_seq = ExpSeq,
-                                              source_drops = SourceDrops}) ->
+do_write_objects(Seq, {Binary, Meta}, State) ->
+    case orddict:find(skip_count, Meta) of
+        % the source may have skipped routing to this sink
+        {ok, N} when Seq - N == State#state.expect_seq ->
+            Completed2 = insert_skipped(Seq, N, State#state.completed),
+            State2 = State#state{expect_seq = State#state.expect_seq + N, completed = Completed2},
+            do_write_objects(Seq, {Binary, Meta}, State2);
+        _Else ->
+            State2 = reset_ref_seq(Seq, State),
+            do_write_objects(Seq, {Binary, Meta}, State2)
+    end;
+do_write_objects(Seq, BinObjs, State) ->
     %% Did not get expected sequence.
     %%
     %% If the source dropped (rtq consumer behind tail of queue), there
@@ -263,22 +279,26 @@ do_write_objects(Seq, BinObjs, State = #state{expect_seq = ExpSeq,
     %%
     %% If the sequence number wrapped?  don't worry about acks, happens infrequently.
     %%
+    State2 = reset_ref_seq(Seq, State),
+    do_write_objects(Seq, BinObjs, State2).
+
+insert_skipped(Seq, Skipped, Completed) ->
+    FoldFun = fun(N, Acc) ->
+        ordsets:add_element(Seq - N, Acc)
+    end,
+    lists:foldl(FoldFun, Completed, lists:seq(1, Skipped)).
+
+reset_ref_seq(Seq, State) ->
+    #state{source_drops = SourceDrops, expect_seq = ExpSeq} = State,
     NewSeqRef = make_ref(),
     SourceDrops2 = case ExpSeq of
-                       undefined -> % no need to tell user about first time through
-                           SourceDrops;
-                       _ ->
-                           SourceDrops + Seq - ExpSeq
-                  end,
-    do_write_objects(Seq, BinObjs, State#state{seq_ref = NewSeqRef,
-                                               expect_seq = Seq,
-                                               acked_seq = Seq - 1,
-                                               completed = [],
-                                               source_drops = SourceDrops2}).
-                                               
-    
-    
-    
+        undefined -> % no need to tell user about first time through
+            SourceDrops;
+        _ ->
+            SourceDrops + Seq - ExpSeq
+    end,
+    State#state{seq_ref = NewSeqRef, expect_seq = Seq, acked_seq = Seq - 1,
+        completed = [], source_drops = SourceDrops2}.
 
 %% Work out the highest sequence number that can be acked
 %% and return it, completed always has one or more elements on first
