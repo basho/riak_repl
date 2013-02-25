@@ -19,6 +19,7 @@
 -record(src_state, {
     pids, % {SourcePid, SinkPid}
     version,
+    skips = 0,
     unacked_objects = []
 }).
 
@@ -88,9 +89,9 @@ precondition(S, {call, _, ack_objects, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, push_object, [_, _, S]}) ->
     S#state.sources /= [];
-precondition(S, {call, _, push_object, [_, _, NotS]}) ->
-    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
-    false;
+%precondition(S, {call, _, push_object, [_, _, NotS]}) ->
+%    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
+%    false;
 precondition(S, {call, _, Connect, [Remote, _]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
     lists:member(Remote, S#state.remotes_available);
 precondition(_S, _Call) ->
@@ -213,17 +214,23 @@ update_unacked_objects(Remotes, Res, Sources) ->
 update_unacked_objects(_Remotes, _Res, [], Acc) ->
     lists:reverse(Acc);
 
-update_unacked_objects(Remotes, Res, [{Remote, Source} = KV | Tail], Acc) ->
+update_unacked_objects(Remotes, Res, [{Remote, Source} | Tail], Acc) ->
     case lists:member(Remote, Remotes) of
         true ->
-            update_unacked_objects(Remotes, Res, Tail, [KV | Acc]);
+            Skipped = Source#src_state.skips + 1,
+            update_unacked_objects(Remotes, Res, Tail, [{Remote, Source#src_state{skips = Skipped}} | Acc]);
         false ->
             Entry = model_push_object(Res, Source),
             update_unacked_objects(Remotes, Res, Tail, [{Remote, Entry} | Acc])
     end.
 
 model_push_object(Res, SrcState = #src_state{unacked_objects = ObjQueue}) ->
-    SrcState#src_state{unacked_objects = [Res | ObjQueue]}.
+    SrcState#src_state{unacked_objects = [{call, ?MODULE, insert_skip_meta, [Res, SrcState]} | ObjQueue], skips = 0}.
+
+insert_skip_meta({Seq, {Count, Bin, Meta}}, #src_state{skips = SkipCount}) ->
+    Meta2 = orddict:from_list(Meta),
+    Meta3 = orddict:store(skip_count, SkipCount, Meta2),
+    {Seq, {Count, Bin, Meta3}}.
 
 model_ack_objects(_Num, []) ->
     {[], []};
