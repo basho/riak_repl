@@ -67,6 +67,7 @@ start(_Type, _StartArgs) ->
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
+            %% pg_proxy will follow the leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_pg_proxy_sup:set_leader/2),
             name_this_cluster(),

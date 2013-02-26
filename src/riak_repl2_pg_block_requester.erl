@@ -13,12 +13,13 @@
          terminate/2, code_change/3, provider_cluster_id/1]).
 
 -record(state, {
-        transport,
-        socket,
-        cluster,
-        proxy_gets = [],
-        remote_cluster_id=nocluster
-    }).
+          transport,
+          socket,
+          cluster,
+          proxy_gets = [],
+          remote_cluster_id=nocluster,
+          leader_mref=undefined
+         }).
 
 start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, [Socket, Transport, Proto, Props], []).
@@ -44,6 +45,7 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
     Pid ! init_ack,
     {ok, Pid}.
 
+
 proxy_get(Pid, Bucket, Key, Options) ->
     gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
 
@@ -57,13 +59,17 @@ provider_cluster_id(Pid) ->
 
 init([Socket, Transport, _Proto, Props]) ->
     lager:info("Starting Proxy Get Block Requester"),
+
     %SocketTag = riak_repl_util:generate_socket_tag("pg_requester", Socket),
     %% TODO
     %lager:debug("Keeping stats for " ++ SocketTag),
     %riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
     %                                   SocketTag}, Transport),
+
     Cluster = proplists:get_value(clustername, Props),
-    {ok, #state{cluster=Cluster, transport=Transport, socket=Socket}}.
+    State0 = #state{cluster=Cluster, transport=Transport, socket=Socket},
+    State = register_with_leader(State0), 
+    {ok, State}.
 
 handle_call({proxy_get, Bucket, Key, Options}, From,
             State=#state{socket=Socket,transport=Transport}) ->
@@ -99,6 +105,14 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
     lager:error("Connection for proxy_get ~p closed unexpectedly: ~p",
         [State#state.cluster, Reason]),
     {stop, normal, State};
+
+handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
+  when Reason == normal; Reason == shutdown ->
+    {noreply, State};
+handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State0) ->
+    lager:info("Re-registering pg_proxy service"),
+    State = register_with_leader(State0),
+    {noreply, State};
 handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp;
         Proto==ssl ->
@@ -138,3 +152,19 @@ terminate(_Reason, #state{}) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+register_with_leader(#state{leader_mref=MRef}=State) ->    
+    case MRef of
+        undefined -> ok;
+        M -> 
+            lager:info("Demonitor previous proxy"),
+            erlang:demonitor(M)
+    end,
+    lager:info("Register with leader"),
+    Leader = riak_repl_leader:leader_node(),
+    lager:info("Register with pg_proxy"),
+    gen_server:call({pg_proxy, Leader}, {register, self()}),
+    lager:info("Register with monitor"),
+    Monitor = erlang:monitor(process, {pg_proxy, Leader}),
+    lager:info("Monitored!"),
+    State#state{leader_mref=Monitor}.
