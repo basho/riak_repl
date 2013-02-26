@@ -63,8 +63,12 @@ init([]) ->
 %                  [riak_repl2_pg_block_requester_sup]},
 
                  {riak_repl2_pg_sup, {riak_repl2_pg_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_repl2_pg_sup]}
-        ],
+                  permanent, infinity, supervisor, [riak_repl2_pg_sup]},
+
+                 {riak_repl2_pg_proxy_sup, {riak_repl2_pg_proxy_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_pg_proxy_sup]}
+
+                ],
 
     {ok, {{one_for_one, 9, 10}, Processes}}.
 

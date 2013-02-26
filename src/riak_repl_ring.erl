@@ -307,7 +307,6 @@ pg_disable_trans(Ring, Remote) ->
 pg_enabled(Ring) ->
     get_list(pg_enabled, Ring).
 
-
 %% Enable replication for the remote (queue will start building)
 rt_enable_trans(Ring, Remote) ->
     add_list_trans(Remote, rt_enabled, Ring).
