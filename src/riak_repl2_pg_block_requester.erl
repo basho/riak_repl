@@ -106,10 +106,8 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
         [State#state.cluster, Reason]),
     {stop, normal, State};
 
-handle_info({'DOWN', _MRef, process, _Pid, Reason}, State0)
+handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
   when Reason == normal; Reason == shutdown ->
-    lager:info("Re-registering pg-proxy service 1"),
-    State = register_with_leader(State0),
     {noreply, State};
 handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State0) ->
     lager:info("Re-registering pg_proxy service 2"),
@@ -121,22 +119,25 @@ handle_info({Proto, Socket, Data},
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
 %    riak_repl_stats:client_bytes_recv(size(Data)),
-    Reply = case Msg of
-       {proxy_get_resp, Ref, Resp} ->
-            case lists:keytake(Ref, 1, State#state.proxy_gets) of
-                false ->
-                    lager:info("got unexpected proxy_get_resp message"),
-                    {noreply, State};
-                {value, {Ref, From}, ProxyGets} ->
-                    %% send the response to the patiently waiting client
-                    gen_server:reply(From, Resp),
-                    {noreply, State#state{proxy_gets=ProxyGets}}
-            end;
-        {get_cluster_id_resp, ClusterID} ->
-            RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
-            {noreply, State#state{remote_cluster_id=RemoteClusterID}};
-        _ ->
-            {noreply, State}
+    Reply = 
+        case Msg of
+            stay_awake ->
+                {noreply, State};
+            {proxy_get_resp, Ref, Resp} ->
+                case lists:keytake(Ref, 1, State#state.proxy_gets) of
+                    false ->
+                        lager:info("got unexpected proxy_get_resp message"),
+                        {noreply, State};
+                    {value, {Ref, From}, ProxyGets} ->
+                        %% send the response to the patiently waiting client
+                        gen_server:reply(From, Resp),
+                        {noreply, State#state{proxy_gets=ProxyGets}}
+                end;
+            {get_cluster_id_resp, ClusterID} ->
+                RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
+                {noreply, State#state{remote_cluster_id=RemoteClusterID}};
+            _ ->
+                {noreply, State}
         end,
     Reply;
 handle_info(init_ack, State=#state{socket=Socket, transport=Transport}) ->

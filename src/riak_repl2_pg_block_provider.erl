@@ -11,6 +11,9 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
     terminate/2, code_change/3]).
 
+%% send a message every KEEPALIVE seconds to make sure the service is running on the sink
+-define(KEEPALIVE, 1000).
+
 -record(state, {
                 transport,
                 socket,
@@ -18,7 +21,8 @@
                 other_cluster,
                 connection_ref,
                 worker,
-                client
+                client,
+                keepalive_timer
                 }).
 
 start_link(Cluster) ->
@@ -36,18 +40,17 @@ connect_failed(_ClientProto, Reason, Pid) ->
 
 init(Cluster) ->
     TcpOptions = [{keepalive, true},
-            {nodelay, true},
-            {packet, 4},
-            {active, false}],
-    ClientSpec = {{proxy_get,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
-
+                  {nodelay, true},
+                  {packet, 4},
+                  {active, false}],
+    ClientSpec = {{proxy_get,[{1,0}]}, {TcpOptions, ?MODULE, self()}},    
     lager:info("proxy_get connecting to remote ~p", [Cluster]),
     case riak_core_connection_mgr:connect({proxy_get, Cluster}, ClientSpec) of
         {ok, Ref} ->
             lager:info("proxy_get connection ref ~p", [Ref]),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Reason}->
-            lager:warning("Error connecting to remote"),
+            lager:warning("Error connecting to remote"),            
             {stop, Reason}
     end.
 
@@ -59,35 +62,62 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
     %SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
     %lager:debug("Keeping stats for " ++ SocketTag),
     %riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
-    %                                   SocketTag}, Transport),
-
+    %                                   SocketTag}, Transport),    
+    TRef = keepalive_timer(),
     Transport:setopts(Socket, [{active, once}]),
     {ok, Client} = riak:local_client(),
     {reply, ok, State#state{
-            transport=Transport,
-            socket=Socket,
-            other_cluster=Cluster,
-            client=Client}};
+                  transport=Transport,
+                  socket=Socket,
+                  other_cluster=Cluster,
+                  client=Client,
+                  keepalive_timer=TRef
+                 }};
 
-%handle_call(legacy_status, _From, State=#state{worker=FSW,
-%                                               socket=Socket}) ->
-%    Res = case is_pid(FSW) of
-%        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
-%        false -> []
-%    end,
-%    SocketStats = riak_core_tcp_mon:format_socket_stats(
-%        riak_core_tcp_mon:socket_status(Socket), []),
-%    Desc =
-%        [
-%            {node, node()},
-%            {site, State#state.cluster},
-%            {strategy, fullsync},
-%            {worker, riak_repl_util:safe_pid_to_list(FSW)},
-%            {socket, SocketStats}
-%        ],
-%    {reply, Desc ++ Res, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
+
+handle_cast({connect_failed, _Pid, Reason},
+            State = #state{other_cluster = Cluster}) ->
+    lager:info("proxy_get connection to cluster ~p failed ~p",
+        [Cluster, Reason]),
+    {stop, foo, State};
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info(keepalive, State=#state{socket=Socket, transport=Transport}) ->
+    Data = term_to_binary(stay_awake),
+    Transport:send(Socket, Data),
+    {noreply, State};
+
+handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
+    lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
+    {stop, socket_closed, State};
+handle_info({tcp_error, _Socket, Reason}, State) ->
+    lager:error("Connection for proxy_get ~p closed unexpectedly: ~p",
+        [State#state.other_cluster, Reason]),
+    {stop, socket_closed, State};
+handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
+    lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
+    {stop, socket_closed, State};
+handle_info({ssl_error, _Socket, Reason}, State) ->
+    lager:error("Connection for proxy_get ~p closed unexpectedly: ~p",
+        [State#state.other_cluster, Reason]),
+    {stop, socket_closed, State};
+handle_info({Proto, Socket, Data},
+            State0=#state{socket=Socket,transport=Transport, keepalive_timer=TRef}) when Proto==tcp; Proto==ssl ->
+    Transport:setopts(Socket, [{active, once}]),
+    timer:cancel(TRef),    
+    Msg = binary_to_term(Data),
+
+    %% restart the timer after each message has been processed
+    State = State0#state{keepalive_timer=keepalive_timer()},
+    %% none of the messages return anything useful, 
+    %% so always return {noreply, State}
+    handle_msg(Msg, State);
+
+handle_info(_Msg, State) ->
+    {noreply, State}.
 
 handle_msg(get_cluster_id, State=#state{transport=Transport, socket=Socket}) ->
     ClusterID = riak_core_cluster_mgr:get_cluster_id(),
@@ -105,41 +135,11 @@ handle_msg({proxy_get, Ref, Bucket, Key, Options},
     Transport:send(Socket, Data),
     {noreply, State}.
 
-handle_cast({connect_failed, _Pid, Reason},
-            State = #state{other_cluster = Cluster}) ->
-    lager:info("proxy_get connection to cluster ~p failed ~p",
-        [Cluster, Reason]),
-    {stop, normal, State};
-handle_cast(_Msg, State) ->
-    {noreply, State}.
-
-handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
-    {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, State) ->
-    lager:error("Connection for proxy_get ~p closed unexpectedly: ~p",
-        [State#state.other_cluster, Reason]),
-    {stop, normal, State};
-handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
-    {stop, normal, State};
-handle_info({ssl_error, _Socket, Reason}, State) ->
-    lager:error("Connection for proxy_get ~p closed unexpectedly: ~p",
-        [State#state.other_cluster, Reason]),
-    {stop, normal, State};
-handle_info({Proto, Socket, Data},
-            State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
-    Transport:setopts(Socket, [{active, once}]),
-    Msg = binary_to_term(Data),
-    handle_msg(Msg, State);
-
-handle_info(_Msg, State) ->
-    {noreply, State}.
-
 terminate(_Reason, #state{}) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-
+keepalive_timer() ->
+    timer:send_interval(?KEEPALIVE, keepalive).
