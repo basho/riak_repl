@@ -68,7 +68,7 @@ init([Socket, Transport, _Proto, Props]) ->
 
     Cluster = proplists:get_value(clustername, Props),
     State0 = #state{cluster=Cluster, transport=Transport, socket=Socket},
-    State = register_with_leader(State0), 
+    State = register_with_leader(State0),
     {ok, State}.
 
 handle_call({proxy_get, Bucket, Key, Options}, From,
@@ -106,11 +106,13 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
         [State#state.cluster, Reason]),
     {stop, normal, State};
 
-handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
+handle_info({'DOWN', _MRef, process, _Pid, Reason}, State0)
   when Reason == normal; Reason == shutdown ->
+    lager:info("Re-registering pg-proxy service 1"),
+    State = register_with_leader(State0),
     {noreply, State};
 handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State0) ->
-    lager:info("Re-registering pg_proxy service"),
+    lager:info("Re-registering pg_proxy service 2"),
     State = register_with_leader(State0),
     {noreply, State};
 handle_info({Proto, Socket, Data},
@@ -153,18 +155,35 @@ terminate(_Reason, #state{}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-register_with_leader(#state{leader_mref=MRef}=State) ->    
+pg_proxy_name(Remote) ->
+    list_to_atom("pg_proxy_" ++ Remote).
+
+make_pg_proxy(Remote) -> 
+    Name = pg_proxy_name(Remote),
+    {Name, {riak_repl2_pg_proxy, start_link, [Name]},
+        transient, 5000, worker, [riak_repl2_pg_proxy, pg_proxy]}.
+
+register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->    
     case MRef of
         undefined -> ok;
         M -> 
-            lager:info("Demonitor previous proxy"),
             erlang:demonitor(M)
     end,
-    lager:info("Register with leader"),
-    Leader = riak_repl_leader:leader_node(),
-    lager:info("Register with pg_proxy"),
-    gen_server:call({pg_proxy, Leader}, {register, self()}),
-    lager:info("Register with monitor"),
-    Monitor = erlang:monitor(process, {pg_proxy, Leader}),
-    lager:info("Monitored!"),
+    Leader = riak_core_cluster_mgr:get_leader(),        
+    ProxyForCluster = pg_proxy_name(Cluster),
+    Child = [{Remote, Pid} || {Remote, Pid, _, _} <-
+        supervisor:which_children({riak_repl2_pg_proxy_sup, Leader}), 
+                      is_pid(Pid),
+                      Remote == ProxyForCluster],
+    case Child of
+        [{_Remote, _Pid}] -> 
+            lager:debug("Not starting a new proxy process, one already exists"),
+            ok;
+        _ -> 
+            lager:debug("Starting a new proxy process"),
+            supervisor:start_child({riak_repl2_pg_proxy_sup, Leader}, 
+                                   make_pg_proxy(Cluster))
+    end,
+    gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node()}),    
+    Monitor = erlang:monitor(process, {ProxyForCluster, Leader}),
     State#state{leader_mref=Monitor}.
