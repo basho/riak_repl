@@ -138,10 +138,8 @@ handle_call({proxy_get, Bucket, Key, Options}, From, State) ->
     {noreply, State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets]}};
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
-
 handle_cast(_Event, State) ->
     {noreply, State}.
-
 handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
     lager:info("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
@@ -197,21 +195,12 @@ handle_info({ssl_error, Socket, Reason}, #state{socket = Socket} = State) ->
 handle_info({Proto, Socket, Data},
         State=#state{transport=Transport,socket=Socket}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
-    Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
-    Reply = case Msg of
+    Reply = case decode_obj_msg(Data) of
         {diff_obj, RObj} ->
-            %% realtime diff object, or a fullsync diff object from legacy
-            %% repl. Because you can't tell the difference this can screw up
-            %% the acking, but there's not really a way to fix it, other than
-            %% not using legacy.
-            {noreply, do_repl_put(RObj, State)};
+            do_diff_obj_and_reply({diff_obj, RObj}, State);
         {fs_diff_obj, RObj} ->
-            %% fullsync diff objects
-            Pool = State#state.pool_pid,
-            Worker = poolboy:checkout(Pool, true, infinity),
-            ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
-            {noreply, State};
+            do_diff_obj_and_reply({fs_diff_obj, RObj}, State);
         {proxy_get_resp, Ref, Resp} ->
             case lists:keytake(Ref, 1, State#state.proxy_gets) of
                 false ->
@@ -230,8 +219,8 @@ handle_info({Proto, Socket, Data},
             {noreply, State};
         {peerinfo, TheirPI, Capability} ->
             handle_peerinfo(State, TheirPI, Capability);
-        _ ->
-            gen_fsm:send_event(State#state.fullsync_worker, Msg),
+        Other ->
+            gen_fsm:send_event(State#state.fullsync_worker, Other),
             {noreply, State}
     end,
     case State#state.keepalive_time of
@@ -283,6 +272,45 @@ code_change(_OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+decode_obj_msg(Data) ->
+    Msg = binary_to_term(Data),
+    %% Cindy: Why Santa? Why do we match binary riak objects now, even after we
+    %%        have already called binary_to_term() on them?
+    %% Santa: Because, Cindy, with new riak object formats, we don't always encode
+    %%        the message as term_to_binary({diff_obj, r_object()}). We can also
+    %%        receive a message that was encoded as term_to_binary({diff_obj,
+    %%        riak_object: to_binary(Version, r_object()}).
+    case Msg of
+        {diff_obj, BObj} when is_binary(BObj) ->
+            RObj = riak_repl_util:from_wire(BObj),
+            {diff_obj, RObj};
+        {diff_obj, _RObj} ->
+            Msg;
+        {fs_diff_obj, BObj} when is_binary(BObj) ->
+            RObj = riak_repl_util:from_wire(BObj),
+            {fs_diff_obj, RObj};
+        {fs_diff_obj, _RObj} ->
+            Msg;
+        Other ->
+            Other
+    end.
+
+do_diff_obj_and_reply(Msg, State) ->
+    case Msg of
+        {diff_obj, RObj} ->
+            %% realtime diff object, or a fullsync diff object from legacy
+            %% repl. Because you can't tell the difference this can screw up
+            %% the acking, but there's not really a way to fix it, other than
+            %% not using legacy.
+            {noreply, do_repl_put(RObj, State)};
+        {fs_diff_obj, RObj} ->
+            %% fullsync diff objects
+            Pool = State#state.pool_pid,
+            Worker = poolboy:checkout(Pool, true, infinity),
+            ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
+            {noreply, State}
+    end.
 
 do_async_connect(#state{pending=[], sitename=SiteName} = State) ->
     %% re-read the listener config in case it has had IPs added
@@ -338,17 +366,17 @@ send(Transport, Socket, Data) when is_binary(Data)->
 send(Transport, Socket, Data) ->
     send(Transport, Socket, term_to_binary(Data)).
 
-do_repl_put(Obj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
+do_repl_put(RObj, State=#state{ack_freq = undefined, pool_pid=Pool}) -> % q_ack not supported
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
+    ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
     State;
-do_repl_put(Obj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-1)) ->
+do_repl_put(RObj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F-1)) ->
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
+    ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
     State#state{count=C+1};
-do_repl_put(Obj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
+do_repl_put(RObj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
     Worker = poolboy:checkout(Pool, true, infinity),
-    ok = riak_repl_fullsync_worker:do_put(Worker, Obj, Pool),
+    ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
     send(T, S, {q_ack, F}),
     State#state{count=0}.
 
