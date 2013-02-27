@@ -62,11 +62,11 @@ init([]) ->
 %                  permanent, infinity, supervisor,
 %                  [riak_repl2_pg_block_requester_sup]},
 
-                 {riak_repl2_pg_sup, {riak_repl2_pg_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_repl2_pg_sup]},
-
                  {riak_repl2_pg_proxy_sup, {riak_repl2_pg_proxy_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_repl2_pg_proxy_sup]}
+                  permanent, infinity, supervisor, [riak_repl2_pg_proxy_sup]},
+
+                 {riak_repl2_pg_sup, {riak_repl2_pg_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_pg_sup]}
 
                 ],
 
