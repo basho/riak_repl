@@ -23,6 +23,13 @@
     unacked_objects = []
 }).
 
+-record(pushed, {
+    seq,
+    push_res,
+    skips,
+    remotes_up
+}).
+
 prop_test_() ->
     {timeout, 30, fun() ->
         ?assert(eqc:quickcheck(?MODULE:prop_main()))
@@ -78,10 +85,11 @@ precondition(S, {call, _, disconnect, _Args}) ->
     S#state.sources /= [];
 precondition(#state{sources = []}, {call, _, ack_objects, _Args}) ->
     false;
-precondition(#state{sources = Sources}, {call, _, ack_objects, [NumAck, {Remote, _}]}) ->
+precondition(#state{sources = Sources}, {call, _, ack_objects, [NumAck, {Remote, SrcState}]}) ->
     case lists:keyfind(Remote, 1, Sources) of
         {_, #src_state{unacked_objects = UnAcked}} when length(UnAcked) >= NumAck ->
-            true;
+            UnAcked =:= SrcState#src_state.unacked_objects;
+            %true;
         _ ->
             false
     end;
@@ -89,11 +97,13 @@ precondition(S, {call, _, ack_objects, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, push_object, [_, _, S]}) ->
     S#state.sources /= [];
-%precondition(S, {call, _, push_object, [_, _, NotS]}) ->
-%    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
-%    false;
-precondition(S, {call, _, Connect, [Remote, _]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
+precondition(S, {call, _, push_object, [_, _, NotS]}) ->
+    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
+    false;
+precondition(#state{master_queue = MasterQ} = S, {call, _, Connect, [Remote, MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
     lists:member(Remote, S#state.remotes_available);
+precondition(_S, {call, _, Connect, [_Remote, _MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
+    false;
 precondition(_S, _Call) ->
     true.
 
@@ -127,14 +137,14 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
         Sources == [] ->
             [];
         true ->
-            MasterKeys = [Seq || {Seq, _, _, _} <- S#state.master_queue],
+            MasterKeys = ordsets:from_list([Seq || {Seq, _, _, _} <- S#state.master_queue]),
             SourceQueues = [Source#src_state.unacked_objects || {_, Source} <- Sources],
             ExtractSeqs = fun(Elem, Acc) ->
-                SrcSeqs = [SeqNum || {SeqNum, _} <- Elem],
-                lists:usort(Acc ++ SrcSeqs)
+                SrcSeqs = ordsets:from_list([PushedThang#pushed.seq || PushedThang <- Elem]),
+                ordsets:union(Acc, SrcSeqs)
             end,
             ActiveSeqs = lists:foldl(ExtractSeqs, [], SourceQueues),
-            RemoveSeqs = MasterKeys -- ActiveSeqs,
+            RemoveSeqs = ordsets:subtract(MasterKeys, ActiveSeqs),
             UpdateMaster = fun(RemoveSeq, Acc) ->
                 lists:keydelete(RemoveSeq, 1, Acc)
             end,
@@ -144,7 +154,7 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
 
 next_state(S, Res, {call, _, push_object, [Remotes, Binary, _S]}) ->
     Seq = S#state.seq + 1,
-    Sources = update_unacked_objects(Remotes, {Seq, Res}, S#state.sources),
+    Sources = update_unacked_objects(Remotes, Seq, Res, S),
     RoutingSources = [R || {R, _} <- Sources, not lists:member(R, Remotes)],
     Master2 = case RoutingSources of
         [] ->
@@ -172,24 +182,51 @@ next_state_connect(Remote, SrcState, State) ->
     case lists:keyfind(Remote, 1, State#state.sources) of
         false ->
             Remotes = lists:delete(Remote, State#state.remotes_available),
-            NewQueue = [{Seq, {call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]}} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
-            SrcState2 = SrcState#src_state{unacked_objects = NewQueue},
+            {NewQueue, Skips} = generate_unacked_from_master(State, Remote),
+            SrcState2 = SrcState#src_state{unacked_objects = NewQueue, skips = Skips},
             Sources = [{Remote, SrcState2} | State#state.sources],
             State#state{sources = Sources, remotes_available = Remotes};
         _Tuple ->
             State
     end.
 
-fix_unacked_from_master(Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
-    Active = [A || {A, _} <- Sources],
-    Routed = lists:usort(RoutedRemotes ++ Active ++ [Remote]),
-    Meta2 = orddict:store(routed_clusters, Routed, Meta),
-    {N, Bin, Meta2}.
+generate_unacked_from_master(State, Remote) ->
+    UpRemotes = running_remotes(State),
+    generate_unacked_from_master(lists:reverse(State#state.master_queue), UpRemotes, Remote, undefined, []).
+
+generate_unacked_from_master([], _UpRemotes, _Remote, Skips, Acc) ->
+    {Acc, Skips};
+generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Remote, Skips, Acc) ->
+    case {lists:member(Remote, Remotes), Skips} of
+        {true, undefined} ->
+            % on start up, we don't worry about skips until we've sent at least
+            % one; the sink doesn't care what the first seq number is anyway.
+            generate_unacked_from_master(Tail, UpRemotes, Remote, Skips, Acc);
+        {true, _} ->
+            generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Acc);
+        {false, _} ->
+            NextSkips = case Skips of
+                undefined -> 0;
+                _ -> Skips
+            end,
+            Obj = #pushed{seq = Seq, push_res = Res, skips = NextSkips,
+                remotes_up = UpRemotes},
+            Acc2 = [Obj | Acc],
+            generate_unacked_from_master(Tail, UpRemotes, Remote, 0, Acc2)
+    end.
+
+%            NewQueue = [{Seq, {call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]}} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
+%fix_unacked_from_master(Remote, {N, Bin, Meta}, RoutedRemotes, #state{sources = Sources}) ->
+%    Active = [A || {A, _} <- Sources],
+%    Routed = lists:usort(RoutedRemotes ++ Active ++ [Remote]),
+%    Meta2 = orddict:store(routed_clusters, Routed, Meta),
+%    {N, Bin, Meta2}.
 
 remove_fully_acked(Master, [], _Sources) ->
     Master;
 
-remove_fully_acked(Master, [{Seq, _} | Chopped], Sources) ->
+remove_fully_acked(Master, [Pushed | Chopped], Sources) ->
+    #pushed{seq = Seq} = Pushed,
     case is_in_a_source(Seq, Sources) of
         true ->
             remove_fully_acked(Master, Chopped, Sources);
@@ -201,31 +238,40 @@ remove_fully_acked(Master, [{Seq, _} | Chopped], Sources) ->
 is_in_a_source(_Seq, []) ->
     false;
 is_in_a_source(Seq, [{_Remote, #src_state{unacked_objects = UnAcked}} | Tail]) ->
-    case lists:keymember(Seq, 1, UnAcked) of
+    case lists:keymember(Seq, #pushed.seq, UnAcked) of
         true ->
             true;
         false ->
             is_in_a_source(Seq, Tail)
     end.
 
-update_unacked_objects(Remotes, Res, Sources) ->
-    update_unacked_objects(Remotes, Res, Sources, []).
+running_remotes(State) ->
+    Remotes = [Remote || {Remote, _} <- State#state.sources],
+    ordsets:from_list(Remotes).
 
-update_unacked_objects(_Remotes, _Res, [], Acc) ->
+update_unacked_objects(Remotes, Seq, Res, State) when is_record(State, state) ->
+    UpRemotes = running_remotes(State),
+    update_unacked_objects(Remotes, Seq, Res, UpRemotes, State#state.sources, []).
+
+update_unacked_objects(_Remotes, _Seq, _Res, _UpRemotes, [], Acc) ->
     lists:reverse(Acc);
 
-update_unacked_objects(Remotes, Res, [{Remote, Source} | Tail], Acc) ->
+update_unacked_objects(Remotes, Seq, Res, UpRemotes, [{Remote, Source} | Tail], Acc) ->
     case lists:member(Remote, Remotes) of
         true ->
-            Skipped = Source#src_state.skips + 1,
-            update_unacked_objects(Remotes, Res, Tail, [{Remote, Source#src_state{skips = Skipped}} | Acc]);
+            Skipped = case Source#src_state.skips of
+                undefined -> undefined;
+                _ -> Source#src_state.skips + 1
+            end,
+            update_unacked_objects(Remotes, Seq, Res, UpRemotes, Tail, [{Remote, Source#src_state{skips = Skipped}} | Acc]);
         false ->
-            Entry = model_push_object(Res, Source),
-            update_unacked_objects(Remotes, Res, Tail, [{Remote, Entry} | Acc])
+            Entry = model_push_object(Seq, Res, UpRemotes, Source),
+            update_unacked_objects(Remotes, Seq, Res, UpRemotes, Tail, [{Remote, Entry} | Acc])
     end.
 
-model_push_object(Res, SrcState = #src_state{unacked_objects = ObjQueue}) ->
-    SrcState#src_state{unacked_objects = [{call, ?MODULE, insert_skip_meta, [Res, SrcState]} | ObjQueue], skips = 0}.
+model_push_object(Seq, Res, UpRemotes, SrcState = #src_state{unacked_objects = ObjQueue}) ->
+    Obj = #pushed{seq = Seq, push_res = Res, skips = SrcState#src_state.skips, remotes_up = UpRemotes},
+    SrcState#src_state{unacked_objects = [Obj | ObjQueue], skips = 0}.
 
 insert_skip_meta({Seq, {Count, Bin, Meta}}, #src_state{skips = SkipCount}) ->
     Meta2 = orddict:from_list(Meta),
@@ -269,7 +315,7 @@ postcondition(State, {call, _, ack_objects, [NumAck, {Remote, Source}]}, AckedSt
             ?debugMsg("Acked length is not the same as AckedStack length"),
             false;
         true ->
-            assert_sink_ackings(Source#src_state.version, Acked, AckedStack)
+            assert_sink_ackings(Remote, Source#src_state.version, Acked, AckedStack)
     end;
 
 postcondition(_S, _C, _R) ->
@@ -287,11 +333,14 @@ assert_sink_bugs(Object, Remotes, Active, [{Remote, SrcState} | Tail], Acc) ->
     Truthiness = assert_sink_bug(Object, Remotes, Remote, Active, SrcState),
     assert_sink_bugs(Object, Remotes, Active, Tail, [Truthiness | Acc]).
 
-assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, Active, SrcState) ->
+assert_sink_bug({_Num, ObjBin, BadMeta}, Remotes, Remote, Active, SrcState) ->
     {_, Sink} = SrcState#src_state.pids,
     Version = SrcState#src_state.version,
     History = gen_server:call(Sink, history),
     ShouldSkip = lists:member(Remote, Remotes),
+    BadMeta2 = set_skip_meta(BadMeta, SrcState),
+    Routed = ordsets:from_list(Remotes ++ [Remote] ++ Active),
+    Meta = orddict:store(routed_clusters, Routed, BadMeta2),
     if
         ShouldSkip andalso length(History) == length(SrcState#src_state.unacked_objects) ->
             true;
@@ -328,26 +377,55 @@ assert_sink_bug({_Num, ObjBin, Meta}, Remotes, Remote, Active, SrcState) ->
             end
     end.
 
-assert_sink_ackings(Version, Expecteds, Gots) ->
-    assert_sink_ackings(Version, Expecteds, Gots, []).
+set_skip_meta(Meta, #src_state{skips = Skips}) ->
+    set_skip_meta(Meta, Skips);
+set_skip_meta(Meta, undefined) ->
+    set_skip_meta(Meta, 0);
+set_skip_meta(Meta, Skips) ->
+    orddict:store(skip_count, Skips, Meta).
 
-assert_sink_ackings(_Version, [], [], Acc) ->
+assert_sink_ackings(Remote, Version, Expecteds, Gots) ->
+    assert_sink_ackings(Remote, Version, Expecteds, Gots, []).
+
+assert_sink_ackings(_Remote, _Version, [], [], Acc) ->
     lists:all(fun(true) -> true; (_) -> false end, Acc);
 
-assert_sink_ackings(Version, [Expected | ETail], [Got | GotTail], Acc) ->
-    AHead = assert_sink_acking(Version, Expected, Got),
-    assert_sink_ackings(Version, ETail, GotTail, [AHead | Acc]).
+assert_sink_ackings(Remote, Version, [Expected | ETail], [Got | GotTail], Acc) ->
+    AHead = assert_sink_acking(Remote, Version, Expected, Got),
+    assert_sink_ackings(Remote, Version, ETail, GotTail, [AHead | Acc]).
 
-assert_sink_acking(Version, {_SomeSeq, {1, ObjBin, Meta}}, Got) ->
+assert_sink_acking(Remote, Version, Pushed, Got) ->
+    #pushed{seq = Seq, push_res = {1, ObjBin, PushMeta}, skips = Skip,
+        remotes_up = UpRemotes} = Pushed,
+    PushMeta1 = set_skip_meta(PushMeta, Skip),
+    PushMeta2 = fix_routed_meta(PushMeta1, ordsets:add_element(Remote, UpRemotes)),
+    Meta = PushMeta2,
     case {Version, Got} of
-        {1, {objects, {_Seq, ObjBin}}} ->
+        {1, {objects, {Seq, ObjBin}}} ->
             true;
-        {2, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
+        {2, {objects_and_meta, {Seq, ObjBin, Meta}}} ->
             true;
         _ ->
-            ?debugFmt("Sink ack failure!~n    Version: ~p~n    ObjBin: ~p~n    Meta: ~p~n    Got: ~p", [Version, ObjBin, Meta, Got]),
+            ?debugFmt("Sink ack failure!~n"
+                "    Remote: ~p~n"
+                "    UpRemotes: ~p~n"
+                "    Version: ~p~n"
+                "    ObjBin: ~p~n"
+                "    Seq: ~p~n"
+                "    Skip: ~p~n"
+                "    PushMeta: ~p~n"
+                "    Meta: ~p~n"
+                "    Got: ~p", [Remote, UpRemotes, Version, ObjBin, Seq, Skip, PushMeta, Meta, Got]),
             false
     end.
+
+fix_routed_meta(Meta, AdditionalRemotes) ->
+    Routed1 = case orddict:find(routed_clusters, Meta) of
+        error -> [];
+        {ok, V} -> V
+    end,
+    Routed2 = ordsets:union(AdditionalRemotes, Routed1),
+    orddict:store(routed_clusters, Routed2, Meta).
 
 %% ====================================================================
 %% test callbacks
@@ -388,12 +466,12 @@ disconnect(ConnectState) ->
 
 push_object(Remotes, BinObjects, State) ->
     Meta = [{routed_clusters, Remotes}],
-    Active = [A || {A, _} <- State#state.sources],
-    ExpectedRouted = lists:usort(Remotes ++ Active),
-    ExpectedMeta = [{routed_clusters, ExpectedRouted}],
+    %Active = [A || {A, _} <- State#state.sources],
+    %ExpectedRouted = lists:usort(Remotes ++ Active),
+    %ExpectedMeta = [{routed_clusters, ExpectedRouted}],
     riak_repl2_rtq:push(1, BinObjects, Meta),
     wait_for_pushes(State, Remotes),
-    {1, BinObjects, ExpectedMeta}.
+    {1, BinObjects, Meta}.
 
 ack_objects(NumToAck, {Remote, SrcState}) ->
     {_, Sink} = SrcState#src_state.pids,

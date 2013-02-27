@@ -54,7 +54,12 @@
             skip_seqs = [], % sequences not sent due to routed by another cluster
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
-            deliver  % deliver function if pending, otherwise undefined
+            deliver,  % deliver function if pending, otherwise undefined
+            delivered = false  % used by the skip count.
+            % skip_count is used to help the sink side determine if an item has
+            % been dropped since the last delivery. The sink side can't
+            % determine if there's been drops accurately if the source says there
+            % were skips before it's sent even one item.
            }).
 
 %% API
@@ -295,9 +300,10 @@ c_update_skipped_seq(C) ->
     #c{aseq = ASeq, skip_seqs = Skipped} = C,
     Filter = fun(Elem) -> Elem > ASeq end,
     Skipped2 = lists:filter(Filter, Skipped),
+    C#c{skip_seqs = Skipped2}.
     % using the skipped2, can we walk the ack up to current?
-    {ASeq2, Skipped3} = c_forward_ack(ASeq, lists:reverse(Skipped2)),
-    C#c{skip_seqs = Skipped3, aseq = ASeq2}.
+    %{ASeq2, Skipped3} = c_forward_ack(ASeq, lists:reverse(Skipped2)),
+    %C#c{skip_seqs = Skipped3, aseq = ASeq2}.
 
 c_forward_ack(ASeq, []) ->
     {ASeq, []};
@@ -419,15 +425,11 @@ maybe_deliver_item(C, QEntry) ->
         {ok, V} -> V
     end,
     case lists:member(Name, Routed) of
-        true ->
+        true when C#c.delivered ->
             Skipped = [Seq | C#c.skip_seqs],
-            if
-                C#c.cseq == C#c.aseq ->
-                    % it's up to date, no need to dirty it.
-                    {skipped, C#c{cseq = Seq, aseq = Seq, skip_seqs = []}};
-                true ->
-                    {skipped, C#c{skip_seqs = Skipped, cseq = Seq}}
-            end;
+            {skipped, C#c{skip_seqs = Skipped, cseq = Seq}};
+        true ->
+            {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
             {delivered, deliver_item(C, C#c.deliver, QEntry)}
     end.
@@ -435,14 +437,33 @@ maybe_deliver_item(C, QEntry) ->
 deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
-        ok = DeliverFun(QEntry),
-        C#c{cseq = Seq, deliver = undefined}
+        QEntry2 = set_skip_meta(QEntry, Seq, C),
+        ok = DeliverFun(QEntry2),
+        C#c{cseq = Seq, deliver = undefined, delivered = true}
     catch
         _:_ ->
             riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.
+
+set_skip_meta(QEntry, _Seq, _C = #c{delivered = false}) ->
+    %io:format("skip_count for ~p set to 0 due to never delivered (Seq: ~p)~n", [_C#c.name, _Seq]),
+    set_meta(QEntry, skip_count, 0);
+set_skip_meta(QEntry, Seq, C) ->
+    Skips = count_skips(Seq, C#c.skip_seqs),
+    %io:format("skip_count for ~p set to ~p due to seq ~p and skips ~p~n", [C#c.name, Skips, Seq, C#c.skip_seqs]),
+    set_meta(QEntry, skip_count, Skips).
+
+count_skips(Seq, Skipped) ->
+    count_skips(Seq, Skipped, 0).
+
+% if the sequence we are testing is more than one above the last sequence
+% skipped, then there was at least one sequence sent to the sink side.
+count_skips(Seq, [SeqMin1 | Tail], N) when Seq - 1 == SeqMin1 ->
+    count_skips(SeqMin1, Tail, N + 1);
+count_skips(_Seq, _Count, N) ->
+    N.
 
 set_local_forwards_meta(LocalForwards, QEntry) ->
     set_meta(QEntry, local_forwards, LocalForwards).
