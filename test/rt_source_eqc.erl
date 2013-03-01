@@ -146,7 +146,7 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
             ActiveSeqs = lists:foldl(ExtractSeqs, [], SourceQueues),
             RemoveSeqs = ordsets:subtract(MasterKeys, ActiveSeqs),
             UpdateMaster = fun(RemoveSeq, Acc) ->
-                lists:keydelete(RemoveSeq, 1, Acc)
+                lists:keystore(RemoveSeq, 1, Acc, {RemoveSeq, tombstone})
             end,
             lists:foldl(UpdateMaster, S#state.master_queue, RemoveSeqs)
     end,
@@ -158,7 +158,7 @@ next_state(S, Res, {call, _, push_object, [Remotes, Binary, _S]}) ->
     RoutingSources = [R || {R, _} <- Sources, not lists:member(R, Remotes)],
     Master2 = case RoutingSources of
         [] ->
-            S#state.master_queue;
+            [{Seq, tombstone} | S#state.master_queue];
         _ ->
             Master = S#state.master_queue,
             [{Seq, Remotes, Binary, Res} | Master]
@@ -196,6 +196,10 @@ generate_unacked_from_master(State, Remote) ->
 
 generate_unacked_from_master([], _UpRemotes, _Remote, Skips, Acc) ->
     {Acc, Skips};
+generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Acc) ->
+    generate_unacked_from_master(Tail, UpRemotes, Remote, undefined, Acc);
+generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Acc) ->
+    generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Acc);
 generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Remote, Skips, Acc) ->
     case {lists:member(Remote, Remotes), Skips} of
         {true, undefined} ->
@@ -231,7 +235,7 @@ remove_fully_acked(Master, [Pushed | Chopped], Sources) ->
         true ->
             remove_fully_acked(Master, Chopped, Sources);
         false ->
-            Master2 = lists:keydelete(Seq, 1, Master),
+            Master2 = lists:keystore(Seq, 1, Master, {Seq, tombstone}),
             remove_fully_acked(Master2, Chopped, Sources)
     end.
 

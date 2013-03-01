@@ -47,11 +47,13 @@
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
                 cs = [],
+                undeliverables = [],
                 shutting_down=false}).  % Consumers
 -record(c, {name,      % consumer name
             aseq = 0,  % last sequence acked
             cseq = 0,  % last sequence sent
-            skip_seqs = [], % sequences not sent due to routed by another cluster
+            %skip_seqs = [], % sequences not sent due to routed by another cluster
+            skips = 0,
             drops = 0, % number of dropped queue entries (not items)
             errs = 0,  % delivery errors
             deliver,  % deliver function if pending, otherwise undefined
@@ -291,16 +293,19 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
     cleanup(QTab, MinSeq),
-    clear_non_deliverables(QTab, UpdCs),
-    State#state{cs = UpdCs}.
+    Undeliverables = clear_non_deliverables(QTab, UpdCs),
+    Undeliverables2 = union_undeliverables(State#state.undeliverables, Undeliverables, MinSeq),
+    State#state{cs = UpdCs, undeliverables = Undeliverables2}.
 
-c_update_skipped_seq(#c{aseq = Seq, cseq = Seq} = C) ->
-    C#c{skip_seqs = []};
 c_update_skipped_seq(C) ->
-    #c{aseq = ASeq, skip_seqs = Skipped} = C,
-    Filter = fun(Elem) -> Elem > ASeq end,
-    Skipped2 = lists:filter(Filter, Skipped),
-    C#c{skip_seqs = Skipped2}.
+    C.
+%c_update_skipped_seq(#c{aseq = Seq, cseq = Seq} = C) ->
+%    C#c{skip_seqs = []};
+%c_update_skipped_seq(C) ->
+%    #c{aseq = ASeq, skip_seqs = Skipped} = C,
+%    Filter = fun(Elem) -> Elem > ASeq end,
+%    Skipped2 = lists:filter(Filter, Skipped),
+%    C#c{skip_seqs = Skipped2}.
     % using the skipped2, can we walk the ack up to current?
     %{ASeq2, Skipped3} = c_forward_ack(ASeq, lists:reverse(Skipped2)),
     %C#c{skip_seqs = Skipped3, aseq = ASeq2}.
@@ -349,8 +354,9 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                      end,
             cleanup(QTab, MinSeq),
             NewState = State#state{cs = Cs2},
-            clear_non_deliverables(QTab, Cs2),
-            {ok, NewState};
+            Undeliverables = clear_non_deliverables(QTab, Cs2),
+            Undeliverables2 = union_undeliverables(State#state.undeliverables, Undeliverables, 0),
+            {ok, NewState#state{undeliverables = Undeliverables2}};
         false ->
             {{error, not_registered}, State}
     end.
@@ -383,20 +389,21 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     CsNames = [Consumer#c.name || Consumer <- Cs],
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
+                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, State#state.undeliverables) | Cs2];
                 false ->
                     DeliverFun({error, not_registered})
             end,
     State#state{cs = UpdCs}.
 
-maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
+maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
             case ets:lookup(QTab, CSeq2) of
                 [] -> % entry removed, due to previously being unroutable
-                    C2 = C#c{cseq = CSeq2},
-                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
+                    %C2 = C#c{cseq = CSeq2, skip_seqs = ordsets:add_element(CSeq2, C#c.skip_seqs)},
+                    C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
+                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
                 [QEntry] ->
                     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
                     %deliver_item(C, DeliverFun, QEntry2);
@@ -404,7 +411,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
                     % just keep trying.
                     case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
                         {skipped, C2} ->
-                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
+                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
                         {_WorkedOrNoFun, C2} ->
                             C2
                     end
@@ -426,8 +433,8 @@ maybe_deliver_item(C, QEntry) ->
     end,
     case lists:member(Name, Routed) of
         true when C#c.delivered ->
-            Skipped = [Seq | C#c.skip_seqs],
-            {skipped, C#c{skip_seqs = Skipped, cseq = Seq}};
+            Skipped = C#c.skips + 1,
+            {skipped, C#c{skips = Skipped, cseq = Seq}};
         true ->
             {skipped, C#c{cseq = Seq, aseq = Seq}};
         false ->
@@ -439,7 +446,7 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
         ok = DeliverFun(QEntry2),
-        C#c{cseq = Seq, deliver = undefined, delivered = true}
+        C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
     catch
         _:_ ->
             riak_repl_stats:rt_source_errors(),
@@ -447,13 +454,15 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.
 
+% if nothing has been delivered, the sink assumes nothing was skipped
+% fulfill that expectation.
 set_skip_meta(QEntry, _Seq, _C = #c{delivered = false}) ->
-    %io:format("skip_count for ~p set to 0 due to never delivered (Seq: ~p)~n", [_C#c.name, _Seq]),
     set_meta(QEntry, skip_count, 0);
-set_skip_meta(QEntry, Seq, C) ->
-    Skips = count_skips(Seq, C#c.skip_seqs),
-    %io:format("skip_count for ~p set to ~p due to seq ~p and skips ~p~n", [C#c.name, Skips, Seq, C#c.skip_seqs]),
-    set_meta(QEntry, skip_count, Skips).
+set_skip_meta(QEntry, _Seq, _C = #c{skips = S}) ->
+    set_meta(QEntry, skip_count, S).
+%set_skip_meta(QEntry, Seq, C) ->
+%    Skips = count_skips(Seq, lists:reverse(C#c.skip_seqs)),
+%    set_meta(QEntry, skip_count, Skips).
 
 count_skips(Seq, Skipped) ->
     count_skips(Seq, Skipped, 0).
@@ -462,6 +471,10 @@ count_skips(Seq, Skipped) ->
 % skipped, then there was at least one sequence sent to the sink side.
 count_skips(Seq, [SeqMin1 | Tail], N) when Seq - 1 == SeqMin1 ->
     count_skips(SeqMin1, Tail, N + 1);
+% a skipped seq can happen when a source connects to a sink, and a seq was
+% marked as unroutable.
+count_skips(Seq, [SeqBig | Tail], N) when Seq < SeqBig ->
+    count_skips(Seq, Tail, N);
 count_skips(_Seq, _Count, N) ->
     N.
 
@@ -497,6 +510,10 @@ clear_non_deliverables(QTab, ActiveConsumers) ->
     ToDelete = ets:foldl(Accumulator, [], QTab),
     [ets:delete(QTab, Key) || Key <- ToDelete],
     ToDelete.
+
+union_undeliverables(SeqSet1, SeqSet2, MinSeq) ->
+    Undeliverables = ordsets:union(SeqSet1, SeqSet2),
+    lists:filter(fun(E) -> E >= MinSeq end, Undeliverables).
 
 %% Trim the queue if necessary
 trim_q(State = #state{max_bytes = undefined}) ->
