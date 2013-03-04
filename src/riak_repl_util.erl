@@ -50,7 +50,8 @@
          peername/2,
          sockname/2,
          deduce_wire_version_from_proto/1,
-         encode_obj_msg/2
+         encode_obj_msg/2,
+         make_pg_proxy_name/1
      ]).
 
 -export([wire_version/1,
@@ -876,3 +877,7 @@ do_wire_list_w1_test() ->
     ?assert(Decoded == Objs).
 
 -endif.
+
+make_pg_proxy_name(Remote) ->
+    list_to_atom("pg_proxy_" ++ Remote).
+

@@ -43,8 +43,6 @@ start_link(ProxyName) ->
 %%% Gen_server callbacks
 %%%===================================================================
 
-init([_ProxyName]) ->
-    lager:info("FOOO");
 init(ProxyName) ->
     lager:info("Registering ~p", [ProxyName]),
     erlang:register(ProxyName, self()),
@@ -57,9 +55,9 @@ handle_call({proxy_get, _Bucket, _Key, _Options}, _From, #state{pg_node=Node} = 
     end,
     {reply, ok, State};
 
-handle_call({register, ClusterID, Node}, _From, State) ->
-    lager:info("registered node for cluster id ~p", [ClusterID]),
-    NewState = State#state{pg_node = Node, source_cluster=ClusterID},
+handle_call({register, ClusterName, Node}, _From, State) ->
+    lager:info("registered node for cluster name ~p", [ClusterName]),
+    NewState = State#state{pg_node = Node, source_cluster=ClusterName},
     {reply, ok, NewState}.
 
 handle_cast(_Msg, State) ->

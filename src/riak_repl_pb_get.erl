@@ -91,41 +91,43 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 true -> get_client_cluster_names_13();
                 false -> get_client_cluster_names_12()
             end,
-            case lists:keyfind(CName, 2, CNames) of
-                false ->
+            Result =
+                case lists:keyfind(CName, 2, CNames) of
+                    false -> 
+                        notconnected;
+                    {ClientPid, _ClusterID} ->
+                        riak_repl_tcp_client:proxy_get(ClientPid, B, K,
+                                                       GetOptions);
+                    {ClientPid, _ClusterID, ClusterName} ->
+                        case lists:member(mode_repl13, State#state.repl_modes) of
+                            true -> 
+                                Leader = riak_core_cluster_mgr:get_leader(),        
+                                ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
+                                gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions});
+                            false -> 
+                                riak_repl_tcp_client:proxy_get(ClientPid, B, K,
+                                                               GetOptions)
+                        end
+            end,
+                
+            case Result of
+                notconnected ->
                     lager:info("not connected to cluster ~p", [CName]),
                     %% not connected to that cluster, return notfound
                     {reply, #rpbgetresp{}, State};
-                {ClientPid, CName} ->
-                    lager:info("Client ~p is connected to cluster ~p",
-                        [ClientPid, CName]),
-
-                    Result = case lists:member(mode_repl13,
-                                               State#state.repl_modes) of
-                        true ->
-                            lager:info("BNW PROXY GET"),
-                            riak_repl2_pg_block_requester:proxy_get(ClientPid, B, K,
-                                                                        GetOptions);
-                        false ->
-                            lager:info("1.2 PROXY GET"),
-                            riak_repl_tcp_client:proxy_get(ClientPid, B, K,
-                                                                GetOptions)
-                    end,
-                    case Result of
-                        {ok, O} ->
-                            spawn(riak_repl_util, do_repl_put, [O]),
-                            make_object_response(O, VClock, Head, State);
-                        {error, {deleted, TombstoneVClock}} ->
-                            %% Found a tombstone - return its vector clock so
-                            %% it can be properly overwritten
-                            {reply, #rpbgetresp{vclock =
-                                    pbify_rpbvc(TombstoneVClock)}, State};
-                        {error, notfound} ->
-                            {reply, #rpbgetresp{}, State};
-                        {error, Reason} ->
-                            {error, {format,Reason}, State}
-                    end
-            end;
+                {ok, O} ->
+                    spawn(riak_repl_util, do_repl_put, [O]),
+                    make_object_response(O, VClock, Head, State);
+                {error, {deleted, TombstoneVClock}} ->
+                    %% Found a tombstone - return its vector clock so
+                    %% it can be properly overwritten
+                    {reply, #rpbgetresp{vclock =
+                                            pbify_rpbvc(TombstoneVClock)}, State};
+                {error, notfound} ->
+                    {reply, #rpbgetresp{}, State};
+                {error, Reason} ->
+                    {error, {format,Reason}, State}
+            end;              
         {error, Reason} ->
             {error, {format,Reason}, State}
     end.
@@ -198,17 +200,18 @@ client_cluster_names_12() ->
         supervisor:which_children(riak_repl_client_sup), P /= undefined].
 
 %% proxy_get for 1.3 repl
-
 get_client_cluster_names_13() ->
-    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_repl),
+    {CInfo, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_repl),
         riak_repl_pb_get, client_cluster_names_13, []),
-    lists:flatten(CNames).
+    lists:flatten(CInfo).
 
 client_cluster_name_13(Pid) ->
-    catch(riak_repl2_pg_block_requester:provider_cluster_id(Pid)).
+    catch(riak_repl2_pg_block_requester:provider_cluster_info(Pid)).
 
 client_cluster_names_13() ->
-    [{P, client_cluster_name_13(P)} || {_,P,_,_} <-
-        supervisor:which_children(riak_repl2_pg_block_requester_sup), P /= undefined].
-
+    [{P, ClusterID, ClusterName}
+     || {_,P,_,_} <- supervisor:which_children(riak_repl2_pg_block_requester_sup),
+        P /= undefined,
+        {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
+    ].
 

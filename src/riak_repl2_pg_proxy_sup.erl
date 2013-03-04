@@ -6,8 +6,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, set_leader/2, started/1, pg_proxy_for_cluster/1, 
-         start_proxy/1, make_remote/1]).
+-export([start_link/0, set_leader/2, started/1, start_proxy/1, make_remote/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -50,27 +49,16 @@ start_proxy(Remote) ->
 %%     supervisor:terminate_child({?MODULE, Node}, Remote),
 %%     supervisor:delete_child({?MODULE, Node}, Remote).
 
-%% started() ->
-%%     [{Remote, Pid} || {Remote, Pid, _, _} <-
-%%         supervisor:which_children(?MODULE), is_pid(Pid)].
 
 started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
         supervisor:which_children({?MODULE, Node}), is_pid(Pid)].
 
-pg_proxy_for_cluster(Cluster) ->
-    Coords = [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE),
-                      is_pid(Pid), Remote == Cluster],
-    case Coords of
-        [] -> undefined;
-        [{_,CoordPid}|_] -> CoordPid
-    end.
-
 init(_) ->
     {ok, {{one_for_one, 10, 5}, []}}.
 
 make_remote(Remote) -> 
-    Name = list_to_atom("pg_proxy_" ++ Remote),
+    Name = riak_repl_util:make_pg_proxy_name(Remote),
     lager:info("make_remote ~p", [Name]),
     {Name, {riak_repl2_pg_proxy, start_link, [Name]},
         transient, ?SHUTDOWN, worker, [riak_repl2_pg_proxy, pg_proxy]}.
