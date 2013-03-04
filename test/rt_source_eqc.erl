@@ -20,11 +20,13 @@
     pids, % {SourcePid, SinkPid}
     version,
     skips = 0,
+    offset = 0,
     unacked_objects = []
 }).
 
 -record(pushed, {
     seq,
+    v1_seq,
     push_res,
     skips,
     remotes_up
@@ -182,8 +184,8 @@ next_state_connect(Remote, SrcState, State) ->
     case lists:keyfind(Remote, 1, State#state.sources) of
         false ->
             Remotes = lists:delete(Remote, State#state.remotes_available),
-            {NewQueue, Skips} = generate_unacked_from_master(State, Remote),
-            SrcState2 = SrcState#src_state{unacked_objects = NewQueue, skips = Skips},
+            {NewQueue, Skips, Offset} = generate_unacked_from_master(State, Remote),
+            SrcState2 = SrcState#src_state{unacked_objects = NewQueue, skips = Skips, offset = Offset},
             Sources = [{Remote, SrcState2} | State#state.sources],
             State#state{sources = Sources, remotes_available = Remotes};
         _Tuple ->
@@ -192,31 +194,32 @@ next_state_connect(Remote, SrcState, State) ->
 
 generate_unacked_from_master(State, Remote) ->
     UpRemotes = running_remotes(State),
-    generate_unacked_from_master(lists:reverse(State#state.master_queue), UpRemotes, Remote, undefined, []).
+    generate_unacked_from_master(lists:reverse(State#state.master_queue), UpRemotes, Remote, undefined, 0, []).
 
-generate_unacked_from_master([], _UpRemotes, _Remote, Skips, Acc) ->
-    {Acc, Skips};
-generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Acc) ->
-    generate_unacked_from_master(Tail, UpRemotes, Remote, undefined, Acc);
-generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Acc) ->
-    generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Acc);
-generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Remote, Skips, Acc) ->
+generate_unacked_from_master([], _UpRemotes, _Remote, Skips, Offset, Acc) ->
+    {Acc, Skips, Offset};
+generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Offset, Acc) ->
+    generate_unacked_from_master(Tail, UpRemotes, Remote, undefined, Offset, Acc);
+generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
+    generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Offset, Acc);
+generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
     case {lists:member(Remote, Remotes), Skips} of
         {true, undefined} ->
             % on start up, we don't worry about skips until we've sent at least
             % one; the sink doesn't care what the first seq number is anyway.
-            generate_unacked_from_master(Tail, UpRemotes, Remote, Skips, Acc);
+            generate_unacked_from_master(Tail, UpRemotes, Remote, Skips, Offset, Acc);
         {true, _} ->
-            generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Acc);
+            generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Offset, Acc);
         {false, _} ->
             NextSkips = case Skips of
                 undefined -> 0;
                 _ -> Skips
             end,
-            Obj = #pushed{seq = Seq, push_res = Res, skips = NextSkips,
+            Offset2 = Offset + NextSkips,
+            Obj = #pushed{seq = Seq, v1_seq = Seq - Offset2, push_res = Res, skips = NextSkips,
                 remotes_up = UpRemotes},
             Acc2 = [Obj | Acc],
-            generate_unacked_from_master(Tail, UpRemotes, Remote, 0, Acc2)
+            generate_unacked_from_master(Tail, UpRemotes, Remote, 0, Offset2, Acc2)
     end.
 
 %            NewQueue = [{Seq, {call, ?MODULE, fix_unacked_from_master, [Remote, Queued, RoutedRemotes, State]}} || {Seq, RoutedRemotes, _Binary, Queued} <- State#state.master_queue, not lists:member(Remote, RoutedRemotes)],
@@ -274,8 +277,15 @@ update_unacked_objects(Remotes, Seq, Res, UpRemotes, [{Remote, Source} | Tail], 
     end.
 
 model_push_object(Seq, Res, UpRemotes, SrcState = #src_state{unacked_objects = ObjQueue}) ->
-    Obj = #pushed{seq = Seq, push_res = Res, skips = SrcState#src_state.skips, remotes_up = UpRemotes},
-    SrcState#src_state{unacked_objects = [Obj | ObjQueue], skips = 0}.
+    {Seq2, Offset2} = case SrcState#src_state.skips of
+        undefined ->
+            {Seq, SrcState#src_state.offset};
+        _ ->
+            Off2 = SrcState#src_state.offset + SrcState#src_state.skips,
+            {Seq - Off2, Off2}
+    end,
+    Obj = #pushed{seq = Seq, v1_seq = Seq2, push_res = Res, skips = SrcState#src_state.skips, remotes_up = UpRemotes},
+    SrcState#src_state{unacked_objects = [Obj | ObjQueue], offset = Offset2, skips = 0}.
 
 insert_skip_meta({Seq, {Count, Bin, Meta}}, #src_state{skips = SkipCount}) ->
     Meta2 = orddict:from_list(Meta),
@@ -399,13 +409,13 @@ assert_sink_ackings(Remote, Version, [Expected | ETail], [Got | GotTail], Acc) -
     assert_sink_ackings(Remote, Version, ETail, GotTail, [AHead | Acc]).
 
 assert_sink_acking(Remote, Version, Pushed, Got) ->
-    #pushed{seq = Seq, push_res = {1, ObjBin, PushMeta}, skips = Skip,
+    #pushed{seq = Seq, v1_seq = V1Seq, push_res = {1, ObjBin, PushMeta}, skips = Skip,
         remotes_up = UpRemotes} = Pushed,
     PushMeta1 = set_skip_meta(PushMeta, Skip),
     PushMeta2 = fix_routed_meta(PushMeta1, ordsets:add_element(Remote, UpRemotes)),
     Meta = PushMeta2,
     case {Version, Got} of
-        {1, {objects, {Seq, ObjBin}}} ->
+        {1, {objects, {V1Seq, ObjBin}}} ->
             true;
         {2, {objects_and_meta, {Seq, ObjBin, Meta}}} ->
             true;
@@ -416,10 +426,11 @@ assert_sink_acking(Remote, Version, Pushed, Got) ->
                 "    Version: ~p~n"
                 "    ObjBin: ~p~n"
                 "    Seq: ~p~n"
+                "    V1Seq: ~p~n"
                 "    Skip: ~p~n"
                 "    PushMeta: ~p~n"
                 "    Meta: ~p~n"
-                "    Got: ~p", [Remote, UpRemotes, Version, ObjBin, Seq, Skip, PushMeta, Meta, Got]),
+                "    Got: ~p", [Remote, UpRemotes, Version, ObjBin, Seq, V1Seq, Skip, PushMeta, Meta, Got]),
             false
     end.
 

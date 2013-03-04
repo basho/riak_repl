@@ -326,7 +326,10 @@ postcondition(_S, {call, _, call_donefun, [{Remote, SrcState}, NthDoneFun]}, Res
                 _ ->
                     ?debugFmt("No valid returns on call_donefun~n"
                         "    AckExpected: ~p~n"
-                        "    DoneFun: ~p~n", [AckExpected, DoneFun]),
+                        "    DoneFun: ~p~n"
+                        "    Res: ~p~n"
+                        "    Remote: ~p~n"
+                        "    SrcState ~p~n", [AckExpected, DoneFun, Res, Remote, SrcState]),
                     false
             end
     end;

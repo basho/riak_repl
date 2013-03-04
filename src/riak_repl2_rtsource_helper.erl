@@ -11,6 +11,7 @@
 -export([start_link/3,
          start_link/4,
          stop/1,
+         v1_ack/2,
          status/1, status/2]).
 
 -define(SERVER, ?MODULE).
@@ -34,6 +35,8 @@
                 proto,      % protocol version negotiated
                 deliver_fun,% Deliver function
                 sent_seq,   % last sequence sent
+                v1_offset = 0,
+                v1_seq_map = [],
                 objects = 0}).   % number of objects sent - really number of pulls as could be multiobj
 
 start_link(Remote, Transport, Socket) ->
@@ -44,6 +47,11 @@ start_link(Remote, Transport, Socket, Version) ->
 
 stop(Pid) ->
     gen_server:call(Pid, stop).
+
+%% @doc v1 sinks requir fully sequential sequence numbers sent. The outgoing
+%% Seq's are munged, and thus must be munged back when the sink replies.
+v1_ack(Pid, Seq) ->
+    gen_server:cast(Pid, {v1_ack, Seq}).
 
 status(Pid) ->
     status(Pid, app_helper:get_env(riak_repl, riak_repl2_rtsource_helper_status_to, 5000)).
@@ -77,6 +85,16 @@ handle_call(status, _From, State =
     {reply, [{sent_seq, SentSeq},
              {objects, Objects}], State}.
 
+handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
+    case orddict:find(Seq, Map) of
+        error ->
+            ok;
+        {ok, RealSeq} ->
+            riak_repl2_rtq:ack(State#state.remote, RealSeq)
+    end,
+    Map2 = orddict:erase(Seq, Map),
+    {noreply, State#state{v1_seq_map = Map2}};
+
 handle_cast(_Msg, State) ->
     %% TODO: Log unhandled message
     {noreply, State}.
@@ -97,7 +115,7 @@ async_pull(#state{remote = Remote, deliver_fun = Deliver}) ->
     riak_repl2_rtq:pull(Remote, Deliver).
 
 maybe_send(Transport, Socket, QEntry, State) ->
-    {Seq, _NumObjects, _BinObjs, Meta} = QEntry,
+    {_Seq, _NumObjects, _BinObjs, Meta} = QEntry,
     #state{remote = Remote} = State,
     Routed = get_routed(Meta),
     case lists:member(Remote, Routed) of
@@ -108,16 +126,22 @@ maybe_send(Transport, Socket, QEntry, State) ->
             State;
         false ->
             QEntry2 = fix_meta(QEntry, Remote),
-            Encoded = encode(QEntry2, State#state.proto),
+            {Encoded, State2} = encode(QEntry2, State),
             ?dbg("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
             Transport:send(Socket, Encoded),
-            State
+            State2
     end.
 
-encode({Seq, _NumObjs, BinObjs, _Meta}, {1,0}) ->
-    riak_repl2_rtframe:encode(objects, {Seq, BinObjs});
-encode({Seq, _NumbOjbs, BinObjs, Meta}, {2,0}) ->
-    riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}).
+encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = {1,0}}) ->
+    Skips = orddict:fetch(skip_count, Meta),
+    Offset = State#state.v1_offset + Skips,
+    Seq2 = Seq - Offset,
+    V1Map = orddict:store(Seq2, Seq, State#state.v1_seq_map),
+    Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs}),
+    State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
+    {Encoded, State2};
+encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = {2,0}}) ->
+    {riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}), State}.
 
 get_routed(Meta) ->
     meta_get(routed_clusters, [], Meta).

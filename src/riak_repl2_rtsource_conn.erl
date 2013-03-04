@@ -218,10 +218,13 @@ recv(TcpBin, State = #state{remote = Name}) ->
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
-        {ok, {ack, Seq}, Cont} ->
+        {ok, {ack, Seq}, Cont} when State#state.proto == {2,0} ->
             %% TODO: report this better per-remote
             riak_repl_stats:objects_sent(),
             ok = riak_repl2_rtq:ack(Name, Seq),
+            recv(Cont, State);
+        {ok, {ack, Seq}, Cont} ->
+            riak_repl2_rtsource_helper:v1_ack(State#state.helper_pid, Seq),
             recv(Cont, State);
         {error, Reason} ->
             %% Something bad happened
