@@ -14,16 +14,17 @@
 %% send a message every KEEPALIVE seconds to make sure the service is running on the sink
 -define(KEEPALIVE, 1000).
 
--record(state, {
-                transport,
-                socket,
-                ip,
-                other_cluster,
-                connection_ref,
-                worker,
-                client,
-                keepalive_timer
-                }).
+-record(state, 
+        {
+          transport,
+          socket,
+          ip,
+          other_cluster,
+          connection_ref,
+          worker,
+          client,
+          keepalive_timer
+        }).
 
 start_link(Cluster) ->
     gen_server:start_link(?MODULE, Cluster, []).
@@ -119,10 +120,11 @@ handle_info({Proto, Socket, Data},
 handle_info(_Msg, State) ->
     {noreply, State}.
 
-handle_msg(get_cluster_id, State=#state{transport=Transport, socket=Socket}) ->
+handle_msg(get_cluster_info, State=#state{transport=Transport, socket=Socket}) ->
+    ThisClusterName = riak_core_connection:symbolic_clustername(),
     ClusterID = riak_core_cluster_mgr:get_cluster_id(),
-    lager:info("ClusterID=~p",[ClusterID]),
-    Data = term_to_binary({get_cluster_id_resp, ClusterID}),
+    lager:info("Cluster ID=~p, Cluster Name = ~p",[ClusterID, ThisClusterName]),
+    Data = term_to_binary({get_cluster_info_resp, ClusterID, ThisClusterName}),
     Transport:send(Socket, Data),
     {noreply, State};
 

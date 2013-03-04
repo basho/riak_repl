@@ -10,14 +10,15 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3, provider_cluster_id/1]).
+         terminate/2, code_change/3, provider_cluster_info/1]).
 
 -record(state, {
           transport,
           socket,
           cluster,
           proxy_gets = [],
-          remote_cluster_id=nocluster,
+          remote_cluster_id=undefined,          
+          remote_cluster_name=undefined,
           leader_mref=undefined
          }).
 
@@ -52,8 +53,8 @@ proxy_get(Pid, Bucket, Key, Options) ->
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
-provider_cluster_id(Pid) ->
-    gen_server:call(Pid, provider_cluster_id).
+provider_cluster_info(Pid) ->
+    gen_server:call(Pid, provider_cluster_info).
 
 %% gen server
 
@@ -78,9 +79,9 @@ handle_call({proxy_get, Bucket, Key, Options}, From,
     Data = term_to_binary({proxy_get, Ref, Bucket, Key, Options}),
     Transport:send(Socket, Data),
     {noreply, State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets]}};
-handle_call(provider_cluster_id, _From,
-            State=#state{remote_cluster_id=ClusterID}) ->
-    {reply, ClusterID, State};
+handle_call(provider_cluster_info, _From,
+            State=#state{remote_cluster_id=ClusterID, remote_cluster_name=ClusterName}) ->
+    {reply, {ClusterID, ClusterName}, State};
 handle_call(legacy_status, _From, State=#state{socket=_Socket}) ->
     Desc = [ {proxy_get, no_stats}],
     {reply, Desc, State};
@@ -133,20 +134,22 @@ handle_info({Proto, Socket, Data},
                         gen_server:reply(From, Resp),
                         {noreply, State#state{proxy_gets=ProxyGets}}
                 end;
-            {get_cluster_id_resp, ClusterID} ->
+            {get_cluster_info_resp, ClusterID, RemoteClusterName} ->
                 RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
-                {noreply, State#state{remote_cluster_id=RemoteClusterID}};
+                lager:info("Remote cluster id = ~p", [RemoteClusterID]),
+                lager:info("Remote cluster name = ~p", [RemoteClusterName]),
+                {noreply, State#state{remote_cluster_id=RemoteClusterID,
+                                      remote_cluster_name=RemoteClusterName}};
             _ ->
                 {noreply, State}
         end,
     Reply;
 handle_info(init_ack, State=#state{socket=Socket, transport=Transport}) ->
     Transport:setopts(Socket, [{active, once}]),
-
-    Data = term_to_binary(get_cluster_id),
+    Data = term_to_binary(get_cluster_info),
     Transport:send(Socket, Data),
-
     {noreply, State};
+
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -156,11 +159,8 @@ terminate(_Reason, #state{}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-pg_proxy_name(Remote) ->
-    list_to_atom("pg_proxy_" ++ Remote).
-
 make_pg_proxy(Remote) -> 
-    Name = pg_proxy_name(Remote),
+    Name = riak_repl_util:make_pg_proxy_name(Remote),
     {Name, {riak_repl2_pg_proxy, start_link, [Name]},
         transient, 5000, worker, [riak_repl2_pg_proxy, pg_proxy]}.
 
@@ -171,7 +171,7 @@ register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->
             erlang:demonitor(M)
     end,
     Leader = riak_core_cluster_mgr:get_leader(),        
-    ProxyForCluster = pg_proxy_name(Cluster),
+    ProxyForCluster = riak_repl_util:make_pg_proxy_name(Cluster),
     Child = [{Remote, Pid} || {Remote, Pid, _, _} <-
         supervisor:which_children({riak_repl2_pg_proxy_sup, Leader}), 
                       is_pid(Pid),

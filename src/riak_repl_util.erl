@@ -42,7 +42,8 @@
          format_ip_and_port/2,
          safe_pid_to_list/1,
          peername/2,
-         sockname/2
+         sockname/2,
+         make_pg_proxy_name/1
      ]).
 
 make_peer_info() ->
@@ -688,3 +689,5 @@ sockname(Socket, Transport) ->
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
+make_pg_proxy_name(Remote) ->
+    list_to_atom("pg_proxy_" ++ Remote).
