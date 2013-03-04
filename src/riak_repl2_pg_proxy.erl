@@ -48,12 +48,17 @@ init(ProxyName) ->
     erlang:register(ProxyName, self()),
     {ok, #state{}}.
 
-handle_call({proxy_get, _Bucket, _Key, _Options}, _From, #state{pg_node=Node} = State) ->
+handle_call({proxy_get, Bucket, Key, GetOptions}, _From, #state{pg_node=Node} = State) ->
     case Node of 
-        undefined -> lager:error("No proxy_get node registered");
-        N -> lager:info("PG_PROXY says hello w/ node ~p", [N])
-    end,
-    {reply, ok, State};
+        undefined -> 
+	    lager:error("No proxy_get node registered"),
+	    {reply, ok, State};	    
+        N -> 
+	    lager:info("PG_PROXY says hello w/ node ~p", [N]),
+	    RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
+	    Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
+	    {reply, Result, State}
+    end;
 
 handle_call({register, ClusterName, Node}, _From, State) ->
     lager:info("registered node for cluster name ~p", [ClusterName]),

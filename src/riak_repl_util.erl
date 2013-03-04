@@ -51,7 +51,8 @@
          sockname/2,
          deduce_wire_version_from_proto/1,
          encode_obj_msg/2,
-         make_pg_proxy_name/1
+         make_pg_proxy_name/1,
+         make_pg_name/1
      ]).
 
 -export([wire_version/1,
@@ -709,6 +710,12 @@ sockname(Socket, Transport) ->
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
+make_pg_proxy_name(Remote) ->
+    list_to_atom("pg_proxy_" ++ Remote).
+
+make_pg_name(Remote) ->
+    list_to_atom("pg_requester_" ++ Remote).
+
 deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
     %% if common protocols are both >= 1.1, then we know the new binary wire protocol
     case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
@@ -878,6 +885,4 @@ do_wire_list_w1_test() ->
 
 -endif.
 
-make_pg_proxy_name(Remote) ->
-    list_to_atom("pg_proxy_" ++ Remote).
 
