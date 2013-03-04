@@ -17,7 +17,7 @@
           socket,
           cluster,
           proxy_gets = [],
-          remote_cluster_id=undefined,          
+          remote_cluster_id=undefined,    
           remote_cluster_name=undefined,
           leader_mref=undefined
          }).
@@ -138,6 +138,9 @@ handle_info({Proto, Socket, Data},
                 RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
                 lager:info("Remote cluster id = ~p", [RemoteClusterID]),
                 lager:info("Remote cluster name = ~p", [RemoteClusterName]),
+		RegName = riak_repl_util:make_pg_name(RemoteClusterName),
+		lager:info("RegName = ~p",[RegName]),
+		erlang:register(RegName, self()),
                 {noreply, State#state{remote_cluster_id=RemoteClusterID,
                                       remote_cluster_name=RemoteClusterName}};
             _ ->

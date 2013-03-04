@@ -109,7 +109,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                                                                GetOptions)
                         end
             end,
-                
+	    lager:info("RESULT = ~p", [Result]),
             case Result of
                 notconnected ->
                     lager:info("not connected to cluster ~p", [CName]),
