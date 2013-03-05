@@ -48,7 +48,7 @@ init(Cluster) ->
     lager:info("proxy_get connecting to remote ~p", [Cluster]),
     case riak_core_connection_mgr:connect({proxy_get, Cluster}, ClientSpec) of
         {ok, Ref} ->
-            lager:info("proxy_get connection ref ~p", [Ref]),
+            lager:debug("proxy_get connection ref ~p", [Ref]),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Reason}->
             lager:warning("Error connecting to remote"),            
@@ -74,23 +74,23 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
                   client=Client,
                   keepalive_timer=TRef
                  }};
-
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
+
 handle_cast({connect_failed, _Pid, Reason},
             State = #state{other_cluster = Cluster}) ->
-    lager:info("proxy_get connection to cluster ~p failed ~p",
+    lager:warning("proxy_get connection to cluster ~p failed ~p",
         [Cluster, Reason]),
     {stop, foo, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+
 handle_info(keepalive, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(stay_awake),
     Transport:send(Socket, Data),
     {noreply, State};
-
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
     {stop, socket_closed, State};
@@ -110,24 +110,19 @@ handle_info({Proto, Socket, Data},
     Transport:setopts(Socket, [{active, once}]),
     timer:cancel(TRef),    
     Msg = binary_to_term(Data),
-
     %% restart the timer after each message has been processed
     State = State0#state{keepalive_timer=keepalive_timer()},
-    %% none of the messages return anything useful, 
-    %% so always return {noreply, State}
     handle_msg(Msg, State);
-
 handle_info(_Msg, State) ->
     {noreply, State}.
 
 handle_msg(get_cluster_info, State=#state{transport=Transport, socket=Socket}) ->
     ThisClusterName = riak_core_connection:symbolic_clustername(),
     ClusterID = riak_core_cluster_mgr:get_cluster_id(),
-    lager:info("Cluster ID=~p, Cluster Name = ~p",[ClusterID, ThisClusterName]),
+    lager:debug("Cluster ID=~p, Cluster Name = ~p",[ClusterID, ThisClusterName]),
     Data = term_to_binary({get_cluster_info_resp, ClusterID, ThisClusterName}),
     Transport:send(Socket, Data),
     {noreply, State};
-
 handle_msg({proxy_get, Ref, Bucket, Key, Options},
             State=#state{transport=Transport, socket=Socket}) ->
     lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),

@@ -50,7 +50,6 @@ start(_Type, _StartArgs) ->
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_repl_cinfo),
 
-
     %% Spin up supervisor
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
@@ -66,9 +65,6 @@ start(_Type, _StartArgs) ->
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
-            %% pg_proxy will follow the leader
-            riak_repl2_leader:register_notify_fun(
-                fun riak_repl2_pg_proxy_sup:set_leader/2),
             name_this_cluster(),
             riak_core_node_watcher:service_up(riak_repl, Pid),
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),

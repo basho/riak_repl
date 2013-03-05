@@ -10,14 +10,14 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3, proxy_get/4, register_pg_node/2]).
+	 terminate/2, code_change/3, proxy_get/4, register_pg_node/2]).
 
 -define(SERVER, ?MODULE).
 
 -record(state, {
-          source_cluster = undefined,
-          pg_node = undefined
-         }).
+	  source_cluster = undefined,
+	  pg_node = undefined
+	 }).
 
 %%%===================================================================
 %%% API
@@ -26,7 +26,7 @@ proxy_get(Pid, Bucket, Key, Options) ->
     gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
 
 register_pg_node(Pid, Node) ->
-    gen_server:call(Pid, {register, Node}). 
+    gen_server:call(Pid, {register, Node}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -36,7 +36,6 @@ register_pg_node(Pid, Node) ->
 %%--------------------------------------------------------------------
 -spec start_link(ProxyName :: string()) -> {'ok', pid()}.
 start_link(ProxyName) ->
-    lager:info("riak_repl2_pg_proxy proxy name ~p",[ProxyName]),
     gen_server:start_link(?MODULE, ProxyName, []).
 
 %%%===================================================================
@@ -44,24 +43,23 @@ start_link(ProxyName) ->
 %%%===================================================================
 
 init(ProxyName) ->
-    lager:info("Registering ~p", [ProxyName]),
+    lager:debug("Registering pg_proxy ~p", [ProxyName]),
     erlang:register(ProxyName, self()),
     {ok, #state{}}.
 
 handle_call({proxy_get, Bucket, Key, GetOptions}, _From, #state{pg_node=Node} = State) ->
-    case Node of 
-        undefined -> 
-	    lager:error("No proxy_get node registered"),
-	    {reply, ok, State};	    
-        N -> 
-	    lager:info("PG_PROXY says hello w/ node ~p", [N]),
+    case Node of
+	undefined ->
+	    lager:warning("No proxy_get node registered"),
+	    {reply, ok, State};
+	N ->
 	    RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
-	    Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
+            Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
 	    {reply, Result, State}
     end;
 
 handle_call({register, ClusterName, Node}, _From, State) ->
-    lager:info("registered node for cluster name ~p", [ClusterName]),
+    lager:debug("registered node for cluster name ~p", [ClusterName]),
     NewState = State#state{pg_node = Node, source_cluster=ClusterName},
     {reply, ok, NewState}.
 
@@ -76,7 +74,3 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================

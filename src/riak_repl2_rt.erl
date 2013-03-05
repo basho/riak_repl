@@ -194,7 +194,7 @@ handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
     {noreply, State#state{sinks = Sinks2}};
 handle_info(Msg, State) ->
     %%TODO: Log unhandled message - e.g. timed out status result
-    lager:warn("unhandled message - e.g. timed out status result: ~p", Msg),
+    lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
     
 terminate(_Reason, _State) ->
