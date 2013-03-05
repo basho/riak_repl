@@ -5,7 +5,7 @@
 -export([start_link/0, enable/1, enabled/0, disable/1]).
 -export([init/1]).
 
--define(SHUTDOWN, 5000). % how long to give rtsource processes to persist queue/shutdown
+-define(SHUTDOWN, 5000).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).

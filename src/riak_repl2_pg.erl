@@ -56,8 +56,8 @@ ensure_pg(WantEnabled0) ->
                 Remote <- ToEnable],
             [riak_repl2_pg_block_provider_sup:disable(Remote) ||
                 Remote <- ToDisable],
-            lager:info("ToEnable: ~p", [ToEnable]),
-            lager:info("ToDisable: ~p", [ToDisable]),
+            lager:debug("ToEnable: ~p", [ToEnable]),
+            lager:debug("ToDisable: ~p", [ToDisable]),
             [{enabled, ToEnable},
              {disabled, ToDisable}]
     end.
@@ -77,7 +77,7 @@ handle_call(status, _From, State) ->
     {reply, Status, State}.
 
 handle_cast(Msg, State) ->
-    lager:info("Proxy-get received an unknown cast: ~p", [Msg]),
+    lager:warning("Proxy-get received an unknown cast: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, SinkPid, _Reason}, 
@@ -85,7 +85,7 @@ handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
     Sinks2 = Sinks -- [SinkPid],
     {noreply, State#state{sinks = Sinks2}};
 handle_info(Msg, State) ->
-    lager:warn("unhandled message - e.g. timed out status result: ~p", Msg),
+    lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
