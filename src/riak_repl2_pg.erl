@@ -44,7 +44,7 @@ disable(Remote) ->
 
 ensure_pg(WantEnabled0) ->
     WantEnabled = lists:usort(WantEnabled0),
-    Enabled = riak_repl2_pg_block_provider_sup:enabled(),
+    Enabled = [Remote || {Remote, _Pid} <- riak_repl2_pg_block_provider_sup:enabled()],
     ToEnable  = WantEnabled -- Enabled,
     ToDisable = Enabled -- WantEnabled,
 
@@ -52,12 +52,12 @@ ensure_pg(WantEnabled0) ->
         [] ->
             [];
         _ ->
+            lager:debug("ToEnable: ~p", [ToEnable]),
+            lager:debug("ToDisable: ~p", [ToDisable]),
             [riak_repl2_pg_block_provider_sup:enable(Remote) ||
                 Remote <- ToEnable],
             [riak_repl2_pg_block_provider_sup:disable(Remote) ||
-                Remote <- ToDisable],
-            lager:debug("ToEnable: ~p", [ToEnable]),
-            lager:debug("ToDisable: ~p", [ToDisable]),
+                Remote<- ToDisable],
             [{enabled, ToEnable},
              {disabled, ToDisable}]
     end.
