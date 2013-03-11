@@ -66,9 +66,10 @@ process(#rpbreplgetclusteridreq{}, State) ->
     {reply, #rpbreplgetclusteridresp{cluster_id = ClusterId}, State};
 %% @doc Return Key/Value pair, derived from the KV version
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
-                   basic_quorum=BQ, if_modified=VClock,
-                   head=Head, deletedvclock=DeletedVClock, cluster_id=CName},
-            #state{client=C} = State) ->
+                       basic_quorum=BQ, if_modified=VClock,
+                       head=Head, deletedvclock=DeletedVClock, 
+                       cluster_id=CName},
+        #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
     lager:info("doing replicated GET using cluster id ~p", [CName]),
@@ -85,31 +86,37 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             %% be properly overwritten
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
-            %% find connection by cluster_id
-            CNames = case lists:member(mode_repl13,
-                                       State#state.repl_modes) of
-                true -> get_client_cluster_names_13();
-                false -> get_client_cluster_names_12()
-            end,
-            Result =
-                case lists:keyfind(CName, 2, CNames) of
+            %% find connection by cluster_id            
+            lager:info("CName = ~p", [ CName ]),
+            Modes = State#state.repl_modes,
+            Repl12Enabled = riak_repl_util:mode_12_enabled(Modes),
+            Repl13Enabled = riak_repl_util:mode_13_enabled(Modes),
+            Result12 = 
+                case Repl12Enabled of
+                    true -> 
+                        CNames12 = get_client_cluster_names_12(),                    
+                        lager:info("CNames12 = ~p", [ CNames12 ]),
+                        proxy_get_12(CName, CNames12, B, K, GetOptions);
                     false -> 
-                        notconnected;
-                    {ClientPid, _ClusterID} ->
-                        riak_repl_tcp_client:proxy_get(ClientPid, B, K,
-                                                       GetOptions);
-                    {ClientPid, _ClusterID, ClusterName} ->
-                        case lists:member(mode_repl13, State#state.repl_modes) of
-                            true -> 
-                                Leader = riak_core_cluster_mgr:get_leader(),        
-                                ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
-                                gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions});
-                            false -> 
-                                riak_repl_tcp_client:proxy_get(ClientPid, B, K,
-                                                               GetOptions)
-                        end
-            end,
-	    lager:info("RESULT = ~p", [Result]),
+                        notconnected
+                end,
+            Result13 = 
+                case Repl13Enabled of
+                    true -> 
+                        CNames13 = get_client_cluster_names_13(),
+                        lager:info("CNames13 = ~p", [ CNames13 ]),
+                        proxy_get_13(State, CName, CNames13, B, K, GetOptions);
+                    false -> 
+                        notconnected
+                end,     
+            lager:info("Result12 = ~p", [ Result12 ]),
+            lager:info("Result13 = ~p", [ Result13 ]),
+            Result = 
+                case {Result12, Result13} of
+                    {notconnected, Value} -> Value;
+                    {Value, notconnected} -> Value;
+                    _ -> notconnected
+                end,
             case Result of
                 notconnected ->
                     lager:info("not connected to cluster ~p", [CName]),
@@ -137,6 +144,31 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
 process_stream(_,_,State) ->
     {ignore, State}.
 
+proxy_get_12(CName, CNames, B, K, GetOptions) ->
+    case lists:keyfind(CName, 2, CNames) of
+        false ->
+            notconnected;
+        {ClientPid, _ClusterID} ->
+            lager:info("Using 1.2 proxy_get (A)"),
+            riak_repl_tcp_client:proxy_get(ClientPid, B, K,
+                                           GetOptions)
+    end.
+
+proxy_get_13(State, CName, CNames, B, K, GetOptions) ->
+    case lists:keyfind(CName, 2, CNames) of
+        false ->
+            notconnected;
+        {_ClientPid, _ClusterID, ClusterName} ->
+            case lists:member(mode_repl13, State#state.repl_modes) of
+                true -> 
+                    Leader = riak_core_cluster_mgr:get_leader(),        
+                    ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
+                    gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions});
+                false ->
+                    notconnected
+            end
+    end.
+                                                          
 
 %%%%%%%%%%%%%%%%%%%%%
 %% Internal functions

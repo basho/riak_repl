@@ -52,7 +52,9 @@
          deduce_wire_version_from_proto/1,
          encode_obj_msg/2,
          make_pg_proxy_name/1,
-         make_pg_name/1
+         make_pg_name/1,
+         mode_12_enabled/1,
+         mode_13_enabled/1
      ]).
 
 -export([wire_version/1,
@@ -680,6 +682,11 @@ get_hooks_for_modes() ->
     Modes = riak_repl_console:get_modes(),
     [ proplists:get_value(K,?REPL_MODES)
      || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
+
+mode_12_enabled(ReplModes) ->
+    lists:member(mode_repl12, ReplModes). 
+mode_13_enabled(ReplModes) ->
+    lists:member(mode_repl13, ReplModes). 
 
 format_ip_and_port(Ip, Port) when is_list(Ip) ->
     lists:flatten(io_lib:format("~s:~p",[Ip,Port]));
