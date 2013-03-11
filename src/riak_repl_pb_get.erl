@@ -67,7 +67,7 @@ process(#rpbreplgetclusteridreq{}, State) ->
 %% @doc Return Key/Value pair, derived from the KV version
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                        basic_quorum=BQ, if_modified=VClock,
-                       head=Head, deletedvclock=DeletedVClock, 
+                       head=Head, deletedvclock=DeletedVClock,
                        cluster_id=CName},
         #state{client=C} = State) ->
     R = decode_quorum(R0),
@@ -86,32 +86,32 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             %% be properly overwritten
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
-            %% find connection by cluster_id            
+            %% find connection by cluster_id
             lager:info("CName = ~p", [ CName ]),
             Modes = State#state.repl_modes,
             Repl12Enabled = riak_repl_util:mode_12_enabled(Modes),
             Repl13Enabled = riak_repl_util:mode_13_enabled(Modes),
-            Result12 = 
+            Result12 =
                 case Repl12Enabled of
-                    true -> 
-                        CNames12 = get_client_cluster_names_12(),                    
+                    true ->
+                        CNames12 = get_client_cluster_names_12(),
                         lager:info("CNames12 = ~p", [ CNames12 ]),
                         proxy_get_12(CName, CNames12, B, K, GetOptions);
-                    false -> 
+                    false ->
                         notconnected
                 end,
-            Result13 = 
+            Result13 =
                 case Repl13Enabled of
-                    true -> 
+                    true ->
                         CNames13 = get_client_cluster_names_13(),
                         lager:info("CNames13 = ~p", [ CNames13 ]),
                         proxy_get_13(State, CName, CNames13, B, K, GetOptions);
-                    false -> 
+                    false ->
                         notconnected
-                end,     
+                end,
             lager:info("Result12 = ~p", [ Result12 ]),
             lager:info("Result13 = ~p", [ Result13 ]),
-            Result = 
+            Result =
                 case {Result12, Result13} of
                     {notconnected, Value} -> Value;
                     {Value, notconnected} -> Value;
@@ -134,7 +134,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                     {reply, #rpbgetresp{}, State};
                 {error, Reason} ->
                     {error, {format,Reason}, State}
-            end;              
+            end;
         {error, Reason} ->
             {error, {format,Reason}, State}
     end.
@@ -160,15 +160,15 @@ proxy_get_13(State, CName, CNames, B, K, GetOptions) ->
             notconnected;
         {_ClientPid, _ClusterID, ClusterName} ->
             case lists:member(mode_repl13, State#state.repl_modes) of
-                true -> 
-                    Leader = riak_core_cluster_mgr:get_leader(),        
+                true ->
+                    Leader = riak_core_cluster_mgr:get_leader(),
                     ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
                     gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions});
                 false ->
                     notconnected
             end
     end.
-                                                          
+
 
 %%%%%%%%%%%%%%%%%%%%%
 %% Internal functions
@@ -246,4 +246,3 @@ client_cluster_names_13() ->
         P /= undefined,
         {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
     ].
-
