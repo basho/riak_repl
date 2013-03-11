@@ -684,9 +684,9 @@ get_hooks_for_modes() ->
      || K <- Modes, proplists:is_defined(K,?REPL_MODES)].
 
 mode_12_enabled(ReplModes) ->
-    lists:member(mode_repl12, ReplModes). 
+    lists:member(mode_repl12, ReplModes).
 mode_13_enabled(ReplModes) ->
-    lists:member(mode_repl13, ReplModes). 
+    lists:member(mode_repl13, ReplModes).
 
 format_ip_and_port(Ip, Port) when is_list(Ip) ->
     lists:flatten(io_lib:format("~s:~p",[Ip,Port]));
