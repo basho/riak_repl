@@ -43,7 +43,7 @@
 
 %% Register with service manager
 register_service() ->
-    ProtoPrefs = {realtime,[{1,1}]},
+    ProtoPrefs = {realtime,[{2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -89,7 +89,7 @@ init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OkProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:debug("RT sink connection negotiated ~p wire format from proto", [Ver, Proto]),
+    lager:debug("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
@@ -142,13 +142,14 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 %% Note pattern patch on Ref
-handle_cast({ack, Ref, Seq}, State = #state{transport = T, socket = S, 
+handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S, 
                                             seq_ref = Ref,
                                             acked_seq = AckedTo,
                                             completed = Completed}) ->
     %% Worker pool has completed the put, check the completed
     %% list and work out where we can ack back to
-    case ack_to(AckedTo, ordsets:add_element(Seq, Completed)) of
+    %case ack_to(AckedTo, ordsets:add_element(Seq, Completed)) of
+    case ack_to(AckedTo, insert_completed(Seq, Skips, Completed)) of
         {AckedTo, Completed2} ->
             {noreply, State#state{completed = Completed2}};
         {AckTo, Completed2}  ->
@@ -156,7 +157,7 @@ handle_cast({ack, Ref, Seq}, State = #state{transport = T, socket = S,
             T:send(S, TcpIOL),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
     end;
-handle_cast({ack, Ref, Seq}, State) ->
+handle_cast({ack, Ref, Seq, _Skips}, State) ->
     %% Nothing to send, it's old news.
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
     {noreply, State}.
@@ -221,21 +222,48 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
         {ok, heartbeat, Cont} ->
             T:send(S, riak_repl2_rtframe:encode(heartbeat, undefined)),
             recv(Cont, State#state{hb_last = os:timestamp()});
+        {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
+            recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
         {error, Reason} ->
             %% TODO: Log Something bad happened
             riak_repl_stats:rt_sink_errors(),
             {stop, {framing, Reason}, State}
     end.
 
+make_donefun({Binary, Meta}, Me, Ref, Seq) ->
+    Done = fun() ->
+        Skips = orddict:fetch(skip_count, Meta),
+        gen_server:cast(Me, {ack, Ref, Seq, Skips}),
+        maybe_push(Binary, Meta)
+    end,
+    {Done, Binary};
+make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
+    Done = fun() ->
+        gen_server:cast(Me, {ack, Ref, Seq, 0})
+    end,
+    {Done, Binary}.
+
+maybe_push(Binary, Meta) ->
+    case app_helper:get_env(riak_repl, realtime_cascades, always) of
+        never ->
+            lager:debug("Skipping cascade due to app env setting"),
+            ok;
+        always ->
+          lager:debug("app env either set to always, or in default; doing cascade"),
+          List = riak_repl_util:from_wire(Binary),
+          Meta2 = orddict:erase(skip_count, Meta),
+          riak_repl2_rtq:push(length(List), Binary, Meta2)
+    end.
+
 %% Note match on Seq
-do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
+do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               helper = Helper,
                                               seq_ref = Ref,
                                               expect_seq = Seq,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    DoneFun = fun() -> gen_server:cast(Me, {ack, Ref, Seq}) end,
+    {DoneFun, BinObjs} = make_donefun(BinObjsMeta, Me, Ref, Seq),
     riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver),
     State2 = case AckedSeq of
                  undefined ->
@@ -253,8 +281,7 @@ do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
         _ ->
             State2
     end;
-do_write_objects(Seq, BinObjs, State = #state{expect_seq = ExpSeq,
-                                              source_drops = SourceDrops}) ->
+do_write_objects(Seq, BinObjs, State) ->
     %% Did not get expected sequence.
     %%
     %% If the source dropped (rtq consumer behind tail of queue), there
@@ -263,22 +290,26 @@ do_write_objects(Seq, BinObjs, State = #state{expect_seq = ExpSeq,
     %%
     %% If the sequence number wrapped?  don't worry about acks, happens infrequently.
     %%
+    State2 = reset_ref_seq(Seq, State),
+    do_write_objects(Seq, BinObjs, State2).
+
+insert_completed(Seq, Skipped, Completed) ->
+    Foldfun = fun(N, Acc) ->
+        ordsets:add_element(N, Acc)
+    end,
+    lists:foldl(Foldfun, Completed, lists:seq(Seq - Skipped, Seq)).
+
+reset_ref_seq(Seq, State) ->
+    #state{source_drops = SourceDrops, expect_seq = ExpSeq} = State,
     NewSeqRef = make_ref(),
     SourceDrops2 = case ExpSeq of
-                       undefined -> % no need to tell user about first time through
-                           SourceDrops;
-                       _ ->
-                           SourceDrops + Seq - ExpSeq
-                  end,
-    do_write_objects(Seq, BinObjs, State#state{seq_ref = NewSeqRef,
-                                               expect_seq = Seq,
-                                               acked_seq = Seq - 1,
-                                               completed = [],
-                                               source_drops = SourceDrops2}).
-                                               
-    
-    
-    
+        undefined -> % no need to tell user about first time through
+            SourceDrops;
+        _ ->
+            SourceDrops + Seq - ExpSeq
+    end,
+    State#state{seq_ref = NewSeqRef, expect_seq = Seq, acked_seq = Seq - 1,
+        completed = [], source_drops = SourceDrops2}.
 
 %% Work out the highest sequence number that can be acked
 %% and return it, completed always has one or more elements on first

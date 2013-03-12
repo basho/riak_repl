@@ -45,6 +45,10 @@ start(_Type, _StartArgs) ->
     riak_core_capability:register({riak_repl, bloom_fold},
                                   [true, false], %% prefer to use bloom_fold in new code
                                   false),        %% the default is false for legacy code
+    % If the realtime queue supports meta data on queued objects. This was a
+    % feature introduced for cascading realtime.
+    riak_core_capability:register({riak_repl, rtq_meta},
+        [true, false], false),
 
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of

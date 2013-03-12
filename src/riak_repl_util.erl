@@ -765,16 +765,14 @@ make_pg_proxy_name(Remote) ->
 make_pg_name(Remote) ->
     list_to_atom("pg_requester_" ++ Remote).
 
-deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
-    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
-        true ->
-            %% new sink. yay! new wire protocol supported.
-            w1;
-        _False ->
-            %% old sink mandates old wire protocol only.
-            w0
-    end.
+% everything from version 1.1 and up should use the new binary objects
+deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 1 ->
+    w1;
+deduce_wire_version_from_proto({_Proto, {_CommonMajor, CMinor}, {_CommonMajor, HMinor}}) when CMinor >= 5 andalso HMinor >= 5 ->
+    w1;
+% legacy wire binary packing.
+deduce_wire_version_from_proto({_Proto, _Client, _Host}) ->
+    w0.
 
 %% Typically, Cmd :: fs_diff_obj | diff_obj
 encode_obj_msg(V, {Cmd, RObj}) ->

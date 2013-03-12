@@ -9,7 +9,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start/0, start_link/0, push/2]).
+-export([start/0, start_link/0, push/2, push/3]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -20,7 +20,9 @@
          code_change/3]).
 
 -record(state, {nodes=[],          %% peer replication nodes
-                versions=[]}).     %% {node(), wire-version()}
+                versions=[],     %% {node(), wire-version()}
+                meta_support=[] :: [{node(), bool()}]
+                }).
 
 %%%===================================================================
 %%% API
@@ -37,7 +39,10 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 push(NumItems, Bin) ->
-    gen_server:cast(?MODULE, {push, NumItems, Bin}).
+    push(NumItems, Bin, []).
+
+push(NumItems, Bin, Meta) ->
+    gen_server:cast(?MODULE, {push, NumItems, Bin, Meta}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -50,25 +55,34 @@ init([]) ->
     [erlang:monitor(process, {riak_repl2_rtq, Node}) || Node <- Nodes],
     %% cache the supported wire format of peer nodes to avoid rcp calls later.
     Versions = get_peer_wire_versions(Nodes),
-    {ok, #state{nodes=Nodes, versions=Versions}}.
+    Metas = get_peer_meta_support(Nodes),
+    {ok, #state{nodes=Nodes, versions=Versions, meta_support = Metas}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
-handle_cast({push, NumItems, _Bin}, State = #state{nodes=[]}) ->
+% we got a push from an older process/node, so upgrade it and retry.
+handle_cast({push, NumItems, Bin}, State) ->
+    handle_cast({push, NumItems, Bin, []}, State);
+
+handle_cast({push, NumItems, _Bin, _Meta}, State = #state{nodes=[]}) ->
     lager:warning("No available nodes to proxy ~p objects to~n", [NumItems]),
     catch(riak_repl_stats:rt_source_errors()),
     {noreply, State};
-handle_cast({push, NumItems, W1BinObjs}, State) ->
+handle_cast({push, NumItems, W1BinObjs, Meta}, State) ->
     %% push items to another node for queueing. If the other node does not speak binary
     %% object format, then downconvert the items (if needed) before pushing.
-    Node = hd(State#state.nodes),
-    Nodes = tl(State#state.nodes),
+    [Node | Nodes] = State#state.nodes,
     PeerWireVer = wire_version_of_node(Node, State#state.versions),
     lager:debug("Proxying ~p items to ~p with wire version ~p", [NumItems, Node, PeerWireVer]),
     BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, PeerWireVer),
-    gen_server:cast({riak_repl2_rtq, Node}, {push, NumItems, BinObjs}),
+    case meta_support(Node, State#state.meta_support) of
+        true ->
+            gen_server:cast({riak_repl2_rtq, Node}, {push, NumItems, BinObjs, Meta});
+        false ->
+            gen_server:cast({riak_repl2_rtq, Node}, {push, NumItems, BinObjs})
+    end,
     {noreply, State#state{nodes=Nodes ++ [Node]}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -109,6 +123,18 @@ get_peer_wire_versions(Nodes) ->
           {Node, WireVer}
       end || Node <- Nodes].
 
+get_peer_meta_support(Nodes) ->
+    GetSupport = fun(Node) ->
+        case rpc:call(Node, riak_core_capability, get, [{riak_repl, rtq_meta}, false]) of
+            Bool when is_boolean(Bool) ->
+                {Node, Bool};
+            LolWut ->
+                lager:warning("Could not get a definitive result when querying ~p about it's rtq_meta support: ~p", [Node, LolWut]),
+                {Node, false}
+        end
+    end,
+    lists:map(GetSupport, Nodes).
+
 wire_version_of_node(Node, Versions) ->
     case lists:keyfind(Node, 1, Versions) of
         false ->
@@ -116,4 +142,11 @@ wire_version_of_node(Node, Versions) ->
         {_Node, Ver} ->
             Ver
     end.
-    
+
+meta_support(Node, Metas) ->
+    case lists:keyfind(Node, 1, Metas) of
+        {_Node, Val} ->
+            Val;
+        false ->
+            false
+    end.

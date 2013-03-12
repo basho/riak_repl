@@ -177,6 +177,14 @@ rt_update_events(Ring) ->
             application:set_env(riak_repl, rtenabled, true)
     end,
 
+    RTCascades = case dict:find(realtime_cascades, RC) of
+        error ->
+            always;
+        {ok, RTCascadesFound} ->
+            RTCascadesFound
+    end,
+    application:set_env(riak_repl, realtime_cascades, RTCascades),
+
     %% always 'install' the hook, the postcommit hooks will be toggled by
     %% the rtenabled environment variable
     riak_repl:install_hook().
