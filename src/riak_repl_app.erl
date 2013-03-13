@@ -5,7 +5,8 @@
 -behaviour(application).
 -export([start/2,prep_stop/1,stop/1]).
 
--include("riak_core_connection.hrl").
+-include("riak_core_cluster.hrl").
+-include_lib("riak_core/include/riak_core_connection.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

@@ -7,7 +7,8 @@
 
 -module(riak_core_cluster_conn).
 
--include("riak_core_connection.hrl").
+-include("riak_core_cluster.hrl").
+-include_lib("riak_core/include/riak_core_connection.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
