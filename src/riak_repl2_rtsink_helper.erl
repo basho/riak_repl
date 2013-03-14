@@ -61,5 +61,6 @@ code_change(_OldVsn, State, _Extra) ->
 do_write_objects(BinObjs, DoneFun, Ver) ->
     Worker = poolboy:checkout(riak_repl2_rtsink_pool, true, infinity),
     monitor(process, Worker),
+    lager:debug("writing RT sink data via fullsync worker with Ver = ~p: ~p", [Ver, BinObjs]),
     ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun,
                                               riak_repl2_rtsink_pool, Ver).

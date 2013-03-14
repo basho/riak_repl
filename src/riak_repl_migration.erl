@@ -60,13 +60,19 @@ handle_info({sleep, MaxTimeout}, State = #state{elapsed_sleep = ElapsedSleep}) -
     NewState = State#state{elapsed_sleep = ElapsedSleep + 1000},
     {noreply, NewState}.
 
-drain_queue(false, Peer) ->
+%% Drain the realtime queue and push all objects into a Peer node's input RT queue.
+%% If the handoff node does not understand the new repl wire format, then we need
+%% to downconvert the items into the old "w0" format, otherwise the other node will
+%% send an unsupported object format to its eventual sink node. This is painful to
+%% trace back to here.
+drain_queue(false, Peer, PeerWireVer) ->
     % would have made this a standard function, but I need a closure for the
     % value Peer
     riak_repl2_rtq:pull_sync(qm,
-             fun ({Seq, NumItem, Bin}) ->
+             fun ({Seq, NumItem, W1BinObjs}) ->
                 try
-                    gen_server:cast({riak_repl2_rtq,Peer}, {push, NumItem, Bin}),
+                    BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, PeerWireVer),
+                    gen_server:cast({riak_repl2_rtq,Peer}, {push, NumItem, BinObjs}),
                     %% Note - the next line is casting, not calling.
                     riak_repl2_rtq:ack(qm, Seq)
                 catch
@@ -78,26 +84,31 @@ drain_queue(false, Peer) ->
                         riak_repl_stats:rt_source_errors()
                 end,
              ok end),
-    drain_queue(riak_repl2_rtq:is_empty(qm), Peer);
+    drain_queue(riak_repl2_rtq:is_empty(qm), Peer, PeerWireVer);
 
-drain_queue(true, _Peer) ->
+drain_queue(true, _Peer, _Ver) ->
    done.
 
+%% filter_peers_for_capability(Peers, Cap) ->
+%%     Filter_fun = fun(Peer) -> rpc:call(Peer, riak_core_capability, get, [Cap]) end,
+%%     lists:filter(Filter_fun, Peers).
+
+%% Note: this function assumes that the handoff node supports BNW, which it will, because
+%% "get_peer_repl_nodes()" will only return other BNW nodes.
 queue_handoff(State) ->
-    PeerReplNodes = riak_repl_util:get_peer_repl_nodes(),
-    case length(PeerReplNodes) of
-        0 -> %% TODO: bump up riak_repl_stats dropped_objects stats
+    case riak_repl_util:get_peer_repl_nodes() of
+        [] ->
+            %% TODO: bump up riak_repl_stats dropped_objects stats
             %% should we have a new stat? riak_repl_stats:objects_dropped_no_leader()
             lager:error("No nodes available to migrate replication data"),
             riak_repl_stats:rt_source_errors(),
             {reply, error, State};
-        _N ->
-            lager:info("Starting queue migration"),
+        [Peer|_Rest] ->
             riak_repl2_rtq:register(qm),
-
-            Peer = hd(PeerReplNodes),
-            lager:info("Migrating replication queue data to ~p", [Peer]),
-            drain_queue(riak_repl2_rtq:is_empty(qm), Peer),
+            WireVer = riak_repl_util:peer_wire_format(Peer),
+            lager:info("Migrating replication queue data to ~p with wire version ~p",
+                       [Peer, WireVer]),
+            drain_queue(riak_repl2_rtq:is_empty(qm), Peer, WireVer),
             lager:info("Done migrating replication queue"),
             {reply, ok, State}
         end.
