@@ -117,18 +117,36 @@ status([]) ->
 status(quiet) ->
     status2(false).
 
+safe_get_stats() ->
+    case erlang:whereis(riak_repl_stats) of
+        Pid when is_pid(Pid) -> lists:sort(riak_repl_stats:get_stats());
+        _ -> []
+     end.
+
+safe_get_rtq_stats() ->
+    case erlang:whereis(riak_repl2_rtq) of
+        Pid when is_pid(Pid) -> rtq_stats();
+        _ -> []
+    end.
+
+safe_stats_from_leader(Fun) ->
+    case erlang:whereis(riak_repl_leader_gs) of
+      Pid when is_pid(Pid) -> Fun();
+      _ -> []
+    end.
+
 status2(Verbose) ->
     Config = get_config(),
-    Stats1 = lists:sort(riak_repl_stats:get_stats()),
+    Stats1 = safe_get_stats(),
     RTRemotesStatus = rt_remotes_status(),
     FSRemotesStatus = fs_remotes_status(),
-    LeaderStats = leader_stats(),
-    ClientStats = client_stats(),
-    ServerStats = server_stats(),
-    CoordStats = coordinator_stats(),
-    CoordSrvStats = coordinator_srv_stats(),
-    CMgrStats = cluster_mgr_stats(),
-    RTQStats = rtq_stats(),
+    LeaderStats = safe_stats_from_leader(fun leader_stats/0),
+    ClientStats = safe_stats_from_leader(fun client_stats/0),
+    ServerStats = safe_stats_from_leader(fun server_stats/0),
+    CoordStats = safe_stats_from_leader(fun coordinator_stats/0),
+    CoordSrvStats = safe_stats_from_leader(fun coordinator_srv_stats/0),
+    CMgrStats = safe_stats_from_leader(fun cluster_mgr_stats/0),
+    RTQStats = safe_get_rtq_stats(),
     All =
           RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
