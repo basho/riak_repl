@@ -382,7 +382,6 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
 %% Pause or Cancel
 diff_bloom(Command, #state{diff_pid=Pid} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
-    ?MODULE:stop(Pid),
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
