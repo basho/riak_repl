@@ -653,6 +653,7 @@ cluster_mgr_sites_fun() ->
 %%-------------------------
 
 ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
+    riak_repl_stats:server_connect_errors(),
     lager:error("Failed to accept control channel connection: ~p", [Reason]);
 ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args, Props) ->
     {ok, ClientAddr} = inet:peername(Socket),
