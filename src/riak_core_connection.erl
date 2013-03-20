@@ -123,7 +123,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
     Timeout = ?CONNECTION_SETUP_TIMEOUT,
     Transport = ranch_tcp,
     %%   connect to host's {IP,Port}
-    ?TRACE(?debugFmt("sync_connect: connect to ~p", [{IP,Port}])),
+    lager:info("Connect to ~p at ~p:~p", [ClientProtocol,IP,Port]),
     case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of
         {ok, Socket} ->
             ?TRACE(?debugFmt("Setting system options on client side: ~p", [?CONNECT_OPTIONS])),
@@ -133,6 +133,8 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
             MyCaps = [{clustername, MyName}],
             case exchange_handshakes_with(host, Socket, Transport, MyCaps) of
                 {ok,Props} ->
+                    lager:info("Connected to ~p at ~p:~p with properties ~p",
+                               [ClientProtocol,Port,IP,Props]),
                     %% ask for protocol, see what host has
                     case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
                         {ok,HostProtocol} ->

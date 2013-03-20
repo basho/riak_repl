@@ -235,11 +235,10 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
     State2 = State#state{pending = lists:keystore(Reference, #req.ref,
                                                   State#state.pending,
                                                   Request)},
-    ?TRACE(?debugFmt("Starting connect request to ~p, ref is ~p", [Target, Reference])),
+    lager:info("Starting connect request from ~p to ~p", [ClientSpec, Target]),
     {reply, {ok, Reference}, start_request(Request, State2)};
 
 handle_call({get_endpoint_backoff, Addr}, _From, State) ->
-    ?TRACE(?debugFmt("backing off ~p", [Addr])),
     {reply, {ok, get_endpoint_backoff(Addr, State#state.endpoints)}, State};
 
 handle_call({register_locator, Type, Fun}, _From,
@@ -304,7 +303,7 @@ handle_cast({conmgr_no_endpoints, _Ref}, State) ->
 
 %% helper process says it failed to reach an address.
 handle_cast({endpoint_failed, Addr, Reason, ProtocolId}, State) ->
-    ?TRACE(?debugFmt("Failing endpoint ~p for protocol ~p with reason ~p", [Addr, ProtocolId, Reason])),
+    lager:info("Failing endpoint ~p for protocol ~p with reason ~p", [Addr, ProtocolId, Reason]),
     %% mark connection as black-listed and start timer for reset
     {noreply, fail_endpoint(Addr, Reason, ProtocolId, State)}.
 
@@ -452,14 +451,16 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             gen_server:cast(?SERVER, {conmgr_no_endpoints, Ref}),
             Interval = app_helper:get_env(riak_core, connmgr_no_endpoint_retry,
                                          ?DEFAULT_RETRY_NO_ENDPOINTS),
-            lager:debug("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
+            lager:info("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
             %% schedule a retry and exit
             schedule_retry(Interval, Ref, State);
         {ok, EpAddrs } ->
-            lager:debug("Connection Manager located endpoints: ~p", [EpAddrs]),
+            lager:info("Connection Manager located endpoints: ~p for ~p to ~p",
+                       [EpAddrs, ClientSpec, Target]),
             AllEps = update_endpoints(EpAddrs, State#state.endpoints),
             TryAddrs = filter_blacklisted_endpoints(EpAddrs, AllEps),
-            lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
+            lager:info("Connection Manager trying endpoints: ~p for ~p to ~p",
+                       [TryAddrs, ClientSpec, Target]),
             Pid = spawn_link(
                     fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
                                   catch T:R -> {exception, {T, R}}
@@ -505,12 +506,12 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
-    lager:debug("Holding off ~p seconds before trying ~p at ~p",
+    lager:info("Holding off ~p seconds before trying ~p at ~p",
                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
         true ->
-            lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
+            lager:info("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             ?TRACE(?debugMsg("Attempting riak_core_connection:sync_connect/2")),
             case riak_core_connection:sync_connect(Addr, Protocol) of
                 ok ->
@@ -522,7 +523,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             end;
         _ ->
             %% connection request has been cancelled
-            lager:debug("Ignoring connection to: ~p at ~p because it was cancelled",
+            lager:info("Ignoring connection to: ~p at ~p because it was cancelled",
                        [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.
