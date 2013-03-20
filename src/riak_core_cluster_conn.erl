@@ -224,4 +224,6 @@ connected(Socket, Transport, Addr,
 connect_failed({_Proto,_Vers}, {error, _Reason}=Error, {_Remote,Client}) ->
     %% tell client we bombed and why
     Client ! {self(), {connect_failed, Error}},
+    %% increment stats for "client failed to connect"
+    riak_repl_stats:client_connect_errors(),
     ok.
