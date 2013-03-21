@@ -624,10 +624,11 @@ schedule_cluster_fullsync(Cluster, Pid) ->
             end;
         {ok, {Cluster, FullsyncIvalMins}} ->
             start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
-        {ok, Tuple} when is_tuple(Tuple) -> ok;
-        {ok, FullsyncIvalMins} ->
+        {ok, FullsyncIvalMins} when not is_tuple(FullsyncIvalMins) ->
             %% this will affect ALL clusters that have fullsync enabled
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster)
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+        _ ->
+            ok
     end.
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
