@@ -9,7 +9,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-    terminate/2, code_change/3]).
+    terminate/2, code_change/3, status/1, status/2]).
 
 %% send a message every KEEPALIVE seconds to make sure the service is running on the sink
 -define(KEEPALIVE, 1000).
@@ -29,6 +29,12 @@
 
 start_link(Cluster) ->
     gen_server:start_link(?MODULE, Cluster, []).
+
+status(Pid) ->
+    status(Pid, infinity).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
 
 %% connection manager callbacks
 connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
@@ -75,7 +81,15 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
                   client=Client,
                   keepalive_timer=TRef
                  }};
-handle_call(_Msg, _From, State) ->
+handle_call(status, _From, State=#state{socket=Socket,
+                                        proxy_gets_provided=PGCount}) ->
+    SocketStats = riak_core_tcp_mon:socket_status(Socket),
+    Status = {pg_provider,
+                {provider_count, PGCount},
+                {socket_stats, SocketStats}
+             },
+    {reply, Status, State};
+handle_call(Msg, _From, State) ->
     {reply, ok, State}.
 
 

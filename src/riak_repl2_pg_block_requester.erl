@@ -5,7 +5,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/4, register_service/0, start_service/5, legacy_status/2,
+-export([start_link/4, register_service/0, start_service/5, status/1, status/2,
          proxy_get/4]).
 
 %% gen_server callbacks
@@ -50,8 +50,11 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 proxy_get(Pid, Bucket, Key, Options) ->
     gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
 
-legacy_status(Pid, Timeout) ->
-    gen_server:call(Pid, legacy_status, Timeout).
+status(Pid) ->
+    gen_server:call(Pid, status, infinity).
+
+status(Pid, Timeout) ->
+    gen_server:call(Pid, status, Timeout).
 
 provider_cluster_info(Pid) ->
     gen_server:call(Pid, provider_cluster_info).
@@ -87,9 +90,15 @@ handle_call(provider_cluster_info, _From,
     ClusterInfo = {ClusterID, ClusterName},
     lager:debug("Returning cluster info ~p", [ClusterInfo]),
     {reply, ClusterInfo, State};
-handle_call(legacy_status, _From, State=#state{socket=_Socket}) ->
-    Desc = [ {proxy_get, no_stats}],
-    {reply, Desc, State};
+handle_call(status, _From, State=#state{socket=Socket,
+                                        proxy_gets_requested=PGCount}) ->
+    SocketStats = riak_core_tcp_mon:socket_status(Socket),
+    Status = {pg_provider,
+                {requester_count, PGCount},
+                {socket_stats, SocketStats}
+             },
+    {reply, Status, State};
+
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 

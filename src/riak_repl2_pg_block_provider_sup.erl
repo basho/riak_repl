@@ -2,7 +2,7 @@
 %% Copyright 2007-2013 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_pg_block_provider_sup).
 -behaviour(supervisor).
--export([start_link/0, enable/1, enabled/0, disable/1]).
+-export([start_link/0, enable/1, enabled/0, enabled/1, disable/1]).
 -export([init/1]).
 
 -define(SHUTDOWN, 5000).
@@ -19,7 +19,12 @@ disable(Remote) ->
     supervisor:delete_child(?MODULE, Remote).
 
 enabled() ->
-    [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].
+    [{Remote, Pid} || {Remote, Pid, _, _} <-
+                      supervisor:which_children(?MODULE), is_pid(Pid)].
+
+enabled(Node) ->
+    [{Remote, Pid} || {Remote, Pid, _, _} <-
+                      supervisor:which_children({?MODULE, Node}), is_pid(Pid)].
 
 %% @private
 init([]) ->

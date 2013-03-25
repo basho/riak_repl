@@ -21,7 +21,25 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 status() ->
-    gen_server:call(?SERVER, status, infinity).
+    LeaderNode = riak_repl2_leader:leader_node(),
+    case LeaderNode of
+        undefined ->
+            {[], []};
+        _ ->
+            ReqStats = case riak_repl2_pg_block_requester_sup:started(LeaderNode) of
+                [] ->
+                    [];
+                PGRs ->
+                    [riak_repl2_pg_block_requester:status(Pid) || {_Remote, Pid} <- PGRs]
+            end,
+            ProStats = case riak_repl2_pg_block_provider_sup:enabled(LeaderNode) of
+                [] ->
+                    [];
+                PGPs ->
+                    [{Remote, riak_repl2_pg_block_provider:status(Pid)} || {Remote, Pid} <- PGPs]
+            end,
+            [{proxy_get,[{"requester",ReqStats}, {"provider", ProStats}]}]
+    end.
 
 enabled() ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),

@@ -130,10 +130,13 @@ status2(Verbose) ->
     CoordSrvStats = coordinator_srv_stats(),
     CMgrStats = cluster_mgr_stats(),
     RTQStats = rtq_stats(),
+    PGStats = riak_repl2_pg:status(),
+
     All =
           RTRemotesStatus ++ FSRemotesStatus ++ PGRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
-          CoordStats++CoordSrvStats++CMgrStats++RTQStats,
+          CoordStats++CoordSrvStats++CMgrStats++RTQStats++PGStats,
+    lager:info("ALL = ~p", [All]),
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -719,3 +722,4 @@ fs2_sink_stats(Pid) ->
     {sink_stats, [{pid,riak_repl_util:safe_pid_to_list(Pid)},
                   erlang:process_info(Pid, message_queue_len),
                   {fs_connected_to, State}]}.
+

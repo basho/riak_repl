@@ -40,7 +40,7 @@ started(Node) ->
 init(_) ->
     {ok, {{one_for_one, 10, 5}, []}}.
 
-make_remote(Remote) -> 
+make_remote(Remote) ->
     Name = riak_repl_util:make_pg_proxy_name(Remote),
     lager:debug("make_remote ~p", [Name]),
     {Name, {riak_repl2_pg_proxy, start_link, [Name]},
