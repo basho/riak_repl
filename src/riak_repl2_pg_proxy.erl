@@ -10,14 +10,14 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3, proxy_get/4, register_pg_node/2]).
+        terminate/2, code_change/3, proxy_get/4, register_pg_node/2]).
 
 -define(SERVER, ?MODULE).
 
 -record(state, {
-	  source_cluster = undefined,
-	  pg_node = undefined
-	 }).
+        source_cluster = undefined,
+        pg_node = undefined
+        }).
 
 %%%===================================================================
 %%% API
@@ -49,13 +49,13 @@ init(ProxyName) ->
 
 handle_call({proxy_get, Bucket, Key, GetOptions}, _From, #state{pg_node=Node} = State) ->
     case Node of
-	undefined ->
-	    lager:warning("No proxy_get node registered"),
-	    {reply, ok, State};
-	N ->
-	    RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
+        undefined ->
+            lager:warning("No proxy_get node registered"),
+            {reply, ok, State};
+        N ->
+            RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
             Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
-	    {reply, Result, State}
+            {reply, Result, State}
     end;
 
 handle_call({register, ClusterName, Node}, _From, State) ->
@@ -74,3 +74,4 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+

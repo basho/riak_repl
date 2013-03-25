@@ -52,8 +52,8 @@ ensure_pg(WantEnabled0) ->
         [] ->
             [];
         _ ->
-            lager:debug("ToEnable: ~p", [ToEnable]),
-            lager:debug("ToDisable: ~p", [ToDisable]),
+            lager:debug("proxy_get ToEnable : ~p", [ToEnable]),
+            lager:debug("proxy_get ToDisable: ~p", [ToDisable]),
             [riak_repl2_pg_block_provider_sup:enable(Remote) ||
                 Remote <- ToEnable],
             [riak_repl2_pg_block_provider_sup:disable(Remote) ||

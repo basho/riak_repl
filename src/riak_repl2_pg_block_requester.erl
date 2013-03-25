@@ -19,7 +19,8 @@
           proxy_gets = [],
           remote_cluster_id=undefined,
           remote_cluster_name=undefined,
-          leader_mref=undefined
+          leader_mref=undefined,
+          proxy_gets_requested = 0
          }).
 
 start_link(Socket, Transport, Proto, Props) ->
@@ -60,10 +61,10 @@ provider_cluster_info(Pid) ->
 init([Socket, Transport, _Proto, Props]) ->
     lager:info("Starting Proxy Get Block Requester"),
 
-    %% SocketTag = riak_repl_util:generate_socket_tag("pg_requester", Socket),
-    %% lager:debug("Keeping stats for " ++ SocketTag),
-    %% riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
-    %%                                    SocketTag}, Transport),
+    SocketTag = riak_repl_util:generate_socket_tag("pg_requester", Socket),
+    lager:debug("Keeping stats for " ++ SocketTag),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_PROXYGET_APP, sink,
+                                        SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
     State0 = #state{cluster=Cluster, transport=Transport, socket=Socket},
@@ -71,22 +72,26 @@ init([Socket, Transport, _Proto, Props]) ->
     {ok, State}.
 
 handle_call({proxy_get, Bucket, Key, Options}, From,
-            State=#state{socket=Socket,transport=Transport}) ->
-    lager:debug("Proxy getting ~p",[Bucket]),
+            State=#state{socket=Socket,transport=Transport,
+                         proxy_gets_requested=PGCount}) ->
+    lager:debug("Proxy getting ~p ~p ~p",[Bucket, Key, Options]),
     Ref = make_ref(),
     Data = term_to_binary({proxy_get, Ref, Bucket, Key, Options}),
     Transport:send(Socket, Data),
-    {noreply, State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets]}};
+    NewState = State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets],
+                           proxy_gets_requested = PGCount+1},
+    {noreply, NewState};
 
 handle_call(provider_cluster_info, _From,
             State=#state{remote_cluster_id=ClusterID, remote_cluster_name=ClusterName}) ->
-    {reply, {ClusterID, ClusterName}, State};
+    ClusterInfo = {ClusterID, ClusterName},
+    lager:debug("Returning cluster info ~p", [ClusterInfo]),
+    {reply, ClusterInfo, State};
 handle_call(legacy_status, _From, State=#state{socket=_Socket}) ->
     Desc = [ {proxy_get, no_stats}],
     {reply, Desc, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
-
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -97,7 +102,7 @@ handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     {stop, normal, State};
 handle_info({tcp_error, _Socket, Reason}, State) ->
     lager:error("Connection for proxy_get ~p closed unexpectedly: ~p",
-		[State#state.cluster, Reason]),
+    [State#state.cluster, Reason]),
     {stop, normal, State};
 handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("Connection for proxy_get ~p closed", [State#state.cluster]),
@@ -115,8 +120,7 @@ handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State0) ->
     State = register_with_leader(State0),
     {noreply, State};
 handle_info({Proto, Socket, Data},
-	    State=#state{socket=Socket,transport=Transport}) when Proto==tcp;
-								  Proto==ssl ->
+  State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     riak_repl_stats:client_bytes_recv(size(Data)),
@@ -130,6 +134,7 @@ handle_info({Proto, Socket, Data},
                         lager:info("got unexpected proxy_get_resp message"),
                         {noreply, State};
                     {value, {Ref, From}, ProxyGets} ->
+                        lager:debug("PG response = ~p", [Resp]),
                         %% send the response to the patiently waiting client
                         gen_server:reply(From, Resp),
                         {noreply, State#state{proxy_gets=ProxyGets}}
@@ -138,9 +143,9 @@ handle_info({Proto, Socket, Data},
                 RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
                 lager:debug("Remote cluster id = ~p", [RemoteClusterID]),
                 lager:debug("Remote cluster name = ~p", [RemoteClusterName]),
-		RegName = riak_repl_util:make_pg_name(RemoteClusterName),
-		lager:debug("RegName = ~p",[RegName]),
-		erlang:register(RegName, self()),
+        RegName = riak_repl_util:make_pg_name(RemoteClusterName),
+        lager:debug("RegName = ~p",[RegName]),
+        erlang:register(RegName, self()),
                 {noreply, State#state{remote_cluster_id=RemoteClusterID,
                                       remote_cluster_name=RemoteClusterName}};
             _ ->
@@ -148,6 +153,7 @@ handle_info({Proto, Socket, Data},
         end,
     Reply;
 handle_info(init_ack, State=#state{socket=Socket, transport=Transport}) ->
+    lager:debug("init_ack"),
     Transport:setopts(Socket, [{active, once}]),
     Data = term_to_binary(get_cluster_info),
     Transport:send(Socket, Data),
@@ -167,6 +173,7 @@ make_pg_proxy(Remote) ->
         transient, 5000, worker, [riak_repl2_pg_proxy, pg_proxy]}.
 
 register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->
+    lager:debug("register with leader"),
     case MRef of
         undefined -> ok;
         M ->
@@ -190,3 +197,4 @@ register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->
     gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node()}),
     Monitor = erlang:monitor(process, {ProxyForCluster, Leader}),
     State#state{leader_mref=Monitor}.
+

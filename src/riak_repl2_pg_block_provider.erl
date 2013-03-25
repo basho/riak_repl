@@ -14,7 +14,7 @@
 %% send a message every KEEPALIVE seconds to make sure the service is running on the sink
 -define(KEEPALIVE, 1000).
 
--record(state, 
+-record(state,
         {
           transport,
           socket,
@@ -23,7 +23,8 @@
           connection_ref,
           worker,
           client,
-          keepalive_timer
+          keepalive_timer,
+          proxy_gets_provided = 0
         }).
 
 start_link(Cluster) ->
@@ -44,26 +45,26 @@ init(Cluster) ->
                   {nodelay, true},
                   {packet, 4},
                   {active, false}],
-    ClientSpec = {{proxy_get,[{1,0}]}, {TcpOptions, ?MODULE, self()}},    
+    ClientSpec = {{proxy_get,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
     lager:info("proxy_get connecting to remote ~p", [Cluster]),
     case riak_core_connection_mgr:connect({proxy_get, Cluster}, ClientSpec) of
         {ok, Ref} ->
             lager:debug("proxy_get connection ref ~p", [Ref]),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Reason}->
-            lager:warning("Error connecting to remote"),            
+            lager:warning("Error connecting to remote"),
             {stop, Reason}
     end.
 
 handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
             State=#state{other_cluster=OtherCluster}) ->
     Cluster = proplists:get_value(clustername, Props),
-    lager:debug("proxy_get to ~p", [OtherCluster]),
+    lager:debug("proxy_get connected to ~p", [OtherCluster]),
 
-    %SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
-    %lager:debug("Keeping stats for " ++ SocketTag),
-    %riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
-    %                                   SocketTag}, Transport),    
+    SocketTag = riak_repl_util:generate_socket_tag("pg_provider", Socket),
+    lager:debug("Keeping stats for " ++ SocketTag),
+    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_PROXYGET_APP, source,
+                                       SocketTag}, Transport),
     TRef = keepalive_timer(),
     Transport:setopts(Socket, [{active, once}]),
     {ok, Client} = riak:local_client(),
@@ -82,10 +83,9 @@ handle_cast({connect_failed, _Pid, Reason},
             State = #state{other_cluster = Cluster}) ->
     lager:warning("proxy_get connection to cluster ~p failed ~p",
         [Cluster, Reason]),
-    {stop, foo, State};
+    {stop, restart_it, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
-
 
 handle_info(keepalive, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(stay_awake),
@@ -106,7 +106,8 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
         [State#state.other_cluster, Reason]),
     {stop, socket_closed, State};
 handle_info({Proto, Socket, Data},
-            State0=#state{socket=Socket,transport=Transport, keepalive_timer=TRef}) when Proto==tcp; Proto==ssl ->
+            State0=#state{socket=Socket,transport=Transport, keepalive_timer=TRef})
+        when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     timer:cancel(TRef),    
     Msg = binary_to_term(Data),
@@ -124,13 +125,14 @@ handle_msg(get_cluster_info, State=#state{transport=Transport, socket=Socket}) -
     Transport:send(Socket, Data),
     {noreply, State};
 handle_msg({proxy_get, Ref, Bucket, Key, Options},
-            State=#state{transport=Transport, socket=Socket}) ->
+            State=#state{transport=Transport, socket=Socket,
+                         proxy_gets_provided=PGCount}) ->
     lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),
     C = State#state.client,
     Res = C:get(Bucket, Key, Options),
     Data = term_to_binary({proxy_get_resp, Ref, Res}),
     Transport:send(Socket, Data),
-    {noreply, State}.
+    {noreply, State#state{proxy_gets_provided=PGCount+1}}.
 
 terminate(_Reason, #state{}) ->
     ok.
@@ -140,3 +142,4 @@ code_change(_OldVsn, State, _Extra) ->
 
 keepalive_timer() ->
     timer:send_interval(?KEEPALIVE, keepalive).
+

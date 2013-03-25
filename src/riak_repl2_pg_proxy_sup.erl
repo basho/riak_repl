@@ -42,7 +42,7 @@ init(_) ->
 
 make_remote(Remote) -> 
     Name = riak_repl_util:make_pg_proxy_name(Remote),
-    lager:info("make_remote ~p", [Name]),
+    lager:debug("make_remote ~p", [Name]),
     {Name, {riak_repl2_pg_proxy, start_link, [Name]},
         transient, ?SHUTDOWN, worker, [riak_repl2_pg_proxy, pg_proxy]}.
 
