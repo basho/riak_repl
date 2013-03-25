@@ -348,6 +348,7 @@ async_connect(Parent, IPAddr, Port) ->
             ok = Transport:controlling_process(Socket, Parent),
             Parent ! {connected, Transport, Socket};
         {error, Reason} ->
+            riak_repl_stats:client_connect_errors(),
             %% Send Reason so it shows in traces even if nothing is done with it
             Parent ! {connect_failed, Reason}
     end.

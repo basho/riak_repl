@@ -224,6 +224,10 @@ prep_stop(_State) ->
         %% one while it's going down
         riak_core_node_watcher:service_down(riak_repl),
 
+        %% remove the ring event handler
+        riak_core:delete_guarded_event_handler(riak_core_ring_events,
+            riak_repl_ring_handler, []),
+
         %% the repl bucket hook will check to see if the queue is running and deliver to
         %% another node if it's shutting down
         lager:info("Redirecting realtime replication traffic"),
