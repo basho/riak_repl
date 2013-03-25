@@ -65,7 +65,6 @@
                   'riak_repl2_rtsource_conn_sup',
                   'riak_repl2_rtsource_helper',
                   'riak_repl2_rtsource_sup',
-                  'riak_core_tcp_mon',
                   'riak_repl_migration',
                   'riak_repl2_pg_block_provider',
                   'riak_repl2_pg_block_provider_sup',
