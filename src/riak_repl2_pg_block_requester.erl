@@ -93,10 +93,11 @@ handle_call(provider_cluster_info, _From,
 handle_call(status, _From, State=#state{socket=Socket,
                                         proxy_gets_requested=PGCount}) ->
     SocketStats = riak_core_tcp_mon:socket_status(Socket),
-    Status = {pg_provider,
-                {requester_count, PGCount},
-                {socket_stats, SocketStats}
-             },
+    FormattedSS =  {socket,
+                    riak_core_tcp_mon:format_socket_stats(SocketStats,[])},
+
+    Status = [ {requester_count, PGCount},
+               FormattedSS],
     {reply, Status, State};
 
 handle_call(_Msg, _From, State) ->

@@ -84,12 +84,13 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
 handle_call(status, _From, State=#state{socket=Socket,
                                         proxy_gets_provided=PGCount}) ->
     SocketStats = riak_core_tcp_mon:socket_status(Socket),
-    Status = {pg_provider,
-                {provider_count, PGCount},
-                {socket_stats, SocketStats}
-             },
+    FormattedSS =  {socket,
+                    riak_core_tcp_mon:format_socket_stats(SocketStats,[])},
+
+    Status = [ {provider_count, PGCount},
+                FormattedSS ],
     {reply, Status, State};
-handle_call(Msg, _From, State) ->
+handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
 

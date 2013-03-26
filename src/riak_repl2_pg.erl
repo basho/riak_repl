@@ -38,7 +38,7 @@ status() ->
                 PGPs ->
                     [{Remote, riak_repl2_pg_block_provider:status(Pid)} || {Remote, Pid} <- PGPs]
             end,
-            [{proxy_get,[{"requester",ReqStats}, {"provider", ProStats}]}]
+            [{proxy_get,[{requester,ReqStats}, {provider, ProStats}]}]
     end.
 
 enabled() ->
