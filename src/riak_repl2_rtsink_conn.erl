@@ -89,7 +89,7 @@ init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OkProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:debug("Negotiated ~p wire format", [Ver]),
+    lager:debug("RT sink connection negotiated ~p wire format from proto", [Ver, Proto]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
