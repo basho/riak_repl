@@ -89,10 +89,6 @@ drain_queue(false, Peer, PeerWireVer) ->
 drain_queue(true, _Peer, _Ver) ->
    done.
 
-%% filter_peers_for_capability(Peers, Cap) ->
-%%     Filter_fun = fun(Peer) -> rpc:call(Peer, riak_core_capability, get, [Cap]) end,
-%%     lists:filter(Filter_fun, Peers).
-
 %% Note: this function assumes that the handoff node supports BNW, which it will, because
 %% "get_peer_repl_nodes()" will only return other BNW nodes.
 queue_handoff(State) ->
