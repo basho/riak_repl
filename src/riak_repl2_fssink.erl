@@ -49,7 +49,7 @@ init([Socket, Transport, OKProto, Props]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
                                        SocketTag}, Transport),
@@ -86,17 +86,12 @@ handle_call(_Msg, _From, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
+handle_info({Closed, Socket}, State=#state{socket=Socket})
+        when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, State) ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
-        [State#state.cluster, Reason]),
-    {stop, normal, State};
-handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for site ~p closed", [State#state.cluster]),
-    {stop, normal, State};
-handle_info({ssl_error, _Socket, Reason}, State) ->
+handle_info({Error, _Socket, Reason}, State)
+        when Error == tcp_error; Error == ssl_error ->
     lager:error("Connection for site ~p closed unexpectedly: ~p",
         [State#state.cluster, Reason]),
     {stop, normal, State};
