@@ -4,6 +4,9 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(application).
 -export([start/2,prep_stop/1,stop/1]).
+% depricated: used only when on a mixed version cluster where some
+% versions < 1.3
+-export([get_matching_address/2]).
 
 -include("riak_core_cluster.hrl").
 -include_lib("riak_core/include/riak_core_connection.hrl").
@@ -272,6 +275,10 @@ prep_stop(_State) ->
                   [SinkErrors]),
     stopping.
 
+%% This function is only here for nodes using a version < 1.3. Remove it in
+%% future version
+get_matching_address(IP, CIDR) ->
+    riak_repl2_ip:get_matching_address(IP, CIDR).
 
 %%%%%%%%%%%%%%%%
 %% Unit Tests %%
