@@ -146,10 +146,24 @@ cluster_mgr_member_fun({IP, Port}) ->
             %AddressMask = mask_address(NormIP, MyMask),
             %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
-            {Results, _BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
+            {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
                 get_matching_address, [NormIP, CIDR]),
+            % when this code was written, a multicall will list the results
+            % in the same order as the nodes where tried.
+            maybe_retry_ip_rpc(Results, Nodes, BadNodes, [NormIP, CIDR]),
             lists_shuffle(Results)
     end.
+
+maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
+    Nodes2 = Nodes -- BadNodes,
+    Zipped = lists:zip(Results, Nodes2),
+    MaybeRetry = fun
+        ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
+            rpc:call(Node, riak_repl_app, get_matching_address, Args);
+        ({Result, _Node}) ->
+            Result
+    end,
+    lists:map(MaybeRetry, Zipped).
 
 lists_shuffle([]) ->
     [];
