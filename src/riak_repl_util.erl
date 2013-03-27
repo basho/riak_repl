@@ -58,7 +58,9 @@
          to_wire/2,
          to_wire/4,
          from_wire/1,
-         from_wire/2
+         from_wire/2,
+         maybe_downconvert_binary_objs/2,
+         peer_wire_format/1
         ]).
 
 %% Defines for Wire format encode/decode
@@ -745,7 +747,9 @@ wire_version(<<131, _Rest/binary>>) ->
 wire_version(<<?MAGIC:8/integer, ?W1_VER:8/integer, _Rest/binary>>) ->
     w1;
 wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
-    list_to_atom(lists:flatten(io_lib:format("w~p", [N]))).
+    list_to_atom(lists:flatten(io_lib:format("w~p", [N])));
+wire_version(_Other) ->
+    plain.
 
 %% @doc Convert a plain or binary riak object to repl wire format.
 %%      Bucket and Key will only be added if the new riak_object
@@ -793,9 +797,38 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
             BLen:32/integer, B:BLen/binary,
             KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
     riak_object:from_binary(B, K, BinObj);
-from_wire(X) ->
+from_wire(X) when is_binary(X) ->
     lager:error("unknown wire format: ~p", [X]),
-    {error, unknown_wire_format}.
+    throw({error, unknown_wire_format}),
+    {error, unknown_wire_format};
+from_wire(RObj) ->
+    RObj.
+
+%% @doc BinObjs are in new riak binary object format. If the remote sink
+%%      is storing older non-binary objects, then we need to downconvert
+%%      the objects before sending. V is the format expected by the sink.
+maybe_downconvert_binary_objs(BinObjs, SinkVer) ->
+    case SinkVer of
+        w1 ->
+            %% great! nothing to do.
+            BinObjs;
+        w0 ->
+            %% old sink. downconvert
+            Objs = from_wire(w1, BinObjs),
+            to_wire(w0, Objs)
+    end.
+
+%% return the wire format supported by the peer node: w0 | w1
+peer_wire_format(Peer) ->
+    case rpc:call(Peer, riak_core_capability, get, [{riak_kv, object_format}]) of
+        {unknown_capability,{riak_kv,object_format}} ->
+            w0;
+        v1 ->
+            w1;
+        _Other ->
+            %% failed RPC call? Assume lowest format
+            w0
+    end.
 
 %% Some eunit tests
 -ifdef(TEST).

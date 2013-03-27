@@ -154,7 +154,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
     case Transport:send(Socket, <<>>) of
         ok ->
             Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-            lager:debug("Negotiated ~p wire format", [Ver]),
+            lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote,
                                                                     Transport, Socket,
                                                                     Ver),

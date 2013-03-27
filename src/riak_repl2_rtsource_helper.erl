@@ -69,7 +69,7 @@ handle_call({pull, {Seq, NumObjects, W1BinObjs}}, From,
             State = #state{transport = T, socket = S, objects = Objects, ver = V}) ->
     %% unblock the rtq as fast as possible
     gen_server:reply(From, ok),
-    BinObjs = maybe_downconvert_binary_objs(W1BinObjs, V),
+    BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, V),
     TcpIOL = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
     T:send(S, TcpIOL),
     async_pull(State),
