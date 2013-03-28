@@ -162,16 +162,23 @@ update_trees({tree_built, _, _}, State) ->
 %% @doc Now that locks have been acquired and both hashtrees have been updated,
 %%      perform a key exchange and trigger read repair for any divergent keys.
 key_exchange(timeout, State=#state{cluster=Cluster,
+                                   transport=Transport,
+                                   socket=Socket,
                                    index=Partition,
                                    tree_pid=TreePid,
                                    index_n=IndexN}) ->
     lager:debug("Starting fullsync exchange with ~p for ~p/~p",
                 [Cluster, Partition, IndexN]),
 
-    Remote = fun(get_bucket, {L, B}) ->
+    SourcePid = self(),
+    Remote = fun(init, _) ->
+                     SourcePid ! {'$aae_src', worker_pid, self()};
+                (get_bucket, {L, B}) ->
                      send_msg(?MSG_GET_AAE_BUCKET, {L,B}, State);
                 (key_hashes, Segment) ->
-                     send_msg(?MSG_GET_AAE_SEGMENT, Segment, State)
+                     send_msg(?MSG_GET_AAE_SEGMENT, Segment, State);
+                (final, _) ->
+                     ok = Transport:controlling_process(Socket, SourcePid)
              end,
 
     %% Unclear if we should allow exchange to run indefinitely or enforce
@@ -191,7 +198,14 @@ key_exchange(timeout, State=#state{cluster=Cluster,
                      end
              end,
     %% TODO: Add stats for AAE
-    case riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid) of
+    spawn_link(fun() ->
+                       Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
+                       SourcePid ! {'$aae_src', done, Acc}
+               end),
+
+    {Acc, State2} = compare_loop(State),
+
+    case Acc of
         [] ->
             %% exchange_complete(LocalVN, RemoteVN, IndexN, 0),
             lager:info("Repl'd 0 keys"),
@@ -201,7 +215,17 @@ key_exchange(timeout, State=#state{cluster=Cluster,
             lager:info("Repl'd ~b keys during fullsync to ~p of ~p/~p ",
                        [Cluster, Partition, IndexN])
     end,
-    {stop, normal, State}.
+    {stop, normal, State2}.
+
+compare_loop(State=#state{transport=Transport,
+                          socket=Socket}) ->
+    receive
+        {'$aae_src', worker_pid, WorkerPid} ->
+            ok = Transport:controlling_process(Socket, WorkerPid),
+            compare_loop(State);
+        {'$aae_src', done, Acc} ->
+            {Acc, State}
+    end.
 
 %%%===================================================================
 %%% Internal functions

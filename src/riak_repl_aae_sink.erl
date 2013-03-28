@@ -72,9 +72,17 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
             {noreply, process_msg(MsgType, binary_to_term(MsgData), State)}
     end;
 
-handle_info({'DOWN', _, _, _, _}, _State) ->
-    {stop, tree_down};
+handle_info({'DOWN', _, _, _, _}, State) ->
+    {stop, tree_down, State};
 
+handle_info({Error, Socket},
+            State=#state{socket=MySocket}) when Socket == MySocket ->
+    lager:info("M: ~p", [{Socket, Error}]),
+    {stop, {Socket, Error}, State};
+handle_info({Error, Socket, Reason},
+            State=#state{socket=MySocket}) when Socket == MySocket ->
+    lager:info("M: ~p", [{Socket, Error, Reason}]),
+    {stop, {Socket, Error, Reason}, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
