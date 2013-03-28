@@ -65,6 +65,7 @@
                   'riak_repl2_rtsource_conn_sup',
                   'riak_repl2_rtsource_helper',
                   'riak_repl2_rtsource_sup',
+                  'riak_repl_aae_source',
                   'riak_repl_migration']},
   {applications, [kernel,
                   stdlib,
