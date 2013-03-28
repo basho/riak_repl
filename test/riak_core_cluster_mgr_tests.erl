@@ -297,7 +297,22 @@ start_link_setup() ->
     start_link_setup(?MY_CLUSTER_ADDR).
 
 start_link_setup(ClusterAddr) ->
-    %% need to start it here so that a supervision tree will be created.
+    % core features that are needed
+    {ok, Eventer} = riak_core_ring_events:start_link(),
+    {ok, RingMgr} = riak_core_ring_manager:start_link(test),
+
+    % needed by the leaders
+    meck:new(riak_core_node_watcher_events, [no_link]),
+    meck:expect(riak_core_node_watcher_events, add_sup_callback, fun(_fn) ->
+        ok
+    end),
+    meck:new(riak_core_node_watcher, [no_link]),
+    meck:expect(riak_core_node_watcher, nodes, fun(_) ->
+        [node()]
+    end),
+
+    {ok, Leader} = riak_repl2_leader:start_link(),
+
     ok = application:start(ranch),
     %% we also need to start the other connection servers
     {ok, Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
@@ -306,7 +321,7 @@ start_link_setup(ClusterAddr) ->
     %unlink(Pid3),
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
-    Pids = [Pid1, Pid2, Pid3, Pid4],
+    Pids = [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4],
     [unlink(P) || P <- Pids],
     Pids.
 
@@ -339,7 +354,18 @@ cleanup() ->
         Sup -> exit(Sup, kill)
     end,
     riak_core_cluster_mgr:stop(),
-    application:stop(ranch).
+    application:stop(ranch),
+    case whereis(riak_repl2_leader_gs) of
+        undefined -> ok;
+        Leader -> exit(Leader, kill)
+    end,
+    riak_core_ring_manager:stop(),
+    case whereis(riak_core_ring_event) of
+        undefined -> ok;
+        RingEvents -> exit(RingEvents, kill)
+    end,
+    meck:unload(riak_core_node_watcher),
+    meck:unlaod(riak_core_node_watcher_events).
 
 maybe_start_master() ->
     case node() of
