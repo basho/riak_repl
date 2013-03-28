@@ -255,7 +255,7 @@ send_exchange_status(Status, State) ->
 send_msg(MsgType, Msg, State=#state{transport=Transport,
                                     socket=Socket}) ->
     Data = term_to_binary(Msg),
-    ok = Transport:send(Socket, <<MsgType:8, Data>>),
+    ok = Transport:send(Socket, <<MsgType:8, Data/binary>>),
     get_reply(State).
 
 send_msg(MsgType, State=#state{transport=Transport,

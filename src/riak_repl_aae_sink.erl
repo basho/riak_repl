@@ -66,7 +66,9 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
     case Data of
         [MsgType] ->
             {noreply, process_msg(MsgType, State)};
-        [MsgType | MsgData] ->
+        [MsgType|<<>>] ->
+            {noreply, process_msg(MsgType, State)};
+        [MsgType|MsgData] ->
             {noreply, process_msg(MsgType, binary_to_term(MsgData), State)}
     end;
 
@@ -107,7 +109,7 @@ process_msg(?MSG_GET_AAE_SEGMENT, SegmentNum, State=#state{index_n=IndexN,
 %% replies: ok | not_built | already_locked
 process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
-    ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink, self()),
+    ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink),
     send_reply(ResponseMsg, State);
 
 %% replies: ok | not_responsible
@@ -119,5 +121,5 @@ process_msg(?MSG_UPDATE_TREE, State=#state{index_n=IndexN, tree_pid=TreePid}) ->
 
 send_reply(Msg, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(Msg),
-    ok = Transport:send(Socket, <<?MSG_REPLY:8, Data>>),
+    ok = Transport:send(Socket, <<?MSG_REPLY:8, Data/binary>>),
     State.
