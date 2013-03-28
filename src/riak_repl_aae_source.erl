@@ -44,7 +44,7 @@ start_link(Cluster, Transport, Socket, Index, IndexN) ->
     gen_fsm:start(?MODULE, [Cluster, Transport, Socket, Index, IndexN], []).
 
 start_exchange(AAESource) ->
-    gen_fsm:sync_send_event(AAESource, start_exchange, infinity).
+    gen_fsm:send_event(AAESource, start_exchange).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -121,8 +121,8 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
                     send_exchange_status({remote, Error}, State),
                     {stop, {remote, Error}, State}
             end;
-        _ ->
-            send_exchange_status(already_locked, State),
+        Error ->
+            send_exchange_status(Error, State),
             {stop, normal, State}
     end.
 

@@ -30,7 +30,7 @@
 %%%===================================================================
 
 start_link(ClusterName, Transport, Socket) ->
-    gen_fsm:start_link(?MODULE, [ClusterName, Transport, Socket], []).
+    gen_server:start_link(?MODULE, [ClusterName, Transport, Socket], []).
 
 %% Called after ownership of socket has been given to AAE sink worker
 init_sync(AAEWorker) ->

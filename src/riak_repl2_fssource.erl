@@ -99,8 +99,10 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                    Index, IndexN),
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
-            {ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
-                             fullsync_worker=FullsyncWorker, work_dir="/dev/null", ver=Ver}}
+            {reply, ok,
+             State#state{transport=Transport, socket=Socket, cluster=Cluster,
+                         fullsync_worker=FullsyncWorker, work_dir="/dev/null",
+                         ver=Ver}}
     end;
             
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
