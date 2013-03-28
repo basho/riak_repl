@@ -14,7 +14,7 @@
         socket,
         cluster,
         fullsync_worker,
-        work_dir,
+        work_dir = undefined,
         ver              % highest common wire protocol in common with fs source
     }).
 
@@ -58,7 +58,7 @@ init([Socket, Transport, OKProto, Props]) ->
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection"),
 
-    {_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}} = Proto,
+    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
     case CommonMajor of
         1 ->
             %% Keylist server strategy
@@ -70,8 +70,8 @@ init([Socket, Transport, OKProto, Props]) ->
         2 ->
             %% AAE strategy
             {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket),
-            {ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
-                             fullsync_worker=FullsyncWorker, work_dir="/dev/null" ver=Ver}}
+            {ok, #state{transport=Transport, socket=Socket, cluster=Cluster,
+                        fullsync_worker=FullsyncWorker, ver=Ver}}
     end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
@@ -148,8 +148,13 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
             ok
     end,
     %% clean up work dir
-    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
-    os:cmd(Cmd).
+    case WorkDir of
+        undefined ->
+            ok;
+        _Other ->
+            Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
+            os:cmd(Cmd)
+    end.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.

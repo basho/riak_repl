@@ -67,8 +67,8 @@ init([Partition, IP]) ->
             {stop, Reason}
     end.
 
-handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
-        State=#state{ip=IP, partition=Partition}) ->
+handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
+            _From, State=#state{ip=IP, partition=Partition}) ->
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     lager:debug("Negotiated ~p wire format", [Ver]),
     Cluster = proplists:get_value(clustername, Props),
@@ -81,7 +81,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
 
     Transport:setopts(Socket, [{active, once}]),
 
-    {_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}} = Proto,
+    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
     case CommonMajor of
         1 ->
             %% Keylist server strategy
@@ -99,7 +99,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
                                                                    Index, IndexN),
             {ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
                              fullsync_worker=FullsyncWorker, work_dir="/dev/null", ver=Ver}}
-    end.
+    end;
             
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
     riak_repl_keylist_server:start_fullsync(FSW),

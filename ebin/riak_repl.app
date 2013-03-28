@@ -10,6 +10,8 @@
                   'couch_merkle',
                   'gen_leader',
                   'riak_repl',
+                  'riak_repl_aae_sink',
+                  'riak_repl_aae_source',
                   'riak_repl_app',
                   'riak_repl_bq',
                   'riak_repl_cinfo',
