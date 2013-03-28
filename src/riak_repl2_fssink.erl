@@ -15,6 +15,7 @@
         cluster,
         fullsync_worker,
         work_dir = undefined,
+        strategy :: keylist | aae,
         ver              % highest common wire protocol in common with fs source
     }).
 
@@ -66,12 +67,13 @@ init([Socket, Transport, OKProto, Props]) ->
             {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
                                                                        Socket, WorkDir),
             {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
-                        fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
+                        fullsync_worker=FullsyncWorker, work_dir=WorkDir,
+                        strategy=keylist, ver=Ver}};
         2 ->
             %% AAE strategy
             {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket),
             {ok, #state{transport=Transport, socket=Socket, cluster=Cluster,
-                        fullsync_worker=FullsyncWorker, ver=Ver}}
+                        fullsync_worker=FullsyncWorker, strategy=aae, ver=Ver}}
     end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
@@ -122,8 +124,17 @@ handle_info({Proto, Socket, Data},
             gen_fsm:send_event(State#state.fullsync_worker, Other)
     end,
     {noreply, State};
-handle_info(init_ack, State=#state{socket=Socket, transport=Transport}) ->
-    Transport:setopts(Socket, [{active, once}]),
+handle_info(init_ack, State=#state{socket=Socket,
+                                   transport=Transport,
+                                   fullsync_worker=FullsyncWorker,
+                                   strategy=Strategy}) ->
+    case Strategy of
+        keylist ->
+            Transport:setopts(Socket, [{active, once}]);
+        aae ->
+            ok = Transport:controlling_process(Socket, FullsyncWorker),
+            riak_repl_aae_sink:init_sync(FullsyncWorker)
+    end,
     {noreply, State};
 handle_info(_Msg, State) ->
     {noreply, State}.

@@ -7,7 +7,7 @@
 -include("riak_repl_aae_fullsync.hrl").
 
 %% API
--export([start_link/5]).
+-export([start_link/5, start_exchange/1]).
 
 %% FSM states
 -export([prepare_exchange/2,
@@ -43,24 +43,19 @@
 start_link(Cluster, Transport, Socket, Index, IndexN) ->
     gen_fsm:start(?MODULE, [Cluster, Transport, Socket, Index, IndexN], []).
 
+start_exchange(AAESource) ->
+    gen_fsm:sync_send_event(AAESource, start_exchange, infinity).
+
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
 
 init([Cluster, Transport, Socket, Index, IndexN]) ->
-    Transport:controlling_process(Socket, self()),
-    TcpOptions = [{keepalive, true},
-                  {packet, 4},
-                  {active, once},
-                  {nodelay, true},
-                  {header, 1}],
-    ok = Transport:setopts(Socket, TcpOptions),
     Timeout = app_helper:get_env(riak_kv,
                                  anti_entropy_timeout,
                                  ?DEFAULT_ACTION_TIMEOUT),
 
-    {ok, VNodePid} = riak_core_vnode_manager:get_vnode_pid(Index, riak_kv_vnode),
-    {ok, TreePid} = riak_kv_vnode:hashtree_pid(VNodePid),
+    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Index),
 
     %% monitor(process, Manager),
     monitor(process, TreePid),
@@ -73,7 +68,6 @@ init([Cluster, Transport, Socket, Index, IndexN]) ->
                    tree_pid=TreePid,
                    timeout=Timeout,
                    built=0},
-    gen_fsm:send_event(self(), start_exchange),
     %% lager:debug("Starting exchange: ~p", [LocalVN]),
     {ok, prepare_exchange, State}.
 
@@ -104,8 +98,16 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%      In order, acquire local concurrency lock, local tree lock,
 %%      remote concurrency lock, and remote tree lock. Exchange will
 %%      timeout if locks cannot be acquired in a timely manner.
-prepare_exchange(start_exchange, State=#state{index=Partition,
+prepare_exchange(start_exchange, State=#state{transport=Transport,
+                                              socket=Socket,
+                                              index=Partition,
                                               index_n=IndexN}) ->
+    TcpOptions = [{keepalive, true},
+                  {packet, 4},
+                  {active, once},
+                  {nodelay, true},
+                  {header, 1}],
+    ok = Transport:setopts(Socket, TcpOptions),
     case riak_kv_index_hashtree:get_lock(State#state.tree_pid,
                                          fullsync_source) of
         ok ->

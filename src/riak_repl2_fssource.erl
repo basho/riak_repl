@@ -97,6 +97,8 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             {Index,IndexN} = Partition,
             {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Transport, Socket,
                                                                    Index, IndexN),
+            ok = Transport:controlling_process(Socket, FullsyncWorker),
+            riak_repl_aae_source:start_exchange(FullsyncWorker),
             {ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
                              fullsync_worker=FullsyncWorker, work_dir="/dev/null", ver=Ver}}
     end;

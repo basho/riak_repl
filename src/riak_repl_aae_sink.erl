@@ -14,7 +14,7 @@
          terminate/2, code_change/3]).
 
 %% API
--export([start_link/3]).
+-export([start_link/3, init_sync/1]).
 
 -record(state, {
           clustername,
@@ -32,20 +32,25 @@
 start_link(ClusterName, Transport, Socket) ->
     gen_fsm:start_link(?MODULE, [ClusterName, Transport, Socket], []).
 
+%% Called after ownership of socket has been given to AAE sink worker
+init_sync(AAEWorker) ->
+    gen_server:call(AAEWorker, init_sync, infinity).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 init([ClusterName, Transport, Socket]) ->
-    Pid = self(),
-    ok = Transport:controlling_process(Socket, Pid),
+    {ok, #state{clustername=ClusterName, socket=Socket, transport=Transport}}.
+
+handle_call(init_sync, _From, State=#state{transport=Transport, socket=Socket}) ->
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, once},
                   {nodelay, true},
                   {header, 1}],
     ok = Transport:setopts(Socket, TcpOptions),
-    {ok, #state{clustername=ClusterName, socket=Socket, transport=Transport}}.
+    {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -59,10 +64,10 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
     TcpOptions = [{active, once}], %% reset to receive next tcp message
     ok = Transport:setopts(Socket, TcpOptions),
     case Data of
-        [MsgType | MsgData] ->
-            {noreply, process_msg(MsgType, binary_to_term(MsgData), State)};
         [MsgType] ->
-            {noreply, process_msg(MsgType, State)}
+            {noreply, process_msg(MsgType, State)};
+        [MsgType | MsgData] ->
+            {noreply, process_msg(MsgType, binary_to_term(MsgData), State)}
     end;
 
 handle_info({'DOWN', _, _, _, _}, _State) ->
@@ -83,8 +88,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% replies: ok
 process_msg(?MSG_INIT, {Partition,IndexN}, State) ->
-    {ok,VnodePid} = riak_core_vnode_manager:get_vnode_pid(Partition, riak_kv_vnode),
-    {ok, TreePid} = riak_kv_vnode:hashtree_pid(VnodePid),
+    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
     %% monitor the tree and crash if the tree goes away
     monitor(process, TreePid),
     send_reply(ok, State),
