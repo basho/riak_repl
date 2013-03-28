@@ -219,6 +219,15 @@ get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
 
 get_matching_address(Node, NormIP, Masked) ->
     case rpc:call(Node, riak_repl2_ip, get_matching_address, [NormIP, Masked]) of
+        % this is a clause that will be removed/useless once all nodes on a 
+        % cluster are >= 1.3
+        {badrpc, {'EXIT', {undef, _StackTrace}}} ->
+            case rpc:call(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
+                {badrpc, Err} ->
+                    {error, Err};
+                OkRes ->
+                    {ok, OkRes}
+            end;
         {badrpc, Err} ->
             {error, Err};
         Res ->
