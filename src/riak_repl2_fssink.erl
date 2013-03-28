@@ -24,7 +24,8 @@ start_link(Socket, Transport, Proto, Props) ->
 %% Register with service manager
 register_service() ->
     %% use 1,1 proto for new binary object
-    ProtoPrefs = {fullsync,[{1,1}]},
+    %% use 2,0 for AAE fullsync + binary objects
+    ProtoPrefs = {fullsync,[{2,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, false},
@@ -56,12 +57,22 @@ init([Socket, Transport, OKProto, Props]) ->
 
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection"),
-    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
-    %% strategy is hardcoded
-    {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster,
-        Transport, Socket, WorkDir),
-    {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
-            fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}}.
+
+    {_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}} = Proto,
+    case CommonMajor of
+        1 ->
+            %% Keylist server strategy
+            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
+            {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
+                                                                       Socket, WorkDir),
+            {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
+                        fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
+        2 ->
+            %% AAE strategy
+            {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket),
+            {ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
+                             fullsync_worker=FullsyncWorker, work_dir="/dev/null" ver=Ver}}
+    end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->
@@ -102,6 +113,7 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
     {stop, normal, State};
 handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
+    %% aae strategy will not receive messages here
     Transport:setopts(Socket, [{active, once}]),
     case decode_obj_msg(Data) of
         {fs_diff_obj, RObj} ->

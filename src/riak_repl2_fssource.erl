@@ -54,7 +54,7 @@ init([Partition, IP]) ->
                   {nodelay, true},
                   {packet, 4},
                   {active, false}],
-    ClientSpec = {{fullsync,[{1,1}]}, {TcpOptions, ?MODULE, self()}},
+    ClientSpec = {{fullsync,[{2,0}]}, {TcpOptions, ?MODULE, self()}},
 
     %% TODO: check for bad remote name
     lager:info("connecting to remote ~p", [IP]),
@@ -80,15 +80,27 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
                                        SocketTag}, Transport),
 
     Transport:setopts(Socket, [{active, once}]),
-    {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
-    {ok, Client} = riak:local_client(),
-    %% strategy is hardcoded
-    {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
-        Transport, Socket, WorkDir, Client),
-    riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
-    {reply, ok, State#state{transport=Transport, socket=Socket,
-            cluster=Cluster,
-            fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
+
+    {_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}} = Proto,
+    case CommonMajor of
+        1 ->
+            %% Keylist server strategy
+            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
+            {ok, Client} = riak:local_client(),
+            {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
+                                                                       Transport, Socket, WorkDir, Client),
+            riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
+            {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
+                                    fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
+        2 ->
+            %% AAE strategy
+            {Index,IndexN} = Partition,
+            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Transport, Socket,
+                                                                   Index, IndexN),
+            {ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
+                             fullsync_worker=FullsyncWorker, work_dir="/dev/null", ver=Ver}}
+    end.
+            
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
     riak_repl_keylist_server:start_fullsync(FSW),
     {reply, ok, State};

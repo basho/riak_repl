@@ -1,0 +1,6 @@
+-define(MSG_INIT, 1).
+-define(MSG_LOCK_TREE, 2).
+-define(MSG_UPDATE_TREE, 3).
+-define(MSG_GET_AAE_BUCKET, 4).
+-define(MSG_GET_AAE_SEGMENT, 5).
+-define(MSG_REPLY, 6).
