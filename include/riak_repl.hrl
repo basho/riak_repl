@@ -19,6 +19,7 @@
 -define(ELECTION_TIMEOUT, 60000).
 -define(TCP_MON_RT_APP, repl_rt).
 -define(TCP_MON_FULLSYNC_APP, repl_fullsync).
+-define(TCP_MON_PROXYGET_APP, proxy_get).
 -define(DEFAULT_REPL_MODE, mode_repl12).
 -define(DEFAULT_SOURCE_PER_NODE, 1).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
