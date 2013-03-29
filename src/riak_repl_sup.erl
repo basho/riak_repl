@@ -24,14 +24,14 @@ init([]) ->
                  {riak_repl_server_sup, {riak_repl_server_sup, start_link, []},
                   permanent, infinity, supervisor, [riak_repl_server_sup]},
 
-                 {riak_core_cluster_mgr_sup, {riak_core_cluster_mgr_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_cluster_mgr_sup]},
-
                  {riak_repl_leader, {riak_repl_leader, start_link, []},
                   permanent, 5000, worker, [riak_repl_leader]},
 
                  {riak_repl2_leader, {riak_repl2_leader, start_link, []},
                   permanent, 5000, worker, [riak_repl2_leader]},
+
+                 {riak_core_cluster_mgr_sup, {riak_core_cluster_mgr_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_cluster_mgr_sup]},
 
                  {riak_repl2_fs_node_reserver, {riak_repl2_fs_node_reserver, start_link, []},
                   permanent, infinity, worker, [riak_repl2_fs_node_reserver]},
