@@ -432,7 +432,6 @@ fullsync([Cmd]) ->
     ok.
 
 proxy_get([Cmd, Remote]) ->
-    %Leader = riak_core_cluster_mgr:get_leader(),
     case Cmd of
         "enable" ->
             riak_core_ring_manager:ring_trans(fun
