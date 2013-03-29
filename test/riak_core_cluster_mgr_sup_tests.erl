@@ -40,10 +40,20 @@ murdering_test_() ->
         wait_for_leader(),
         TopSup
     end,
-    fun(_) ->
+    fun(TopSup) ->
+        application:stop(ranch),
         Mecks = [riak_repl_sup, riak_core_node_watcher_events, riak_core_node_watcher],
         [meck:unload(Meck) || Meck <- Mecks],
-        riak_core_ring_manager:stop()
+        riak_core_ring_manager:stop(),
+        case whereis(riak_core_ring_events) of
+            undefined ->
+                ok;
+            Events ->
+                unlink(Events),
+                exit(Events, kill)
+        end,
+        unlink(TopSup),
+        exit(TopSup, kill)
     end,
     fun(_) -> [
 

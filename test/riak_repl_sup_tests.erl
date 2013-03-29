@@ -25,6 +25,7 @@ can_start_test() ->
         application:set_env(riak_repl, data_root, ".")
     end,
     fun(_) ->
+        application:stop(ranch),
         riak_core_ring_events:stop(),
         riak_core_ring_manager:stop(),
         meck:unload(riak_core_node_watcher),

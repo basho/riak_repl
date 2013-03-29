@@ -360,12 +360,12 @@ cleanup() ->
         Leader -> exit(Leader, kill)
     end,
     riak_core_ring_manager:stop(),
-    case whereis(riak_core_ring_event) of
+    case whereis(riak_core_ring_events) of
         undefined -> ok;
         RingEvents -> exit(RingEvents, kill)
     end,
     meck:unload(riak_core_node_watcher),
-    meck:unlaod(riak_core_node_watcher_events).
+    meck:unload(riak_core_node_watcher_events).
 
 maybe_start_master() ->
     case node() of
