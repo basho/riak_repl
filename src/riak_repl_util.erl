@@ -34,6 +34,8 @@
          repl_helper_send_realtime/2,
          schedule_fullsync/0,
          schedule_fullsync/1,
+         schedule_cluster_fullsync/1,
+         schedule_cluster_fullsync/2,
          elapsed_secs/1,
          shuffle_partitions/2,
          proxy_get_active/0,
@@ -584,13 +586,51 @@ configure_socket(Transport, Socket) ->
 schedule_fullsync() ->
     schedule_fullsync(self()).
 
+%% Skip lists + tuples for 1.2 repl, it's only a BNW feature
 schedule_fullsync(Pid) ->
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
             ok;
+        {ok, [{_,_} | _]} -> ok;
+        {ok, Tuple} when is_tuple(Tuple) -> ok;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
             erlang:send_after(FullsyncIval, Pid, start_fullsync)
+    end.
+
+
+start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
+    FullsyncIval = timer:minutes(FullsyncIvalMins),
+    lager:info("Fullsync for ~p scheduled in ~p minutes",
+               [Cluster, FullsyncIvalMins]),
+    spawn(fun() ->
+                timer:sleep(FullsyncIval),
+                gen_server:cast(Pid, start_fullsync)
+        end).
+
+%% send a start_fullsync to the calling process for a given cluster
+%% when it is time for fullsync
+schedule_cluster_fullsync(Cluster) ->
+    schedule_cluster_fullsync(Cluster, self()).
+
+schedule_cluster_fullsync(Cluster, Pid) ->
+    case application:get_env(riak_repl, fullsync_interval) of
+        {ok, disabled} ->
+            ok;
+        {ok, [{_,_} | _] = List} ->
+            case proplists:lookup(Cluster, List) of
+                none -> ok;
+                {_, FullsyncIvalMins} ->
+                    start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+                    ok
+            end;
+        {ok, {Cluster, FullsyncIvalMins}} ->
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+        {ok, FullsyncIvalMins} when not is_tuple(FullsyncIvalMins) ->
+            %% this will affect ALL clusters that have fullsync enabled
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+        _ ->
+            ok
     end.
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.

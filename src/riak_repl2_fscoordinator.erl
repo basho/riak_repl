@@ -45,8 +45,11 @@
     error_exits = 0,
     pending_fullsync = false,
     dirty_nodes = ordsets:new(),          % these nodes should run fullsync
-    dirty_nodes_during_fs = ordsets:new() % these nodes reported realtime errors
+    dirty_nodes_during_fs = ordsets:new(), % these nodes reported realtime errors
                                           % during an already running fullsync
+    fullsyncs_completed = 0,
+    fullsync_start_time = undefined,
+    last_fullsync_duration = undefined
 }).
 
 %% ------------------------------------------------------------------
@@ -191,6 +194,7 @@ init(Cluster) ->
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
+            riak_repl_util:schedule_cluster_fullsync(Cluster),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Error} ->
             lager:warning("Error connection to remote"),
@@ -202,6 +206,11 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
     SourceStats = gather_source_stats(State#state.running_sources),
     SocketStats = riak_core_tcp_mon:format_socket_stats(
         riak_core_tcp_mon:socket_status(Socket), []),
+    StartTime =
+        case State#state.fullsync_start_time of
+            undefined -> undefined;
+            N -> calendar:gregorian_seconds_to_datetime(State#state.fullsync_start_time)
+        end,
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
@@ -212,6 +221,9 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {busy_nodes, sets:size(State#state.busy_nodes)},
         {running_stats, SourceStats},
         {socket, SocketStats},
+        {fullsyncs_completed, State#state.fullsyncs_completed},
+        {last_fullsync_started, StartTime},
+        {last_fullsync_duration, State#state.last_fullsync_duration},
         {fullsync_suggested,
             nodeset_to_string_list(State#state.dirty_nodes)},
         {fullsync_suggested_during_fs,
@@ -293,7 +305,8 @@ handle_cast(start_fullsync,  State) ->
                 owners = riak_core_ring:all_owners(Ring),
                 partition_queue = queue:from_list(Partitions),
                 successful_exits = 0,
-                error_exits = 0
+                error_exits = 0,
+                fullsync_start_time = riak_core_util:moment()
             },
             State3 = start_up_reqs(State2),
             {noreply, State3}
@@ -349,11 +362,20 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                     % clear the "rt dirty" stat if it's set,
                     % otherwise, don't do anything
                     State3 = notify_rt_dirty_nodes(State),
-                    riak_repl_stats:server_fullsyncs(),
-                    {noreply, State3#state{running_sources = Running, busy_nodes = NewBusies}};
+                    TotalFullsyncs = State#state.fullsyncs_completed + 1,
+                    Finish = riak_core_util:moment(),
+                    ElapsedSeconds = Finish - State#state.fullsync_start_time,
+                    riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster),
+                    {noreply, State3#state{running_sources = Running,
+                                           busy_nodes = NewBusies,
+                                           fullsyncs_completed = TotalFullsyncs,
+                                           fullsync_start_time = undefined,
+                                           last_fullsync_duration=ElapsedSeconds
+                                          }};
                 _ ->
                     % there's something waiting for a response.
-                    State3 = start_up_reqs(State2#state{running_sources = Running, busy_nodes = NewBusies}),
+                    State3 = start_up_reqs(State2#state{running_sources = Running,
+                                                        busy_nodes = NewBusies}),
                     {noreply, State3}
             end
     end;
@@ -496,7 +518,7 @@ handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Wait
     end.
 
 % try our best to reach maximum capacity by sending as many whereis requests
-% as we can under the condition that we don't overload our local nodes or 
+% as we can under the condition that we don't overload our local nodes or
 % remote nodes.
 start_up_reqs(State) ->
     Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
@@ -537,7 +559,7 @@ send_next_whereis_req(State) ->
                     {defer, State#state{partition_queue = Queue}};
 
                 undefined ->
-                    % something may have gone wrong, but we have outstanding 
+                    % something may have gone wrong, but we have outstanding
                     % whereis requests or running sources, so we can wait for
                     % one of those to finish and try again
                     {defer, State#state{partition_queue = Queue}};
@@ -740,5 +762,3 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
 
 nodeset_to_string_list(Set) ->
     string:join([erlang:atom_to_list(V) || V <- ordsets:to_list(Set)],",").
-
-
