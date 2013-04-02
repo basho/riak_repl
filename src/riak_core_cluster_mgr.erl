@@ -204,9 +204,20 @@ init([]) ->
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
-    {ok, #state{is_leader=false,
-                balancer_fun=BalancerFun
-               }}.
+    MeNode = node(),
+    State = #state{is_leader = false, balancer_fun = BalancerFun},
+    case riak_repl2_leader:leader_node() of
+        undefined ->
+            % there's an election in progress, so we can just hang on until
+            % that finishes
+            {ok, State};
+        MeNode ->
+            State2 = become_leader(State#state{leader_node = MeNode}, MeNode),
+            {ok, State2};
+        NotMeNode ->
+            State2 = become_proxy(State#state{leader_node = NotMeNode}, NotMeNode),
+            {ok, State2}
+    end.
 
 handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
