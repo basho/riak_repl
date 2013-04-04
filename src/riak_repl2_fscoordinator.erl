@@ -263,7 +263,7 @@ handle_call(_Request, _From, State) ->
 %% @hidden
 handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     lager:info("fullsync coordinator connected to ~p", [State#state.other_cluster]),
-    SocketTag = riak_repl_util:generate_socket_tag("fs_coord", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("fs_coord", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coord,
                                        SocketTag}, Transport),

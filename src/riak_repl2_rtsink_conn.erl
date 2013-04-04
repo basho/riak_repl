@@ -52,7 +52,7 @@ register_service() ->
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->
-    SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, sink, SocketTag},
                               Transport),
@@ -159,9 +159,11 @@ handle_cast({ack, Ref, Seq}, State) ->
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
     {noreply, State}.
 
-handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
+handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
+        when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
-handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
+handle_info({Closed, _S}, State = #state{cont = Cont})
+        when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
             ok;
@@ -172,7 +174,8 @@ handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
                           [peername(State), NumBytes])
     end,
     {stop, normal, State};
-handle_info({tcp_error, _S, Reason}, State= #state{cont = Cont}) ->
+handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
+        Error == tcp_error; Error == ssl_error ->
     %%TODO: Add remote name somehow
     riak_repl_stats:rt_sink_errors(),
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",

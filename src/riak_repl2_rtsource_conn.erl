@@ -158,7 +158,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote,
                                                                     Transport, Socket,
                                                                     Ver),
-            SocketTag = riak_repl_util:generate_socket_tag("rt_source", Socket),
+            SocketTag = riak_repl_util:generate_socket_tag("rt_source",
+                Transport, Socket),
             lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
                                                SocketTag}, Transport),
@@ -182,10 +183,12 @@ handle_cast({connect_failed, _HelperPid, Reason},
                   [Remote, Reason]),
     {stop, normal, State}.
 
-handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
+handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
+        when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
-handle_info({tcp_closed, _S}, 
-            State = #state{remote = Remote, cont = Cont}) ->
+handle_info({Closed, _S}, 
+            State = #state{remote = Remote, cont = Cont})
+        when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
             ok;
@@ -198,8 +201,9 @@ handle_info({tcp_closed, _S},
     %% dies will not make the server restart too fst.
     timer:sleep(1000),
     {stop, normal, State};
-handle_info({tcp_error, _S, Reason}, 
-            State = #state{remote = Remote, cont = Cont}) ->
+handle_info({Error, _S, Reason}, 
+            State = #state{remote = Remote, cont = Cont})
+        when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
     lager:warning("Realtime connection ~p to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
