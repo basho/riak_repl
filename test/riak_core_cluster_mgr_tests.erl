@@ -4,8 +4,8 @@
 -module(riak_core_cluster_mgr_tests).
 -compile(export_all).
 
--include("riak_core_connection.hrl").
-
+-include("riak_core_cluster.hrl").
+-include_lib("riak_core/include/riak_core_connection.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TRACE(Stmt),Stmt).
