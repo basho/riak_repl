@@ -74,7 +74,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
-    SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
                                        SocketTag}, Transport),
@@ -131,17 +131,12 @@ handle_cast({connect_failed, _Pid, Reason},
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
+handle_info({Closed, Socket}, State=#state{socket=Socket})
+        when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, State) ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
-        [State#state.cluster, Reason]),
-    {stop, normal, State};
-handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for site ~p closed", [State#state.cluster]),
-    {stop, normal, State};
-handle_info({ssl_error, _Socket, Reason}, State) ->
+handle_info({Error, _Socket, Reason}, State)
+        when Error == tcp_error; Error == ssl_error ->
     lager:error("Connection for site ~p closed unexpectedly: ~p",
         [State#state.cluster, Reason]),
     {stop, normal, State};

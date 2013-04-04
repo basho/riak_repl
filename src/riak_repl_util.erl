@@ -41,7 +41,7 @@
          proxy_get_active/0,
          log_dropped_realtime_obj/1,
          dropped_realtime_hook/1,
-         generate_socket_tag/2,
+         generate_socket_tag/3,
          source_socket_stats/0,
          sink_socket_stats/0,
          get_peer_repl_nodes/0,
@@ -678,9 +678,9 @@ dropped_realtime_hook(Obj) ->
     end.
 
 %% generate a unique ID for a socket to log stats against
-generate_socket_tag(Prefix, Socket) ->
-    {ok, {{O1, O2, O3, O4}, PeerPort}} = inet:peername(Socket),
-    {ok, Portnum} = inet:port(Socket),
+generate_socket_tag(Prefix, Transport, Socket) ->
+    {ok, {{O1, O2, O3, O4}, PeerPort}} = Transport:peername(Socket),
+    {ok, {_Address, Portnum}} = Transport:sockname(Socket),
     lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
                 Prefix,
                 Portnum,
