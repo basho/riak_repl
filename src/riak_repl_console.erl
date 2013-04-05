@@ -27,7 +27,8 @@
 -export([modes/1, set_modes/1, get_modes/0,
          max_fssource_node/1,
          max_fssource_cluster/1,
-         max_fssink_node/1]).
+         max_fssink_node/1,
+         nat_map/1]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -503,6 +504,54 @@ max_fssink_node([FSSinkNode]) ->
     ok;
 max_fssink_node(NewVal) ->
     application:set_env(riak_repl, max_fssink_node, NewVal).
+
+nat_map([]) ->
+    %% no arguments, print it
+    Ring = get_ring(),
+    io:format("Nat map: ~p~n", [riak_repl_ring:get_nat_map(Ring)]);
+nat_map([External, InternalIPStr]) ->
+    try inet_parse:address(InternalIPStr) of
+        {ok, InternalIP} ->
+            case string:tokens(External, ":") of
+                [ExternalIPStr, ExternalPortStr] ->
+                    try inet_parse:address(ExternalIPStr) of
+                        {ok, ExternalIP} ->
+                            try list_to_integer(ExternalPortStr) of
+                                ExternalPort ->
+                                    riak_core_ring_manager:ring_trans(
+                                        fun riak_repl_ring:add_nat_map/2,
+                                        {{ExternalIP, ExternalPort},
+                                            InternalIP}),
+                                    ok
+                            catch
+                                _:_ ->
+                                    io:format("Invalid port ~p~n", [ExternalPortStr]),
+                                    error
+                            end
+                    catch
+                        _:_ ->
+                            io:format("Invalid external IP ~p~n", [ExternalIPStr]),
+                            error
+                    end;
+                [ExternalIPStr] ->
+                    try inet_parse:address(ExternalIPStr) of
+                        {ok, ExternalIP} ->
+                            riak_core_ring_manager:ring_trans(
+                                fun riak_repl_ring:add_nat_map/2,
+                                {ExternalIP, InternalIP}),
+                            ok
+                    catch
+                        _:_ ->
+                            io:format("Invalid external IP ~p~n", [ExternalIPStr]),
+                            error
+                    end
+            end
+    catch
+        _:_ ->
+            io:format("Invalid internal IP ~p~n",
+                [InternalIPStr]),
+            error
+    end.
 
 %% helper functions
 

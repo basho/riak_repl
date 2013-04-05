@@ -172,11 +172,17 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
     % is that node available
     % send an appropriate reply
     #state{transport = Transport, socket = Socket} = State,
-    Node = get_partition_node(Partition),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Node = get_partition_node(Partition, Ring),
+    Map = riak_repl_ring:get_nat_map(Ring),
+    {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
+    %% apply the NAT map
+    RealIP = riak_repl2_ip:maybe_apply_nat_map(NormIP, ConnPort, Map),
     Reply = case riak_repl2_fs_node_reserver:reserve(Partition) of
         ok ->
-            case get_node_ip_port(Node, ConnIP) of
+            case get_node_ip_port(Node, RealIP) of
                 {ok, {ListenIP, Port}} ->
+                    %% TODO need to apply the reversed nat-map, now
                     {location, Partition, {Node, ListenIP, Port}};
                 {error, _} ->
                     riak_repl2_fs_node_reserver:unreserve(Partition),
@@ -195,15 +201,13 @@ handle_protocol_msg({unreserve, Partition}, State) ->
     riak_repl2_fs_node_reserver:unreserve(Partition),
     State.
 
-get_partition_node(Partition) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+get_partition_node(Partition, Ring) ->
     Owners = riak_core_ring:all_owners(Ring),
     proplists:get_value(Partition, Owners).
 
-get_node_ip_port(Node, ConnIP) ->
+get_node_ip_port(Node, NormIP) ->
     {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
-    {ok, NormIP} = riak_repl_util:normalize_ip(ConnIP),
     Subnet = riak_repl2_ip:determine_netmask(IfAddrs, NormIP),
     Masked = riak_repl2_ip:mask_address(NormIP, Subnet),
     case get_matching_address(Node, NormIP, Masked) of
