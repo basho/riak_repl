@@ -164,8 +164,22 @@ cluster_mgr_member_fun({IP, Port}) ->
                     lists_shuffle(Results2);
                 false ->
                     %% NAT is in effect
-                    %% TODO
-                    []
+                    lists:foldl(fun({XIP, XPort}, Acc) ->
+                            case riak_repl2_ip:apply_reverse_nat_map(XIP, Map) of
+                                error ->
+                                    %% there's no NAT configured for this IP!
+                                    %% location_down is the closest thing we
+                                    %% can reply with.
+                                    lager:warning("There's no NAT mapping for"
+                                        "~p:~b to an external IP",
+                                        [XIP, XPort]),
+                                    Acc;
+                                {ExternalIP, ExternalPort} ->
+                                    [{ExternalIP, ExternalPort}|Acc];
+                                ExternalIP ->
+                                    [{ExternalIP, XPort}|Acc]
+                            end
+                    end, [], Results2)
             end
     end.
 
