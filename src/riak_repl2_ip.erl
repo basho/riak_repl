@@ -1,7 +1,8 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_ip).
--export([get_matching_address/2, determine_netmask/2, mask_address/2]).
+-export([get_matching_address/2, determine_netmask/2, mask_address/2,
+        maybe_apply_nat_map/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -120,11 +121,13 @@ get_matching_address(IP, CIDR, MyIPs) ->
                     %% Both addresses are either internal or external.
                     %% We'll have to assume the user knows what they're
                     %% doing
-                    lager:debug("returning speific listen IP ~p",
+                    lager:debug("returning specific listen IP ~p",
                             [ListenIP]),
                     {ListenIP, Port};
                 false ->
-                    lager:warning("NAT detected?"),
+                    %% we should never get here if things are configured right
+                    lager:warning("NAT detected, do you need to define a"
+                        "nat-map?"),
                     undefined
             end
     end.
@@ -228,6 +231,20 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
             find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth+1);
         Res ->
             Res
+    end.
+
+%% Apply the relevant nat-mapping rule, if any
+maybe_apply_nat_map(IP, Port, Map) ->
+    case lists:keyfind({IP, Port}, 1, Map) of
+        false ->
+            case lists:keyfind(IP, 1, Map) of
+                {_, InternalIP} ->
+                    InternalIP;
+                false ->
+                    IP
+            end
+        {_, InternalIP} ->
+            InternalIP
     end.
 
 -ifdef(TEST).

@@ -137,8 +137,12 @@ cluster_mgr_member_fun({IP, Port}) ->
     %% find the subnet for the interface we connected to
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
-    lager:debug("normIP is ~p", [NormIP]),
-    case riak_repl2_ip:determine_netmask(MyIPs, NormIP) of
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Map = riak_repl_ring:get_nat_map(Ring),
+    %% apply the NAT map
+    RealIP = riak_repl2_ip:maybe_apply_nat_map(NormIP, Port, Map),
+    lager:debug("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
+    case riak_repl2_ip:determine_netmask(MyIPs, RealIP) of
         undefined ->
             lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
                          [{IP,Port}]),
@@ -154,7 +158,15 @@ cluster_mgr_member_fun({IP, Port}) ->
             % when this code was written, a multicall will list the results
             % in the same order as the nodes where tried.
             Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [NormIP, CIDR]),
-            lists_shuffle(Results2)
+            case RealIP == NormIP of
+                true ->
+                    %% No nat, just return the results
+                    lists_shuffle(Results2);
+                false ->
+                    %% NAT is in effect
+                    %% TODO
+                    []
+            end
     end.
 
 maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
