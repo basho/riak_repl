@@ -4,10 +4,11 @@
 -module(riak_repl_aae_source).
 -behaviour(gen_fsm).
 
+-include("riak_repl.hrl").
 -include("riak_repl_aae_fullsync.hrl").
 
 %% API
--export([start_link/5, start_exchange/1]).
+-export([start_link/6, start_exchange/1]).
 
 %% FSM states
 -export([prepare_exchange/2,
@@ -22,13 +23,15 @@
 -type index_n() :: {index(), pos_integer()}.
 
 -record(state, {cluster,
+                client,     %% riak:local_client()
                 transport,
                 socket,
                 index       :: index(),
                 index_n     :: index_n(),
                 tree_pid    :: pid(),
                 built       :: non_neg_integer(),
-                timeout     :: pos_integer()
+                timeout     :: pos_integer(),
+                wire_ver    :: atom()
                }).
 
 %% Per state transition timeout used by certain transitions
@@ -38,10 +41,10 @@
 %%% API
 %%%===================================================================
 
--spec start_link(term(), term(), term(), index(), index_n())
+-spec start_link(term(), term(), term(), term(), index(), index_n())
                 -> {ok,pid()} | ignore | {error, term()}.
-start_link(Cluster, Transport, Socket, Index, IndexN) ->
-    gen_fsm:start(?MODULE, [Cluster, Transport, Socket, Index, IndexN], []).
+start_link(Cluster, Client, Transport, Socket, Index, IndexN) ->
+    gen_fsm:start(?MODULE, [Cluster, Client, Transport, Socket, Index, IndexN], []).
 
 start_exchange(AAESource) ->
     gen_fsm:send_event(AAESource, start_exchange).
@@ -50,7 +53,7 @@ start_exchange(AAESource) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
-init([Cluster, Transport, Socket, Index, IndexN]) ->
+init([Cluster, Client, Transport, Socket, Index, IndexN]) ->
     Timeout = app_helper:get_env(riak_kv,
                                  anti_entropy_timeout,
                                  ?DEFAULT_ACTION_TIMEOUT),
@@ -61,14 +64,15 @@ init([Cluster, Transport, Socket, Index, IndexN]) ->
     monitor(process, TreePid),
 
     State = #state{cluster=Cluster,
+                   client=Client,
                    transport=Transport,
                    socket=Socket,
                    index=Index,
                    index_n=IndexN,
                    tree_pid=TreePid,
                    timeout=Timeout,
-                   built=0},
-    %% lager:debug("Starting exchange: ~p", [LocalVN]),
+                   built=0,
+                   wire_ver=w1}, %% can't be w0 because they don't do AAE
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -244,28 +248,55 @@ compare_loop(State=#state{transport=Transport,
 %% @private
 %% Returns accumulator as a list of one element that is the count of
 %% keys that differed. Initial value of Acc is always [].
-replicate_diff(KeyDiff, Acc, #state{cluster=_Cluster,
-                                    transport=_Transport,
-                                    socket=_Socket,
-                                    index=Partition,
-                                    tree_pid=_TreePid,
-                                    index_n=_IndexN}) ->
-    case KeyDiff of
-        {remote_missing, BObj} ->
-            {Bucket,Key} = binary_to_term(BObj),
-            lager:info("Keydiff: remote partition ~p missing: ~p:~p", [Partition, Bucket, Key]);
-        Other ->
-            lager:info("Keydiff: ~p", [Other])
-    end,
+replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
+    NumObjects =
+        case KeyDiff of
+            {remote_missing, Bin} ->
+                %% send object and related objects to remote
+                {Bucket,Key} = binary_to_term(Bin),
+                lager:info("Keydiff: remote partition ~p missing: ~p:~p", [Partition, Bucket, Key]),
+                send_missing(Bucket, Key, State);
+            Other ->
+                lager:info("Keydiff: ~p", [Other]),
+                0
+        end,
 
     case Acc of
         [] ->
             [1];
         [Count] ->
-            %% accrue number of differences in this segment
-            [Count+1];
+            %% accrue number of differences sent from this segment
+            [Count+NumObjects];
         _Other ->
             Acc
+    end.
+
+send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver}) ->
+    case Client:get(Bucket, Key, 1, ?REPL_FSM_TIMEOUT) of
+        {ok, RObj} ->
+            %% we don't actually have the vclock to compare, so just send the
+            %% key and let the other side sort things out.
+            case riak_repl_util:repl_helper_send(RObj, Client) of
+                cancel ->
+                    0;
+                Objects when is_list(Objects) ->
+                    %% source -> sink : fs_diff_obj
+                    %% binarize here instead of in the send() so that our wire
+                    %% format for the riak_object is more compact.
+                    [begin
+                         Data = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,O}),
+                         send_asynchronous_msg(?MSG_PUT_OBJ, Data, State)
+                     end || O <- Objects],
+                    Data2 = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,RObj}),
+                    send_asynchronous_msg(?MSG_PUT_OBJ, Data2, State),
+                    1 + length(Objects)
+            end;
+        {error, notfound} ->
+            %% can't find the key!
+            lager:warning("Can't get a key that was know to be a difference: ~p:~p", [Bucket,Key]),
+            0;
+        _ ->
+            0
     end.
 
 %% @private
@@ -317,18 +348,30 @@ send_exchange_status(Status, State) ->
 %%------------
 %% Synchronous messaging with the AAE fullsync "sink" on the remote cluster
 %%------------
-%% send a tagged message with type and data and return the reply
-send_synchronous_msg(MsgType, Msg, State=#state{transport=Transport,
-                                                socket=Socket}) ->
-    Data = term_to_binary(Msg),
+%% send a tagged message with type and binary data. return the reply
+send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
+                                                 socket=Socket}) when is_binary(Data) ->
     ok = Transport:send(Socket, <<MsgType:8, Data/binary>>),
-    get_reply(State).
+    get_reply(State);
+%% send a tagged message with type and msg. return the reply
+send_synchronous_msg(MsgType, Msg, State) ->
+    Data = term_to_binary(Msg),
+    send_synchronous_msg(MsgType, Data, State).
 
 %% send a message with type tag only, no data
 send_synchronous_msg(MsgType, State=#state{transport=Transport,
                                            socket=Socket}) ->
     ok = Transport:send(Socket, <<MsgType:8>>),
     get_reply(State).
+
+%% Async message send with tag and (binary or term data).
+send_asynchronous_msg(MsgType, Data, #state{transport=Transport,
+                                            socket=Socket}) when is_binary(Data) ->
+    ok = Transport:send(Socket, <<MsgType:8, Data/binary>>);
+%% send a tagged message with type and msg. return the reply
+send_asynchronous_msg(MsgType, Msg, State) ->
+    Data = term_to_binary(Msg),
+    send_asynchronous_msg(MsgType, Data, State).
 
 get_reply(#state{transport=Transport, socket=Socket}) ->
     ok = Transport:setopts(Socket, [{active, once}]),

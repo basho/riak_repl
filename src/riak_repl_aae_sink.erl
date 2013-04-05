@@ -112,7 +112,17 @@ process_msg(?MSG_GET_AAE_BUCKET, {Level,BucketNum}, State=#state{index_n=IndexN,
 process_msg(?MSG_GET_AAE_SEGMENT, SegmentNum, State=#state{index_n=IndexN,
                                                            tree_pid=TreePid}) ->
     ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid),
-    send_reply(ResponseMsg, State).
+    send_reply(ResponseMsg, State);
+
+%% no reply
+process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
+    RObj = riak_repl_util:from_wire(BObj),
+    B = riak_object:bucket(RObj),
+    K = riak_object:key(RObj),
+    lager:info("Received put request for ~p:~p", [B,K]),
+    %% do the put
+    riak_repl_util:do_repl_put(RObj),
+    State.
 
 %% replies: ok | not_built | already_locked
 process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->

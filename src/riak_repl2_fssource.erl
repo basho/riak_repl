@@ -95,7 +95,9 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
         2 ->
             %% AAE strategy
             {Index,IndexN} = Partition,
-            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Transport, Socket,
+            {ok, Client} = riak:local_client(),
+            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Client,
+                                                                   Transport, Socket,
                                                                    Index, IndexN),
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),

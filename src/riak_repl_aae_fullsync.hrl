@@ -4,3 +4,5 @@
 -define(MSG_GET_AAE_BUCKET, 4).
 -define(MSG_GET_AAE_SEGMENT, 5).
 -define(MSG_REPLY, 6).
+-define(MSG_PUT_OBJ, 7).
+-define(MSG_GET_OBJ, 8).
