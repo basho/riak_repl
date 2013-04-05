@@ -167,7 +167,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
+handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
     % which node is the partition for
     % is that node available
     % send an appropriate reply
@@ -182,8 +182,28 @@ handle_protocol_msg({whereis, Partition, ConnIP, _ConnPort}, State) ->
         ok ->
             case get_node_ip_port(Node, RealIP) of
                 {ok, {ListenIP, Port}} ->
-                    %% TODO need to apply the reversed nat-map, now
-                    {location, Partition, {Node, ListenIP, Port}};
+                    case NormIP == RealIP of
+                        true ->
+                            {location, Partition, {Node, ListenIP, Port}};
+                        false ->
+                            %% need to apply the reversed nat-map, now
+                            case riak_repl2_ip:apply_reverse_nat_map(ListenIP, Map) of
+                                error ->
+                                    %% there's no NAT configured for this IP!
+                                    %% location_down is the closest thing we
+                                    %% can reply with.
+                                    lager:warning("There's no NAT mapping for"
+                                        "~p:~b to an external IP on node ~p",
+                                        [ListenIP, Port, Node]),
+                                    {location_down, Partition, Node};
+                                {ExternalIP, ExternalPort} ->
+                                    {location, Partition, {Node, ExternalIP,
+                                            ExternalPort}};
+                                ExternalIP ->
+                                    {location, Partition, {Node, ExternalIP,
+                                            Port}}
+                            end
+                    end;
                 {error, _} ->
                     riak_repl2_fs_node_reserver:unreserve(Partition),
                     {location_down, Partition, Node}

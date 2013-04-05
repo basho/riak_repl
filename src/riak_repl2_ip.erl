@@ -2,7 +2,7 @@
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_ip).
 -export([get_matching_address/2, determine_netmask/2, mask_address/2,
-        maybe_apply_nat_map/3]).
+        maybe_apply_nat_map/3, apply_reverse_nat_map/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -242,9 +242,20 @@ maybe_apply_nat_map(IP, Port, Map) ->
                     InternalIP;
                 false ->
                     IP
-            end
+            end;
         {_, InternalIP} ->
             InternalIP
+    end.
+
+%% Find the external IP for this interal IP
+%% Should only be called when you know NAT is in effect
+apply_reverse_nat_map(IP, Map) ->
+    case lists:keyfind(IP, 1, Map) of
+        false ->
+            error;
+        Res ->
+            %% this will either be the IP or an {IP, Port} tuple
+            Res
     end.
 
 -ifdef(TEST).
