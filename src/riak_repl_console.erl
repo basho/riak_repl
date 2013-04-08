@@ -27,7 +27,10 @@
          max_fssource_node/1,
          max_fssource_cluster/1,
          max_fssink_node/1,
-         nat_map/1]).
+         show_nat_map/1,
+         add_nat_map/1,
+         del_nat_map/1
+     ]).
 
 add_listener(Params) ->
     Ring = get_ring(),
@@ -474,11 +477,14 @@ max_fssink_node([FSSinkNode]) ->
 max_fssink_node(NewVal) ->
     application:set_env(riak_repl, max_fssink_node, NewVal).
 
-nat_map([]) ->
-    %% no arguments, print it
+show_nat_map([]) ->
     Ring = get_ring(),
-    io:format("Nat map: ~p~n", [riak_repl_ring:get_nat_map(Ring)]);
-nat_map([External, Internal]) ->
+    io:format("Nat map: ~n"),
+    [io:format("        ~-21.. s -> ~s~n",
+            [print_ip_and_maybe_port(Int), print_ip_and_maybe_port(Ext)])
+        || {Int, Ext} <- riak_repl_ring:get_nat_map(Ring)].
+
+add_nat_map([External, Internal]) ->
     case {parse_ip_and_maybe_port(External),
             parse_ip_and_maybe_port(Internal)} of
         {{error, Reason}, _} ->
@@ -490,6 +496,22 @@ nat_map([External, Internal]) ->
         {ExternalIP, InternalIP} ->
             riak_core_ring_manager:ring_trans(
                 fun riak_repl_ring:add_nat_map/2,
+                {ExternalIP, InternalIP}),
+            ok
+    end.
+
+del_nat_map([External, Internal]) ->
+    case {parse_ip_and_maybe_port(External),
+            parse_ip_and_maybe_port(Internal)} of
+        {{error, Reason}, _} ->
+            io:format("Bad external IP ~p", [Reason]),
+            error;
+        {_, {error, Reason}} ->
+            io:format("Bad internal IP ~p", [Reason]),
+            error;
+        {ExternalIP, InternalIP} ->
+            riak_core_ring_manager:ring_trans(
+                fun riak_repl_ring:del_nat_map/2,
                 {ExternalIP, InternalIP}),
             ok
     end.
@@ -521,6 +543,12 @@ parse_ip_and_maybe_port(String) ->
                     {error, {bad_ip, IPStr}}
             end
     end.
+
+print_ip_and_maybe_port({IP, Port}) ->
+    [inet_parse:ntoa(IP), $:, integer_to_list(Port)];
+print_ip_and_maybe_port(IP) ->
+    inet_parse:ntoa(IP).
+
 
 format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
