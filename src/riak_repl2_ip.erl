@@ -60,7 +60,7 @@ cidr(<<X:1/bits, Rest/bits>>, Acc) ->
 %%      erlang-questions.
 mask_address(Addr={_, _, _, _}, Maskbits) ->
     B = list_to_binary(tuple_to_list(Addr)),
-    lager:debug("address as binary: ~p ~p", [B,Maskbits]),
+    lager:debug("address as binary: ~w ~w", [B,Maskbits]),
     <<Subnet:Maskbits, _Host/bitstring>> = B,
     Subnet;
 mask_address(_, _) ->
@@ -110,10 +110,10 @@ get_matching_address(IP, CIDR, MyIPs) ->
             case rfc1918(IP) of
                 false ->
                     %% search as low as a class A
-                    find_best_ip(MyIPs, IP, Port, CIDR, CIDR - 8);
+                    find_best_ip(MyIPs, IP, Port, CIDR, 8);
                 RFCCIDR ->
                     %% search as low as the bottom of the RFC1918 subnet
-                    find_best_ip(MyIPs, IP, Port, CIDR, (CIDR - RFCCIDR)+1)
+                    find_best_ip(MyIPs, IP, Port, CIDR, RFCCIDR)
             end;
         _ ->
             case is_rfc1918(IP) == is_rfc1918(ListenIP) of
@@ -127,13 +127,13 @@ get_matching_address(IP, CIDR, MyIPs) ->
                 false ->
                     %% we should never get here if things are configured right
                     lager:warning("NAT detected, do you need to define a"
-                        "nat-map?"),
+                        " nat-map?"),
                     undefined
             end
     end.
 
 
-find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) when MyCIDR - SearchDepth < 8 ->
+find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
     %% CIDR is now too small to meaningfully return a result
     %% blindly return *anything* that is close, I guess?
     lager:warning("Unable to find an approximate match for ~s/~b,"
@@ -158,6 +158,8 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) when MyCIDR - SearchDepth <
                         IP = proplists:get_value(addr, V4Attrs),
                         case is_rfc1918(MyIP) == is_rfc1918(IP) of
                             true ->
+                                lager:debug("wildly guessing that  ~p is close"
+                                    "to ~p", [IP, MyIP]),
                                 {IP, Port};
                             false ->
                                 Acc
@@ -175,7 +177,7 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) when MyCIDR - SearchDepth <
             Res
     end;
 
-find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
+find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) ->
     Res = lists:foldl(fun({_IF, Attrs}, Acc) ->
                 V4Attrs = lists:filter(fun({addr, {_, _, _, _}}) ->
                             true;
@@ -191,18 +193,8 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
                     _ ->
                         lager:debug("IPs for ~s : ~p", [_IF, V4Attrs]),
                         IP = proplists:get_value(addr, V4Attrs),
-                        NetMask = proplists:get_value(netmask, V4Attrs),
-                        CIDR = case cidr(list_to_binary(tuple_to_list(NetMask)), 0) of
-                            X when X < SearchDepth ->
-                                MyCIDR;
-                            X ->
-                                X
-                        end,
-
-                        lager:debug("CIDRs are ~p ~p for depth ~p", [CIDR-SearchDepth,
-                                MyCIDR - SearchDepth, SearchDepth]),
-                        case {mask_address(IP, CIDR - SearchDepth),
-                                mask_address(MyIP, MyCIDR - SearchDepth)}  of
+                        case {mask_address(IP, MyCIDR),
+                                mask_address(MyIP, MyCIDR)}  of
                             {Mask, Mask} ->
                                 %% the 172.16/12 is a pain in the ass
                                 case is_rfc1918(IP) == is_rfc1918(MyIP) of
@@ -215,7 +207,7 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
                                 end;
                             {_A, _B} ->
                                 lager:debug("IP ~p with CIDR ~p masked as ~p",
-                                        [IP, CIDR, _A]),
+                                        [IP, MyCIDR, _A]),
                                 lager:debug("IP ~p with CIDR ~p masked as ~p",
                                         [MyIP, MyCIDR, _B]),
                                 Acc
@@ -224,16 +216,14 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
         end, undefined, MyIPs),
     case Res of
         undefined ->
-            %% TODO check for NAT
-
             %% Increase the search depth and retry, this will decrement the
             %% CIDR masks by one
-            find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth+1);
+            find_best_ip(MyIPs, MyIP, Port, MyCIDR - 1, MaxDepth);
         Res ->
             Res
     end.
 
-%% Apply the relevant nat-mapping rule, if any
+%% Apply the relevant NAT-mapping rule, if any
 maybe_apply_nat_map(IP, Port, Map) ->
     case lists:keyfind({IP, Port}, 1, Map) of
         false ->
@@ -367,9 +357,9 @@ get_matching_address_test_() ->
             {"public IPs when all we have are RFC1918 ones",
                 fun() ->
                         Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 0, 0, 1}},
+                                    [{addr, {172, 16, 0, 1}},
                                         {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({8, 8, 8, 1}, 8, Addrs),
+                        Res = get_matching_address({172, 0, 8, 8}, 24, Addrs),
                         ?assertEqual(undefined, Res)
                 end
             },
