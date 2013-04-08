@@ -187,7 +187,8 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                             {location, Partition, {Node, ListenIP, Port}};
                         false ->
                             %% need to apply the reversed nat-map, now
-                            case riak_repl2_ip:apply_reverse_nat_map(ListenIP, Map) of
+                            case riak_repl2_ip:apply_reverse_nat_map(ListenIP,
+                                    Port, Map) of
                                 error ->
                                     %% there's no NAT configured for this IP!
                                     %% location_down is the closest thing we

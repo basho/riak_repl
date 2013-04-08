@@ -141,7 +141,7 @@ cluster_mgr_member_fun({IP, Port}) ->
     Map = riak_repl_ring:get_nat_map(Ring),
     %% apply the NAT map
     RealIP = riak_repl2_ip:maybe_apply_nat_map(NormIP, Port, Map),
-    lager:debug("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
+    lager:info("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
     case riak_repl2_ip:determine_netmask(MyIPs, RealIP) of
         undefined ->
             lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
@@ -154,18 +154,18 @@ cluster_mgr_member_fun({IP, Port}) ->
             %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
-                get_matching_address, [NormIP, CIDR]),
+                get_matching_address, [RealIP, CIDR]),
             % when this code was written, a multicall will list the results
             % in the same order as the nodes where tried.
-            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [NormIP, CIDR]),
+            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP, CIDR]),
             case RealIP == NormIP of
                 true ->
                     %% No nat, just return the results
                     lists_shuffle(Results2);
                 false ->
                     %% NAT is in effect
-                    lists:foldl(fun({XIP, XPort}, Acc) ->
-                            case riak_repl2_ip:apply_reverse_nat_map(XIP, Map) of
+                    NatRes = lists:foldl(fun({XIP, XPort}, Acc) ->
+                            case riak_repl2_ip:apply_reverse_nat_map(XIP, XPort, Map) of
                                 error ->
                                     %% there's no NAT configured for this IP!
                                     %% location_down is the closest thing we
@@ -179,7 +179,9 @@ cluster_mgr_member_fun({IP, Port}) ->
                                 ExternalIP ->
                                     [{ExternalIP, XPort}|Acc]
                             end
-                    end, [], Results2)
+                    end, [], Results2),
+                    lager:info("~p -> ~p", [Results2, NatRes]),
+                    NatRes
             end
     end.
 
