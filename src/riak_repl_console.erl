@@ -509,48 +509,48 @@ nat_map([]) ->
     %% no arguments, print it
     Ring = get_ring(),
     io:format("Nat map: ~p~n", [riak_repl_ring:get_nat_map(Ring)]);
-nat_map([External, InternalIPStr]) ->
-    try inet_parse:address(InternalIPStr) of
-        {ok, InternalIP} ->
-            case string:tokens(External, ":") of
-                [ExternalIPStr, ExternalPortStr] ->
-                    try inet_parse:address(ExternalIPStr) of
-                        {ok, ExternalIP} ->
-                            try list_to_integer(ExternalPortStr) of
-                                ExternalPort ->
-                                    riak_core_ring_manager:ring_trans(
-                                        fun riak_repl_ring:add_nat_map/2,
-                                        {{ExternalIP, ExternalPort},
-                                            InternalIP}),
-                                    ok
-                            catch
-                                _:_ ->
-                                    io:format("Invalid port ~p~n", [ExternalPortStr]),
-                                    error
-                            end
+nat_map([External, Internal]) ->
+    case {parse_ip_and_maybe_port(External),
+            parse_ip_and_maybe_port(Internal)} of
+        {{error, Reason}, _} ->
+            io:format("Bad external IP ~p", [Reason]),
+            error;
+        {_, {error, Reason}} ->
+            io:format("Bad internal IP ~p", [Reason]),
+            error;
+        {ExternalIP, InternalIP} ->
+            riak_core_ring_manager:ring_trans(
+                fun riak_repl_ring:add_nat_map/2,
+                {ExternalIP, InternalIP}),
+            ok
+    end.
+
+%% helper functions
+
+parse_ip_and_maybe_port(String) ->
+    case string:tokens(String, ":") of
+        [IPStr, PortStr] ->
+            try inet_parse:address(IPStr) of
+                {ok, IP} ->
+                    try list_to_integer(PortStr) of
+                        Port ->
+                            {IP, Port}
                     catch
                         _:_ ->
-                            io:format("Invalid external IP ~p~n", [ExternalIPStr]),
-                            error
-                    end;
-                [ExternalIPStr] ->
-                    try inet_parse:address(ExternalIPStr) of
-                        {ok, ExternalIP} ->
-                            riak_core_ring_manager:ring_trans(
-                                fun riak_repl_ring:add_nat_map/2,
-                                {ExternalIP, InternalIP}),
-                            ok
-                    catch
-                        _:_ ->
-                            io:format("Invalid external IP ~p~n", [ExternalIPStr]),
-                            error
+                            {error, {bad_port, PortStr}}
                     end
+            catch
+                _:_ ->
+                    {error, {bad_ip, IPStr}}
+            end;
+        [IPStr] ->
+            try inet_parse:address(IPStr) of
+                {ok, IP} ->
+                    IP
+            catch
+                _:_ ->
+                    {error, {bad_ip, IPStr}}
             end
-    catch
-        _:_ ->
-            io:format("Invalid internal IP ~p~n",
-                [InternalIPStr]),
-            error
     end.
 
 %% helper functions
