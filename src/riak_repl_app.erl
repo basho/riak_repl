@@ -181,7 +181,7 @@ cluster_mgr_member_fun({IP, Port}) ->
                             end
                     end, [], Results2),
                     lager:info("~p -> ~p", [Results2, NatRes]),
-                    NatRes
+                    lists:shuffle(NatRes)
             end
     end.
 

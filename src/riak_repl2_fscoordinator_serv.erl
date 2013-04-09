@@ -229,9 +229,8 @@ get_partition_node(Partition, Ring) ->
 get_node_ip_port(Node, NormIP) ->
     {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
-    Subnet = riak_repl2_ip:determine_netmask(IfAddrs, NormIP),
-    Masked = riak_repl2_ip:mask_address(NormIP, Subnet),
-    case get_matching_address(Node, NormIP, Masked) of
+    CIDR = riak_repl2_ip:determine_netmask(IfAddrs, NormIP),
+    case get_matching_address(Node, NormIP, CIDR) of
         {ok, {ListenIP, _}} ->
             {ok, {ListenIP, Port}};
         Else ->
