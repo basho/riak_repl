@@ -521,7 +521,7 @@ del_nat_map([External, Internal]) ->
 parse_ip_and_maybe_port(String) ->
     case string:tokens(String, ":") of
         [IPStr, PortStr] ->
-            try inet_parse:address(IPStr) of
+            try inet_parse:ipv4strict_address(IPStr) of
                 {ok, IP} ->
                     try list_to_integer(PortStr) of
                         Port ->
@@ -535,7 +535,7 @@ parse_ip_and_maybe_port(String) ->
                     {error, {bad_ip, IPStr}}
             end;
         [IPStr] ->
-            try inet_parse:address(IPStr) of
+            try inet_parse:ipv4strict_address(IPStr) of
                 {ok, IP} ->
                     IP
             catch
