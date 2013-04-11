@@ -141,7 +141,7 @@ cluster_mgr_member_fun({IP, Port}) ->
     Map = riak_repl_ring:get_nat_map(Ring),
     %% apply the NAT map
     RealIP = riak_repl2_ip:maybe_apply_nat_map(NormIP, Port, Map),
-    lager:info("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
+    lager:debug("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
     case riak_repl2_ip:determine_netmask(MyIPs, RealIP) of
         undefined ->
             lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
@@ -180,7 +180,7 @@ cluster_mgr_member_fun({IP, Port}) ->
                                     [{ExternalIP, XPort}|Acc]
                             end
                     end, [], Results2),
-                    lager:info("~p -> ~p", [Results2, NatRes]),
+                    lager:debug("~p -> ~p", [Results2, NatRes]),
                     lists_shuffle(NatRes)
             end
     end.
