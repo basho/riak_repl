@@ -485,8 +485,8 @@ show_nat_map([]) ->
         || {Int, Ext} <- riak_repl_ring:get_nat_map(Ring)].
 
 add_nat_map([External, Internal]) ->
-    case {parse_ip_and_maybe_port(External),
-            parse_ip_and_maybe_port(Internal)} of
+    case {parse_ip_and_maybe_port(External, false),
+            parse_ip_and_maybe_port(Internal, true)} of
         {{error, Reason}, _} ->
             io:format("Bad external IP ~p", [Reason]),
             error;
@@ -501,8 +501,8 @@ add_nat_map([External, Internal]) ->
     end.
 
 del_nat_map([External, Internal]) ->
-    case {parse_ip_and_maybe_port(External),
-            parse_ip_and_maybe_port(Internal)} of
+    case {parse_ip_and_maybe_port(External, false),
+            parse_ip_and_maybe_port(Internal, true)} of
         {{error, Reason}, _} ->
             io:format("Bad external IP ~p", [Reason]),
             error;
@@ -518,10 +518,10 @@ del_nat_map([External, Internal]) ->
 
 %% helper functions
 
-parse_ip_and_maybe_port(String) ->
+parse_ip_and_maybe_port(String, Hostname) ->
     case string:tokens(String, ":") of
         [IPStr, PortStr] ->
-            try inet_parse:ipv4strict_address(IPStr) of
+            case inet_parse:ipv4strict_address(IPStr) of
                 {ok, IP} ->
                     try list_to_integer(PortStr) of
                         Port ->
@@ -529,26 +529,47 @@ parse_ip_and_maybe_port(String) ->
                     catch
                         _:_ ->
                             {error, {bad_port, PortStr}}
-                    end
-            catch
-                _:_ ->
+                    end;
+                _ when Hostname ->
+                    case inet_gethost_native:gethostbyname(IPStr) of
+                        {ok, _} ->
+                            try list_to_integer(PortStr) of
+                                Port ->
+                                    {IPStr, Port}
+                            catch
+                                _:_ ->
+                                    {error, {bad_port, PortStr}}
+                            end;
+                        _ ->
+                            {error, {bad_ip, IPStr}}
+                    end;
+                _ ->
                     {error, {bad_ip, IPStr}}
             end;
         [IPStr] ->
-            try inet_parse:ipv4strict_address(IPStr) of
+            case inet_parse:ipv4strict_address(IPStr) of
                 {ok, IP} ->
-                    IP
-            catch
-                _:_ ->
+                    IP;
+                _ when Hostname ->
+                    case inet_gethost_native:gethostbyname(IPStr) of
+                        {ok, _} ->
+                            IPStr;
+                        _ ->
+                            {error, {bad_ip, IPStr}}
+                    end;
+                _ ->
                     {error, {bad_ip, IPStr}}
             end
     end.
 
-print_ip_and_maybe_port({IP, Port}) ->
+print_ip_and_maybe_port({IP, Port}) when is_tuple(IP) ->
     [inet_parse:ntoa(IP), $:, integer_to_list(Port)];
-print_ip_and_maybe_port(IP) ->
-    inet_parse:ntoa(IP).
-
+print_ip_and_maybe_port({Host, Port}) when is_list(Host) ->
+    [Host, $:, integer_to_list(Port)];
+print_ip_and_maybe_port(IP) when is_tuple(IP) ->
+    inet_parse:ntoa(IP);
+print_ip_and_maybe_port(Host) when is_list(Host) ->
+    Host.
 
 format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
