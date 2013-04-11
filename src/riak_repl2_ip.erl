@@ -224,7 +224,8 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) ->
     end.
 
 %% Apply the relevant NAT-mapping rule, if any
-maybe_apply_nat_map(IP, Port, Map) ->
+maybe_apply_nat_map(IP, Port, Map0) ->
+    Map = expand_hostnames(Map0),
     case lists:keyfind({IP, Port}, 1, Map) of
         false ->
             case lists:keyfind(IP, 1, Map) of
@@ -243,7 +244,8 @@ maybe_apply_nat_map(IP, Port, Map) ->
 
 %% Find the external IP for this interal IP
 %% Should only be called when you know NAT is in effect
-apply_reverse_nat_map(IP, Port, Map) ->
+apply_reverse_nat_map(IP, Port, Map0) ->
+    Map = expand_hostnames(Map0),
     case lists:keyfind({IP, Port}, 2, Map) of
         false ->
             case lists:keyfind(IP, 2, Map) of
@@ -256,6 +258,48 @@ apply_reverse_nat_map(IP, Port, Map) ->
             %% this will either be the IP or an {IP, Port} tuple
             Res
     end.
+
+expand_hostnames(Map) ->
+    lists:reverse(lists:foldl(fun expand_hostnames/2, [],  Map)).
+
+expand_hostnames({External, {Host, InternalPort}}, Acc) when is_list(Host) ->
+    %% resolve it via /etc/hosts
+    case inet_gethost_native:gethostbyname(Host) of
+        {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+            lager:debug("locally resolved ~p to ~p", [Host, Addresses]),
+            [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
+        Res ->
+            %% resolve it via the configured nameserver
+            case inet_res:gethostnames(Host) of
+                {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+                    lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
+                    [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
+                Res2 ->
+                    lager:warning("Failed to resolve ~p locally: ~p", [Host, Res]),
+                    lager:warning("Failed to resolve ~p remotely: ~p", [Host, Res2]),
+                    Acc
+            end
+    end;
+expand_hostnames({External, Host}, Acc) when is_list(Host) ->
+    %% resolve it via /etc/hosts
+    case inet_gethost_native:gethostbyname(Host) of
+        {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+            lager:debug("locally resolved ~p to ~p", [Host, Addresses]),
+            [{External, Addr} || Addr <- Addresses] ++ Acc;
+        Res ->
+            %% resolve it via the configured nameserver
+            case inet_res:gethostnames(Host) of
+                {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+                    lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
+                    [{External, Addr} || Addr <- Addresses] ++ Acc;
+                Res2 ->
+                    lager:warning("Failed to resolve ~p locally: ~p", [Host, Res]),
+                    lager:warning("Failed to resolve ~p remotely: ~p", [Host, Res2]),
+                    Acc
+            end
+    end;
+expand_hostnames(Any, Acc) ->
+    [Any|Acc].
 
 -ifdef(TEST).
 
@@ -455,6 +499,99 @@ determine_netmask_test_() ->
             end
         }
 
+    ].
+
+natmap_test_() ->
+    [
+        {"forward lookups work",
+            fun() ->
+                    Map = [
+                        {{65, 172, 243, 10}, {10, 0, 0, 10}},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({10, 0, 0, 11},
+                        maybe_apply_nat_map({65, 172, 243, 11}, 9080, Map)),
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 9090, Map)),
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({10, 0, 0, 10}, 9090, Map)),
+                    ok
+            end
+        },
+        {"forward lookups with ports work",
+            fun() ->
+                    Map = [
+                        {{{65, 172, 243, 10}, 10080}, {10, 0, 0, 10}},
+                        {{{65, 172, 243, 10}, 10081}, {10, 0, 0, 11}},
+                        {{{65, 172, 243, 10}, 10082}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 10080, Map)),
+                    ?assertEqual({10, 0, 0, 11},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 10081, Map)),
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({10, 0, 0, 10}, 9090, Map)),
+                    ok
+            end
+        },
+        {"reverse lookups work",
+            fun() ->
+                    Map = [
+                        {{65, 172, 243, 10}, {10, 0, 0, 10}},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({65, 172, 243, 10},
+                        apply_reverse_nat_map({10, 0, 0, 10}, 9080, Map)),
+                    ?assertEqual({65, 172, 243, 11},
+                        apply_reverse_nat_map({10, 0, 0, 11}, 9090, Map)),
+                    ?assertEqual(error,
+                        apply_reverse_nat_map({10, 0, 0, 20}, 9090, Map)),
+                    ok
+            end
+        },
+        {"reverse lookups with ports work",
+            fun() ->
+                    Map = [
+                        {{{65, 172, 243, 10}, 10080}, {10, 0, 0, 10}},
+                        {{{65, 172, 243, 10}, 10081}, {10, 0, 0, 11}},
+                        {{{65, 172, 243, 10}, 10082}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({{65, 172, 243, 10}, 10080},
+                        apply_reverse_nat_map({10, 0, 0, 10}, 9080, Map)),
+                    ?assertEqual({{65, 172, 243, 10}, 10081},
+                        apply_reverse_nat_map({10, 0, 0, 11}, 9080, Map)),
+                    ?assertEqual(error,
+                        apply_reverse_nat_map({10, 0, 0, 20}, 9080, Map)),
+                    ok
+            end
+        },
+        {"forward lookups with hostnames work",
+            fun() ->
+                    Map = [
+                        {{65, 172, 243, 10}, "localhost"},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({127, 0, 0, 1},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 9080, Map)),
+                    ok
+            end
+        },
+        {"reverse lookups with hostnames work",
+            fun() ->
+                    {ok, {hostent, "basho.com", _, inet, 4, Addresses}} = inet_res:gethostbyname("basho.com"),
+                    Map = [
+                        {{65, 172, 243, 10}, "basho.com"},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({65, 172, 243, 10},
+                        apply_reverse_nat_map(hd(Addresses), 9080, Map)),
+                    ok
+            end
+        }
     ].
 
 -endif.
