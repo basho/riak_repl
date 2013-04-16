@@ -8,6 +8,7 @@
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
          pause_fullsync/1, resume_fullsync/1]).
 -export([client_stats_rpc/0, server_stats_rpc/0]).
+-export([extract_rt_fs_send_recv_kbps/1]).
 
 -export([clustername/1, clusters/1,clusterstats/1,
          connect/1, disconnect/1, connections/1,
@@ -129,10 +130,12 @@ status2(Verbose) ->
     CoordSrvStats = coordinator_srv_stats(),
     CMgrStats = cluster_mgr_stats(),
     RTQStats = rtq_stats(),
-    All =
+    Most =
           RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
           CoordStats++CoordSrvStats++CMgrStats++RTQStats,
+    SendRecvKbps = extract_rt_fs_send_recv_kbps(Most),
+    All = Most ++ SendRecvKbps,
     if Verbose ->
             format_counter_stats(All);
        true ->
@@ -464,6 +467,14 @@ max_fssink_node([FSSinkNode]) ->
 
 %% helper functions
 
+extract_rt_fs_send_recv_kbps(Most) ->
+    RTSendKbps = sum_rt_send_kbps(Most),
+    RTRecvKbps = sum_rt_recv_kbps(Most),
+    FSSendKbps = sum_fs_send_kbps(Most),
+    FSRecvKbps = sum_fs_recv_kbps(Most),
+    [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kgbps, RTRecvKbps},
+        {fullsync_send_kbps, FSSendKbps}, {fullsync_recv_kbps, FSRecvKbps}].
+
 format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
     io:format("~s: ~p~n", [K,V]),
@@ -692,3 +703,97 @@ fs2_sink_stats(Pid) ->
     {sink_stats, [{pid,riak_repl_util:safe_pid_to_list(Pid)},
                   erlang:process_info(Pid, message_queue_len),
                   {fs_connected_to, State}]}.
+
+sum_rt_send_kbps(Stats) ->
+    sum_rt_kbps(Stats, send_kbps).
+
+sum_rt_recv_kbps(Stats) ->
+    sum_rt_kbps(Stats, recv_kbps).
+
+sum_rt_kbps(Stats, KbpsDirection) ->
+    Sinks = proplists:get_value(sinks, Stats, []),
+    Sources = proplists:get_value(sources, Stats, []),
+    Kbpss = lists:foldl(fun({StatKind, SinkProps}, Acc) ->
+        Path1 = case StatKind of
+            sink_stats -> rt_sink_connected_to;
+            source_stats -> rt_source_connected_to;
+            _Else -> not_found
+        end,
+        KbpsStr = proplists_get([Path1, socket, KbpsDirection], SinkProps, "[]"),
+        get_first_kbsp(KbpsStr) + Acc
+    end, 0, Sinks ++ Sources),
+    Kbpss.
+
+sum_fs_send_kbps(Stats) ->
+    sum_fs_kbps(Stats, send_kbps).
+
+sum_fs_recv_kbps(Stats) ->
+    sum_fs_kbps(Stats, recv_kbps).
+
+sum_fs_kbps(Stats, Direction) ->
+    Coordinators = proplists:get_value(fullsync_coordinator, Stats),
+    CoordFoldFun = fun({_SinkName, FSCoordStats}, Acc) ->
+        CoordKbpsStr = proplists_get([socket, Direction], FSCoordStats, "[]"),
+        CoordKbps = get_first_kbsp(CoordKbpsStr),
+        CoordSourceKpbs = sum_fs_source_kbps(FSCoordStats, Direction),
+        SinkKbps = sum_fs_sink_kbps(Stats, Direction),
+        Acc + CoordKbps + CoordSourceKpbs + SinkKbps
+    end,
+    CoordSrvs = proplists:get_value(fullsync_coordinator_srv, Stats),
+    CoordSrvsFoldFun = fun({_IPPort, SrvStats}, Acc) ->
+        KbpsStr = proplists_get([socket, Direction], SrvStats, "[]"),
+        Kbps = get_first_kbsp(KbpsStr),
+        Kbps + Acc
+    end,
+    lists:foldl(CoordFoldFun, 0, Coordinators) + lists:foldl(CoordSrvsFoldFun, 0, CoordSrvs).
+
+sum_fs_source_kbps(CoordStats, Direction) ->
+    Running = proplists:get_value(running_stats, CoordStats, []),
+    FoldFun = fun({_Pid, Stats}, Acc) ->
+        KbpsStr = proplists_get([socket, Direction], Stats, "[]"),
+        Kbps = get_first_kbsp(KbpsStr),
+        Acc + Kbps
+    end,
+    lists:foldl(FoldFun, 0, Running).
+
+sum_fs_sink_kbps(Stats, Direction) ->
+    Sinks = proplists:get_value(sinks, Stats, []),
+    FoldFun = fun({sink_stats, SinkStats}, Acc) ->
+        case proplists_get([fs_connected_to, socket, Direction], SinkStats) of
+            undefined ->
+                Acc;
+            KbpsStr ->
+                Kbps = get_first_kbsp(KbpsStr),
+                Acc + Kbps
+        end
+    end,
+    lists:foldl(FoldFun, 0, Sinks).
+
+proplists_get(Path, Props) ->
+    proplists_get(Path, Props, undefined).
+
+proplists_get([], undefined, Default) ->
+    Default;
+proplists_get([], Value, _Default) ->
+    Value;
+proplists_get([Key | Path], Props, Default) when is_list(Props) ->
+    case proplists:get_value(Key, Props) of
+        undefined ->
+            Default;
+        AList when is_list(AList) ->
+            proplists_get(Path, AList, Default);
+        _Wut ->
+            erlang:error(badarg)
+    end.
+
+get_first_kbsp(Str) ->
+    case simple_parse(Str ++ ".") of
+        [] -> 0;
+        [V | _] -> V
+    end.
+
+simple_parse(Str) ->
+    {ok, Tokens, _EoL} = erl_scan:string(Str),
+    {ok, AbsForm} = erl_parse:parse_exprs(Tokens),
+    {value, Value, _Bs} = erl_eval:exprs(AbsForm, erl_eval:new_bindings()),
+    Value.

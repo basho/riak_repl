@@ -94,12 +94,15 @@ get_stats() ->
     Coord = riak_repl_console:coordinator_stats(),
     CoordSrv = riak_repl_console:coordinator_srv_stats(),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
+    Most = lists:append([RTRemotesStatus, FSRemotesStatus, Stats1, CMStats,
+      LeaderStats, Servers, Clients, Coord, CoordSrv, RTQ]),
+    KbpsSums = riak_repl_console:extract_rt_fs_send_recv_kbps(Most),
     jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
     ++ RTQ 
     ++ jsonify_stats(Coord,[])
-    ++ jsonify_stats(CoordSrv,[]).
+    ++ jsonify_stats(CoordSrv,[]) ++ jsonify_stats(KbpsSums, []).
 
 %%format_stats(Type, [], Acc) ->
 %%    [{Type, lists:reverse(Acc)}];
