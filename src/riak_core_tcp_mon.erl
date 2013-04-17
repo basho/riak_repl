@@ -178,8 +178,20 @@ handle_info({nodeup, Node, _InfoList}, State) ->
     end;
 
 
-handle_info({nodedown, _Node, _InfoList}, _State) ->
-    {noreply, #state{}};
+handle_info({nodedown, Node, _InfoList}, State) ->
+    GbList = gb_trees:to_list(State#state.conns),
+    MaybePortConn = [{P, C} ||
+        {P, #conn{type = dist, tag = {node, MaybeNode}} = C} <- GbList,
+        MaybeNode =:= Node],
+    Conns2 = case MaybePortConn of
+        [{Port, Conn} | _] ->
+            erlang:send_after(State#state.clear_after, self(), {clear, Port}),
+            Conn2 = Conn#conn{type = error},
+            gb_trees:update(Port, Conn2, State#state.conns);
+        _ ->
+            State#state.conns
+    end,
+    {noreply, State#state{conns = Conns2}};
 handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
                                              opts = Opts, conns = Conns}) ->
     schedule_tick(State),
