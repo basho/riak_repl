@@ -32,6 +32,7 @@
                 deactivated = 0,  %% Count of times deactivated
                 source_drops = 0, %% Count of upstream drops
                 helper,           %% Helper PID
+                hb_last,          %% os:timestamp last heartbeat message received
                 seq_ref,          %% Sequence reference for completed/acked
                 expect_seq = undefined,%% Next expected sequence number
                 acked_seq = undefined, %% Last sequence number acknowledged
@@ -41,7 +42,7 @@
 
 %% Register with service manager
 register_service() ->
-    ProtoPrefs = {realtime,[{1,0}]},
+    ProtoPrefs = {realtime,[{1,1}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -91,6 +92,7 @@ init([Proto, Remote]) ->
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = _S, helper = Helper,
+                                          hb_last = HBLast,
                                           active = Active, deactivated = Deactivated,
                                           source_drops = SourceDrops,
                                           expect_seq = ExpSeq, acked_seq = AckedSeq}) ->
@@ -103,6 +105,7 @@ handle_call(status, _From, State = #state{remote = Remote,
               %%{socket_raw, S},
               {socket,
                riak_core_tcp_mon:format_socket_stats(SocketStats,[])},
+              {hb_last, HBLast},
               %%{peer, peername(State)},
               {helper, riak_repl_util:safe_pid_to_list(Helper)},
               {active, Active},
@@ -197,12 +200,15 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% Receive TCP data - decode framing and dispatch
-recv(TcpBin, State) ->
+recv(TcpBin, State = #state{transport = T, socket = S}) ->
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
             recv(Cont, do_write_objects(Seq, BinObjs, State));
+        {ok, heartbeat, Cont} ->
+            T:send(S, riak_repl2_rtframe:encode(heartbeat, undefined)),
+            recv(Cont, State#state{hb_last = os:timestamp()});
         {error, Reason} ->
             %% TODO: Log Something bad happened
             {stop, {framing, Reason}, State}

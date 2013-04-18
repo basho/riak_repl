@@ -122,6 +122,11 @@ jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso 
 jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
+jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega),
+                                                   is_integer(Secs),
+                                                   is_integer(Micro) ->
+    StrDate = httpd_util:rfc1123_date(calendar:now_to_local_time(Now)),
+    jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
 

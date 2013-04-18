@@ -10,7 +10,7 @@
 %% API
 -export([start_link/3,
          stop/1,
-         status/1, status/2]).
+         status/1, status/2, send_heartbeat/1]).
 
 -define(SERVER, ?MODULE).
 
@@ -38,6 +38,11 @@ status(Pid) ->
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
+send_heartbeat(Pid) ->
+    %% Cast the heartbeat, do not want to block the rtsource process
+    %% as it is responsible for checking heartbeat
+    gen_server:cast(Pid, send_heartbeat).
+
 init([Remote, Transport, Socket]) ->
     riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
@@ -64,12 +69,16 @@ handle_call(status, _From, State =
     {reply, [{sent_seq, SentSeq},
              {objects, Objects}], State}.
 
-handle_cast(_Msg, State) ->
-    %% TODO: Log unhandled message
+handle_cast(send_heartbeat, State = #state{transport = T, socket = S}) ->
+    HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
+    T:send(S, HBIOL),
+    {noreply, State};
+handle_cast(Msg, State) ->
+    lager:info("Realtime source helper received unexpected cast - ~p\n", [Msg]),
     {noreply, State}.
 
-handle_info(_Msg, State) ->
-    %% TODO: Log unknown msg
+handle_info(Msg, State) ->
+    lager:info("Realtime source helper received unexpected message - ~p\n", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
