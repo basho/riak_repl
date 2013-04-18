@@ -3,7 +3,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/4, register_service/0, start_service/5, legacy_status/2]).
+-export([start_link/4, register_service/0, start_service/5, legacy_status/2, fullsync_complete/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -21,6 +21,10 @@
 
 start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, [Socket, Transport, Proto, Props], []).
+
+fullsync_complete(Pid) ->
+    %% cast to avoid deadlock in terminate
+    gen_server:cast(Pid, fullsync_complete).
 
 %% Register with service manager
 register_service() ->
@@ -51,6 +55,7 @@ init([Socket, Transport, OKProto, Props]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
@@ -71,14 +76,14 @@ init([Socket, Transport, OKProto, Props]) ->
                         strategy=keylist, ver=Ver}};
         2 ->
             %% AAE strategy
-            {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket),
+            {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket, self()),
             {ok, #state{transport=Transport, socket=Socket, cluster=Cluster,
                         fullsync_worker=FullsyncWorker, strategy=aae, ver=Ver}}
     end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->
-    Res = case is_pid(FSW) of
+    Res = case is_process_alive(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
@@ -96,6 +101,10 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
+handle_cast(fullsync_complete, State) ->
+    %% sent from AAE fullsync worker
+    lager:info("Fullsync complete."),
+    {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -152,7 +161,8 @@ decode_obj_msg(Data) ->
     end.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
-    case is_pid(FSW) of
+    lager:info("FS sink terminating."),
+    case is_process_alive(FSW) of
         true ->
             gen_fsm:sync_send_all_state_event(FSW, stop);
         _ ->

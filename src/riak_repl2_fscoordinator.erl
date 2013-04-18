@@ -323,6 +323,7 @@ handle_cast(_Msg, State) ->
 
 %% @hidden
 handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdown ->
+    lager:info("fssource ~p exited normally", [Pid]),
     PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
     case PartitionEntry of
         false ->
@@ -359,7 +360,7 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
     end;
 
 handle_info({'EXIT', Pid, _Cause}, State) ->
-    lager:warning("fssource ~p exited abnormally", [Pid]),
+    lager:info("fssource ~p exited abnormally", [Pid]),
     PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
     case PartitionEntry of
         false ->

@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/2, connected/6, connect_failed/3, start_fullsync/1,
-         stop_fullsync/1, cluster_name/1, legacy_status/2]).
+         stop_fullsync/1, cluster_name/1, legacy_status/2, fullsync_complete/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -19,7 +19,8 @@
         connection_ref,
         fullsync_worker,
         work_dir,
-        ver
+        ver,
+        strategy
     }).
 
 start_link(Partition, IP) ->
@@ -39,6 +40,10 @@ start_fullsync(Pid) ->
 
 stop_fullsync(Pid) ->
     gen_server:call(Pid, stop_fullsync).
+
+fullsync_complete(Pid) ->
+    %% cast to avoid deadlock in terminate
+    gen_server:cast(Pid, fullsync_complete).
 
 %% get the cluster name
 cluster_name(Pid) ->
@@ -70,7 +75,7 @@ init([Partition, IP]) ->
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition}) ->
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:debug("Negotiated ~p wire format", [Ver]),
+    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
@@ -91,31 +96,44 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                        Transport, Socket, WorkDir, Client),
             riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
-                                    fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
+                                    fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver,
+                                    strategy=keylist}};
         2 ->
             %% AAE strategy
-            {Index,IndexN} = Partition,
             {ok, Client} = riak:local_client(),
             {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Client,
                                                                    Transport, Socket,
-                                                                   Index, IndexN),
+                                                                   Partition,
+                                                                   self()),
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
             {reply, ok,
              State#state{transport=Transport, socket=Socket, cluster=Cluster,
                          fullsync_worker=FullsyncWorker, work_dir="/dev/null",
-                         ver=Ver}}
+                         ver=Ver, strategy=aae}}
     end;
             
-handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
-    riak_repl_keylist_server:start_fullsync(FSW),
+handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW,
+                                                strategy=Strategy}) ->
+    case Strategy of
+        keylist ->
+            riak_repl_keylist_server:start_fullsync(FSW);
+        aae ->
+            ok
+    end,
     {reply, ok, State};
-handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
-    riak_repl_keylist_server:cancel_fullsync(FSW),
+handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
+                                               strategy=Strategy}) ->
+    case Strategy of
+        keylist ->
+            riak_repl_keylist_server:cancel_fullsync(FSW);
+        aae ->
+            riak_repl_aae_source:cancel_fullsync(FSW)
+    end,
     {reply, ok, State};
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->
-    Res = case is_pid(FSW) of
+    Res = case is_process_alive(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
@@ -141,6 +159,10 @@ handle_call(cluster_name, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
+handle_cast(fullsync_complete, State=#state{partition=Partition}) ->
+    %% sent from AAE fullsync worker
+    lager:info("Fullsync for partition ~p complete.", [Partition]),
+    {stop, normal, State};
 handle_cast({connect_failed, _Pid, Reason},
      State = #state{cluster = Cluster}) ->
      lager:info("fullsync replication connection to cluster ~p failed ~p",
@@ -169,7 +191,9 @@ handle_info({Proto, Socket, Data},
     Msg = binary_to_term(Data),
     case Msg == fullsync_complete of
         true ->
-            %% stop on fullsync completion
+            %% sent from the keylist_client when it's done.
+            %% stop on fullsync completion, which will call
+            %% our terminate function and stop the keylist_server.
             {stop, normal, State};
         _ ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
@@ -179,8 +203,9 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
-    case is_pid(FSW) of
+    case is_process_alive(FSW) of
         true ->
+            lager:info("Sending stop event to worker"),
             gen_fsm:sync_send_all_state_event(FSW, stop);
         _ ->
             ok

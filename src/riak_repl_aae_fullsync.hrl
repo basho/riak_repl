@@ -6,3 +6,4 @@
 -define(MSG_REPLY, 6).
 -define(MSG_PUT_OBJ, 7).
 -define(MSG_GET_OBJ, 8).
+-define(MSG_COMPLETE, 9).

@@ -712,7 +712,7 @@ sockname(Socket, Transport) ->
 
 deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
     %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
+    case ((CommonMajor >= 2) or (CommonMajor == 1 andalso CMinor >= 1 andalso HMinor >= 1)) of
         true ->
             %% new sink. yay! new wire protocol supported.
             w1;

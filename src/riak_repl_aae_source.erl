@@ -13,6 +13,7 @@
 %% FSM states
 -export([prepare_exchange/2,
          update_trees/2,
+         cancel_fullsync/1,
          key_exchange/2]).
 
 %% gen_fsm callbacks
@@ -27,11 +28,12 @@
                 transport,
                 socket,
                 index       :: index(),
-                index_n     :: index_n(),
+                indexns     :: [index_n()],
                 tree_pid    :: pid(),
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
-                wire_ver    :: atom()
+                wire_ver    :: atom(),
+                owner       :: pid()
                }).
 
 %% Per state transition timeout used by certain transitions
@@ -41,49 +43,75 @@
 %%% API
 %%%===================================================================
 
--spec start_link(term(), term(), term(), term(), index(), index_n())
+-spec start_link(term(), term(), term(), term(), index(), pid())
                 -> {ok,pid()} | ignore | {error, term()}.
-start_link(Cluster, Client, Transport, Socket, Index, IndexN) ->
-    gen_fsm:start(?MODULE, [Cluster, Client, Transport, Socket, Index, IndexN], []).
+start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid) ->
+    gen_fsm:start(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid], []).
 
 start_exchange(AAESource) ->
+    lager:info("Send start_exchange to AAE fullsync sink worker"),
     gen_fsm:send_event(AAESource, start_exchange).
+
+cancel_fullsync(Pid) ->
+    gen_fsm:send_event(Pid, cancel_fullsync).
 
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
 
-init([Cluster, Client, Transport, Socket, Index, IndexN]) ->
+init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
+    %% Get the list of IndexNs for this partition. We'll lock the tree just once
+    %% for all combined IndexNs and iterate over them. When finished, send
+    %% COMPLETE msg to signal sink to die and unlock tree.
+
+    lager:info("AAE fullsync source worker started for partition ~p", [Partition]),
+
     Timeout = app_helper:get_env(riak_kv,
                                  anti_entropy_timeout,
                                  ?DEFAULT_ACTION_TIMEOUT),
 
-    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Index),
+    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
 
     %% monitor(process, Manager),
     monitor(process, TreePid),
+
+    %% List of IndexNs to iterate over.
+    IndexNs = riak_kv_util:responsible_preflists(Partition),
+
+    lager:info("AAE fullsync source partition ~p has Indexes ~p", [Partition, IndexNs]),
 
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
                    socket=Socket,
-                   index=Index,
-                   index_n=IndexN,
+                   index=Partition,
+                   indexns=IndexNs,
                    tree_pid=TreePid,
                    timeout=Timeout,
                    built=0,
+                   owner=OwnerPid,
                    wire_ver=w1}, %% can't be w0 because they don't do AAE
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(status, _From, StateName, State) ->
+    Res = [{state, StateName},
+           {partition_syncing, State#state.index},
+           {wire_ver, State#state.wire_ver},
+           {trees_built, State#state.built}
+          ],
+    {reply, Res, StateName, State};
+
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, ok, StateName, State}.
 
-handle_info({'DOWN', _, _, _, _}, _StateName, State) ->
+handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
     %% Either the entropy manager, local hashtree, or remote hashtree has
     %% exited. Stop exchange.
+    lager:info("Something went down ~p", [Error]),
+    send_complete(State),
     {stop, something_went_down, State};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
@@ -102,32 +130,42 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%      In order, acquire local concurrency lock, local tree lock,
 %%      remote concurrency lock, and remote tree lock. Exchange will
 %%      timeout if locks cannot be acquired in a timely manner.
+prepare_exchange(cancel_fullsync, State) ->
+    larger:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    send_complete(State),
+    {stop, normal, State};
 prepare_exchange(start_exchange, State=#state{transport=Transport,
                                               socket=Socket,
-                                              index=Partition,
-                                              index_n=IndexN}) ->
+                                              index=Partition}) ->
     TcpOptions = [{keepalive, true},
                   {packet, 4},
                   {active, once},
                   {nodelay, true},
                   {header, 1}],
+    lager:info("Prepare exchange for partition ~p", [Partition]),
     ok = Transport:setopts(Socket, TcpOptions),
     case riak_kv_index_hashtree:get_lock(State#state.tree_pid,
                                          fullsync_source) of
         ok ->
             %% TODO: Normal AAE has a timeout in this phase of the
             %%       protocol. Do we want similar for fullsync?
-            ok = send_synchronous_msg(?MSG_INIT, {Partition, IndexN}, State),
+            ok = send_synchronous_msg(?MSG_INIT, Partition, State),
             case send_synchronous_msg(?MSG_LOCK_TREE, State) of
                 ok ->
                     update_trees(start_exchange, State);
                 Error ->
+                    lager:info("lock tree for partition ~p failed, got ~p",
+                               [Partition, Error]),
+                    send_complete(State),
                     send_exchange_status({remote, Error}, State),
                     {stop, {remote, Error}, State}
             end;
         Error ->
+            lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                       [Partition, Error]),
+            send_complete(State),
             send_exchange_status(Error, State),
-            {stop, normal, State}
+            {stop, Error, State}
     end.
 
 %% @doc Now that locks have been acquired, ask both the local and remote
@@ -135,41 +173,58 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
 %%      a timely manner, the exchange will timeout. Since the trees will
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
+update_trees(cancel_fullsync, State) ->
+    larger:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    send_complete(State),
+    {stop, normal, State};
+update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
+    send_complete(State),
+    lager:info("AAE fullsync source completed partition ~p. Stopping.",
+               [State#state.index]),
+    riak_repl2_fssource:fullsync_complete(Owner),
+    {stop, normal, State};
 update_trees(start_exchange, State=#state{tree_pid=TreePid,
                                           index=Partition,
-                                          index_n=IndexN}) ->
+                                          indexns=[IndexN|_IndexNs]}) ->
+    lager:info("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
     update_request(TreePid, {Partition, undefined}, IndexN),
-    case send_synchronous_msg(?MSG_UPDATE_TREE, State) of
+    case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
         ok ->
             update_trees({tree_built, Partition, IndexN}, State);
         not_responsible ->
             update_trees({not_responsible, Partition, IndexN}, State)
     end;
 
-update_trees({not_responsible, VNodeIdx, IndexN}, State) ->
-    lager:info("VNode ~p does not cover preflist ~p", [VNodeIdx, IndexN]),
-    send_exchange_status({not_responsible, VNodeIdx, IndexN}, State),
+update_trees({not_responsible, Partition, IndexN}, State) ->
+    lager:info("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
+    send_complete(State),
+    send_exchange_status({not_responsible, Partition, IndexN}, State),
     {stop, not_responsible, State};
 update_trees({tree_built, _, _}, State) ->
     Built = State#state.built + 1,
     case Built of
         2 ->
             lager:info("Moving to key exchange state"),
-            {next_state, key_exchange, State, 0};
+            gen_fsm:send_event(self(), start_key_exchange),
+            {next_state, key_exchange, State};
         _ ->
             {next_state, update_trees, State#state{built=Built}}
     end.
 
 %% @doc Now that locks have been acquired and both hashtrees have been updated,
 %%      perform a key exchange and trigger replication for any divergent keys.
-key_exchange(timeout, State=#state{cluster=Cluster,
-                                   transport=Transport,
-                                   socket=Socket,
-                                   index=Partition,
-                                   tree_pid=TreePid,
-                                   index_n=IndexN}) ->
-    lager:info("Starting fullsync exchange with ~p for ~p/~p",
-                [Cluster, Partition, IndexN]),
+key_exchange(cancel_fullsync, State) ->
+    larger:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    send_complete(State),
+    {stop, normal, State};
+key_exchange(start_key_exchange, State=#state{cluster=Cluster,
+                                              transport=Transport,
+                                              socket=Socket,
+                                              index=Partition,
+                                              tree_pid=TreePid,
+                                              indexns=[IndexN|IndexNs]}) ->
+    lager:info("Starting fullsync key exchange with ~p for ~p/~p",
+               [Cluster, Partition, IndexN]),
 
     SourcePid = self(),
 
@@ -185,9 +240,9 @@ key_exchange(timeout, State=#state{cluster=Cluster,
                      SourcePid ! {'$aae_src', worker_pid, self()};
                 (get_bucket, {L, B}) ->
                      %% 
-                     send_synchronous_msg(?MSG_GET_AAE_BUCKET, {L,B}, State);
+                     send_synchronous_msg(?MSG_GET_AAE_BUCKET, {L,B,IndexN}, State);
                 (key_hashes, Segment) ->
-                     send_synchronous_msg(?MSG_GET_AAE_SEGMENT, Segment, State);
+                     send_synchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
                 (final, _) ->
                      %% give ourself control of the socket again
                      ok = Transport:controlling_process(Socket, SourcePid)
@@ -212,6 +267,7 @@ key_exchange(timeout, State=#state{cluster=Cluster,
              end,
 
     %% TODO: Add stats for AAE
+    lager:info("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
                        Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
                        SourcePid ! {'$aae_src', done, Acc}
@@ -229,7 +285,10 @@ key_exchange(timeout, State=#state{cluster=Cluster,
             lager:info("Repl'd ~b keys during fullsync to ~p of ~p/~p ",
                        [Count, Cluster, Partition, IndexN])
     end,
-    {stop, normal, State2}.
+
+    %% go back for the next indexN (possibly none, which will stop normal)
+    gen_fsm:send_event(self(), start_exchange),
+    {next_state, update_trees, State2#state{built=0, indexns=IndexNs}}.
 
 compare_loop(State=#state{transport=Transport,
                           socket=Socket}) ->
@@ -254,10 +313,23 @@ replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
             {remote_missing, Bin} ->
                 %% send object and related objects to remote
                 {Bucket,Key} = binary_to_term(Bin),
-                lager:info("Keydiff: remote partition ~p missing: ~p:~p", [Partition, Bucket, Key]),
+                lager:info("Keydiff: remote partition ~p remote missing: ~p:~p",
+                            [Partition, Bucket, Key]),
                 send_missing(Bucket, Key, State);
+            {different, Bin} ->
+                %% send object and related objects to remote
+                {Bucket,Key} = binary_to_term(Bin),
+                lager:info("Keydiff: remote partition ~p different: ~p:~p",
+                            [Partition, Bucket, Key]),
+                send_missing(Bucket, Key, State);
+            {missing, Bin} ->
+                %% remote has a key we don't have. Ignore it.
+                {Bucket,Key} = binary_to_term(Bin),
+                lager:info("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
+                            [Partition, Bucket, Key]),
+                0;
             Other ->
-                lager:info("Keydiff: ~p", [Other]),
+                lager:info("Keydiff: ~p (ignored)", [Other]),
                 0
         end,
 
@@ -344,6 +416,9 @@ send_exchange_status(Status, State) ->
 %%     rpc:call(RemoteNode, riak_kv_entropy_info, exchange_complete,
 %%              [RemoteIdx, LocalIdx, IndexN, Repaired]).
 
+send_complete(State=#state{index=Partition}) ->
+    lager:info("Exchange complete for partition ~p", [Partition]),
+    send_asynchronous_msg(?MSG_COMPLETE, State).
 
 %%------------
 %% Synchronous messaging with the AAE fullsync "sink" on the remote cluster
@@ -351,8 +426,11 @@ send_exchange_status(Status, State) ->
 %% send a tagged message with type and binary data. return the reply
 send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
                                                  socket=Socket}) when is_binary(Data) ->
+    lager:info("sending message type ~p", [MsgType]),
     ok = Transport:send(Socket, <<MsgType:8, Data/binary>>),
-    get_reply(State);
+    Response = get_reply(State),
+    lager:info("got reply ~p", [Response]),
+    Response;
 %% send a tagged message with type and msg. return the reply
 send_synchronous_msg(MsgType, Msg, State) ->
     Data = term_to_binary(Msg),
@@ -372,6 +450,11 @@ send_asynchronous_msg(MsgType, Data, #state{transport=Transport,
 send_asynchronous_msg(MsgType, Msg, State) ->
     Data = term_to_binary(Msg),
     send_asynchronous_msg(MsgType, Data, State).
+
+%% send a message with type tag only, no data
+send_asynchronous_msg(MsgType, #state{transport=Transport,
+                                      socket=Socket}) ->
+    ok = Transport:send(Socket, <<MsgType:8>>).
 
 get_reply(#state{transport=Transport, socket=Socket}) ->
     ok = Transport:setopts(Socket, [{active, once}]),
