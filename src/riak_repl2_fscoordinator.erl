@@ -428,7 +428,7 @@ handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, {connection_error, Erred}, State};
 
-handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
+handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) when is_binary(Data) ->
     #state{transport = Transport} = State,
     Transport:setopts(Socket, [{active, once}]),
     Data1 = binary_to_term(Data),
