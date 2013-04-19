@@ -28,14 +28,15 @@ fullsync_complete(Pid) ->
 
 %% Register with service manager
 register_service() ->
-    %% use 1,1 proto for new binary object
-    %% use 2,0 for AAE fullsync + binary objects
-    ProtoPrefs = {fullsync,[{2,0}]},
+    %% 1,0 and up supports keylist strategy
+    %% 1,1 and up supports binary object
+    %% 2,0 and up supports AAE strategy
+    ProtoPrefs = {fullsync,[{1,1}, {2,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, false},
                   {nodelay, true}],
-    HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
+    HostSpec     = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
     riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
 
 %% Callback from service manager

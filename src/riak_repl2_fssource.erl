@@ -59,7 +59,28 @@ init([Partition, IP]) ->
                   {nodelay, true},
                   {packet, 4},
                   {active, false}],
-    ClientSpec = {{fullsync,[{2,0}]}, {TcpOptions, ?MODULE, self()}},
+
+    DefaultStrategy = keylist,
+
+    %% Determine what kind of fullsync worker strategy we want to start with,
+    %% which could change if we talk to the sink and it can't speak AAE
+    Strategy =
+        case app_helper:get_env(riak_repl, fullsync_strategy, DefaultStrategy) of
+            aae -> aae;
+            keylist -> keylist;
+            UnSupportedStrategy ->
+                lager:warning("App config for riak_repl/fullsync_strategy ~p is unsupported. Using ~p",
+                              [UnSupportedStrategy, DefaultStrategy]),
+                DefaultStrategy
+        end,
+
+    %% use 1,1 proto for new binary object
+    %% use 2,0 for AAE fullsync + binary objects
+    {Major,Minor} = case Strategy of
+                        keylist -> {1,1};
+                        aae -> {2,0}
+                    end,
+    ClientSpec = {{fullsync,[{Major,Minor}]}, {TcpOptions, ?MODULE, self()}},
 
     %% TODO: check for bad remote name
     lager:info("connecting to remote ~p", [IP]),
@@ -86,9 +107,17 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
 
     Transport:setopts(Socket, [{active, once}]),
 
+    %% Strategy still depends on what the sink is capable of.
     {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
-    case CommonMajor of
-        1 ->
+    Strategy =
+        case CommonMajor of
+            0 -> keylist; %% would be a bug to hit this case
+            1 -> keylist; %% default uses keylist
+            _ -> aae      %% AAE technology preview, first introduced in 1.4
+        end,
+
+    case Strategy of
+        keylist ->
             %% Keylist server strategy
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
             {ok, Client} = riak:local_client(),
@@ -98,7 +127,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
                                     fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver,
                                     strategy=keylist}};
-        2 ->
+        aae ->
             %% AAE strategy
             {ok, Client} = riak:local_client(),
             {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Client,
