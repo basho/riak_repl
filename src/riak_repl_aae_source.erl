@@ -49,7 +49,7 @@ start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid) ->
     gen_fsm:start(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid], []).
 
 start_exchange(AAESource) ->
-    lager:info("Send start_exchange to AAE fullsync sink worker"),
+    lager:debug("Send start_exchange to AAE fullsync sink worker"),
     gen_fsm:send_event(AAESource, start_exchange).
 
 cancel_fullsync(Pid) ->
@@ -78,7 +78,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
 
-    lager:info("AAE fullsync source partition ~p has Indexes ~p", [Partition, IndexNs]),
+    lager:debug("AAE fullsync source partition ~p has Indexes ~p", [Partition, IndexNs]),
 
     State = #state{cluster=Cluster,
                    client=Client,
@@ -142,19 +142,21 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
                   {active, once},
                   {nodelay, true},
                   {header, 1}],
-    lager:info("Prepare exchange for partition ~p", [Partition]),
+    lager:debug("Prepare exchange for partition ~p", [Partition]),
     ok = Transport:setopts(Socket, TcpOptions),
     case riak_kv_index_hashtree:get_lock(State#state.tree_pid,
                                          fullsync_source) of
         ok ->
             %% TODO: Normal AAE has a timeout in this phase of the
             %%       protocol. Do we want similar for fullsync?
+            trace("Send MSG_INIT for part", Partition),
             ok = send_synchronous_msg(?MSG_INIT, Partition, State),
+            trace("Send MSG_LOCK_TREE for part", Partition),
             case send_synchronous_msg(?MSG_LOCK_TREE, State) of
                 ok ->
                     update_trees(start_exchange, State);
                 Error ->
-                    lager:info("lock tree for partition ~p failed, got ~p",
+                    lager:debug("lock tree for partition ~p failed, got ~p",
                                [Partition, Error]),
                     send_complete(State),
                     send_exchange_status({remote, Error}, State),
@@ -186,8 +188,9 @@ update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when Ind
 update_trees(start_exchange, State=#state{tree_pid=TreePid,
                                           index=Partition,
                                           indexns=[IndexN|_IndexNs]}) ->
-    lager:info("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
+    lager:debug("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
     update_request(TreePid, {Partition, undefined}, IndexN),
+    trace("Send MSG_UPDATE_TREE for partition", Partition),
     case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
         ok ->
             update_trees({tree_built, Partition, IndexN}, State);
@@ -204,7 +207,7 @@ update_trees({tree_built, _, _}, State) ->
     Built = State#state.built + 1,
     case Built of
         2 ->
-            lager:info("Moving to key exchange state"),
+            lager:debug("Moving to key exchange state"),
             gen_fsm:send_event(self(), start_key_exchange),
             {next_state, key_exchange, State};
         _ ->
@@ -223,7 +226,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                               index=Partition,
                                               tree_pid=TreePid,
                                               indexns=[IndexN|IndexNs]}) ->
-    lager:info("Starting fullsync key exchange with ~p for ~p/~p",
+    lager:debug("Starting fullsync key exchange with ~p for ~p/~p",
                [Cluster, Partition, IndexN]),
 
     SourcePid = self(),
@@ -236,15 +239,24 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     Remote = fun(init, _) ->
                      %% cause control of the socket to be given to AAE so that
                      %% the get_bucket and key_hashes can send messages via the
-                     %% socket (with correct ownership).
-                     SourcePid ! {'$aae_src', worker_pid, self()};
+                     %% socket (with correct ownership). We'll send a 'ready'
+                     %% back here once the socket ownership is transfered and
+                     %% we are ready to proceed with the compare.
+                     trace("Init worker_pid", [Partition]),
+                     SourcePid ! {'$aae_src', worker_pid, self()},
+                     receive
+                         {'$aae_src', ready, SourcePid} ->
+                             ok
+                     end;
                 (get_bucket, {L, B}) ->
-                     %% 
+                     trace("Send MSG_GET_AAE_BUCKET for bucket", B),
                      send_synchronous_msg(?MSG_GET_AAE_BUCKET, {L,B,IndexN}, State);
                 (key_hashes, Segment) ->
+                     trace("Send MSG_GET_AAE_SEGMENT for segment", Segment),
                      send_synchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
                 (final, _) ->
                      %% give ourself control of the socket again
+                     trace("Final"),
                      ok = Transport:controlling_process(Socket, SourcePid)
              end,
 
@@ -267,7 +279,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
              end,
 
     %% TODO: Add stats for AAE
-    lager:info("Starting compare for partition ~p", [Partition]),
+    lager:debug("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
                        Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
                        SourcePid ! {'$aae_src', done, Acc}
@@ -294,7 +306,9 @@ compare_loop(State=#state{transport=Transport,
                           socket=Socket}) ->
     receive
         {'$aae_src', worker_pid, WorkerPid} ->
+            trace_recv("worker_pid", [WorkerPid]),
             ok = Transport:controlling_process(Socket, WorkerPid),
+            WorkerPid ! {'$aae_src', ready, self()},
             compare_loop(State);
         {'$aae_src', done, Acc} ->
             {Acc, State}
@@ -313,19 +327,19 @@ replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
             {remote_missing, Bin} ->
                 %% send object and related objects to remote
                 {Bucket,Key} = binary_to_term(Bin),
-                lager:info("Keydiff: remote partition ~p remote missing: ~p:~p",
+                lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
                             [Partition, Bucket, Key]),
                 send_missing(Bucket, Key, State);
             {different, Bin} ->
                 %% send object and related objects to remote
                 {Bucket,Key} = binary_to_term(Bin),
-                lager:info("Keydiff: remote partition ~p different: ~p:~p",
+                lager:debug("Keydiff: remote partition ~p different: ~p:~p",
                             [Partition, Bucket, Key]),
                 send_missing(Bucket, Key, State);
             {missing, Bin} ->
                 %% remote has a key we don't have. Ignore it.
                 {Bucket,Key} = binary_to_term(Bin),
-                lager:info("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
+                lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
                             [Partition, Bucket, Key]),
                 0;
             Other ->
@@ -355,6 +369,7 @@ send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver}) ->
                     %% source -> sink : fs_diff_obj
                     %% binarize here instead of in the send() so that our wire
                     %% format for the riak_object is more compact.
+                    trace("Send missing object"),
                     [begin
                          Data = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,O}),
                          send_asynchronous_msg(?MSG_PUT_OBJ, Data, State)
@@ -417,7 +432,7 @@ send_exchange_status(Status, State) ->
 %%              [RemoteIdx, LocalIdx, IndexN, Repaired]).
 
 send_complete(State=#state{index=Partition}) ->
-    lager:info("Exchange complete for partition ~p", [Partition]),
+    trace("Send MSG_COMPLETE for partition", Partition),
     send_asynchronous_msg(?MSG_COMPLETE, State).
 
 %%------------
@@ -426,10 +441,10 @@ send_complete(State=#state{index=Partition}) ->
 %% send a tagged message with type and binary data. return the reply
 send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
                                                  socket=Socket}) when is_binary(Data) ->
-    lager:info("sending message type ~p", [MsgType]),
+    lager:debug("sending message type ~p", [MsgType]),
     ok = Transport:send(Socket, <<MsgType:8, Data/binary>>),
     Response = get_reply(State),
-    lager:info("got reply ~p", [Response]),
+    lager:debug("got reply ~p", [Response]),
     Response;
 %% send a tagged message with type and msg. return the reply
 send_synchronous_msg(MsgType, Msg, State) ->
@@ -460,9 +475,24 @@ get_reply(#state{transport=Transport, socket=Socket}) ->
     ok = Transport:setopts(Socket, [{active, once}]),
     receive
         {_, Socket, [?MSG_REPLY|Data]} ->
+            trace_recv("MSG_REPLY"),
             binary_to_term(Data);
         {Error, Socket} ->
             throw(Error);
         {Error, Socket, Reason} ->
             throw({Error, Reason})
     end.
+
+trace(_Msg) ->
+%%    lager:info("Source ---------> ~p", [_Msg]),
+    ok.
+trace(_Msg, _Param) ->
+%%    lager:info("Source ---------> ~p : ~p", [_Msg, _Param]),
+    ok.
+
+trace_recv(_Msg) ->
+%%    lager:info("Source <--------- ~p", [_Msg]),
+    ok.
+trace_recv(_Msg,_Param) ->
+%%    lager:info("Source <--------- ~p : ~p", [_Msg, _Param]),
+    ok.

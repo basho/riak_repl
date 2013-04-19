@@ -72,10 +72,13 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
     ok = Transport:setopts(Socket, TcpOptions),
     case Data of
         [MsgType] ->
+            trace(MsgType),
             {noreply, process_msg(MsgType, State)};
         [MsgType|<<>>] ->
+            trace(MsgType),
             {noreply, process_msg(MsgType, State)};
         [MsgType|MsgData] ->
+            trace(MsgType),
             {noreply, process_msg(MsgType, binary_to_term(MsgData), State)}
     end;
 
@@ -116,24 +119,22 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% replies: ok
 process_msg(?MSG_INIT, Partition, State) ->
+    lager:info("MSG_INIT for partition ~p", [Partition]),
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
     {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
     %% monitor the tree and crash if the tree goes away
     monitor(process, TreePid),
-    lager:info("Got init for partition ~p with IndexeNs ~p", [Partition, IndexNs]),
     %% tell the reservation coordinator that we are taking this partition.
     riak_repl2_fs_node_reserver:claim_reservation(Partition),
     send_reply(ok, State#state{partition=Partition, tree_pid=TreePid});
 
 process_msg(?MSG_GET_AAE_BUCKET, {Level,BucketNum,IndexN}, State=#state{tree_pid=TreePid}) ->
     ResponseMsg = riak_kv_index_hashtree:exchange_bucket(IndexN, Level, BucketNum, TreePid),
-    lager:info("Got bucket: ~p", [ResponseMsg]),
     send_reply(ResponseMsg, State);
 
 process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=TreePid}) ->
     ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid),
-    lager:info("Got segment: ~p", [ResponseMsg]),
     send_reply(ResponseMsg, State);
 
 %% no reply
@@ -141,7 +142,6 @@ process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
     RObj = riak_repl_util:from_wire(BObj),
     B = riak_object:bucket(RObj),
     K = riak_object:key(RObj),
-    lager:info("Received put request for ~p:~p", [B,K]),
     %% do the put
     riak_repl_util:do_repl_put(RObj),
     State;
@@ -149,29 +149,28 @@ process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
 %% replies: ok | not_responsible
 process_msg(?MSG_UPDATE_TREE, IndexN, State=#state{tree_pid=TreePid}) ->
     ResponseMsg = riak_kv_index_hashtree:update(IndexN, TreePid),
-    lager:info("AAE sink update tree indexN ~p got ~p",
-               [State#state.partition, ResponseMsg]),
     send_reply(ResponseMsg, State).
 
 %% replies: ok | not_built | already_locked
 process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
     ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink),
-    lager:info("AAE sink locked tree for partition ~p got ~p",
-               [State#state.partition, ResponseMsg]),
     send_reply(ResponseMsg, State);
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
-    lager:info("AAE sink got complete."),
     riak_repl2_fssink:fullsync_complete(Owner),
     State.
+
+trace(_Msg) ->
+%%    lager:info("Sink <-------- ~p", [_Msg]),
+    ok.
 
 %% Send a response back to the aae_source worker
 
 send_reply(Msg, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(Msg),
     ok = Transport:send(Socket, <<?MSG_REPLY:8, Data/binary>>),
-    lager:info("sent reply ~p", [Msg]),
+%%    lager:info("Sink --------> ~p", [Msg]),
     State.
 
