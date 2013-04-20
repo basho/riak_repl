@@ -74,19 +74,26 @@ format(Status, Stat) ->
 format_header(Stat) ->
     io_lib:format("~40w Value\n", [Stat]).
 
-format_entry({_Socket, Status}, Stat) ->
+format_entry(Status, Stat) ->
     Tag = proplists:get_value(tag, Status),
     Value = proplists:get_value(Stat, Status),
     case Value of
         Value when is_list(Value) ->
-            [io_lib:format("~40s [", [Tag]),
-                format_list(Value),
-                "]\n"];
+            [format_tag(Tag),
+             " ",
+             format_list(Value),
+             "\n"];
         _ ->
-            [io_lib:format("~40s", [Tag]),
+            [format_tag(Tag),
+             " [",
              format_value(Value),
              "\n"]
     end.
+
+format_tag(Tag) when is_list(Tag) ->
+    io_lib:format("~40s", [Tag]);
+format_tag(Tag) ->
+    io_lib:format("~40w", [Tag]).
 
 format_value(Val) when is_float(Val) ->
     io_lib:format("~7.1f", [Val]);
@@ -174,7 +181,7 @@ handle_info({nodeup, Node, _InfoList}, State) ->
             lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
-            {noreply, add_dist_conn(Port, Node, State)}
+            {noreply, add_dist_conn(Node, Port, State)}
     end;
 
 
@@ -206,7 +213,7 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
                                 hist = Hist2}
                   catch
                       _E:_R ->
-                          %io:format("Error ~p: ~p\n", [E, R]),
+                          %io:format("Error ~p: ~p\n", [_E, _R]),
                           %% Any problems with getstat/getopts mark in error
                           erlang:send_after(State#state.clear_after,
                                             self(),
@@ -230,7 +237,9 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Add a distributed connection to the state
 add_dist_conn(Node, Port, State) ->
-    add_conn(Port, #conn{tag = {node, Node}, type = dist}, State).
+    add_conn(Port, #conn{tag = {node, Node},
+                         type = dist,
+                         transport = ranch_tcp}, State).
 
 %% Add connection to the state
 add_conn(Socket, Conn, State = #state{conns = Conns}) ->
