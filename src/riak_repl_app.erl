@@ -5,6 +5,7 @@
 -behaviour(application).
 -export([start/2,prep_stop/1,stop/1]).
 -export([get_matching_address/2, determine_netmask/2, mask_address/2]).
+-export([register_cluster_name_locator/0]).
 
 -include("riak_core_connection.hrl").
 
