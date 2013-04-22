@@ -14,7 +14,10 @@
 -export([prepare_exchange/2,
          update_trees/2,
          cancel_fullsync/1,
-         key_exchange/2]).
+         key_exchange/2,
+         send_diffs/2,
+         send_missing/3,
+         bloom_fold/3]).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
@@ -33,6 +36,8 @@
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
+                diff_batch_size = 1000 :: non_neg_integer(),
+                local_lock = false :: boolean(),
                 owner       :: pid()
                }).
 
@@ -136,38 +141,50 @@ prepare_exchange(cancel_fullsync, State) ->
     {stop, normal, State};
 prepare_exchange(start_exchange, State=#state{transport=Transport,
                                               socket=Socket,
-                                              index=Partition}) ->
+                                              index=Partition,
+                                              local_lock=Lock}) when Lock == false ->
     TcpOptions = [{keepalive, true},
                   {packet, 4},
                   {active, once},
                   {nodelay, true},
                   {header, 1}],
+    %% try to get local lock of the tree
     lager:debug("Prepare exchange for partition ~p", [Partition]),
     ok = Transport:setopts(Socket, TcpOptions),
-    case riak_kv_index_hashtree:get_lock(State#state.tree_pid,
-                                         fullsync_source) of
+    trace("Send MSG_INIT for part", Partition),
+    ok = send_synchronous_msg(?MSG_INIT, Partition, State),
+    case riak_kv_index_hashtree:get_lock(State#state.tree_pid, fullsync_source) of
         ok ->
-            %% TODO: Normal AAE has a timeout in this phase of the
-            %%       protocol. Do we want similar for fullsync?
-            trace("Send MSG_INIT for part", Partition),
-            ok = send_synchronous_msg(?MSG_INIT, Partition, State),
-            trace("Send MSG_LOCK_TREE for part", Partition),
-            case send_synchronous_msg(?MSG_LOCK_TREE, State) of
-                ok ->
-                    update_trees(start_exchange, State);
-                Error ->
-                    lager:debug("lock tree for partition ~p failed, got ~p",
-                               [Partition, Error]),
-                    send_complete(State),
-                    send_exchange_status({remote, Error}, State),
-                    {stop, {remote, Error}, State}
-            end;
+            prepare_exchange(start_exchange, State#state{local_lock=true});
         Error ->
             lager:info("AAE source failed get_lock for partition ~p, got ~p",
                        [Partition, Error]),
             send_complete(State),
             send_exchange_status(Error, State),
             {stop, Error, State}
+    end;
+prepare_exchange(start_exchange, State=#state{transport=Transport,
+                                              socket=Socket,
+                                              index=Partition}) ->
+    %% try to get the remote lock
+    trace("Send MSG_LOCK_TREE for part", Partition),
+    case send_synchronous_msg(?MSG_LOCK_TREE, State) of
+        ok ->
+            update_trees(start_exchange, State);
+        already_locked ->
+            %% This partition is already locked, probably by a vnode doing a handoff.
+            %% ideally, we would put this back on the queue, but we'll just need to
+            %% wait for a while and try again since we can't unclaim it yet.
+            lager:info("AAE tree for partition ~p is already_locked. Trying again in ~p seconds.",
+                       [5000]),
+            gen_fsm:send_event_after(5000, start_exchange),
+            {next_state, prepare_exchange, State};
+        Error ->
+            lager:warning("lock tree for partition ~p failed, got ~p",
+                          [Partition, Error]),
+            send_complete(State),
+            send_exchange_status({remote, Error}, State),
+            {stop, {remote, Error}, State}
     end.
 
 %% @doc Now that locks have been acquired, ask both the local and remote
@@ -269,11 +286,12 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% accumulates a list of one element that is the count of
     %% keys that differed. We can't prime the accumulator. It
     %% always starts as the empty list. KeyDiffs is a list of hashtree::keydiff()
+    NumKeys = 10000000,
+    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
     AccFun = fun(KeyDiffs, Acc0) ->
-                     %% fold over key differences. We could batch up all the diffs
-                     %% and send as a giant blob, but let's do one at a time for now.
+                     %% Gather diff keys into a bloom filter
                      lists:foldl(fun(KeyDiff, AccIn) ->
-                                         replicate_diff(KeyDiff, AccIn, State) end,
+                                         accumulate_diff(KeyDiff, Bloom, AccIn, State) end,
                                  Acc0,
                                  KeyDiffs)
              end,
@@ -282,10 +300,16 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     lager:debug("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
                        Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
+                       %% Maybe you wish you could move this send up to the compare function,
+                       %% but we need it to send the Accumulated results back to our SourcePid.
                        SourcePid ! {'$aae_src', done, Acc}
                end),
 
     {Acc, State2} = compare_loop(State),
+
+    %% send differences
+    NDiff = ebloom:elements(Bloom),
+    lager:info("Found ~p differences", [NDiff]),
 
     case Acc of
         [] ->
@@ -294,13 +318,38 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
             ok;
         [Count] ->
             %% exchange_complete(LocalVN, RemoteVN, IndexN, Count),
-            lager:info("Repl'd ~b keys during fullsync to ~p of ~p/~p ",
+            lager:info("Found ~b differences during AAE exchange on ~p of ~p/~p ",
                        [Count, Cluster, Partition, IndexN])
     end,
 
-    %% go back for the next indexN (possibly none, which will stop normal)
+    %% if we have anything in our bloom filter, start sending them now.
+    %% this will start a worker process, which will tell us it's done with
+    %% diffs_done once all differences are sent.
+    finish_sending_differences(Bloom, State),
+
+    %% wait for differences from bloom_folder or to be done
+    {next_state, send_diffs, State2#state{built=0, indexns=IndexNs}}.
+
+%% state send_diffs is where we wait for diff_obj messages from the bloom folder
+%% and send them to the sink for each diff_obj. We eventually finish upon receipt
+%% of the diff_done event.
+send_diffs({diff_obj, RObj}, State) ->
+    %% send missing object to remote sink
+    send_missing(RObj, State),
+    {next_state, send_diffs, State};
+%% All indexes in this Partition are done
+send_diffs(diff_done, State=#state{indexns=[]}) ->
     gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State2#state{built=0, indexns=IndexNs}}.
+    {next_state, update_trees, State#state{built=0, indexns=[]}};
+%% IndexN is done, restart for remaining
+send_diffs(diff_done, State=#state{indexns=[_IndexN|IndexNs]}) ->
+    %% re-start for next indexN
+    gen_fsm:send_event(self(), start_exchange),
+    {next_state, update_trees, State#state{built=0, indexns=IndexNs}}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
 
 compare_loop(State=#state{transport=Transport,
                           socket=Socket}) ->
@@ -314,9 +363,39 @@ compare_loop(State=#state{transport=Transport,
             {Acc, State}
     end.
 
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
+finish_sending_differences(Bloom, #state{index=Partition, diff_batch_size=_DiffSize}) ->
+    case ebloom:elements(Bloom) == 0 of
+        true ->
+            lager:info("No differences, skipping bloom fold"),
+            gen_fsm:send_event(self(), diff_done);
+        false ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            OwnerNode = riak_core_ring:index_owner(Ring, Partition),
+
+            Self = self(),
+            Worker = fun() ->
+                             riak_kv_vnode:fold({Partition,OwnerNode},
+                                                fun ?MODULE:bloom_fold/3,
+                                                {Self,
+                                                 {serialized, ebloom:serialize(Bloom)}}),
+                             gen_fsm:send_event(Self, diff_done),
+                             ok
+                     end,
+            spawn_link(Worker) %% this isn't the Pid we need because it's just the vnode:fold
+    end.
+
+bloom_fold(BK, V, {MPid, {serialized, SBloom}}) ->
+    {ok, Bloom} = ebloom:deserialize(SBloom),
+    bloom_fold(BK, V, {MPid, Bloom});
+bloom_fold({B, K}, V, {MPid, Bloom}) ->
+    case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
+        true ->
+            RObj = riak_object:from_binary(B,K,V),
+            gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
+        false ->
+            ok
+    end,
+    {MPid, Bloom}.
 
 %% @private
 %% Returns accumulator as a list of one element that is the count of
@@ -355,6 +434,58 @@ replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
             [Count+NumObjects];
         _Other ->
             Acc
+    end.
+
+accumulate_diff(KeyDiff, Bloom, [], State) ->
+    accumulate_diff(KeyDiff, Bloom, [0], State);
+accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
+    NumObjects =
+        case KeyDiff of
+            {remote_missing, Bin} ->
+                %% send object and related objects to remote
+                %% {Bucket,Key} = binary_to_term(Bin),
+                %% lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
+                %%             [Partition, Bucket, Key]),
+                %% ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
+                ebloom:insert(Bloom, Bin),
+                1;
+            {different, Bin} ->
+                %% send object and related objects to remote
+                %% {Bucket,Key} = binary_to_term(Bin),
+                %% lager:debug("Keydiff: remote partition ~p different: ~p:~p",
+                %%             [Partition, Bucket, Key]),
+                ebloom:insert(Bloom, Bin),
+                1;
+            {missing, Bin} ->
+                %% remote has a key we don't have. Ignore it.
+                {Bucket,Key} = binary_to_term(Bin),
+                lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
+                            [Partition, Bucket, Key]),
+                0;
+            Other ->
+                lager:info("Keydiff: ~p (ignored)", [Other]),
+                0
+        end,
+    [Count+NumObjects].
+
+send_missing(RObj, State=#state{client=Client, wire_ver=Ver}) ->
+    %% we don't actually have the vclock to compare, so just send the
+    %% key and let the other side sort things out.
+    case riak_repl_util:repl_helper_send(RObj, Client) of
+        cancel ->
+            0;
+        Objects when is_list(Objects) ->
+            %% source -> sink : fs_diff_obj
+            %% binarize here instead of in the send() so that our wire
+            %% format for the riak_object is more compact.
+            trace("Send missing object"),
+            [begin
+                 Data = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,O}),
+                 send_asynchronous_msg(?MSG_PUT_OBJ, Data, State)
+             end || O <- Objects],
+            Data2 = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,RObj}),
+            send_asynchronous_msg(?MSG_PUT_OBJ, Data2, State),
+            1 + length(Objects)
     end.
 
 send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver}) ->
