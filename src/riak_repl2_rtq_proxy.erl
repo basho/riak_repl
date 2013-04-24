@@ -19,7 +19,8 @@
          terminate/2,
          code_change/3]).
 
--record(state, {nodes=[]}).
+-record(state, {nodes=[],          %% peer replication nodes
+                versions=[]}).     %% {node(), wire-version()}
 
 %%%===================================================================
 %%% API
@@ -47,7 +48,9 @@ init([]) ->
     process_flag(trap_exit, true),
     Nodes = riak_repl_util:get_peer_repl_nodes(),
     [erlang:monitor(process, {riak_repl2_rtq, Node}) || Node <- Nodes],
-    {ok, #state{nodes=Nodes}}.
+    %% cache the supported wire format of peer nodes to avoid rcp calls later.
+    Versions = get_peer_wire_versions(Nodes),
+    {ok, #state{nodes=Nodes, versions=Versions}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -57,11 +60,15 @@ handle_cast({push, NumItems, _Bin}, State = #state{nodes=[]}) ->
     lager:warning("No available nodes to proxy ~p objects to~n", [NumItems]),
     catch(riak_repl_stats:rt_source_errors()),
     {noreply, State};
-handle_cast({push, NumItems, Bin}, State) ->
+handle_cast({push, NumItems, W1BinObjs}, State) ->
+    %% push items to another node for queueing. If the other node does not speak binary
+    %% object format, then downconvert the items (if needed) before pushing.
     Node = hd(State#state.nodes),
     Nodes = tl(State#state.nodes),
-    lager:debug("Proxying ~p items to ~p", [NumItems, Node]),
-    gen_server:cast({riak_repl2_rtq, Node}, {push, NumItems, Bin}),
+    PeerWireVer = wire_version_of_node(Node, State#state.versions),
+    lager:debug("Proxying ~p items to ~p with wire version ~p", [NumItems, Node, PeerWireVer]),
+    BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, PeerWireVer),
+    gen_server:cast({riak_repl2_rtq, Node}, {push, NumItems, BinObjs}),
     {noreply, State#state{nodes=Nodes ++ [Node]}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -95,3 +102,18 @@ flush_pending_pushes(State) ->
             ok
     end.
 
+%% return tuple of node and it's supported wire version
+get_peer_wire_versions(Nodes) ->
+    [ begin
+          WireVer = riak_repl_util:peer_wire_format(Node),
+          {Node, WireVer}
+      end || Node <- Nodes].
+
+wire_version_of_node(Node, Versions) ->
+    case lists:keyfind(Node, 1, Versions) of
+        false ->
+            w0;
+        {_Node, Ver} ->
+            Ver
+    end.
+    

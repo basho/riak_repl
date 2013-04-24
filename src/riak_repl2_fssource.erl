@@ -18,7 +18,8 @@
         cluster,
         connection_ref,
         fullsync_worker,
-        work_dir
+        work_dir,
+        ver
     }).
 
 start_link(Partition, IP) ->
@@ -53,7 +54,7 @@ init([Partition, IP]) ->
                   {nodelay, true},
                   {packet, 4},
                   {active, false}],
-    ClientSpec = {{fullsync,[{1,0}]}, {TcpOptions, ?MODULE, self()}},
+    ClientSpec = {{fullsync,[{1,1}]}, {TcpOptions, ?MODULE, self()}},
 
     %% TODO: check for bad remote name
     lager:info("connecting to remote ~p", [IP]),
@@ -66,12 +67,14 @@ init([Partition, IP]) ->
             {stop, Reason}
     end.
 
-handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
+handle_call({connected, Socket, Transport, _Endpoint, Proto, Props}, _From,
         State=#state{ip=IP, partition=Partition}) ->
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    lager:debug("Negotiated ~p wire format", [Ver]),
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
-    SocketTag = riak_repl_util:generate_socket_tag("fs_source", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
                                        SocketTag}, Transport),
@@ -85,7 +88,7 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
     riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
     {reply, ok, State#state{transport=Transport, socket=Socket,
             cluster=Cluster,
-            fullsync_worker=FullsyncWorker, work_dir=WorkDir}};
+            fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver}};
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW}) ->
     riak_repl_keylist_server:start_fullsync(FSW),
     {reply, ok, State};
@@ -128,17 +131,12 @@ handle_cast({connect_failed, _Pid, Reason},
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
+handle_info({Closed, Socket}, State=#state{socket=Socket})
+        when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, State) ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
-        [State#state.cluster, Reason]),
-    {stop, normal, State};
-handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for site ~p closed", [State#state.cluster]),
-    {stop, normal, State};
-handle_info({ssl_error, _Socket, Reason}, State) ->
+handle_info({Error, _Socket, Reason}, State)
+        when Error == tcp_error; Error == ssl_error ->
     lager:error("Connection for site ~p closed unexpectedly: ~p",
         [State#state.cluster, Reason]),
     {stop, normal, State};

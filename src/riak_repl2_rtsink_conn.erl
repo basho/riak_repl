@@ -27,6 +27,7 @@
                 transport,        %% Module for sending
                 socket,           %% Socket
                 proto,            %% Protocol version negotiated
+                ver,              %% wire format agreed with rt source
                 max_pending,      %% Maximum number of operations
                 active = true,    %% If socket is set active
                 deactivated = 0,  %% Count of times deactivated
@@ -41,7 +42,8 @@
 
 %% Register with service manager
 register_service() ->
-    ProtoPrefs = {realtime,[{1,0}]},
+    %% protocol version >= 1.1 speaks new binary object format
+    ProtoPrefs = {realtime,[{1,1}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -50,7 +52,7 @@ register_service() ->
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->
-    SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, sink, SocketTag},
                               Transport),
@@ -83,11 +85,16 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 %% Callbacks
-init([Proto, Remote]) ->
+init([OkProto, Remote]) ->
+    %% TODO: remove annoying 'ok' from service mgr proto
+    {ok, Proto} = OkProto,
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    lager:debug("RT sink connection negotiated ~p wire format from proto", [Ver, Proto]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
-    {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending, helper = Helper}}.
+    {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending,
+                helper = Helper, ver = Ver}}.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = _S, helper = Helper,
@@ -152,9 +159,11 @@ handle_cast({ack, Ref, Seq}, State) ->
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
     {noreply, State}.
 
-handle_info({tcp, _S, TcpBin}, State= #state{cont = Cont}) ->
+handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
+        when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
-handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
+handle_info({Closed, _S}, State = #state{cont = Cont})
+        when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
         0 ->
             ok;
@@ -165,7 +174,8 @@ handle_info({tcp_closed, _S}, State = #state{cont = Cont}) ->
                           [peername(State), NumBytes])
     end,
     {stop, normal, State};
-handle_info({tcp_error, _S, Reason}, State= #state{cont = Cont}) ->
+handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
+        Error == tcp_error; Error == ssl_error ->
     %%TODO: Add remote name somehow
     riak_repl_stats:rt_sink_errors(),
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
@@ -217,10 +227,11 @@ do_write_objects(Seq, BinObjs, State = #state{max_pending = MaxPending,
                                               helper = Helper,
                                               seq_ref = Ref,
                                               expect_seq = Seq,
-                                              acked_seq = AckedSeq}) ->
+                                              acked_seq = AckedSeq,
+                                              ver = Ver}) ->
     Me = self(),
     DoneFun = fun() -> gen_server:cast(Me, {ack, Ref, Seq}) end,
-    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun),
+    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver),
     State2 = case AckedSeq of
                  undefined ->
                      %% Handle first received sequence number

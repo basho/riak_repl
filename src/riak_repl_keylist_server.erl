@@ -87,7 +87,8 @@
         bloom_pid,
         num_diffs,
         generator_paused = false,
-        pending_acks = 0
+        pending_acks = 0,
+        ver = w0
     }).
 
 %% -define(TRACE(Stmt),Stmt).
@@ -321,16 +322,17 @@ diff_keylist(Command, #state{diff_pid=Pid} = State)
     {next_state, wait_for_partition, State};
 %% @plu server <-- diff_stream : merkle_diff
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
-        transport=Transport, socket=Socket, diff_ref=Ref, pool=Pool} = State) ->
+        transport=Transport, socket=Socket, diff_ref=Ref, pool=Pool, ver=Ver} = State) ->
     Worker = poolboy:checkout(Pool, true, infinity),
     case State#state.vnode_gets of
         true ->
             %% do a direct get against the vnode, not a regular riak client
             %% get().
             ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
-                State#state.partition);
+                                                  State#state.partition, Ver);
         _ ->
-            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool)
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
+                                                  Ver)
     end,
     {next_state, diff_keylist, State};
 %% @plu server <-- key-lister: diff_paused
@@ -501,9 +503,15 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
         cancel ->
             skipped;
         Objects when is_list(Objects) ->
+            V = State#state.ver,
             %% server -> client : fs_diff_obj
-            [riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, O}) || O <- Objects],
-            riak_repl_tcp_server:send(Transport, Socket, {fs_diff_obj, RObj})
+            %% binarize here instead of in the send() so that our wire
+            %% format for the riak_object is more compact.
+            [riak_repl_tcp_server:send(Transport, Socket,
+                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
+             || O <- Objects],
+            riak_repl_tcp_server:send(Transport, Socket,
+                                      riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj}))
     end,
     {reply, ok, diff_bloom, State}.
 
@@ -600,7 +608,7 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
                 true ->
-                    RObj = binary_to_term(V),
+                    RObj = riak_object:from_binary(B,K,V),
                     gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity),
                     NSent0 - 1;
                 false ->

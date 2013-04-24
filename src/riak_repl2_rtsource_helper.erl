@@ -8,7 +8,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/3,
+-export([start_link/4,
          stop/1,
          status/1, status/2]).
 
@@ -20,14 +20,15 @@
 
 
 -record(state, {remote,     % remote site name
+                ver = w0,   % wire format for binary objects :: w0 | w1
                 transport,  % erlang module to use for transport
                 socket,     % socket to pass to transport
                 deliver_fun,% Deliver function
                 sent_seq,   % last sequence sent
                 objects = 0}).   % number of objects sent - really number of pulls as could be multiobj
 
-start_link(Remote, Transport, Socket) ->
-    gen_server:start_link(?MODULE, [Remote, Transport, Socket], []).
+start_link(Remote, Transport, Socket, Ver) ->
+    gen_server:start_link(?MODULE, [Remote, Transport, Socket, Ver], []).
 
 stop(Pid) ->
     gen_server:call(Pid, stop).
@@ -38,22 +39,37 @@ status(Pid) ->
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
-init([Remote, Transport, Socket]) ->
+init([Remote, Transport, Socket, Ver]) ->
     riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
     Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}) end,
     State = #state{remote = Remote, transport = Transport, 
-                   socket = Socket, deliver_fun = Deliver},
+                   socket = Socket, deliver_fun = Deliver, ver = Ver},
     async_pull(State),
     {ok, State}.
+
+%% @doc BinObjs are in new riak binary object format. If the remote sink
+%%      is storing older non-binary objects, then we need to downconvert
+%%      the objects before sending. V is the format expected by the sink.
+maybe_downconvert_binary_objs(BinObjs, V) ->
+    case V of
+        w1 ->
+            %% great! nothing to do.
+            BinObjs;
+        w0 ->
+            %% old sink. downconvert
+            Objs = riak_repl_util:from_wire(w1, BinObjs),
+            riak_repl_util:to_wire(w0, Objs)
+    end.
 
 handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, State};
-handle_call({pull, {Seq, NumObjects, BinObjs}}, From,
-            State = #state{transport = T, socket = S, objects = Objects}) ->
+handle_call({pull, {Seq, NumObjects, W1BinObjs}}, From,
+            State = #state{transport = T, socket = S, objects = Objects, ver = V}) ->
     %% unblock the rtq as fast as possible
     gen_server:reply(From, ok),
+    BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, V),
     TcpIOL = riak_repl2_rtframe:encode(objects, {Seq, BinObjs}),
     T:send(S, TcpIOL),
     async_pull(State),

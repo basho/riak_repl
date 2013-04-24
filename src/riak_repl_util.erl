@@ -4,6 +4,12 @@
 -author('Andy Gross <andy@basho.com>').
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 -include("riak_repl.hrl").
+
+-ifdef(TEST).
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([make_peer_info/0,
          make_fake_peer_info/0,
          validate_peer_info/2,
@@ -28,12 +34,14 @@
          repl_helper_send_realtime/2,
          schedule_fullsync/0,
          schedule_fullsync/1,
+         schedule_cluster_fullsync/1,
+         schedule_cluster_fullsync/2,
          elapsed_secs/1,
          shuffle_partitions/2,
          proxy_get_active/0,
          log_dropped_realtime_obj/1,
          dropped_realtime_hook/1,
-         generate_socket_tag/2,
+         generate_socket_tag/3,
          source_socket_stats/0,
          sink_socket_stats/0,
          get_peer_repl_nodes/0,
@@ -42,8 +50,24 @@
          format_ip_and_port/2,
          safe_pid_to_list/1,
          peername/2,
-         sockname/2
+         sockname/2,
+         deduce_wire_version_from_proto/1,
+         encode_obj_msg/2
      ]).
+
+-export([wire_version/1,
+         to_wire/1,
+         to_wire/2,
+         to_wire/4,
+         from_wire/1,
+         from_wire/2,
+         maybe_downconvert_binary_objs/2,
+         peer_wire_format/1
+        ]).
+
+%% Defines for Wire format encode/decode
+-define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
+-define(W1_VER, 1). %% first non-just-term-to-binary wire format
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -562,13 +586,51 @@ configure_socket(Transport, Socket) ->
 schedule_fullsync() ->
     schedule_fullsync(self()).
 
+%% Skip lists + tuples for 1.2 repl, it's only a BNW feature
 schedule_fullsync(Pid) ->
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
             ok;
+        {ok, [{_,_} | _]} -> ok;
+        {ok, Tuple} when is_tuple(Tuple) -> ok;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
             erlang:send_after(FullsyncIval, Pid, start_fullsync)
+    end.
+
+
+start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
+    FullsyncIval = timer:minutes(FullsyncIvalMins),
+    lager:info("Fullsync for ~p scheduled in ~p minutes",
+               [Cluster, FullsyncIvalMins]),
+    spawn(fun() ->
+                timer:sleep(FullsyncIval),
+                gen_server:cast(Pid, start_fullsync)
+        end).
+
+%% send a start_fullsync to the calling process for a given cluster
+%% when it is time for fullsync
+schedule_cluster_fullsync(Cluster) ->
+    schedule_cluster_fullsync(Cluster, self()).
+
+schedule_cluster_fullsync(Cluster, Pid) ->
+    case application:get_env(riak_repl, fullsync_interval) of
+        {ok, disabled} ->
+            ok;
+        {ok, [{_,_} | _] = List} ->
+            case proplists:lookup(Cluster, List) of
+                none -> ok;
+                {_, FullsyncIvalMins} ->
+                    start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+                    ok
+            end;
+        {ok, {Cluster, FullsyncIvalMins}} ->
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+        {ok, FullsyncIvalMins} when not is_tuple(FullsyncIvalMins) ->
+            %% this will affect ALL clusters that have fullsync enabled
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+        _ ->
+            ok
     end.
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
@@ -616,9 +678,9 @@ dropped_realtime_hook(Obj) ->
     end.
 
 %% generate a unique ID for a socket to log stats against
-generate_socket_tag(Prefix, Socket) ->
-    {ok, {{O1, O2, O3, O4}, PeerPort}} = inet:peername(Socket),
-    {ok, Portnum} = inet:port(Socket),
+generate_socket_tag(Prefix, Transport, Socket) ->
+    {ok, {{O1, O2, O3, O4}, PeerPort}} = Transport:peername(Socket),
+    {ok, {_Address, Portnum}} = Transport:sockname(Socket),
     lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
                 Prefix,
                 Portnum,
@@ -688,3 +750,202 @@ sockname(Socket, Transport) ->
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
+deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
+    %% if common protocols are both >= 1.1, then we know the new binary wire protocol
+    case CommonMajor >= 1 andalso CMinor >= 1 andalso HMinor >= 1 of
+        true ->
+            %% new sink. yay! new wire protocol supported.
+            w1;
+        _False ->
+            %% old sink mandates old wire protocol only.
+            w0
+    end.
+
+%% Typically, Cmd :: fs_diff_obj | diff_obj
+encode_obj_msg(V, {Cmd, RObj}) ->
+    case V of
+        w0 ->
+            term_to_binary({Cmd, RObj});
+        _W ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({Cmd, BObj})
+    end.
+
+%% @doc Create a new binary wire formatted replication blob, complete with
+%%      bucket and key for reconstruction on the other end. BinObj should be
+%%      in the new format as obtained from riak_object:to_binary(v1, RObj).
+new_w1(B, K, BinObj) when is_binary(B), is_binary(K), is_binary(BinObj) ->
+    KLen = byte_size(K),
+    BLen = byte_size(B),
+    <<?MAGIC:8/integer, ?W1_VER:8/integer,
+      BLen:32/integer, B:BLen/binary,
+      KLen:32/integer, K:KLen/binary, BinObj/binary>>.
+
+%% @doc Return the wire format version of the given wire blob
+wire_version(<<131, _Rest/binary>>) ->
+    w0;
+wire_version(<<?MAGIC:8/integer, ?W1_VER:8/integer, _Rest/binary>>) ->
+    w1;
+wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
+    list_to_atom(lists:flatten(io_lib:format("w~p", [N])));
+wire_version(_Other) ->
+    plain.
+
+%% @doc Convert a plain or binary riak object to repl wire format.
+%%      Bucket and Key will only be added if the new riak_object
+%%      binary format is supplied (because it doesn't contain them).
+to_wire(w0, Objects) when is_list(Objects) ->
+    term_to_binary(Objects);
+to_wire(w0, Object) ->
+    term_to_binary(Object);
+to_wire(w1, Objects) when is_list(Objects) ->
+    BObjs = [to_wire(w1,O) || O <- Objects],
+    term_to_binary(BObjs);
+to_wire(w1, Object) when not is_binary(Object) ->
+    B = riak_object:bucket(Object),
+    K = riak_object:key(Object),
+    to_wire(w1, B, K, Object).
+
+%% When the wire format is known and objects are packed in a list of binaries
+from_wire(w0, BinObjList) ->
+      binary_to_term(BinObjList);
+from_wire(w1, BinObjList) ->
+    BinObjs = binary_to_term(BinObjList),
+    [from_wire(BObj) || BObj <- BinObjs].
+
+to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
+    Bin;
+to_wire(w0, _B, _K, RObj) when not is_binary(RObj) ->
+    to_wire(w0, RObj);
+to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
+    %% no need to wrap a full old object. just use w0 format
+    to_wire(w0, B, K, Bin);
+to_wire(w1, B, K, <<_/binary>>=Bin) ->
+    new_w1(B, K, Bin);
+to_wire(w1, B, K, RObj) ->
+    new_w1(B, K, riak_object:to_binary(v1, RObj));
+to_wire(_W, _B, _K, _RObj) ->
+    {error, unsupported_wire_version}.
+
+to_wire(Obj) ->
+    to_wire(w0, unused, unused, Obj).
+
+%% @doc Convert from wire format to non-binary riak_object form
+from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
+    binary_to_term(BinObjTerm);
+from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
+            BLen:32/integer, B:BLen/binary,
+            KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
+    riak_object:from_binary(B, K, BinObj);
+from_wire(X) when is_binary(X) ->
+    lager:error("unknown wire format: ~p", [X]),
+    throw({error, unknown_wire_format}),
+    {error, unknown_wire_format};
+from_wire(RObj) ->
+    RObj.
+
+%% @doc BinObjs are in new riak binary object format. If the remote sink
+%%      is storing older non-binary objects, then we need to downconvert
+%%      the objects before sending. V is the format expected by the sink.
+maybe_downconvert_binary_objs(BinObjs, SinkVer) ->
+    case SinkVer of
+        w1 ->
+            %% great! nothing to do.
+            BinObjs;
+        w0 ->
+            %% old sink. downconvert
+            Objs = from_wire(w1, BinObjs),
+            to_wire(w0, Objs)
+    end.
+
+%% return the wire format supported by the peer node: w0 | w1
+peer_wire_format(Peer) ->
+    case rpc:call(Peer, riak_core_capability, get, [{riak_kv, object_format}]) of
+        {unknown_capability,{riak_kv,object_format}} ->
+            w0;
+        v1 ->
+            w1;
+        _Other ->
+            %% failed RPC call? Assume lowest format
+            w0
+    end.
+
+%% Some eunit tests
+-ifdef(TEST).
+
+do_wire_old_format_test() ->
+    %% old wire format is just term_to_binary of the riak object,
+    %% so encoded should be the same sa the binary object.
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    BObj = term_to_binary(RObj),
+    %% cover to_wire(... binary-Obj)
+    EncodedBinObj = to_wire(w0, Bucket, Key, BObj),
+    ?assert(EncodedBinObj == BObj),
+    %% cover to_wire(... non-binary-Obj)
+    EncodedObj = to_wire(w0, Bucket, Key, RObj),
+    ?assert(EncodedObj == BObj),
+    DecodedBinObj = from_wire(EncodedBinObj),
+    ?assert(DecodedBinObj == RObj),
+    DecodedObj = from_wire(EncodedObj),
+    ?assert(DecodedObj == RObj).
+
+do_wire_new_format_binary_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    %% encode new binary form of riak object
+    BObj = riak_object:to_binary(v1, RObj),
+    Encoded = to_wire(w1, Bucket, Key, BObj),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == RObj).
+
+do_wire_new_format_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    %% encode record version of riak object
+    Encoded = to_wire(w1, Bucket, Key, RObj),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == RObj).
+
+do_wire_new_format_old_object_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    %% encode old binary form of riak object
+    BObj = riak_object:to_binary(v0, RObj),
+    ?assert(BObj == term_to_binary(RObj)),
+    Encoded = to_wire(w1, Bucket, Key, BObj),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == RObj).
+
+do_wire_unknown_format_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    Encoded = to_wire(w9, Bucket, Key, term_to_binary(RObj)),
+    ?assert(Encoded == {error, unsupported_wire_version}),
+    Decoded = from_wire(Encoded),
+    ?assert(Decoded == {error, unknown_wire_format}).
+
+do_wire_list_w0_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    Objs = [RObj, RObj, RObj],
+    Encoded = to_wire(w0, Objs),
+    Decoded = from_wire(w0, Encoded),
+    ?assert(Decoded == Objs).
+
+do_wire_list_w1_test() ->
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new(Bucket, Key, <<"val">>),
+    Objs = [RObj, RObj, RObj],
+    Encoded = to_wire(w1, Objs),
+    Decoded = from_wire(w1, Encoded),
+    ?assert(Decoded == Objs).
+
+-endif.
