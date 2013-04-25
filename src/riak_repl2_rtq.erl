@@ -332,11 +332,14 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin} = QEntry) ->
 cleanup(_QTab, '$end_of_table', State) ->
     State;
 cleanup(QTab, Seq, State) ->
-    [QEntry] = ets:lookup(QTab, Seq),
-    ObjSize = erlang:external_size(QEntry),
-    NewState = update_q_size(State, -ObjSize),
-    ets:delete(QTab, Seq),
-    cleanup(QTab, ets:prev(QTab, Seq), NewState).
+    case ets:lookup(QTab, Seq) of
+        [] -> cleanup(QTab, ets:prev(QTab, Seq), State);
+        [QEntry] ->
+           ObjSize = erlang:external_size(QEntry),
+           NewState = update_q_size(State, -ObjSize),
+           ets:delete(QTab, Seq),
+           cleanup(QTab, ets:prev(QTab, Seq), NewState)
+    end.
 
 update_q_size(State = #state{qsize_bytes = CurrentQSize}, Diff) ->
   State#state{qsize_bytes = CurrentQSize + Diff}.
