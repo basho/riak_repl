@@ -46,7 +46,11 @@
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
                 cs = [],
-                shutting_down=false}).  % Consumers
+                shutting_down=false,
+                qsize_bytes = 0
+               }).
+
+% Consumers
 -record(c, {name,      % consumer name
             aseq = 0,  % last sequence acked
             cseq = 0,  % last sequence sent
@@ -124,7 +128,7 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
          || #c{name = Name, aseq = ASeq, cseq = CSeq, 
                drops = Drops, errs = Errs} <- Cs],
     Status =
-        [{bytes, qbytes(QTab)},
+        [{bytes, qbytes(QTab, State)},
          {max_bytes, MaxBytes},
          {consumers, Consumers}],
     {reply, Status, State};
@@ -210,10 +214,8 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                                 end
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
-    cleanup(QTab, MinSeq),
-    State#state{cs = UpdCs}.
-
-
+    NewState = cleanup(QTab, MinSeq, State),
+    NewState#state{cs = UpdCs}.
 
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -260,21 +262,26 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                          _ ->
                              lists:min([Seq || #c{aseq = Seq} <- Cs2])
                      end,
-            cleanup(QTab, MinSeq),
-            NewState = State#state{cs = Cs2},
+            NewState0 = cleanup(QTab, MinSeq, State),
+            NewState = NewState0#state{cs = Cs2},
             {ok, NewState};
         false ->
             {{error, not_registered}, State}
     end.
 
-push(NumItems, Bin, State = #state{qtab = QTab, qseq = QSeq,
-                                                  cs = Cs, shutting_down = false}) ->
+push(NumItems, Bin, State = #state{qtab = QTab,
+                                   qseq = QSeq,
+                                   cs = Cs,
+                                   shutting_down = false}) ->
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin},
     %% Send to any pending consumers
     Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
+    Size = erlang:external_size(QEntry),
+    NewState = update_q_size(State, Size),
     ets:insert(QTab, QEntry),
-    trim_q(State#state{qseq = QSeq2, cs = Cs2});
+    trim_q(NewState#state{qseq = QSeq2, cs = Cs2});
+
 push(NumItems, Bin, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin),
     State.
@@ -322,19 +329,26 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin} = QEntry) ->
     end.
 
 %% Cleanup until the start of the table
-cleanup(_QTab, '$end_of_table') ->
-    ok;
-cleanup(QTab, Seq) ->
+cleanup(_QTab, '$end_of_table', State) ->
+    State;
+cleanup(QTab, Seq, State) ->
+    [QEntry] = ets:lookup(QTab, Seq),
+    ObjSize = erlang:external_size(QEntry),
+    NewState = update_q_size(State, -ObjSize),
     ets:delete(QTab, Seq),
-    cleanup(QTab, ets:prev(QTab, Seq)).
+    cleanup(QTab, ets:prev(QTab, Seq), NewState).
+
+update_q_size(State = #state{qsize_bytes = CurrentQSize}, Diff) ->
+  State#state{qsize_bytes = CurrentQSize + Diff}.
 
 %% Trim the queue if necessary
 trim_q(State = #state{max_bytes = undefined}) ->
     State;
 trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
-    case qbytes(QTab) > MaxBytes of
+    case qbytes(QTab, State) > MaxBytes of
         true ->
-            Cs2 = trim_q_entries(QTab, MaxBytes, State#state.cs),
+            {Cs2, NewState} = trim_q_entries(QTab, MaxBytes, State#state.cs,
+                                             State),
 
             %% Adjust the last sequence handed out number
             %% so that the next pull will retrieve the new minseq
@@ -353,16 +367,19 @@ trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
                        _ ->
                            C
                    end || C = #c{cseq = CSeq} <- Cs2],
-            State#state{cs = Cs3};
+            NewState#state{cs = Cs3};
         false -> % Q size is less than MaxBytes words
             State
     end.
 
-trim_q_entries(QTab, MaxBytes, Cs) ->
+trim_q_entries(QTab, MaxBytes, Cs, State) ->
     case ets:first(QTab) of
         '$end_of_table' ->
-            Cs;
+            {Cs, State};
         TrimSeq ->
+            [QEntry] = ets:lookup(QTab, TrimSeq),
+            ObjSize = erlang:external_size(QEntry),
+            NewState = update_q_size(State, -ObjSize),
             ets:delete(QTab, TrimSeq),
             Cs2 = [case CSeq < TrimSeq of
                        true ->
@@ -373,19 +390,18 @@ trim_q_entries(QTab, MaxBytes, Cs) ->
                            C
                    end || C = #c{cseq = CSeq} <- Cs],
             %% Rinse and repeat until meet the target or the queue is empty
-            case qbytes(QTab) > MaxBytes of
+            case qbytes(QTab, NewState) > MaxBytes of
                 true ->
-                    trim_q_entries(QTab, MaxBytes, Cs2);
+                    trim_q_entries(QTab, MaxBytes, Cs2, NewState);
                 _ ->
-                    Cs2
+                    {Cs2, NewState}
             end
     end.
 
-qbytes(QTab) ->
+qbytes(QTab, #state{qsize_bytes = QSizeBytes}) ->
     WordSize = erlang:system_info(wordsize),
     Words = ets:info(QTab, memory),
-    Words * WordSize.
-
+    (Words * WordSize) + QSizeBytes.
 
 is_queue_empty(Name, QSeq, Cs) ->
     case lists:keytake(Name, #c.name, Cs) of
