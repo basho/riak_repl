@@ -48,7 +48,8 @@
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
                 cs = [],
                 shutting_down=false,
-                qsize_bytes = 0
+                qsize_bytes = 0,
+                word_size=erlang:system_info(wordsize)
                }).
 
 % Consumers
@@ -284,7 +285,7 @@ push(NumItems, Bin, State = #state{qtab = QTab,
     QEntry = {QSeq2, NumItems, Bin},
     %% Send to any pending consumers
     Cs2 = [maybe_deliver_item(C, QEntry) || C <- Cs],
-    Size = erlang:external_size(QEntry),
+    Size = ets_obj_size(Bin, State),
     NewState = update_q_size(State, Size),
     ets:insert(QTab, QEntry),
     trim_q(NewState#state{qseq = QSeq2, cs = Cs2});
@@ -341,12 +342,24 @@ cleanup(_QTab, '$end_of_table', State) ->
 cleanup(QTab, Seq, State) ->
     case ets:lookup(QTab, Seq) of
         [] -> cleanup(QTab, ets:prev(QTab, Seq), State);
-        [QEntry] ->
-           ObjSize = erlang:external_size(QEntry),
+        [{_, _, Bin}] ->
+           ObjSize = ets_obj_size(Bin, State),
            NewState = update_q_size(State, -ObjSize),
            ets:delete(QTab, Seq),
-           cleanup(QTab, ets:prev(QTab, Seq), NewState)
+           cleanup(QTab, ets:prev(QTab, Seq), NewState);
+        _ ->
+            lager:warning("Unexpected object in RTQ")
     end.
+
+
+ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
+  BSize = erlang:byte_size(Obj),
+  case BSize > 64 of
+        true -> BSize - (6 * WordSize);
+        false -> BSize
+  end;
+ets_obj_size(Obj, _) ->
+  erlang:size(Obj).
 
 update_q_size(State = #state{qsize_bytes = CurrentQSize}, Diff) ->
   State#state{qsize_bytes = CurrentQSize + Diff}.
@@ -408,8 +421,7 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
             end
     end.
 
-qbytes(QTab, #state{qsize_bytes = QSizeBytes}) ->
-    WordSize = erlang:system_info(wordsize),
+qbytes(QTab, #state{qsize_bytes = QSizeBytes, word_size=WordSize}) ->
     Words = ets:info(QTab, memory),
     (Words * WordSize) + QSizeBytes.
 
