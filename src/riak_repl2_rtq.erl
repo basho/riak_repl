@@ -400,8 +400,8 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
         '$end_of_table' ->
             {Cs, State};
         TrimSeq ->
-            [QEntry] = ets:lookup(QTab, TrimSeq),
-            ObjSize = erlang:external_size(QEntry),
+            [{_, _, Bin}] = ets:lookup(QTab, TrimSeq),
+            ObjSize = ets_obj_size(Bin, State),
             NewState = update_q_size(State, -ObjSize),
             ets:delete(QTab, TrimSeq),
             Cs2 = [case CSeq < TrimSeq of
