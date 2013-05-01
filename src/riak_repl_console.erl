@@ -136,7 +136,6 @@ status2(Verbose) ->
           RTRemotesStatus ++ FSRemotesStatus ++ PGRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
           CoordStats++CoordSrvStats++CMgrStats++RTQStats++PGStats,
-    lager:info("ALL = ~p", [All]),
     if Verbose ->
             format_counter_stats(All);
        true ->
