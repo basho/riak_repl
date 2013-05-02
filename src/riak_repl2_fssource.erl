@@ -232,12 +232,13 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
-    case is_process_alive(FSW) of
+    %% check if process alive only if it's defined
+    case is_pid(FSW) andalso is_process_alive(FSW) of
+        false ->
+            ok;
         true ->
             lager:info("Sending stop event to worker"),
-            gen_fsm:sync_send_all_state_event(FSW, stop);
-        _ ->
-            ok
+            gen_fsm:sync_send_all_state_event(FSW, stop)
     end,
     %% clean up work dir
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),

@@ -176,8 +176,8 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
             %% ideally, we would put this back on the queue, but we'll just need to
             %% wait for a while and try again since we can't unclaim it yet.
             lager:info("AAE tree for partition ~p is already_locked. Trying again in ~p seconds.",
-                       [5000]),
-            gen_fsm:send_event_after(5000, start_exchange),
+                       [?RETRY_AAE_LOCKED_INTERVAL]),
+            gen_fsm:send_event_after(?RETRY_AAE_LOCKED_INTERVAL, start_exchange),
             {next_state, prepare_exchange, State};
         Error ->
             lager:warning("lock tree for partition ~p failed, got ~p",
