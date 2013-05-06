@@ -42,7 +42,7 @@ status() ->
     end.
 
 enabled() ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_repl_ring:pg_enabled(Ring).
 
 enable(Remote) ->

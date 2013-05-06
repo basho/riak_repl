@@ -87,7 +87,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             %% find connection by cluster_id
-            lager:info("CName = ~p", [ CName ]),
+            lager:debug("CName = ~p", [ CName ]),
             Modes = State#state.repl_modes,
             Repl12Enabled = riak_repl_util:mode_12_enabled(Modes),
             Repl13Enabled = riak_repl_util:mode_13_enabled(Modes),
@@ -95,7 +95,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 case Repl12Enabled of
                     true ->
                         CNames12 = get_client_cluster_names_12(),
-                        lager:info("CNames12 = ~p", [ CNames12 ]),
+                        lager:debug("CNames12 = ~p", [ CNames12 ]),
                         proxy_get_12(CName, CNames12, B, K, GetOptions);
                     false ->
                         notconnected
@@ -104,17 +104,18 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 case Repl13Enabled of
                     true ->
                         CNames13 = get_client_cluster_names_13(),
-                        lager:info("CNames13 = ~p", [ CNames13 ]),
+                        lager:debug("CNames13 = ~p", [ CNames13 ]),
                         proxy_get_13(State, CName, CNames13, B, K, GetOptions);
                     false ->
                         notconnected
                 end,
-            lager:info("Result12 = ~p", [ Result12 ]),
-            lager:info("Result13 = ~p", [ Result13 ]),
+            lager:debug("Result12 = ~p", [ Result12 ]),
+            lager:debug("Result13 = ~p", [ Result13 ]),
             Result =
                 case {Result12, Result13} of
                     {notconnected, Value} -> Value;
                     {Value, notconnected} -> Value;
+                    {_, Value} -> Value; %% always use 1.3
                     _ -> notconnected
                 end,
             case Result of
@@ -149,7 +150,7 @@ proxy_get_12(CName, CNames, B, K, GetOptions) ->
         false ->
             notconnected;
         {ClientPid, _ClusterID} ->
-            lager:info("Using 1.2 proxy_get (A)"),
+            lager:debug("Using 1.2 proxy_get (A)"),
             riak_repl_tcp_client:proxy_get(ClientPid, B, K,
                                            GetOptions)
     end.
