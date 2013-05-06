@@ -1,7 +1,8 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_ip).
--export([get_matching_address/2, determine_netmask/2, mask_address/2]).
+-export([get_matching_address/2, determine_netmask/2, mask_address/2,
+        maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -59,7 +60,7 @@ cidr(<<X:1/bits, Rest/bits>>, Acc) ->
 %%      erlang-questions.
 mask_address(Addr={_, _, _, _}, Maskbits) ->
     B = list_to_binary(tuple_to_list(Addr)),
-    lager:debug("address as binary: ~p ~p", [B,Maskbits]),
+    lager:debug("address as binary: ~w ~w", [B,Maskbits]),
     <<Subnet:Maskbits, _Host/bitstring>> = B,
     Subnet;
 mask_address(_, _) ->
@@ -109,10 +110,10 @@ get_matching_address(IP, CIDR, MyIPs) ->
             case rfc1918(IP) of
                 false ->
                     %% search as low as a class A
-                    find_best_ip(MyIPs, IP, Port, CIDR, CIDR - 8);
+                    find_best_ip(MyIPs, IP, Port, CIDR, 8);
                 RFCCIDR ->
                     %% search as low as the bottom of the RFC1918 subnet
-                    find_best_ip(MyIPs, IP, Port, CIDR, (CIDR - RFCCIDR)+1)
+                    find_best_ip(MyIPs, IP, Port, CIDR, RFCCIDR)
             end;
         _ ->
             case is_rfc1918(IP) == is_rfc1918(ListenIP) of
@@ -120,17 +121,19 @@ get_matching_address(IP, CIDR, MyIPs) ->
                     %% Both addresses are either internal or external.
                     %% We'll have to assume the user knows what they're
                     %% doing
-                    lager:debug("returning speific listen IP ~p",
+                    lager:debug("returning specific listen IP ~p",
                             [ListenIP]),
                     {ListenIP, Port};
                 false ->
-                    lager:warning("NAT detected?"),
+                    %% we should never get here if things are configured right
+                    lager:warning("NAT detected, do you need to define a"
+                        " nat-map?"),
                     undefined
             end
     end.
 
 
-find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) when MyCIDR - SearchDepth < 8->
+find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
     %% CIDR is now too small to meaningfully return a result
     %% blindly return *anything* that is close, I guess?
     lager:warning("Unable to find an approximate match for ~s/~b,"
@@ -155,6 +158,8 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) when MyCIDR - SearchDepth <
                         IP = proplists:get_value(addr, V4Attrs),
                         case is_rfc1918(MyIP) == is_rfc1918(IP) of
                             true ->
+                                lager:debug("wildly guessing that  ~p is close"
+                                    "to ~p", [IP, MyIP]),
                                 {IP, Port};
                             false ->
                                 Acc
@@ -172,7 +177,7 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) when MyCIDR - SearchDepth <
             Res
     end;
 
-find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
+find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) ->
     Res = lists:foldl(fun({_IF, Attrs}, Acc) ->
                 V4Attrs = lists:filter(fun({addr, {_, _, _, _}}) ->
                             true;
@@ -188,18 +193,8 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
                     _ ->
                         lager:debug("IPs for ~s : ~p", [_IF, V4Attrs]),
                         IP = proplists:get_value(addr, V4Attrs),
-                        NetMask = proplists:get_value(netmask, V4Attrs),
-                        CIDR = case cidr(list_to_binary(tuple_to_list(NetMask)), 0) of
-                            X when X < SearchDepth ->
-                                MyCIDR;
-                            X ->
-                                X
-                        end,
-
-                        lager:debug("CIDRs are ~p ~p for depth ~p", [CIDR-SearchDepth,
-                                MyCIDR - SearchDepth, SearchDepth]),
-                        case {mask_address(IP, CIDR - SearchDepth),
-                                mask_address(MyIP, MyCIDR - SearchDepth)}  of
+                        case {mask_address(IP, MyCIDR),
+                                mask_address(MyIP, MyCIDR)}  of
                             {Mask, Mask} ->
                                 %% the 172.16/12 is a pain in the ass
                                 case is_rfc1918(IP) == is_rfc1918(MyIP) of
@@ -212,7 +207,7 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
                                 end;
                             {_A, _B} ->
                                 lager:debug("IP ~p with CIDR ~p masked as ~p",
-                                        [IP, CIDR, _A]),
+                                        [IP, MyCIDR, _A]),
                                 lager:debug("IP ~p with CIDR ~p masked as ~p",
                                         [MyIP, MyCIDR, _B]),
                                 Acc
@@ -221,14 +216,90 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth) ->
         end, undefined, MyIPs),
     case Res of
         undefined ->
-            %% TODO check for NAT
-
             %% Increase the search depth and retry, this will decrement the
             %% CIDR masks by one
-            find_best_ip(MyIPs, MyIP, Port, MyCIDR, SearchDepth+1);
+            find_best_ip(MyIPs, MyIP, Port, MyCIDR - 1, MaxDepth);
         Res ->
             Res
     end.
+
+%% Apply the relevant NAT-mapping rule, if any
+maybe_apply_nat_map(IP, Port, Map0) ->
+    Map = expand_hostnames(Map0),
+    case lists:keyfind({IP, Port}, 1, Map) of
+        false ->
+            case lists:keyfind(IP, 1, Map) of
+                {_, {InternalIP, _InternalPort}} ->
+                    InternalIP;
+                {_, InternalIP} ->
+                    InternalIP;
+                false ->
+                    IP
+            end;
+        {_, {InternalIP, _InternalPort}} ->
+            InternalIP;
+        {_, InternalIP} ->
+            InternalIP
+    end.
+
+%% Find the external IP for this interal IP
+%% Should only be called when you know NAT is in effect
+apply_reverse_nat_map(IP, Port, Map0) ->
+    Map = expand_hostnames(Map0),
+    case lists:keyfind({IP, Port}, 2, Map) of
+        false ->
+            case lists:keyfind(IP, 2, Map) of
+                false ->
+                    error;
+                {Res, _} ->
+                    Res
+            end;
+        {Res, _} ->
+            %% this will either be the IP or an {IP, Port} tuple
+            Res
+    end.
+
+expand_hostnames(Map) ->
+    lists:reverse(lists:foldl(fun expand_hostnames/2, [],  Map)).
+
+expand_hostnames({External, {Host, InternalPort}}, Acc) when is_list(Host) ->
+    %% resolve it via /etc/hosts
+    case inet_gethost_native:gethostbyname(Host) of
+        {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+            lager:debug("locally resolved ~p to ~p", [Host, Addresses]),
+            [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
+        Res ->
+            %% resolve it via the configured nameserver
+            case inet_res:gethostnames(Host) of
+                {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+                    lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
+                    [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
+                Res2 ->
+                    lager:warning("Failed to resolve ~p locally: ~p", [Host, Res]),
+                    lager:warning("Failed to resolve ~p remotely: ~p", [Host, Res2]),
+                    Acc
+            end
+    end;
+expand_hostnames({External, Host}, Acc) when is_list(Host) ->
+    %% resolve it via /etc/hosts
+    case inet_gethost_native:gethostbyname(Host) of
+        {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+            lager:debug("locally resolved ~p to ~p", [Host, Addresses]),
+            [{External, Addr} || Addr <- Addresses] ++ Acc;
+        Res ->
+            %% resolve it via the configured nameserver
+            case inet_res:gethostnames(Host) of
+                {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
+                    lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
+                    [{External, Addr} || Addr <- Addresses] ++ Acc;
+                Res2 ->
+                    lager:warning("Failed to resolve ~p locally: ~p", [Host, Res]),
+                    lager:warning("Failed to resolve ~p remotely: ~p", [Host, Res2]),
+                    Acc
+            end
+    end;
+expand_hostnames(Any, Acc) ->
+    [Any|Acc].
 
 -ifdef(TEST).
 
@@ -330,9 +401,9 @@ get_matching_address_test_() ->
             {"public IPs when all we have are RFC1918 ones",
                 fun() ->
                         Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 0, 0, 1}},
+                                    [{addr, {172, 16, 0, 1}},
                                         {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({8, 8, 8, 1}, 8, Addrs),
+                        Res = get_matching_address({172, 0, 8, 8}, 24, Addrs),
                         ?assertEqual(undefined, Res)
                 end
             },
@@ -428,6 +499,99 @@ determine_netmask_test_() ->
             end
         }
 
+    ].
+
+natmap_test_() ->
+    [
+        {"forward lookups work",
+            fun() ->
+                    Map = [
+                        {{65, 172, 243, 10}, {10, 0, 0, 10}},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({10, 0, 0, 11},
+                        maybe_apply_nat_map({65, 172, 243, 11}, 9080, Map)),
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 9090, Map)),
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({10, 0, 0, 10}, 9090, Map)),
+                    ok
+            end
+        },
+        {"forward lookups with ports work",
+            fun() ->
+                    Map = [
+                        {{{65, 172, 243, 10}, 10080}, {10, 0, 0, 10}},
+                        {{{65, 172, 243, 10}, 10081}, {10, 0, 0, 11}},
+                        {{{65, 172, 243, 10}, 10082}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 10080, Map)),
+                    ?assertEqual({10, 0, 0, 11},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 10081, Map)),
+                    ?assertEqual({10, 0, 0, 10},
+                        maybe_apply_nat_map({10, 0, 0, 10}, 9090, Map)),
+                    ok
+            end
+        },
+        {"reverse lookups work",
+            fun() ->
+                    Map = [
+                        {{65, 172, 243, 10}, {10, 0, 0, 10}},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({65, 172, 243, 10},
+                        apply_reverse_nat_map({10, 0, 0, 10}, 9080, Map)),
+                    ?assertEqual({65, 172, 243, 11},
+                        apply_reverse_nat_map({10, 0, 0, 11}, 9090, Map)),
+                    ?assertEqual(error,
+                        apply_reverse_nat_map({10, 0, 0, 20}, 9090, Map)),
+                    ok
+            end
+        },
+        {"reverse lookups with ports work",
+            fun() ->
+                    Map = [
+                        {{{65, 172, 243, 10}, 10080}, {10, 0, 0, 10}},
+                        {{{65, 172, 243, 10}, 10081}, {10, 0, 0, 11}},
+                        {{{65, 172, 243, 10}, 10082}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({{65, 172, 243, 10}, 10080},
+                        apply_reverse_nat_map({10, 0, 0, 10}, 9080, Map)),
+                    ?assertEqual({{65, 172, 243, 10}, 10081},
+                        apply_reverse_nat_map({10, 0, 0, 11}, 9080, Map)),
+                    ?assertEqual(error,
+                        apply_reverse_nat_map({10, 0, 0, 20}, 9080, Map)),
+                    ok
+            end
+        },
+        {"forward lookups with hostnames work",
+            fun() ->
+                    Map = [
+                        {{65, 172, 243, 10}, "localhost"},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({127, 0, 0, 1},
+                        maybe_apply_nat_map({65, 172, 243, 10}, 9080, Map)),
+                    ok
+            end
+        },
+        {"reverse lookups with hostnames work",
+            fun() ->
+                    {ok, {hostent, "basho.com", _, inet, 4, Addresses}} = inet_res:gethostbyname("basho.com"),
+                    Map = [
+                        {{65, 172, 243, 10}, "basho.com"},
+                        {{65, 172, 243, 11}, {10, 0, 0, 11}},
+                        {{65, 172, 243, 12}, {10, 0, 0, 12}}
+                    ],
+                    ?assertEqual({65, 172, 243, 10},
+                        apply_reverse_nat_map(hd(Addresses), 9080, Map)),
+                    ok
+            end
+        }
     ].
 
 -endif.
