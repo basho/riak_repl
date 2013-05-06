@@ -297,13 +297,15 @@ get_clusters(Ring) ->
     end.
 
 
-% TODO: comments
+%% Enable proxy_get replication for a given remote
 pg_enable_trans(Ring, Remote) ->
     add_list_trans(Remote, pg_enabled, Ring).
 
+%% Disable proxy_get replication for a given remote
 pg_disable_trans(Ring, Remote) ->
     del_list_trans(Remote, pg_enabled, Ring).
 
+%% Get list of RT enabled remotes
 pg_enabled(Ring) ->
     get_list(pg_enabled, Ring).
 
