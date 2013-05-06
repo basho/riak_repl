@@ -11,7 +11,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
     terminate/2, code_change/3, status/1, status/2]).
 
-%% send a message every KEEPALIVE seconds to make sure the service is running on the sink
+%% send a message every KEEPALIVE milliseconds to make sure the service is running on the sink
 -define(KEEPALIVE, 1000).
 
 -record(state,
