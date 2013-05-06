@@ -422,7 +422,13 @@ handle_info({Partition, whereis_timeout}, State) ->
             {noreply, State3}
     end;
 
-handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) ->
+handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
+    Erred =:= tcp_error; Erred =:= ssl_error ->
+    lager:error("Connection closed unexpectedly with message: ~p", [Erred]),
+    % Yes I do want to die horribly; my supervisor should restart me.
+    {stop, {connection_error, Erred}, State};
+
+handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) when is_binary(Data) ->
     #state{transport = Transport} = State,
     Transport:setopts(Socket, [{active, once}]),
     Data1 = binary_to_term(Data),
@@ -434,12 +440,6 @@ handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     lager:info("Connect closed"),
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, connection_closed, State};
-
-handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
-    Erred =:= tcp_error; Erred =:= ssl_error ->
-    lager:error("Connection closed unexpectedly"),
-    % Yes I do want to die horribly; my supervisor should restart me.
-    {stop, connection_error, State};
 
 handle_info(send_next_whereis_req, State) ->
     State2 = case is_fullsync_in_progress(State) of
