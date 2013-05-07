@@ -2,6 +2,10 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_tcp_mon).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
          socket_status/1, format_socket_stats/2 ]).
@@ -74,19 +78,26 @@ format(Status, Stat) ->
 format_header(Stat) ->
     io_lib:format("~40w Value\n", [Stat]).
 
-format_entry({_Socket, Status}, Stat) ->
+format_entry(Status, Stat) ->
     Tag = proplists:get_value(tag, Status),
     Value = proplists:get_value(Stat, Status),
     case Value of
         Value when is_list(Value) ->
-            [io_lib:format("~40s [", [Tag]),
-                format_list(Value),
-                "]\n"];
+            [format_tag(Tag),
+             " ",
+             format_list(Value),
+             "\n"];
         _ ->
-            [io_lib:format("~40s", [Tag]),
+            [format_tag(Tag),
+             " [",
              format_value(Value),
              "\n"]
     end.
+
+format_tag(Tag) when is_list(Tag) ->
+    io_lib:format("~40s", [Tag]);
+format_tag(Tag) ->
+    io_lib:format("~40w", [Tag]).
 
 format_value(Val) when is_float(Val) ->
     io_lib:format("~7.1f", [Val]);
@@ -174,12 +185,24 @@ handle_info({nodeup, Node, _InfoList}, State) ->
             lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
-            {noreply, add_dist_conn(Port, Node, State)}
+            {noreply, add_dist_conn(Node, Port, State)}
     end;
 
 
-handle_info({nodedown, _Node, _InfoList}, _State) ->
-    {noreply, #state{}};
+handle_info({nodedown, Node, _InfoList}, State) ->
+    GbList = gb_trees:to_list(State#state.conns),
+    MaybePortConn = [{P, C} ||
+        {P, #conn{type = dist, tag = {node, MaybeNode}} = C} <- GbList,
+        MaybeNode =:= Node],
+    Conns2 = case MaybePortConn of
+        [{Port, Conn} | _] ->
+            erlang:send_after(State#state.clear_after, self(), {clear, Port}),
+            Conn2 = Conn#conn{type = error},
+            gb_trees:update(Port, Conn2, State#state.conns);
+        _ ->
+            State#state.conns
+    end,
+    {noreply, State#state{conns = Conns2}};
 handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
                                              opts = Opts, conns = Conns}) ->
     schedule_tick(State),
@@ -194,7 +217,7 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
                                 hist = Hist2}
                   catch
                       _E:_R ->
-                          %io:format("Error ~p: ~p\n", [E, R]),
+                          %io:format("Error ~p: ~p\n", [_E, _R]),
                           %% Any problems with getstat/getopts mark in error
                           erlang:send_after(State#state.clear_after,
                                             self(),
@@ -218,7 +241,9 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Add a distributed connection to the state
 add_dist_conn(Node, Port, State) ->
-    add_conn(Port, #conn{tag = {node, Node}, type = dist}, State).
+    add_conn(Port, #conn{tag = {node, Node},
+                         type = dist,
+                         transport = ranch_tcp}, State).
 
 %% Add connection to the state
 add_conn(Socket, Conn, State = #state{conns = Conns}) ->
@@ -295,4 +320,63 @@ format_socket_stats([{K,V}|T], Buf) when
     format_socket_stats(T, [{K, lists:flatten(format_list(V))} | Buf]);
 format_socket_stats([{K,V}|T], Buf) ->
     format_socket_stats(T, [{K, V} | Buf]).
+
+-ifdef(TEST).
+
+updown() ->
+    riak_core_tcp_mon:start_link(),
+    {ok, LS} = gen_tcp:listen(0, [{active, true}, binary]),
+    {ok, Port} = inet:port(LS),
+    Pid = self(),
+    spawn(
+        fun () ->
+                %% server
+                {ok, S} = gen_tcp:accept(LS),
+                receive
+                    {tcp, S, _Data} ->
+                        %% only receive one packet, let the others build
+                        %% up
+                        ok;
+                    _ ->
+                        ?assert(fail)
+                after
+                    1000 ->
+                        ?assert(fail)
+                end,
+                riak_core_tcp_mon:monitor(S, "test", gen_tcp),
+                Stat1 = riak_core_tcp_mon:status(),
+                gen_server:cast(riak_core_tcp_mon, {nodedown, 'foo', []}),
+                Stat2 = riak_core_tcp_mon:status(),
+                %% give the tcp monitor some time to gather stats
+                timer:sleep(20000),
+                gen_server:cast(riak_core_tcp_mon, {nodeup, 'foo', []}),
+                Stat3 = riak_core_tcp_mon:status(),
+                %% these would be asserts, but eunit times out before they
+                %% run
+                ?assert(proplists:is_defined(socket,hd(Stat1))),
+                ?assert(proplists:is_defined(socket,hd(Stat2))),
+                ?assert(proplists:is_defined(socket,hd(Stat3))),
+                gen_tcp:close(S),
+                Pid ! finished
+        end),
+    timer:sleep(1000),
+    %% client
+    {ok, Socket} = gen_tcp:connect("localhost",Port,
+                                   [binary, {active, true}]),
+    lists:foreach(
+          fun (_) ->
+                gen_tcp:send(Socket, "TEST")
+          end,
+        lists:seq(1,10000)),
+    receive
+        finished -> ok;
+        X -> io:format(user, "Unexpected message received ~p~n", [X]),
+            ?assert(fail)
+    end.
+
+
+nodeupdown_test_() ->
+       {timeout, 30, fun updown/0}.
+-endif.
+
 
