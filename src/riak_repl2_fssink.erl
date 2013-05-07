@@ -63,7 +63,6 @@ init([Socket, Transport, OKProto, Props]) ->
                                        SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("fullsync connection"),
 
     {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
     case CommonMajor of
@@ -83,11 +82,17 @@ init([Socket, Transport, OKProto, Props]) ->
     end.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
-                                               socket=Socket}) ->
+                                               socket=Socket, strategy=Strategy}) ->
     Res = case is_process_alive(FSW) of
-        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
-        false -> []
-    end,
+              true ->
+                  case Strategy of
+                      keylist ->
+                          gen_fsm:sync_send_all_state_event(FSW, status, infinity);
+                      aae ->
+                          gen_server:call(FSW, status)
+                  end;
+              false -> []
+          end,
     SocketStats = riak_core_tcp_mon:socket_status(Socket),
     Desc =
         [
@@ -104,7 +109,7 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast(fullsync_complete, State) ->
     %% sent from AAE fullsync worker
-    lager:info("Fullsync complete."),
+    lager:info("Fullsync of partition complete."),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -161,11 +166,15 @@ decode_obj_msg(Data) ->
             Other
     end.
 
-terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
-    lager:info("FS sink terminating."),
-    case is_process_alive(FSW) of
+terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strategy}) ->
+    case is_pid(FSW) andalso is_process_alive(FSW) of
         true ->
-            gen_fsm:sync_send_all_state_event(FSW, stop);
+            case Strategy of
+                keylist ->
+                    gen_fsm:sync_send_all_state_event(FSW, stop);
+                aae ->
+                    gen_server:cast(FSW, stop)
+            end;
         _ ->
             ok
     end,

@@ -11,7 +11,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         handle_sync_event/4, terminate/2, code_change/3]).
+         terminate/2, code_change/3]).
 
 %% API
 -export([start_link/4, init_sync/1]).
@@ -53,18 +53,22 @@ handle_call(init_sync, _From, State=#state{transport=Transport, socket=Socket}) 
     ok = Transport:setopts(Socket, TcpOptions),
     {reply, ok, State};
 
+handle_call(status, _From, State) ->
+    Reply = [{partition_syncing, State#state.partition}],
+    {reply, Reply, State};
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
+handle_cast(stop, State) ->
+    {stop, normal, State};
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
-
-handle_sync_event(status, _From, StateName, State) ->
-    Res = [{state, StateName},
-           {partition_syncing, State#state.partition}
-          ],
-    {reply, Res, StateName, State}.
 
 handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
                                                  socket=Socket}) when Proto==tcp; Proto==ssl ->
@@ -120,8 +124,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% replies: ok
 process_msg(?MSG_INIT, Partition, State) ->
     lager:info("MSG_INIT for partition ~p", [Partition]),
-    %% List of IndexNs to iterate over.
-    IndexNs = riak_kv_util:responsible_preflists(Partition),
     {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
     %% monitor the tree and crash if the tree goes away
     monitor(process, TreePid),
@@ -140,8 +142,9 @@ process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=Tre
 %% no reply
 process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
     RObj = riak_repl_util:from_wire(BObj),
-    B = riak_object:bucket(RObj),
-    K = riak_object:key(RObj),
+    %% B = riak_object:bucket(RObj),
+    %% K = riak_object:key(RObj),
+    %% lager:info("PUT ~p:~p", [B, K]),
     %% do the put
     riak_repl_util:do_repl_put(RObj),
     State;

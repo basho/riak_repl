@@ -237,7 +237,6 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
         false ->
             ok;
         true ->
-            lager:info("Sending stop event to worker"),
             gen_fsm:sync_send_all_state_event(FSW, stop)
     end,
     %% clean up work dir
