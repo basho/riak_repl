@@ -2,6 +2,10 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_tcp_mon).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
          socket_status/1, format_socket_stats/2 ]).
@@ -316,4 +320,63 @@ format_socket_stats([{K,V}|T], Buf) when
     format_socket_stats(T, [{K, lists:flatten(format_list(V))} | Buf]);
 format_socket_stats([{K,V}|T], Buf) ->
     format_socket_stats(T, [{K, V} | Buf]).
+
+-ifdef(TEST).
+
+updown() ->
+    riak_core_tcp_mon:start_link(),
+    {ok, LS} = gen_tcp:listen(0, [{active, true}, binary]),
+    {ok, Port} = inet:port(LS),
+    Pid = self(),
+    spawn(
+        fun () ->
+                %% server
+                {ok, S} = gen_tcp:accept(LS),
+                receive
+                    {tcp, S, _Data} ->
+                        %% only receive one packet, let the others build
+                        %% up
+                        ok;
+                    _ ->
+                        ?assert(fail)
+                after
+                    1000 ->
+                        ?assert(fail)
+                end,
+                riak_core_tcp_mon:monitor(S, "test", gen_tcp),
+                Stat1 = riak_core_tcp_mon:status(),
+                gen_server:cast(riak_core_tcp_mon, {nodedown, 'foo', []}),
+                Stat2 = riak_core_tcp_mon:status(),
+                %% give the tcp monitor some time to gather stats
+                timer:sleep(20000),
+                gen_server:cast(riak_core_tcp_mon, {nodeup, 'foo', []}),
+                Stat3 = riak_core_tcp_mon:status(),
+                %% these would be asserts, but eunit times out before they
+                %% run
+                ?assert(proplists:is_defined(socket,hd(Stat1))),
+                ?assert(proplists:is_defined(socket,hd(Stat2))),
+                ?assert(proplists:is_defined(socket,hd(Stat3))),
+                gen_tcp:close(S),
+                Pid ! finished
+        end),
+    timer:sleep(1000),
+    %% client
+    {ok, Socket} = gen_tcp:connect("localhost",Port,
+                                   [binary, {active, true}]),
+    lists:foreach(
+          fun (_) ->
+                gen_tcp:send(Socket, "TEST")
+          end,
+        lists:seq(1,10000)),
+    receive
+        finished -> ok;
+        X -> io:format(user, "Unexpected message received ~p~n", [X]),
+            ?assert(fail)
+    end.
+
+
+nodeupdown_test_() ->
+       {timeout, 30, fun updown/0}.
+-endif.
+
 
