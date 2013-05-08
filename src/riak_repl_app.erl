@@ -6,7 +6,10 @@
 -export([start/2,prep_stop/1,stop/1]).
 % deprecated: used only when on a mixed version cluster where some
 % versions < 1.3
--export([get_matching_address/2]).
+-export([get_matching_address/2,
+         cluster_mgr_member_fun/1,
+         cluster_mgr_write_cluster_members_to_ring/2,
+         cluster_mgr_read_cluster_targets_from_ring/0]).
 
 -include("riak_core_connection.hrl").
 

@@ -81,6 +81,7 @@
                }).
 
 -export([start_link/0,
+         start_link/3,
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
@@ -108,11 +109,13 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-
 %% @doc start the Cluster Manager
 -spec(start_link() -> ok).
 start_link() ->
-    Args = [],
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
+    Args = [DefaultLocator, DefaultSave, DefaultRestore],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
@@ -193,19 +196,26 @@ set_gc_interval(Interval) ->
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
-
-init([]) ->
+init(Defaults) ->
     lager:debug("Cluster Manager: starting"),
-    register_cluster_locator(),
-    %% start our cluster_mgr service
-    ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
-    ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
-    riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
+    %% start our cluster_mgr service if not already started.
+    case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
+        false ->
+            ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
+            ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
+            riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS});
+        true ->
+            ok
+    end,
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
     MeNode = node(),
-    State = #state{is_leader = false, balancer_fun = BalancerFun},
+    State = register_defaults(Defaults, #state{is_leader = false, balancer_fun = BalancerFun}),
+    
+    %% Schedule a delayed connection to know clusters
+    schedule_cluster_connections(),
+
     case riak_repl2_leader:leader_node() of
         undefined ->
             % there's an election in progress, so we can just hang on until
@@ -413,6 +423,27 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Private
 %%%===================================================================
+
+%% Cause ourself to try and reconnect to known clusters at various intervals.
+%% If a connection is already established, it won't create a new one.
+schedule_cluster_connections() ->
+    erlang:send_after(5000, self(), connect_to_clusters),
+    erlang:send_after(15000, self(), connect_to_clusters),
+    erlang:send_after(30000, self(), connect_to_clusters),
+    erlang:send_after(60000, self(), connect_to_clusters).
+
+register_defaults(Defaults, State) ->
+    %% register a default cluster locator by identity
+    register_cluster_addr_locator(),
+    case Defaults of
+        [] ->
+            State;            
+        [MembersFun, SaveFun, RestoreFun] ->
+            lager:debug("Registering default cluster manager functions."),
+            State#state{member_fun=MembersFun,
+                        save_members_fun=SaveFun,
+                        restore_targets_fun=RestoreFun}
+    end.
 
 is_ok_to_connect(NewName, Remote, CheckConnected) ->
     NewRemote = {cluster_by_name, NewName},
