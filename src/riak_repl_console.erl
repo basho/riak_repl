@@ -119,7 +119,7 @@ status(quiet) ->
 
 status2(Verbose) ->
     Config = get_config(),
-    Stats1 = lists:sort(riak_repl_stats:get_stats()),
+    Stats1 = riak_repl_stats:get_stats(),
     RTRemotesStatus = rt_remotes_status(),
     FSRemotesStatus = fs_remotes_status(),
     PGRemotesStatus = pg_remotes_status(),
@@ -190,19 +190,27 @@ resume_fullsync([]) ->
 %% Repl2 commands
 %%
 rtq_stats() ->
-     [{realtime_queue_stats, riak_repl2_rtq:status()}].
+    case erlang:whereis(riak_repl2_rtq) of
+        Pid when is_pid(Pid) ->
+            [{realtime_queue_stats, riak_repl2_rtq:status()}];
+        _ -> []
+    end.
 
 cluster_mgr_stats() ->
-    ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
-                            {ok, Clusters} ->
-                                [erlang:list_to_binary(Cluster) || Cluster <-
-                                                                   Clusters];
-                            Error -> Error
-                        end,
-    [{cluster_name,
-      erlang:list_to_binary(riak_core_connection:symbolic_clustername())},
-     {cluster_leader, riak_core_cluster_mgr:get_leader()},
-     {connected_clusters, ConnectedClusters}].
+    case erlang:whereis(riak_repl_leader_gs) of
+        Pid when is_pid(Pid) ->
+            ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
+                {ok, Clusters} ->
+                    [erlang:list_to_binary(Cluster) || Cluster <-
+                                                       Clusters];
+                Error -> Error
+            end,
+            [{cluster_name,
+              erlang:list_to_binary(riak_core_connection:symbolic_clustername())},
+             {cluster_leader, riak_core_cluster_mgr:get_leader()},
+             {connected_clusters, ConnectedClusters}];
+        _ -> []
+    end.
 
 %% Show cluster stats for this node
 clusterstats([]) ->
@@ -592,36 +600,44 @@ format_nat_listener(L) ->
       format_ip(L#nat_listener.nat_addr)}].
 
 leader_stats() ->
-    LeaderNode = riak_repl_leader:leader_node(),
-    LocalStats =
-        try
-            LocalProcInfo = erlang:process_info(whereis(riak_repl_leader_gs),
-                                                [message_queue_len, heap_size]),
-            [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
-        catch _:_ ->
-                []
-        end,
-    RemoteStats =
-        try
-            LeaderPid = rpc:call(LeaderNode, erlang, whereis,
-                [riak_repl_leader_gs]),
-            LeaderStats = rpc:call(LeaderNode, erlang, process_info,
-                                   [LeaderPid, [message_queue_len,
-                                                total_heap_size,
-                                                heap_size,
-                                                stack_size,
-                                                reductions,
-                                                garbage_collection]]),
-            [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
-        catch
-            _:_ ->
-                []
-        end,
-    [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats.
+    case erlang:whereis(riak_repl_leader_gs) of
+        Pid when is_pid(Pid) ->
+            LeaderNode = riak_repl_leader:leader_node(),
+            LocalStats =
+                         try
+                LocalProcInfo = erlang:process_info(whereis(riak_repl_leader_gs),
+                                                    [message_queue_len, heap_size]),
+                [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
+            catch _:_ ->
+                    []
+            end,
+            RemoteStats =
+                          try
+                LeaderPid = rpc:call(LeaderNode, erlang, whereis,
+                                     [riak_repl_leader_gs]),
+                LeaderStats = rpc:call(LeaderNode, erlang, process_info,
+                                       [LeaderPid, [message_queue_len,
+                                                    total_heap_size,
+                                                    heap_size,
+                                                    stack_size,
+                                                    reductions,
+                                                    garbage_collection]]),
+                [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
+            catch
+                _:_ ->
+                    []
+            end,
+            [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats;
+        _ -> []
+    end.
 
 client_stats() ->
-    %% NOTE: rpc:multicall to all clients removed
-    riak_repl_console:client_stats_rpc().
+    case erlang:whereis(riak_repl_leader_gs) of
+        Pid when is_pid(Pid) ->
+            %% NOTE: rpc:multicall to all clients removed
+            riak_repl_console:client_stats_rpc();
+        _ -> []
+    end.
 
 client_stats_rpc() ->
     RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
@@ -630,16 +646,20 @@ client_stats_rpc() ->
     [{client_stats, [client_stats(P) || P <- Pids]}, {sinks, RT2}].
 
 server_stats() ->
-    RT2 = [rt2_source_stats(P) || {_R,P} <-
-                                  riak_repl2_rtsource_conn_sup:enabled()],
-    LeaderNode = riak_repl_leader:leader_node(),
-    case LeaderNode of
-        undefined ->
-            [{sources, RT2}];
-        _ ->
-            [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
-                        [])},
-             {sources, RT2}]
+    case erlang:whereis(riak_repl_leader_gs) of
+        Pid when is_pid(Pid) ->
+            RT2 = [rt2_source_stats(P) || {_R,P} <-
+                                          riak_repl2_rtsource_conn_sup:enabled()],
+            LeaderNode = riak_repl_leader:leader_node(),
+            case LeaderNode of
+                undefined ->
+                    [{sources, RT2}];
+                _ ->
+                    [{server_stats, rpc:call(LeaderNode, ?MODULE, server_stats_rpc,
+                                             [])},
+                     {sources, RT2}]
+            end;
+        _ -> []
     end.
 
 server_stats_rpc() ->
@@ -677,10 +697,18 @@ server_stats(Pid) ->
     {Pid, erlang:process_info(Pid, message_queue_len), State}.
 
 coordinator_stats() ->
-    [{fullsync_coordinator, riak_repl2_fscoordinator:status()}].
+    case erlang:whereis(riak_repl_leader_gs) of
+        Pid when is_pid(Pid) ->
+            [{fullsync_coordinator, riak_repl2_fscoordinator:status()}];
+        _ -> []
+    end.
 
 coordinator_srv_stats() ->
-    [{fullsync_coordinator_srv, riak_repl2_fscoordinator_serv:status()}].
+    case erlang:whereis(riak_repl_leader_gs) of
+        Pid when is_pid(Pid) ->
+            [{fullsync_coordinator_srv, riak_repl2_fscoordinator_serv:status()}];
+        _ -> []
+    end.
 
 rt2_source_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
