@@ -300,9 +300,15 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% TODO: Add stats for AAE
     lager:debug("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
+                       StartTime = erlang:now(),
                        Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
                        %% Maybe you wish you could move this send up to the compare function,
                        %% but we need it to send the Accumulated results back to our SourcePid.
+                       Count = case Acc of
+                                   [] -> 0;
+                                   [N] -> N
+                               end,
+                       trace_time(StartTime, "key_compare diffs for partition", Count, Partition),
                        SourcePid ! {'$aae_src', done, Acc}
                end),
 
@@ -366,7 +372,8 @@ compare_loop(State=#state{transport=Transport,
             {Acc, State}
     end.
 
-finish_sending_differences(Bloom, #state{index=Partition, diff_batch_size=_DiffSize}) ->
+finish_sending_differences(Bloom, #state{index=Partition, diff_batch_size=_DiffSize,
+                                         indexns=[_IndexN|_IndexNs]}) ->
     case ebloom:elements(Bloom) == 0 of
         true ->
             lager:info("No differences, skipping bloom fold"),
@@ -374,15 +381,18 @@ finish_sending_differences(Bloom, #state{index=Partition, diff_batch_size=_DiffS
         false ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             OwnerNode = riak_core_ring:index_owner(Ring, Partition),
+            Count = ebloom:elements(Bloom),
 
             trace("Folding over bloom"),
 
             Self = self(),
             Worker = fun() ->
+                             StartTime = erlang:now(),
                              riak_kv_vnode:fold({Partition,OwnerNode},
                                                 fun ?MODULE:bloom_fold/3,
                                                 {Self,
                                                  {serialized, ebloom:serialize(Bloom)}}),
+                             trace_time(StartTime,"bloom_fold diffs/partition", Count, Partition),
                              gen_fsm:send_event(Self, diff_done),
                              ok
                      end,
@@ -635,3 +645,8 @@ trace_recv(_Msg) ->
 trace_recv(_Msg,_Param) ->
 %%    lager:info("Source <--------- ~p : ~p", [_Msg, _Param]),
     ok.
+
+trace_time(StartTime, Msg, P1, P2) ->
+    DiffTime = timer:now_diff(erlang:now(), StartTime),
+    DiffSecs = DiffTime / 1000,
+    lager:info("~p:~s:~p:~p", [DiffSecs, Msg, P1, P2]).
