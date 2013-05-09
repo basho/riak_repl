@@ -1,5 +1,9 @@
 %% Riak EnterpriseDS
 %% Copyright 2007-2013 Basho Technologies, Inc. All Rights Reserved.
+%%
+%% block_provider services proxy_get requests originating from a
+%% block_requester (which runs on the *SINK* cluster) to a *SOURCE* cluster.
+%%
 -module(riak_repl2_pg_block_provider).
 -include("riak_repl.hrl").
 

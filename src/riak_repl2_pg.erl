@@ -1,5 +1,8 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%%
+%% Riak MDC "Advanced Mode" Proxy-Get
+
 -module(riak_repl2_pg).
 
 %% @doc Riak CS Proxy-get
