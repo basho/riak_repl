@@ -101,16 +101,16 @@ get_stats() ->
     CoordSrv = riak_repl_console:coordinator_srv_stats(),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
 
-    jsonify_stats(RTRemotesStatus,[]) ++
-        jsonify_stats(FSRemotesStatus,[]) ++
-        CMStats ++
-        Stats1 ++
-        LeaderStats
+    Most = lists:append([RTRemotesStatus, FSRemotesStatus, Stats1, CMStats,
+      LeaderStats, Servers, Clients, Coord, CoordSrv, RTQ]),
+    KbpsSums = riak_repl_console:extract_rt_fs_send_recv_kbps(Most),
+    jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
-        ++ RTQ
-        ++ jsonify_stats(Coord,[])
-        ++ jsonify_stats(CoordSrv,[]).
+    ++ RTQ 
+    ++ jsonify_stats(Coord,[])
+    ++ jsonify_stats(CoordSrv,[]) ++ jsonify_stats(KbpsSums, []).
+
 
 format_pid(Pid) ->
     list_to_binary(riak_repl_util:safe_pid_to_list(Pid)).
