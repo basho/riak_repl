@@ -106,6 +106,8 @@
          round_robin_balancer/1, cluster_mgr_sites_fun/0,
          get_my_members/1]).
 
+-export([ensure_valid_ip_addresses/1]).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -487,15 +489,58 @@ schedule_gc_timer(Interval) ->
     %% schedule a timer to garbage collect old cluster and endpoint data
     erlang:send_after(Interval, self(), garbage_collection_timer).
 
-save_cluster(NewName, OldMembers, Members, State) ->
+is_valid_ip(Addr) when is_list(Addr) ->
+    %% a string. try and parse it.
+    case inet_parse:address(Addr) of
+        {ok,_} -> true;
+        _ -> false
+    end;
+is_valid_ip(IP) when is_tuple(IP) ->
+    %% maybe it's a tuple like {1.2.3.4}
+    try
+        _S = inet_parse:ntoa(IP),
+        true
+    catch
+        _Err ->
+            false
+    end.
+
+is_valid_member({IP, Port}) when is_integer(Port) -> is_valid_ip(IP);
+is_valid_member(_Junk) -> false.
+
+%% filter the list of "ip addresses" to ensure that only ones that appear
+%% to be real addresses remain. Valid IPs look like: {"17.173.26.138",9085}, e.g.
+ensure_valid_ip_addresses(Members) ->
+    lists:filter(fun(Member) ->
+                         case is_valid_member(Member) of
+                             true -> true;
+                             false ->
+                                 lager:warning("Cluster Manager: ignoring bad remote IP address: ~p",
+                                               [Member]),
+                                 false
+                         end
+                 end,
+                 Members).
+
+save_cluster(NewName, OldMembers, ReturnedMembers, State) ->
+    %% per issue #243, ensure that only reasonable IP addresses are persisted.
+    Members = ensure_valid_ip_addresses(ReturnedMembers),
     %% persist clustername and ip members to ring so the locator will find it by cluster name
     case OldMembers == lists:sort(Members) of
         true ->
             ok;
         false ->
-            persist_members_to_ring(State, NewName, Members),
-            lager:debug("Cluster Manager: updated ~p with members: ~p",
-                        [NewName, Members])
+            case Members of
+                [] ->
+                    %% oh boo. All bad addresses? Don't overwrite what
+                    %% we already know with [].
+                    lager:warning("Cluster Manager: skipped update of ~p with all bad members: ~p",
+                                  [NewName, Members]);
+                _ ->
+                    persist_members_to_ring(State, NewName, Members),
+                    lager:info("Cluster Manager: updated ~p with members: ~p",
+                               [NewName, Members])
+            end
     end,
     %% clear out these IPs from other clusters
     Clusters1 = remove_ips_from_all_clusters(Members, State#state.clusters),
@@ -506,6 +551,7 @@ save_cluster(NewName, OldMembers, Members, State) ->
 %% remove aliased connections, and try to ensure that IP addresses only
 %% appear in one cluster.
 update_cluster_members(_OldName, _NewName, [], _Addr, _Remote, State) ->
+    lager:warning("Cluster Manager: got empty list of addresses for remote ~p", [_Remote]),
     State;
 update_cluster_members(_OldName, NewName, Members, _Addr, {cluster_by_addr, _CAddr}=Remote, State) ->
     %% This was a connection by host:ip, replace with cluster connection
