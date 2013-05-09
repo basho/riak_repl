@@ -1,6 +1,12 @@
-%%%-------------------------------------------------------------------
-%%% Created : 21 Feb 2013 by Dave Parfitt
-%%%-------------------------------------------------------------------
+%% Riak EnterpriseDS
+%% Copyright 2007-2013 Basho Technologies, Inc. All Rights Reserved.
+%%
+%% pg_proxy keeps track of which node is servicing proxy_get requests
+%% in the cluster. A client can always make requests to the leader
+%% pg_proxy, which will then be routed to the appropriate node in the
+%% cluster.
+%%
+
 -module(riak_repl2_pg_proxy).
 
 -behaviour(gen_server).
