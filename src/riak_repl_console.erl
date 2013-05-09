@@ -11,7 +11,7 @@
 
 -export([clustername/1, clusters/1,clusterstats/1,
          connect/1, disconnect/1, connections/1,
-         realtime/1, fullsync/1
+         realtime/1, fullsync/1, proxy_get/1
         ]).
 -export([rt_remotes_status/0,
          fs_remotes_status/0]).
@@ -122,6 +122,7 @@ status2(Verbose) ->
     Stats1 = lists:sort(riak_repl_stats:get_stats()),
     RTRemotesStatus = rt_remotes_status(),
     FSRemotesStatus = fs_remotes_status(),
+    PGRemotesStatus = pg_remotes_status(),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
@@ -129,15 +130,22 @@ status2(Verbose) ->
     CoordSrvStats = coordinator_srv_stats(),
     CMgrStats = cluster_mgr_stats(),
     RTQStats = rtq_stats(),
+    PGStats = riak_repl2_pg:status(),
+
     All =
-          RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
+          RTRemotesStatus ++ FSRemotesStatus ++ PGRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
-          CoordStats++CoordSrvStats++CMgrStats++RTQStats,
+          CoordStats++CoordSrvStats++CMgrStats++RTQStats++PGStats,
     if Verbose ->
             format_counter_stats(All);
        true ->
             All
     end.
+
+pg_remotes_status() ->
+    Ring = get_ring(),
+    Enabled = string:join(riak_repl_ring:pg_enabled(Ring),", "),
+    [{proxy_get_enabled, Enabled}].
 
 rt_remotes_status() ->
     Ring = get_ring(),
@@ -422,6 +430,18 @@ fullsync([Cmd]) ->
     end,
     ok.
 
+proxy_get([Cmd, Remote]) ->
+    case Cmd of
+        "enable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:pg_enable_trans/2, Remote),
+            ok;
+        "disable" ->
+            riak_core_ring_manager:ring_trans(fun
+                    riak_repl_ring:pg_disable_trans/2, Remote),
+            ok
+    end.
+
 modes([]) ->
     CurrentModes = get_modes(),
     io:format("Current replication modes: ~p~n",[CurrentModes]),
@@ -700,3 +720,4 @@ fs2_sink_stats(Pid) ->
     {sink_stats, [{pid,riak_repl_util:safe_pid_to_list(Pid)},
                   erlang:process_info(Pid, message_queue_len),
                   {fs_connected_to, State}]}.
+

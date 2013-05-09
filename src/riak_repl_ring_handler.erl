@@ -26,6 +26,7 @@ init([]) ->
     AllNodes = riak_core_ring:all_members(Ring),
     riak_repl2_leader:set_candidates(AllNodes, []),
     rt_update_events(Ring),
+    pg_update_events(Ring),
     {ok, #state{ring=Ring}}.
 
 handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
@@ -36,6 +37,7 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     FinalRing = init_repl_config(OldRing, NewRing),
     update_leader(FinalRing),
     rt_update_events(FinalRing),
+    pg_update_events(FinalRing),
     riak_repl_listener_sup:ensure_listeners(FinalRing),
     case riak_repl_leader:is_leader() of
         true ->
@@ -178,4 +180,8 @@ rt_update_events(Ring) ->
     %% always 'install' the hook, the postcommit hooks will be toggled by
     %% the rtenabled environment variable
     riak_repl:install_hook().
+
+pg_update_events(Ring) ->
+    riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring)).
+
 

@@ -12,7 +12,7 @@
          process/2,
          process_stream/3]).
 
--export([client_cluster_names/0]).
+-export([client_cluster_names_12/0, client_cluster_names_13/0]).
 
 -import(riak_pb_kv_codec, [decode_quorum/1]).
 
@@ -21,7 +21,9 @@
 -define(PB_MSG_RESP_CLUSTER_ID, 130).
 
 -record(state, {
-        client    % local client
+        client,    % local client
+        repl_modes,
+        cluster_id
     }).
 
 %% @doc init/0 callback. Returns the service internal start
@@ -29,7 +31,15 @@
 -spec init() -> any().
 init() ->
     {ok, C} = riak:local_client(),
-    #state{client=C}.
+    lager:debug("Riak repl pb get init"),
+    % get the current repl modes and stash them in the state
+    % I suppose riak_repl_pb_get would need to be restarted if these values
+    % changed
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterID = riak_core_ring:cluster_name(Ring),
+    riak_repl_ring:ensure_config(Ring),
+    Modes = riak_repl_ring:get_modes(Ring),
+    #state{client=C, repl_modes=Modes, cluster_id=ClusterID}.
 
 %% @doc decode/2 callback. Decodes an incoming message.
 decode(?PB_MSG_PROXY_GET, Bin) ->
@@ -56,12 +66,13 @@ process(#rpbreplgetclusteridreq{}, State) ->
     {reply, #rpbreplgetclusteridresp{cluster_id = ClusterId}, State};
 %% @doc Return Key/Value pair, derived from the KV version
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
-                   basic_quorum=BQ, if_modified=VClock,
-                   head=Head, deletedvclock=DeletedVClock, cluster_id=CName},
-            #state{client=C} = State) ->
+                       basic_quorum=BQ, if_modified=VClock,
+                       head=Head, deletedvclock=DeletedVClock,
+                       cluster_id=CName},
+        #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
-    lager:debug("doing replicated GET using cluster id ~p", [CName]),
+    lager:info("doing replicated GET using cluster id ~p", [CName]),
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
@@ -76,31 +87,56 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             %% find connection by cluster_id
-            CNames = get_client_cluster_names(),
-            lager:debug("Cnames ~p", [CNames]),
-            case lists:keyfind(CName, 2, CNames) of
-                false ->
-                    lager:debug("not connected to cluster ~p", [CName]),
+            lager:debug("CName = ~p", [ CName ]),
+            Modes = State#state.repl_modes,
+            Repl12Enabled = riak_repl_util:mode_12_enabled(Modes),
+            Repl13Enabled = riak_repl_util:mode_13_enabled(Modes),
+            Result12 =
+                case Repl12Enabled of
+                    true ->
+                        CNames12 = get_client_cluster_names_12(),
+                        lager:debug("CNames12 = ~p", [ CNames12 ]),
+                        proxy_get_12(CName, CNames12, B, K, GetOptions);
+                    false ->
+                        notconnected
+                end,
+            Result13 =
+                case Repl13Enabled of
+                    true ->
+                        CNames13 = get_client_cluster_names_13(),
+                        lager:debug("CNames13 = ~p", [ CNames13 ]),
+                        proxy_get_13(State, CName, CNames13, B, K, GetOptions);
+                    false ->
+                        notconnected
+                end,
+            lager:debug("Result12 = ~p", [ Result12 ]),
+            lager:debug("Result13 = ~p", [ Result13 ]),
+            Result =
+                case {Result12, Result13} of
+                    {notconnected, Value} -> Value;
+                    {Value, notconnected} -> Value;
+                    {_, Value} ->
+                        lager:warning("proxy_get received a result from multiple versions of replication for cluster ~p", [CName]),
+                        Value; %% default to 1.3 if both are valid
+                    _ -> notconnected
+                end,
+            case Result of
+                notconnected ->
+                    lager:info("not connected to cluster ~p", [CName]),
                     %% not connected to that cluster, return notfound
                     {reply, #rpbgetresp{}, State};
-                {ClientPid, CName} ->
-                    lager:debug("Client ~p is connected to cluster ~p",
-                        [ClientPid, CName]),
-                    case riak_repl_tcp_client:proxy_get(ClientPid, B, K,
-                            GetOptions) of
-                        {ok, O} ->
-                            spawn(riak_repl_util, do_repl_put, [O]),
-                            make_object_response(O, VClock, Head, State);
-                        {error, {deleted, TombstoneVClock}} ->
-                            %% Found a tombstone - return its vector clock so
-                            %% it can be properly overwritten
-                            {reply, #rpbgetresp{vclock =
-                                    pbify_rpbvc(TombstoneVClock)}, State};
-                        {error, notfound} ->
-                            {reply, #rpbgetresp{}, State};
-                        {error, Reason} ->
-                            {error, {format,Reason}, State}
-                    end
+                {ok, O} ->
+                    spawn(riak_repl_util, do_repl_put, [O]),
+                    make_object_response(O, VClock, Head, State);
+                {error, {deleted, TombstoneVClock}} ->
+                    %% Found a tombstone - return its vector clock so
+                    %% it can be properly overwritten
+                    {reply, #rpbgetresp{vclock =
+                                            pbify_rpbvc(TombstoneVClock)}, State};
+                {error, notfound} ->
+                    {reply, #rpbgetresp{}, State};
+                {error, Reason} ->
+                    {error, {format,Reason}, State}
             end;
         {error, Reason} ->
             {error, {format,Reason}, State}
@@ -111,9 +147,31 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
 process_stream(_,_,State) ->
     {ignore, State}.
 
-client_cluster_names() ->
-    [{P, client_cluster_name(P)} || {_,P,_,_} <-
-        supervisor:which_children(riak_repl_client_sup), P /= undefined].
+proxy_get_12(CName, CNames, B, K, GetOptions) ->
+    case lists:keyfind(CName, 2, CNames) of
+        false ->
+            notconnected;
+        {ClientPid, _ClusterID} ->
+            lager:debug("Using 1.2 proxy_get (A)"),
+            riak_repl_tcp_client:proxy_get(ClientPid, B, K,
+                                           GetOptions)
+    end.
+
+proxy_get_13(State, CName, CNames, B, K, GetOptions) ->
+    case lists:keyfind(CName, 2, CNames) of
+        false ->
+            notconnected;
+        {_ClientPid, _ClusterID, ClusterName} ->
+            case lists:member(mode_repl13, State#state.repl_modes) of
+                true ->
+                    Leader = riak_core_cluster_mgr:get_leader(),
+                    ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
+                    gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions});
+                false ->
+                    notconnected
+            end
+    end.
+
 
 %%%%%%%%%%%%%%%%%%%%%
 %% Internal functions
@@ -141,13 +199,6 @@ erlify_rpbvc(PbVc) ->
 pbify_rpbvc(Vc) ->
     zlib:zip(term_to_binary(Vc)).
 
-get_client_cluster_names() ->
-    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv),
-        riak_repl_pb_get, client_cluster_names, []),
-    lists:flatten(CNames).
-
-client_cluster_name(Client) ->
-    catch(riak_repl_tcp_client:cluster_name(Client)).
 
 make_object_response(O, VClock, Head, State) ->
     case erlify_rpbvc(VClock) == riak_object:vclock(O) of
@@ -169,3 +220,32 @@ make_object_response(O, VClock, Head, State) ->
                     vclock = pbify_rpbvc(riak_object:vclock(O))}, State}
     end.
 
+%% proxy_get for 1.2 repl
+
+get_client_cluster_names_12() ->
+    {CNames, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_kv),
+        riak_repl_pb_get, client_cluster_names_12, []),
+    lists:flatten(CNames).
+
+client_cluster_name_12(Client) ->
+    catch(riak_repl_tcp_client:cluster_name(Client)).
+
+client_cluster_names_12() ->
+    [{P, client_cluster_name_12(P)} || {_,P,_,_} <-
+        supervisor:which_children(riak_repl_client_sup), P /= undefined].
+
+%% proxy_get for 1.3 repl
+get_client_cluster_names_13() ->
+    {CInfo, _BadNodes} = rpc:multicall(riak_core_node_watcher:nodes(riak_repl),
+        riak_repl_pb_get, client_cluster_names_13, []),
+    lists:flatten(CInfo).
+
+client_cluster_name_13(Pid) ->
+    catch(riak_repl2_pg_block_requester:provider_cluster_info(Pid)).
+
+client_cluster_names_13() ->
+    [{P, ClusterID, ClusterName}
+     || {_,P,_,_} <- supervisor:which_children(riak_repl2_pg_block_requester_sup),
+        P /= undefined,
+        {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
+    ].

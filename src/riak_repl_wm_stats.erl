@@ -100,7 +100,7 @@ get_stats() ->
     Coord = riak_repl_console:coordinator_stats(),
     CoordSrv = riak_repl_console:coordinator_srv_stats(),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
-
+    PGStats = riak_repl2_pg:status(),
     jsonify_stats(RTRemotesStatus,[]) ++
         jsonify_stats(FSRemotesStatus,[]) ++
         CMStats ++
@@ -110,7 +110,8 @@ get_stats() ->
         ++ jsonify_stats(Servers, [])
         ++ RTQ
         ++ jsonify_stats(Coord,[])
-        ++ jsonify_stats(CoordSrv,[]).
+        ++ jsonify_stats(CoordSrv,[])
+        ++ PGStats.
 
 format_pid(Pid) ->
     list_to_binary(riak_repl_util:safe_pid_to_list(Pid)).
