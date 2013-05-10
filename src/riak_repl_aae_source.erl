@@ -243,7 +243,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                               socket=Socket,
                                               index=Partition,
                                               tree_pid=TreePid,
-                                              indexns=[IndexN|IndexNs]}) ->
+                                              indexns=[IndexN|_IndexNs]}) ->
     lager:debug("Starting fullsync key exchange with ~p for ~p/~p",
                [Cluster, Partition, IndexN]),
 
@@ -300,7 +300,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% TODO: Add stats for AAE
     lager:debug("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
-                       StartTime = erlang:now(),
+                       StageStart=os:timestamp(),
                        Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
                        %% Maybe you wish you could move this send up to the compare function,
                        %% but we need it to send the Accumulated results back to our SourcePid.
@@ -308,7 +308,8 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                    [] -> 0;
                                    [N] -> N
                                end,
-                       trace_time(StartTime, "key_compare diffs for partition", Count, Partition),
+                       lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
+                                  [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
                        SourcePid ! {'$aae_src', done, Acc}
                end),
 
@@ -335,7 +336,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     finish_sending_differences(Bloom, State),
 
     %% wait for differences from bloom_folder or to be done
-    {next_state, send_diffs, State2#state{built=0, indexns=IndexNs}}.
+    {next_state, send_diffs, State2}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
@@ -372,8 +373,7 @@ compare_loop(State=#state{transport=Transport,
             {Acc, State}
     end.
 
-finish_sending_differences(Bloom, #state{index=Partition, diff_batch_size=_DiffSize,
-                                         indexns=[_IndexN|_IndexNs]}) ->
+finish_sending_differences(Bloom, #state{index=Partition}) ->
     case ebloom:elements(Bloom) == 0 of
         true ->
             lager:info("No differences, skipping bloom fold"),
