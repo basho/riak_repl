@@ -262,7 +262,12 @@ set_clusterIpAddrs(Ring, {ClusterName, Addrs}) ->
     Cluster = {ClusterName, Addrs},
     Clusters = case lists:keymember(ClusterName, 1, OldClusters) of
                    true ->
-                       lists:keyreplace(ClusterName, 1, OldClusters, Cluster);
+                       case Addrs of
+                           [] ->
+                               lists:keydelete(ClusterName, 1, OldClusters);
+                           _Addrs ->
+                               lists:keyreplace(ClusterName, 1, OldClusters, Cluster)
+                       end;
                    _ ->
                        [Cluster | OldClusters]
                end,

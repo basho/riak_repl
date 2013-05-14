@@ -101,17 +101,16 @@ get_stats() ->
     CoordSrv = riak_repl_console:coordinator_srv_stats(),
     RTQ = [{realtime_queue_stats, riak_repl2_rtq:status()}],
     PGStats = riak_repl2_pg:status(),
-    jsonify_stats(RTRemotesStatus,[]) ++
-        jsonify_stats(FSRemotesStatus,[]) ++
-        CMStats ++
-        Stats1 ++
-        LeaderStats
+
+    Most = lists:append([RTRemotesStatus, FSRemotesStatus, Stats1, CMStats,
+      LeaderStats, Servers, Clients, Coord, CoordSrv, RTQ]),
+    KbpsSums = riak_repl_console:extract_rt_fs_send_recv_kbps(Most),
+    jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
-        ++ RTQ
-        ++ jsonify_stats(Coord,[])
-        ++ jsonify_stats(CoordSrv,[])
-        ++ PGStats.
+    ++ RTQ 
+    ++ jsonify_stats(Coord,[])
+    ++ jsonify_stats(CoordSrv,[]) ++ PGStats ++ jsonify_stats(KbpsSums, []).
 
 format_pid(Pid) ->
     list_to_binary(riak_repl_util:safe_pid_to_list(Pid)).
@@ -162,9 +161,19 @@ jsonify_stats([{K,V}|T], Acc) when is_atom(K)
         [] ->
             jsonify_stats(T, Acc)
     end;
+jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
+    jsonify_stats(T, [{S,
+                       list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
+jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Port) ->
+    jsonify_stats(T, [{S,
+                       iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
+jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega),
+                                                   is_integer(Secs),
+                                                   is_integer(Micro) ->
+    StrDate = httpd_util:rfc1123_date(calendar:now_to_local_time(Now)),
+    jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
     jsonify_stats(T, [{K,list_to_binary(V)}|Acc]);
-
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
 
