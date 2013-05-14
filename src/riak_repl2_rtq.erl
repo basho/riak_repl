@@ -169,7 +169,10 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
             Drops = max(0, MinSeq - PrevASeq - 1),
 
             %% Re-registering, send from the last acked sequence
-            CSeq = C#c.aseq,
+            CSeq = case C#c.aseq < MinSeq of
+                true -> MinSeq;
+                false -> C#c.aseq
+            end,
             UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops, 
                          deliver = undefined} | Cs2];
         false ->
