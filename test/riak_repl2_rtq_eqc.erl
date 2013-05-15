@@ -14,6 +14,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-define(BINARIED_OBJ_SIZE, 39). % 39 = byte_size(term_to_binary([make_ref()])).
 
 -record(state, {rtq, %% pid of queue process
                 qseq=0, %% Queue seq number
@@ -44,7 +45,7 @@ rtq_test_() ->
 
 
 max_bytes() ->
-    ?LET(MaxBytes, nat(), {size, (MaxBytes+1) * 39}).
+    ?LET(MaxBytes, nat(), {size, (MaxBytes+1) * ?BINARIED_OBJ_SIZE}).
 
 cleanup() ->
     catch(meck:unload(riak_repl_stats)),
@@ -335,11 +336,11 @@ gen_seq(C) ->
 
 trim(Q, #state{max_bytes=Max}) ->
     {_Size, NewQ} = lists:foldl(fun({Seq, NumItems, Bin}, {Size, Acc}) ->
-                case (39 + Size) > Max of
+                case (?BINARIED_OBJ_SIZE + Size) > Max of
                     true ->
                         {Size, Acc};
                     false ->
-                        {Size + 39, [{Seq, NumItems, Bin}|Acc]}
+                        {Size + ?BINARIED_OBJ_SIZE, [{Seq, NumItems, Bin}|Acc]}
                 end
             end, {0, []}, lists:reverse(Q)),
     case Q /= NewQ of
