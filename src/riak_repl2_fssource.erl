@@ -162,7 +162,7 @@ handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
     {reply, ok, State};
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket}) ->
-    Res = case is_process_alive(FSW) of
+    Res = case is_pid(FSW) andalso is_process_alive(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
