@@ -1,6 +1,38 @@
 -module(riak_repl2_fssink).
 -include("riak_repl.hrl").
 
+%% @doc fssink
+%%
+%% This module is responsible, at a high level, for accomplishing the full sync
+%% of a single partition. The partition to synchronize is transmitted from the
+%% connected fssource on the source cluster. The strategy for fullsync is determined
+%% dynamically as well:
+%%   keylist - used if the protocol version is < 2.0
+%%   aae     - used if the protocol version is >= 2.0 and AAE is enabled and repl_strategy=aae
+%%
+%% Protocol Support Summary:
+%% -------------------------
+%% 1,0 and up supports keylist strategy
+%% 1,1 and up supports binary object
+%% 2,0 and up supports AAE strategy
+%%
+%% For keylist, the "old" tcp_server is used. That module is capable of handling multiple
+%% sequential partitions, but we only use it to sync a single partition and then we stop it.
+%% For aae, the repl_aae_sink is desinged to process a single partition and be stopped.
+%%
+%% If the protocol version >= 2.0, and the cluster has aae enabled and the replication
+%% configuration stanza enables the aae strategy (the default is keylist), then aae strategy
+%% will be selected. It is negotiated as follows: if the version is >= 2.0, then upon
+%% accepting a connection from the soruce, we send our capabilities to the the source. The
+%% source then sends it's caps to us. This is all done by the fssource and fssink modules
+%% in order to decide which strategy will be used. Once caps are exchanged, both sides can
+%% mutually agree on the strategy (aae if both sides announced it in their caps). If the
+%% node does not have aae enabled in riak_kv or aae strategy is not enabled in riak_repl,
+%% then the caps will not include the "aae" strategy.
+%%
+%% Once the strategy is settled, the sockets are handled to the appropriate spawned
+%% fullssync worker processes.
+
 -behaviour(gen_server).
 %% API
 -export([start_link/4, register_service/0, start_service/5, legacy_status/2, fullsync_complete/1]).
@@ -16,6 +48,7 @@
         fullsync_worker,
         work_dir = undefined,
         strategy :: keylist | aae,
+        proto,
         ver              % highest common wire protocol in common with fs source
     }).
 
@@ -63,33 +96,18 @@ init([Socket, Transport, OKProto, Props]) ->
                                        SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-
-    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
-    case CommonMajor of
-        1 ->
-            %% Keylist server strategy
-            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
-            {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
-                                                                       Socket, WorkDir),
-            {ok, #state{cluster=Cluster, transport=Transport, socket=Socket,
-                        fullsync_worker=FullsyncWorker, work_dir=WorkDir,
-                        strategy=keylist, ver=Ver}};
-        2 ->
-            %% AAE strategy
-            {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket, self()),
-            {ok, #state{transport=Transport, socket=Socket, cluster=Cluster,
-                        fullsync_worker=FullsyncWorker, strategy=aae, ver=Ver}}
-    end.
+    lager:info("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
+    {ok, #state{proto=Proto, socket=Socket, transport=Transport, cluster=Cluster, ver=Ver}}.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket, strategy=Strategy}) ->
-    Res = case is_process_alive(FSW) of
+    Res = case is_pid(FSW) andalso is_process_alive(FSW) of
               true ->
                   case Strategy of
                       keylist ->
-                          gen_fsm:sync_send_all_state_event(FSW, status, infinity);
+                          gen_fsm:sync_send_all_state_event(FSW, status);
                       aae ->
-                          gen_server:call(FSW, status)
+                          gen_server:call(FSW, status, 5000)
                   end;
               false -> []
           end,
@@ -141,16 +159,33 @@ handle_info({Proto, Socket, Data},
     {noreply, State};
 handle_info(init_ack, State=#state{socket=Socket,
                                    transport=Transport,
-                                   fullsync_worker=FullsyncWorker,
-                                   strategy=Strategy}) ->
+                                   proto=Proto,
+                                   cluster=Cluster}) ->
+    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
+
+    %% possibly exchange fullsync capabilities with the remote
+    OurCaps = decide_our_caps(CommonMajor),
+    TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
+    lager:info("Got caps: ~p", [TheirCaps]),
+    Strategy = decide_common_strategy(OurCaps, TheirCaps),
+    lager:info("Common strategy: ~p", [Strategy]),
+
     case Strategy of
         keylist ->
-            Transport:setopts(Socket, [{active, once}]);
+            %% Keylist server strategy
+            Transport:setopts(Socket, [{active, once}]),
+            {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
+            {ok, FullsyncWorker} = riak_repl_keylist_client:start_link(Cluster, Transport,
+                                                                       Socket, WorkDir),
+            {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, work_dir=WorkDir,
+                                  strategy=keylist}};
         aae ->
+            %% AAE strategy
+            {ok, FullsyncWorker} = riak_repl_aae_sink:start_link(Cluster, Transport, Socket, self()),
             ok = Transport:controlling_process(Socket, FullsyncWorker),
-            riak_repl_aae_sink:init_sync(FullsyncWorker)
-    end,
-    {noreply, State};
+            riak_repl_aae_sink:init_sync(FullsyncWorker),
+            {noreply, State#state{cluster=Cluster, fullsync_worker=FullsyncWorker, strategy=aae}}
+    end;
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -173,7 +208,7 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strate
                 keylist ->
                     gen_fsm:sync_send_all_state_event(FSW, stop);
                 aae ->
-                    gen_server:cast(FSW, stop)
+                    gen_server:call(FSW, stop)
             end;
         _ ->
             ok
@@ -189,3 +224,42 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strate
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% decide what strategy to use, given our own capabilties and those
+%% of the remote source.
+decide_common_strategy(_OurCaps, []) -> keylist;
+decide_common_strategy(OurCaps, TheirCaps) ->
+    OurStrategy = proplists:get_value(strategy, OurCaps, keylist),
+    TheirStrategy = proplists:get_value(strategy, TheirCaps, keylist),
+    case {OurStrategy,TheirStrategy} of
+        {aae,aae} -> aae;
+        {_,_}     -> keylist
+    end.
+
+%% Based on the agreed common protocol level and the supported
+%% mode of AAE, decide what strategy we are capable of offering.
+decide_our_caps(CommonMajor) ->
+    SupportedStrategy =
+        case {riak_kv_entropy_manager:enabled(), CommonMajor} of
+            {_,1} -> keylist;
+            {false,_} -> keylist;
+            {true,_} -> aae
+        end,
+    [{strategy, SupportedStrategy}].
+
+%% Depending on the protocol version number, send our capabilities
+%% as a list of properties, in binary.
+maybe_exchange_caps(1, _Caps, _Socket, _Transport) ->
+    [];
+maybe_exchange_caps(_, Caps, Socket, Transport) ->
+    Transport:send(Socket, term_to_binary(Caps)),
+    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+        {ok, Data} ->
+            binary_to_term(Data);
+        {Error, Socket} ->
+            throw(Error);
+        {Error, Socket, Reason} ->
+            throw({Error, Reason})
+    end.
+
+

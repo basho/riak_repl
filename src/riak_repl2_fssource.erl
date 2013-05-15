@@ -63,20 +63,14 @@ init([Partition, IP]) ->
     DefaultStrategy = keylist,
 
     %% Determine what kind of fullsync worker strategy we want to start with,
-    %% which could change if we talk to the sink and it can't speak AAE
-    Strategy =
-        case app_helper:get_env(riak_repl, fullsync_strategy, DefaultStrategy) of
-            aae -> aae;
-            keylist -> keylist;
-            UnSupportedStrategy ->
-                lager:warning("App config for riak_repl/fullsync_strategy ~p is unsupported. Using ~p",
-                              [UnSupportedStrategy, DefaultStrategy]),
-                DefaultStrategy
-        end,
+    %% which could change if we talk to the sink and it can't speak AAE. If
+    %% AAE is not enabled in KV, then we can't use aae strategy.
+    OurCaps = decide_our_caps(DefaultStrategy),
+    SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
 
     %% use 1,1 proto for new binary object
     %% use 2,0 for AAE fullsync + binary objects
-    {Major,Minor} = case Strategy of
+    {Major,Minor} = case SupportedStrategy of
                         keylist -> {1,1};
                         aae -> {2,0}
                     end,
@@ -87,14 +81,17 @@ init([Partition, IP]) ->
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
             lager:info("connection ref ~p", [Ref]),
-            {ok, #state{ip = IP, connection_ref = Ref, partition=Partition}};
+            {ok, #state{strategy = SupportedStrategy, ip = IP,
+                        connection_ref = Ref, partition=Partition}};
         {error, Reason}->
             lager:warning("Error connecting to remote"),
             {stop, Reason}
     end.
 
+
+
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
-            _From, State=#state{ip=IP, partition=Partition}) ->
+            _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
     Cluster = proplists:get_value(clustername, Props),
@@ -105,16 +102,16 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
                                        SocketTag}, Transport),
 
-    Transport:setopts(Socket, [{active, once}]),
-
     %% Strategy still depends on what the sink is capable of.
     {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
-    Strategy =
-        case CommonMajor of
-            0 -> keylist; %% would be a bug to hit this case
-            1 -> keylist; %% default uses keylist
-            _ -> aae      %% AAE technology preview, first introduced in 1.4
-        end,
+
+    OurCaps = decide_our_caps(DefaultStrategy),
+    TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
+    lager:info("Got caps: ~p", [TheirCaps]),
+    Strategy = decide_common_strategy(OurCaps, TheirCaps),
+    lager:info("Common strategy: ~p", [Strategy]),
+
+    Transport:setopts(Socket, [{active, once}]),
 
     case Strategy of
         keylist ->
@@ -247,3 +244,46 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
+%% Based on the agreed common protocol level and the supported
+%% mode of AAE, decide what strategy we are capable of offering.
+decide_our_caps(DefaultStrategy) ->
+    SupportedStrategy =
+        case {riak_kv_entropy_manager:enabled(),
+              app_helper:get_env(riak_repl, fullsync_strategy, DefaultStrategy)} of
+            {false,_} -> keylist;
+            {true,aae} -> aae;
+            {true,keylist} -> keylist;
+            {true,UnSupportedStrategy} ->
+                lager:warning("App config for riak_repl/fullsync_strategy ~p is unsupported. Using ~p",
+                              [UnSupportedStrategy, DefaultStrategy]),
+                DefaultStrategy
+        end,
+    [{strategy, SupportedStrategy}].
+
+%% decide what strategy to use, given our own capabilties and those
+%% of the remote source.
+decide_common_strategy(_OurCaps, []) -> keylist;
+decide_common_strategy(OurCaps, TheirCaps) ->
+    OurStrategy = proplists:get_value(strategy, OurCaps, keylist),
+    TheirStrategy = proplists:get_value(strategy, TheirCaps, keylist),
+    case {OurStrategy,TheirStrategy} of
+        {aae,aae} -> aae;
+        {_,_}     -> keylist
+    end.
+
+%% Depending on the protocol version number, send our capabilities
+%% as a list of properties, in binary.
+maybe_exchange_caps(1, _Caps, _Socket, _Transport) ->
+    [];
+maybe_exchange_caps(_, Caps, Socket, Transport) ->
+    TheirCaps =
+        case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+            {ok, Data} ->
+                binary_to_term(Data);
+            {Error, Socket} ->
+                throw(Error);
+            {Error, Socket, Reason} ->
+                throw({Error, Reason})
+        end,
+    Transport:send(Socket, term_to_binary(Caps)),
+    TheirCaps.

@@ -77,13 +77,13 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
     case Data of
         [MsgType] ->
             trace(MsgType),
-            {noreply, process_msg(MsgType, State)};
+            process_msg(MsgType, State);
         [MsgType|<<>>] ->
             trace(MsgType),
-            {noreply, process_msg(MsgType, State)};
+            process_msg(MsgType, State);
         [MsgType|MsgData] ->
             trace(MsgType),
-            {noreply, process_msg(MsgType, binary_to_term(MsgData), State)}
+            process_msg(MsgType, binary_to_term(MsgData), State)
     end;
 
 handle_info({'DOWN', _, _, _, _}, State) ->
@@ -112,6 +112,7 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
+    lager:info("Terminating."),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -147,7 +148,7 @@ process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
     %% lager:info("PUT ~p:~p", [B, K]),
     %% do the put
     riak_repl_util:do_repl_put(RObj),
-    State;
+    {noreply, State};
 
 %% replies: ok | not_responsible
 process_msg(?MSG_UPDATE_TREE, IndexN, State=#state{tree_pid=TreePid}) ->
@@ -162,8 +163,9 @@ process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
+    lager:info("got complete"),
     riak_repl2_fssink:fullsync_complete(Owner),
-    State.
+    {stop, normal, State}.
 
 trace(_Msg) ->
 %%    lager:info("Sink <-------- ~p", [_Msg]),
@@ -175,5 +177,5 @@ send_reply(Msg, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(Msg),
     ok = Transport:send(Socket, <<?MSG_REPLY:8, Data/binary>>),
 %%    lager:info("Sink --------> ~p", [Msg]),
-    State.
+    {noreply, State}.
 

@@ -104,6 +104,9 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event(stop,_F,_StateName,State) ->
+    {stop, normal, ok, State};
+
 handle_sync_event(status, _From, StateName, State) ->
     Res = [{state, StateName},
            {partition_syncing, State#state.index},
@@ -125,6 +128,7 @@ handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, _State) ->
+    lager:info("Terminating."),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -202,7 +206,8 @@ update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when Ind
     lager:info("AAE fullsync source completed partition ~p. Stopping.",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
-    {stop, normal, State};
+%%    {stop, normal, State};
+    {next_state, update_trees, State};
 update_trees(start_exchange, State=#state{tree_pid=TreePid,
                                           index=Partition,
                                           indexns=[IndexN|_IndexNs]}) ->
