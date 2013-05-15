@@ -169,7 +169,10 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
             Drops = max(0, MinSeq - PrevASeq - 1),
 
             %% Re-registering, send from the last acked sequence
-            CSeq = C#c.aseq,
+            CSeq = case C#c.aseq < MinSeq of
+                true -> MinSeq;
+                false -> C#c.aseq
+            end,
             UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops, 
                          deliver = undefined} | Cs2];
         false ->
@@ -421,9 +424,15 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
             end
     end.
 
+-ifdef(TEST).
+qbytes(_QTab, #state{qsize_bytes = QSizeBytes}) ->
+    %% when EQC testing, don't account for ETS overhead
+    QSizeBytes.
+-else.
 qbytes(QTab, #state{qsize_bytes = QSizeBytes, word_size=WordSize}) ->
     Words = ets:info(QTab, memory),
     (Words * WordSize) + QSizeBytes.
+-endif.
 
 is_queue_empty(Name, QSeq, Cs) ->
     case lists:keytake(Name, #c.name, Cs) of
