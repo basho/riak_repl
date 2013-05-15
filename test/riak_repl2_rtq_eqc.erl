@@ -36,7 +36,8 @@ rtq_test_() ->
                 ?assert(eqc:quickcheck(eqc:testing_time(25,
                                                         ?MODULE:prop_main()))),
                 ?assert(eqc:quickcheck(eqc:testing_time(25,
-                                                        ?MODULE:prop_parallel())))
+                                                        ?MODULE:prop_parallel()))),
+                catch(meck:unload(riak_repl_stats))
         end
     }.
 -endif.
