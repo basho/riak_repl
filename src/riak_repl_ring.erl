@@ -37,7 +37,10 @@
          multicompose/1,
          pg_enable_trans/2,
          pg_disable_trans/2,
-         pg_enabled/1
+         pg_enabled/1,
+         add_nat_map/2,
+         del_nat_map/2,
+         get_nat_map/1
          ]).
 
 -ifdef(TEST).
@@ -442,6 +445,15 @@ get_modes(Ring) ->
             %% default to mixed modes
             [mode_repl12, mode_repl13]
     end.
+
+add_nat_map(Ring, Mapping) ->
+    add_list_trans(Mapping, nat_map, Ring).
+
+del_nat_map(Ring, Mapping) ->
+    del_list_trans(Mapping, nat_map, Ring).
+
+get_nat_map(Ring) ->
+    get_list(nat_map, Ring).
 
 %% Function composition
 compose(F,G) -> fun(X) -> F(G(X)) end.
