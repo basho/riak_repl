@@ -134,7 +134,7 @@ status2(Verbose) ->
     PGStats = riak_repl2_pg:status(),
 
     Most =
-          RTRemotesStatus ++ FSRemotesStatus ++ Config++Stats1++
+          RTRemotesStatus ++ FSRemotesStatus ++ PGRemotesStatus ++ Config++Stats1++
           LeaderStats++ClientStats++ServerStats++
           CoordStats++CoordSrvStats++CMgrStats++RTQStats++PGStats,
     SendRecvKbps = extract_rt_fs_send_recv_kbps(Most),

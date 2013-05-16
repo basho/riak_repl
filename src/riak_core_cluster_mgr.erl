@@ -223,12 +223,16 @@ init(Defaults) ->
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
     MeNode = node(),
-    State = register_defaults(Defaults, #state{is_leader = false, balancer_fun = BalancerFun}),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterID = riak_core_ring:cluster_name(Ring),
+    State = register_defaults(Defaults, #state{
+                is_leader = false,
+                balancer_fun = BalancerFun,
+                cluster_id=ClusterID}),
 
     %% Schedule a delayed connection to know clusters
     schedule_cluster_connections(),
-
-    case riak_repl2_leader:leader_node() of
+   case riak_repl2_leader:leader_node() of
         undefined ->
             % there's an election in progress, so we can just hang on until
             % that finishes
