@@ -71,7 +71,7 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
     Cluster = proplists:get_value(clustername, Props),
     lager:debug("proxy_get connected to ~p", [OtherCluster]),
 
-    SocketTag = riak_repl_util:generate_socket_tag("pg_provider", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("pg_provider", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_PROXYGET_APP, source,
                                        SocketTag}, Transport),
