@@ -69,7 +69,7 @@ provider_cluster_info(Pid) ->
 init([Socket, Transport, _Proto, Props]) ->
     lager:info("Starting Proxy Get Block Requester"),
 
-    SocketTag = riak_repl_util:generate_socket_tag("pg_requester", Socket),
+    SocketTag = riak_repl_util:generate_socket_tag("pg_requester", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_PROXYGET_APP, sink,
                                         SocketTag}, Transport),
