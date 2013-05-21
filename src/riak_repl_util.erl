@@ -765,9 +765,9 @@ make_pg_proxy_name(Remote) ->
 make_pg_name(Remote) ->
     list_to_atom("pg_requester_" ++ Remote).
 
-deduce_wire_version_from_proto({_Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}) ->
+deduce_wire_version_from_proto({_Proto,ClientVer,HostVer}) ->
     %% if common protocols are both >= 1.1, then we know the new binary wire protocol
-    case ((CommonMajor >= 2) or (CommonMajor == 1 andalso CMinor >= 1 andalso HMinor >= 1)) of
+    case ClientVer >= {1,1} andalso HostVer >= {1,1} of
         true ->
             %% new sink. yay! new wire protocol supported.
             w1;
