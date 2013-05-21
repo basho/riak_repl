@@ -111,13 +111,13 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
     lager:info("Common strategy: ~p", [Strategy]),
 
-    Transport:setopts(Socket, [{active, once}]),
-
     case Strategy of
         keylist ->
             %% Keylist server strategy
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
             {ok, Client} = riak:local_client(),
+            %% We maintain ownership of the socket. We will consume TCP messages in handle_info/2
+            Transport:setopts(Socket, [{active, once}]),
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
                                                                        Transport, Socket, WorkDir, Client),
             riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
@@ -131,6 +131,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                    Transport, Socket,
                                                                    Partition,
                                                                    self()),
+            %% Give control of socket to AAE worker. It will consume all TCP messages.
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
             {reply, ok,

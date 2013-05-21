@@ -36,6 +36,7 @@
                 index       :: index(),
                 indexns     :: [index_n()],
                 tree_pid    :: pid(),
+                tree_mref   :: reference(),
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
@@ -80,7 +81,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
 
     {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
 
-    monitor(process, TreePid),
+    TreeMref = monitor(process, TreePid),
 
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
@@ -94,6 +95,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
                    index=Partition,
                    indexns=IndexNs,
                    tree_pid=TreePid,
+                   tree_mref=TreeMref,
                    timeout=Timeout,
                    built=0,
                    owner=OwnerPid,
@@ -117,9 +119,13 @@ handle_sync_event(status, _From, StateName, State) ->
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, ok, StateName, State}.
 
+handle_info({'DOWN', TreeMref, process, Pid, Why}, _StateName, State=#state{tree_mref=TreeMref}) ->
+    %% Local hashtree process went down. Stop exchange.
+    lager:info("Monitored pid ~p, AAE Hashtree process went down", [Pid, Why]),
+    send_complete(State),
+    {stop, {aae_hashtree_went_down, Why}, State};
 handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
-    %% Either the entropy manager, local hashtree, or remote hashtree has
-    %% exited. Stop exchange.
+    %% Something else exited. Stop exchange.
     lager:info("Something went down ~p", [Error]),
     send_complete(State),
     {stop, something_went_down, State};
