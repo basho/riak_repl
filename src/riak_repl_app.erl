@@ -11,10 +11,6 @@
          cluster_mgr_write_cluster_members_to_ring/2,
          cluster_mgr_read_cluster_targets_from_ring/0]).
 
--export([cluster_mgr_member_fun/1,
-         cluster_mgr_write_cluster_members_to_ring/2,
-         cluster_mgr_read_cluster_targets_from_ring/0]).
-
 -include("riak_core_cluster.hrl").
 -include_lib("riak_core/include/riak_core_connection.hrl").
 

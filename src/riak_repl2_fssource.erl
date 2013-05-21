@@ -60,7 +60,7 @@ init([Partition, IP]) ->
                   {packet, 4},
                   {active, false}],
 
-    DefaultStrategy = keylist,
+    DefaultStrategy = ?DEFAULT_FULLSYNC_STRATEGY,
 
     %% Determine what kind of fullsync worker strategy we want to start with,
     %% which could change if we talk to the sink and it can't speak AAE. If
@@ -135,7 +135,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             riak_repl_aae_source:start_exchange(FullsyncWorker),
             {reply, ok,
              State#state{transport=Transport, socket=Socket, cluster=Cluster,
-                         fullsync_worker=FullsyncWorker, work_dir="/dev/null",
+                         fullsync_worker=FullsyncWorker, work_dir=undefined,
                          ver=Ver, strategy=aae}}
     end;
             
@@ -231,9 +231,13 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
         true ->
             gen_fsm:sync_send_all_state_event(FSW, stop)
     end,
-    %% clean up work dir
-    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
-    os:cmd(Cmd).
+    case WorkDir of
+        undefined -> ok;
+        _ ->
+            %% clean up work dir
+            Cmd = lists:flatten(io_lib:format("rm -rf ~s", [WorkDir])),
+            os:cmd(Cmd)
+    end.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.

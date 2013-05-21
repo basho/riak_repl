@@ -76,13 +76,10 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
     ok = Transport:setopts(Socket, TcpOptions),
     case Data of
         [MsgType] ->
-            trace(MsgType),
             process_msg(MsgType, State);
         [MsgType|<<>>] ->
-            trace(MsgType),
             process_msg(MsgType, State);
         [MsgType|MsgData] ->
-            trace(MsgType),
             process_msg(MsgType, binary_to_term(MsgData), State)
     end;
 
@@ -143,9 +140,6 @@ process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=Tre
 %% no reply
 process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
     RObj = riak_repl_util:from_wire(BObj),
-    %% B = riak_object:bucket(RObj),
-    %% K = riak_object:key(RObj),
-    %% lager:info("PUT ~p:~p", [B, K]),
     %% do the put
     riak_repl_util:do_repl_put(RObj),
     {noreply, State};
@@ -167,15 +161,10 @@ process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
     riak_repl2_fssink:fullsync_complete(Owner),
     {stop, normal, State}.
 
-trace(_Msg) ->
-%%    lager:info("Sink <-------- ~p", [_Msg]),
-    ok.
-
 %% Send a response back to the aae_source worker
 
 send_reply(Msg, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(Msg),
     ok = Transport:send(Socket, <<?MSG_REPLY:8, Data/binary>>),
-%%    lager:info("Sink --------> ~p", [Msg]),
     {noreply, State}.
 

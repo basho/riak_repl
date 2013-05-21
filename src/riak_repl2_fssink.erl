@@ -197,6 +197,7 @@ decode_obj_msg(Data) ->
     end.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strategy}) ->
+    %% TODO: define a fullsync worker behavior and call it's stop function
     case is_pid(FSW) andalso is_process_alive(FSW) of
         true ->
             case Strategy of
