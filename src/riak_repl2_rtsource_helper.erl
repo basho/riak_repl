@@ -92,7 +92,7 @@ handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
     Map2 = orddict:erase(Seq, Map),
     {noreply, State#state{v1_seq_map = Map2}};
 
-handle_cast(Msg, State) ->
+handle_cast(Msg, _State) ->
     lager:info("Realtime source helper received unexpected cast - ~p\n", [Msg]).
 
 
@@ -132,7 +132,7 @@ encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {
     Offset = State#state.v1_offset + Skips,
     Seq2 = Seq - Offset,
     V1Map = orddict:store(Seq2, Seq, State#state.v1_seq_map),
-    BinObjs2 = maybe_downconvert_binary_objs(BinObjs, w0),
+    BinObjs2 = riak_repl_util:maybe_downconvert_binary_objs(BinObjs, w0),
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};

@@ -19,7 +19,6 @@
         connection_ref,
         fullsync_worker,
         work_dir,
-        ver,
         strategy
     }).
 
@@ -92,8 +91,6 @@ init([Partition, IP]) ->
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
-    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
@@ -122,7 +119,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                        Transport, Socket, WorkDir, Client),
             riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
-                                    fullsync_worker=FullsyncWorker, work_dir=WorkDir, ver=Ver,
+                                    fullsync_worker=FullsyncWorker, work_dir=WorkDir,
                                     strategy=keylist}};
         aae ->
             %% AAE strategy
@@ -137,7 +134,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             {reply, ok,
              State#state{transport=Transport, socket=Socket, cluster=Cluster,
                          fullsync_worker=FullsyncWorker, work_dir=undefined,
-                         ver=Ver, strategy=aae}}
+                         strategy=aae}}
     end;
             
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW,
