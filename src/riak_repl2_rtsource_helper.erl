@@ -53,20 +53,6 @@ init([Remote, Transport, Socket, Ver]) ->
     async_pull(State),
     {ok, State}.
 
-%% @doc BinObjs are in new riak binary object format. If the remote sink
-%%      is storing older non-binary objects, then we need to downconvert
-%%      the objects before sending. V is the format expected by the sink.
-maybe_downconvert_binary_objs(BinObjs, V) ->
-    case V of
-        w1 ->
-            %% great! nothing to do.
-            BinObjs;
-        w0 ->
-            %% old sink. downconvert
-            Objs = riak_repl_util:from_wire(w1, BinObjs),
-            riak_repl_util:to_wire(w0, Objs)
-    end.
-
 handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, State};
