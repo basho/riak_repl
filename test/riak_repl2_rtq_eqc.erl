@@ -29,6 +29,8 @@
              trec=[],    %% received items
              tack=[]}).    %% acked items
 
+% queued item, get it?
+-record(qed_item, {seq, num_items, item_list = [], meta = []}).
 
 -ifdef(TEST).
 rtq_test_() ->
@@ -117,12 +119,27 @@ kill_all_pids(_)                    -> ok.
 %% ====================================================================
 
 initial_state() ->
+    kill_and_wait(riak_repl2_rtq),
     #state{}.
+
+kill_and_wait(undefined) ->
+    ok;
+kill_and_wait(Atom) when is_atom(Atom) ->
+    kill_and_wait(whereis(Atom));
+kill_and_wait(Pid) when is_pid(Pid) ->
+    unlink(Pid),
+    MonRef = erlang:monitor(process, Pid),
+    exit(Pid, kill),
+    receive
+        {'DOWN', MonRef, process, Pid, _} ->
+            ok
+    end.
 
 %% start the RTQ *and* set the max bytes for the queue
 test_init({size, MaxBytes}) ->
     application:set_env(riak_repl, rtq_max_bytes, MaxBytes),
-    {ok, Pid} = riak_repl2_rtq:start_test(),
+    {ok, Pid} = riak_repl2_rtq:start_link(),
+    unlink(Pid),
     Pid.
 
 
@@ -137,6 +154,7 @@ command(#state{rtq=undefined}) ->
 command(S) ->
     frequency(lists:map(fun(Call={call, _, Fun, _}) -> {weight(Fun), Call} end,
         [{call, ?MODULE, push, [make_item(), S#state.rtq]}] ++
+        [{call, ?MODULE, push, [make_item(), routed_clusters(S#state.cs), S#state.rtq]}] ++
         [{call, ?MODULE, new_consumer, [elements(S#state.pcs), S#state.rtq]} ||
           S#state.pcs /= []] ++
         [{call, ?MODULE, rm_consumer, [client_name(S), S#state.rtq]} ||
@@ -191,9 +209,12 @@ postcondition(S,{call,?MODULE,pull,[Name, _]},R) ->
             case Tout of
                 [] ->
                     {unexpected_item, C#tc.name, {Seq, Size, Item}};
-                [H|_] ->
-                   H == {Seq, Size, Item} orelse {not_match, C#tc.name, H,
-                        {Seq, Size, Item}}
+                [#qed_item{seq = Seq, num_items = Size, item_list = Item}|_] ->
+                    true;
+                _ ->
+                    {not_match, C#tc.name, hd(Tout), {Seq, Size, Item}}
+                   %H == {Seq, Size, Item} orelse {not_match, C#tc.name, H,
+                        %{Seq, Size, Item}}
             end
     end;
 postcondition(S,{call,?MODULE,push,[_Item, Q]},_R) ->
@@ -204,7 +225,9 @@ postcondition(S,{call,?MODULE,push,[_Item, Q]},_R) ->
                 ((S#state.max_bytes >= QBytes) == Acc)
         end, true, S#state.cs) orelse {queue_too_big, S#state.max_bytes,
                                        QBytes};
-    %true;
+postcondition(S,{call,?MODULE,push,[_Item,_RotuedClusters,Q]},_R) ->
+    % same postcondition as call/2, so no duplicate code here!
+    postcondition(S,{call,?MODULE,push,[undefined, Q]},undefined);
 postcondition(_S,{call,_,_,_},_R) ->
     true.
 
@@ -237,10 +260,14 @@ next_state(S,_V,{call, _, replace_consumer, [Name, _Q]}) ->
                           tout=trim(Client#tc.trec
                           ++ Client#tc.tout, S)},
     update_client(NewClient, S);
-next_state(S0,_V,{call, _, push, [Value, _Q]}) ->
+next_state(S0,V,{call, M, push, [Value, _Q]}) ->
+    next_state(S0,V,{call,M,push,[Value,[],_Q]});
+next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
+    %Item2 = set_meta(Item, routed_clusters, RoutedClusters),
     S = S0#state{qseq = S0#state.qseq+1},
-    Item = {S#state.qseq, length(Value), Value},
-    case S#state.cs of
+    %Item = {S#state.qseq, length(Value), Value},
+    Item = #qed_item{seq = S#state.qseq, num_items = length(Value), item_list = Value, meta = RoutedClusters},
+    S1 = case S#state.cs of
         [] ->
             S#state{tout_no_clients=trim(S#state.tout_no_clients ++ [Item], S)};
         _ ->
@@ -248,7 +275,8 @@ next_state(S0,_V,{call, _, push, [Value, _Q]}) ->
                             TC#tc{tout=trim(TC#tc.tout ++ [Item], S)}
                     end, S#state.cs),
             S#state{cs=Clients}
-    end;
+    end,
+    simulate_trimq(S1);
 next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     Client = get_client(Name, S),
     %lager:info("tout is ~p~n", [Client#tc.tout]),
@@ -269,27 +297,110 @@ next_state(S,_V,{call, _, ack, [{Name,N}, _Q]}) ->
 next_state(S,_V,{call, _, _, _}) ->
     S.
 
+simulate_trimq(State) ->
+    RawItems = get_queued_items(State),
+    Ets = ets:new(?MODULE, [ordered_set, private]),
+    MaxSeq = length(RawItems),
+    Keyed = case MaxSeq of
+        0 ->
+            [];
+        _ ->
+            Keys = lists:seq(1, MaxSeq),
+            lists:zip(Keys, RawItems)
+    end,
+    ets:insert(Ets, Keyed),
+    WordSize = erlang:system_info(wordsize),
+    simulate_trimq(State, Ets, WordSize, RawItems, []).
+
+simulate_trimq(State, Ets, _WordSize, [], Acc) ->
+    finish_simulate_trimq(State, Ets, Acc);
+
+simulate_trimq(State, Ets, WordSize, RawItems, Acc) ->
+    Words = ets:info(Ets, memory),
+    TableBytes = WordSize * Words,
+    ObjectBytes = lists:sum([?BINARIED_OBJ_SIZE * length(Item#qed_item.item_list) || Item <- RawItems]),
+    TotalBytes = TableBytes + ObjectBytes,
+    if
+        TotalBytes > State#state.max_bytes ->
+            [Dropping | RawItems2] = RawItems,
+            ets:delete(Ets, ets:first(Ets)),
+            simulate_trimq(State, Ets, WordSize, RawItems2, [Dropping | Acc]);
+        true ->
+            finish_simulate_trimq(State, Ets, Acc)
+    end.
+
+finish_simulate_trimq(State, Ets, Acc) ->
+    ets:delete(Ets),
+    case State#state.tout_no_clients of
+        [] ->
+            Dropping = lists:reverse(Acc),
+            MapFun = fun(Tc) ->
+                Tout = Tc#tc.tout -- Dropping,
+                Tc#tc{tout = Tout}
+            end,
+            Tcs2 = lists:map(MapFun, State#state.cs),
+            State#state{cs = Tcs2};
+        ToutNoClients ->
+            {_Dropped, NewTout} = lists:split(length(Acc), ToutNoClients),
+            State#state{tout_no_clients = NewTout}
+    end.
+
+
+get_queued_items(#state{cs = [], tout_no_clients = Items}) ->
+    Items;
+get_queued_items(#state{cs = Cs}) ->
+    FoldFun = fun
+        (#tc{tout = Tout}, Acc) when length(Tout) > length(Acc) ->
+            Tout;
+        (_, Acc) ->
+            Acc
+    end,
+    lists:foldl(FoldFun, [], Cs).
+
+set_meta(DataList, Key, Value) when is_list(DataList) ->
+    set_meta({length(DataList), term_to_binary(DataList)}, Key, Value);
+set_meta({A, B}, Key, Value) ->
+    set_meta({A, B, []}, Key, Value);
+set_meta({A, B, MetaDict}, Key, Value) ->
+    MetaDict2 = orddict:store(Key, Value, MetaDict),
+    {A, B, MetaDict2}.
+
+routed_clusters([]) ->
+    [];
+routed_clusters(Consumers) ->
+    Names = [C#tc.name || C <- Consumers],
+    ?LET(NamesList, list(elements(Names)),
+        ordsets:from_list(NamesList)
+    ).
+
 make_item() ->
     ?LAZY([make_ref()]).
 
 push(List, Q) ->
     lager:info("pushed item ~p~n to ~p~n", [List, Q]),
-    gen_server:call(Q, {push, length(List), term_to_binary(List)}).
+    NumItems = length(List),
+    Bin = term_to_binary(List),
+    riak_repl2_rtq:push(NumItems, Bin).
+
+push(List, RoutedClusters, _Q) ->
+    NumItems = length(List),
+    Bin = term_to_binary(List),
+    riak_repl2_rtq:push(NumItems, Bin, [{routed_clusters, RoutedClusters}]).
 
 new_consumer(Name, Q) ->
     lager:info("registering ~p to ~p~n", [Name, Q]),
-    gen_server:call(Q, {register, Name}).
+    riak_repl2_rtq:register(Name).
 
 rm_consumer(Name, Q) ->
     lager:info("unregistering ~p", [Name]),
-    gen_server:call(Q, {unregister, Name}).
+    riak_repl2_rtq:unregister(Name).
 
 replace_consumer(Name, Q) ->
     lager:info("replacing ~p", [Name]),
-    gen_server:call(Q, {register, Name}).
+    riak_repl2_rtq:register(Name).
 
-get_rtq_bytes(Q) ->
-    Stats = gen_server:call(Q, status),
+get_rtq_bytes(_Q) ->
+    Stats = riak_repl2_rtq:status(),
     proplists:get_value(bytes, Stats).
 
 
@@ -308,21 +419,24 @@ pull(Name, Q) ->
                     error 
             end
     end,
-    gen_server:cast(Q, {pull, Name, F}),
+    riak_repl2_rtq:pull(Name, F),
     receive
         {Ref, {Seq, Size, Item}} ->
             lager:info("~p got ~p size ~p seq ~p~n", [Name, Item, Size, Seq]),
             Q ! {Ref, ok},
-            %gen_server:cast(Q, {ack, Name, Seq}),
-            {Seq, Size, binary_to_term(Item)}
+            {Seq, Size, binary_to_term(Item)};
+        {Ref, Wut} ->
+            none
     after
         20 ->
             lager:info("queue empty: ~p~n", [Name]),
             none
     end.
 
-ack({Name, Seq}, Q) ->
-    gen_server:call(Q, {ack_sync, Name, Seq}).
+ack({_Name, no_seq}, _Q) ->
+    ok;
+ack({Name, Seq}, _Q) ->
+    riak_repl2_rtq:ack_sync(Name, Seq).
 
 delete_client(Name, S) ->
     S#state{cs=lists:keydelete(Name, #tc.name, S#state.cs)}.
@@ -335,12 +449,13 @@ gen_seq(C) ->
     ?LET(E, elements(C#tc.trec), element(1, E)).
 
 trim(Q, #state{max_bytes=Max}) ->
-    {_Size, NewQ} = lists:foldl(fun({Seq, NumItems, Bin}, {Size, Acc}) ->
+    {_Size, NewQ} = lists:foldl(fun(#qed_item{seq = Seq, num_items = NumItems, item_list = NotYetBin} = Item, {Size, Acc}) ->
+                Bin = term_to_binary(NotYetBin),
                 case (?BINARIED_OBJ_SIZE + Size) > Max of
                     true ->
                         {Size, Acc};
                     false ->
-                        {Size + ?BINARIED_OBJ_SIZE, [{Seq, NumItems, Bin}|Acc]}
+                        {Size + ?BINARIED_OBJ_SIZE, [Item|Acc]}
                 end
             end, {0, []}, lists:reverse(Q)),
     case Q /= NewQ of

@@ -255,17 +255,11 @@ multinode_test_() ->
 
         {"add remote cluster from two different non-leader nodes, but still resolve", fun() ->
             rpc:call(Batman, riak_core_cluster_mgr, add_remote_cluster, [?REMOTE_CLUSTER_ADDR]),
-            ?debugMsg("bing"),
             {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
-            ?debugMsg("bing"),
             Expected = repeat({ok, []}, 3),
-            ?debugMsg("bing"),
             ?assertEqual(Expected, Res),
-            ?debugMsg("bing"),
             rpc:call(Wonder, riak_core_cluster_mgr, add_remote_cluster, [?REMOTE_CLUSTER_ADDR]),
-            ?debugMsg("bing"),
-            ?assertEqual({Res, []}, rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, [])),
-            ?debugMsg("bing")
+            ?assertEqual({Res, []}, rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []))
         end},
 
         {"connect to remote cluster", fun() ->
