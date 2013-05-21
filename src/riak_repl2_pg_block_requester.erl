@@ -158,9 +158,17 @@ handle_info({Proto, Socket, Data},
                 RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
                 lager:debug("Remote cluster id = ~p", [RemoteClusterID]),
                 lager:debug("Remote cluster name = ~p", [RemoteClusterName]),
-        RegName = riak_repl_util:make_pg_name(RemoteClusterName),
-        lager:debug("RegName = ~p",[RegName]),
-        erlang:register(RegName, self()),
+                RegName = riak_repl_util:make_pg_name(RemoteClusterName),
+                lager:debug("RegName = ~p",[RegName]),
+                case lists:member(RegName, erlang:registered()) of
+                  true ->
+                    lager:debug("Unregistering an existing pg_proxy"),
+                    catch(erlang:unregister(RegName));
+                  false ->
+                    lager:debug("Not unregistering an existing pg_proxy"),
+                    ok
+                end,
+                erlang:register(RegName, self()),
                 {noreply, State#state{remote_cluster_id=RemoteClusterID,
                                       remote_cluster_name=RemoteClusterName}};
             _ ->
