@@ -28,6 +28,8 @@
          rt_start_trans/2,
          rt_stop_trans/2,
          rt_started/1,
+         rt_cascades_trans/2,
+         rt_cascades/1,
          fs_enable_trans/2,
          fs_disable_trans/2,
          fs_enabled/1,
@@ -341,6 +343,39 @@ rt_stop_trans(Ring, Remote) ->
 rt_started(Ring) ->
     get_list(rt_started, Ring).
 
+rt_cascades_trans(Ring, Val) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    OldVal = case dict:find(realtime_cascades, RC) of
+        error ->
+            % we want to trigger an update to get the config in the ring
+            error;
+        {ok, V} ->
+            V
+    end,
+    case Val of
+        OldVal ->
+            {ignore, {no_change, OldVal}};
+        _ when Val =:= always; Val =:= never ->
+            {new_ring, riak_core_ring:update_meta(
+                              ?MODULE,
+                              dict:store(realtime_cascades, Val, RC),
+                              Ring)};
+        _ ->
+            lager:warning("ignoring invalid casacding realtime setting: ~p; using old setting ~p", [Val, OldVal]),
+            {ignore, {invalid_option, Val}}
+    end.
+
+%% Get status of cascading rt
+rt_cascades(Ring) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    % find because the ring may be from a time before cascading rt.
+    case dict:find(realtime_cascades, RC) of
+        error ->
+            never;
+        {ok, Val} ->
+            Val
+    end.
+
 %% Enable replication for the remote (queue will start building)
 fs_enable_trans(Ring, Remote) ->
     add_list_trans(Remote, fs_enabled, Ring).
@@ -358,6 +393,7 @@ initial_config() ->
       [{natlisteners, []},
        {listeners, []},
        {sites, []},
+       {realtime_cascades, always},
        {version, ?REPL_VERSION}]
       ).
 
@@ -666,5 +702,33 @@ verify_adding_nat_upgrades_test() ->
     ?assertEqual(1,length(Listeners)),
     ?assertEqual(1,length(NatListeners)),
     ?assertNot(undefined == riak_repl_ring:get_listener(Ring2, {ListenAddr, ListenPort})).
+
+%% cascading rt defaults to always
+realtime_cascades_defaults_always_test() ->
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    ?assertEqual(always, riak_repl_ring:rt_cascades(Ring0)).
+
+%% disable rt cascading
+realtime_cascades_disable_test() ->
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    TransRes = riak_repl_ring:rt_cascades_trans(Ring0, never),
+    ?assertMatch({new_ring, _Ring}, TransRes),
+    {new_ring, Ring1} = TransRes,
+    ?assertEqual(never, riak_repl_ring:rt_cascades(Ring1)).
+
+%% disable and re-enable
+realtime_cascades_enabled_test() ->
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    {new_ring, Ring1} = riak_repl_ring:rt_cascades_trans(Ring0, never),
+    TransRes = riak_repl_ring:rt_cascades_trans(Ring1, always),
+    ?assertMatch({new_ring, _Ring}, TransRes),
+    {new_ring, Ring2} = TransRes,
+    ?assertEqual(always, riak_repl_ring:rt_cascades(Ring2)).
+
+%% attempt to set to something invalid
+realtime_cascades_invalid_set_test() ->
+    Ring0 = riak_repl_ring:ensure_config(mock_ring()),
+    BadOpt = sometimes,
+    ?assertMatch({ignore, {invalid_option, BadOpt}}, riak_repl_ring:rt_cascades_trans(Ring0, BadOpt)).
 
 -endif.

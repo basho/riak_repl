@@ -107,7 +107,14 @@ init([Remote]) ->
                   {nodelay, true},
                   {packet, 0},
                   {active, false}],
-    ClientSpec = {{realtime,[{1,1}]}, {TcpOptions, ?MODULE, self()}},
+    % nodes running 1.3.1 have a bug in the service_mgr module.
+    % this bug prevents it from being able to negotiate a version list longer
+    % than 2. Until we no longer support communicating with that version,
+    % we need to artifically truncate the version list.
+    % TODO: expand version list or remove comment when we no
+    % longer support 1.3.1
+    % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
+    ClientSpec = {{realtime,[{2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
 
     %% Todo: check for bad remote name
     lager:debug("connecting to remote ~p", [Remote]),
@@ -197,11 +204,9 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
         ok ->
             Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
             lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
-            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote,
-                                                                    Transport, Socket,
-                                                                    Ver),
-            SocketTag = riak_repl_util:generate_socket_tag("rt_source",
-                Transport, Socket),
+            {_, ClientVer, _} = Proto,
+            {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
+            SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
             lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
                                                SocketTag}, Transport),
@@ -267,7 +272,7 @@ handle_info(send_heartbeat, State) ->
     {noreply, send_heartbeat(State)};
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent = HBSent,
                                                         remote = Remote}) ->
-    Duration = timer:now_diff(now(), HBSent) div 1000,
+    Duration = safe_now_diff(HBSent),
     lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                   "after ~p milliseconds\n",
                   [peername(State), Remote, Duration]),
@@ -307,16 +312,24 @@ recv(TcpBin, State = #state{remote = Name,
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
-        {ok, {ack, Seq}, Cont} ->
+        {ok, {ack, Seq}, Cont} when State#state.proto == {2,0} ->
             %% TODO: report this better per-remote
             riak_repl_stats:objects_sent(),
             ok = riak_repl2_rtq:ack(Name, Seq),
             recv(Cont, State);
+        {ok, {ack, Seq}, Cont} ->
+            riak_repl2_rtsource_helper:v1_ack(State#state.helper_pid, Seq),
+            recv(Cont, State);
         {ok, heartbeat, Cont} ->
             %% Compute last heartbeat roundtrip in msecs and
             %% reschedule next
-            HBRTT = timer:now_diff(now(), HBSent) div 1000,
-            erlang:cancel_timer(HBTRef),
+            HBRTT = safe_now_diff(HBSent),
+            case HBTRef of
+                undefined ->
+                    ok;
+                _ ->
+                    erlang:cancel_timer(HBTRef)
+            end,
             State2 = State#state{hb_sent = undefined,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
@@ -349,3 +362,11 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
 schedule_heartbeat(State = #state{hb_interval = HBInterval}) ->
     erlang:send_after(HBInterval, self(), send_heartbeat),
     State.
+
+safe_now_diff(NotNow) ->
+    safe_now_diff(now(), NotNow).
+
+safe_now_diff({_,_,_} = Sooner, {_,_,_} = Later) ->
+    timer:now_diff(Sooner, Later) div 1000;
+safe_now_diff(_,_) ->
+    0.

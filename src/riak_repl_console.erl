@@ -28,6 +28,8 @@
          max_fssource_node/1,
          max_fssource_cluster/1,
          max_fssink_node/1,
+         realtime_cascades/1,
+         cascades/1,
          show_nat_map/1,
          add_nat_map/1,
          del_nat_map/1
@@ -384,7 +386,12 @@ realtime([Cmd, Remote]) ->
         "start" ->
             riak_repl2_rt:start(Remote);
         "stop" ->
-            riak_repl2_rt:stop(Remote)
+            riak_repl2_rt:stop(Remote);
+        % easier to put this clause here and update 1 file
+        % than update riak_core's riak-repl bin script and make yet anothor
+        % place to change/potentially break stuff.
+        "cascades" ->
+            riak_repl_console:reatime_cascades(Remote)
     end,
     ok;
 realtime([Cmd]) ->
@@ -465,6 +472,21 @@ modes(NewModes) ->
     Modes = [ list_to_atom(Mode) || Mode <- NewModes],
     set_modes(Modes),
     modes([]).
+
+realtime_cascades(["always"]) ->
+    riak_core_ring_manager:ring_trans(fun
+        riak_repl_ring:rt_cascades_trans/2, always);
+realtime_cascades(["never"]) ->
+    riak_core_ring_manager:ring_trans(fun
+        riak_repl_ring:rt_cascades_trans/2, never);
+realtime_cascades([]) ->
+    Cascades = app_helper:get_env(riak_repl, realtime_cascades, always),
+    io:format("reatime_cascades: ~p~n", [Cascades]);
+realtime_cascades(_Wut) ->
+    io:format("realtime_cascades either \"always\" or \"never\"~n").
+
+cascades(Val) ->
+    realtime_cascades(Val).
 
 %% For each of these "max" parameter changes, we need to make an rpc multi-call to every node
 %% so that all nodes have the new value in their application environment. That way, whoever
