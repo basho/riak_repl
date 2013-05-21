@@ -7,3 +7,4 @@
 -define(MSG_PUT_OBJ, 7).
 -define(MSG_GET_OBJ, 8).
 -define(MSG_COMPLETE, 9).
+-define(AAE_FULLSYNC_REPLY_TIMEOUT, 60000). %% 1 minute to hear from remote sink

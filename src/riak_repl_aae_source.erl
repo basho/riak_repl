@@ -157,7 +157,7 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
                                               local_lock=Lock}) when Lock == false ->
     TcpOptions = [{keepalive, true},
                   {packet, 4},
-                  {active, once},
+                  {active, false},  %% passive mode, messages must be received with recv
                   {nodelay, true},
                   {header, 1}],
     %% try to get local lock of the tree
@@ -573,13 +573,16 @@ send_asynchronous_msg(MsgType, #state{transport=Transport,
                                       socket=Socket}) ->
     ok = Transport:send(Socket, <<MsgType:8>>).
 
+%% Receive a syncrhonous reply from the sink node.
+%% TODO: change to use async io and thread the expected message
+%% states through the fsm. That will allow us to service a status
+%% request without blocking. We could also handle lates messages
+%% without having to die.
 get_reply(#state{transport=Transport, socket=Socket}) ->
-    ok = Transport:setopts(Socket, [{active, once}]),
-    receive
-        {_, Socket, [?MSG_REPLY|Data]} ->
+    %% don't block forever, but if we timeout, then die with reason
+    case Transport:recv(Socket, 0, ?AAE_FULLSYNC_REPLY_TIMEOUT) of
+        {ok, [?MSG_REPLY|Data]} ->
             binary_to_term(Data);
-        {Error, Socket} ->
-            throw(Error);
-        {Error, Socket, Reason} ->
-            throw({Error, Reason})
+        {error, Reason} ->
+            throw(Reason)
     end.
