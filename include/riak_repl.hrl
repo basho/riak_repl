@@ -29,6 +29,8 @@
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
 -define(RETRY_WHEREIS_INTERVAL, 1000).
 -define(CONSOLE_RPC_TIMEOUT, 5000).
+-define(RETRY_AAE_LOCKED_INTERVAL, 1000).
+-define(DEFAULT_FULLSYNC_STRATEGY, keylist). %% keylist | aae
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
