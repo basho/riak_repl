@@ -91,11 +91,6 @@ init([Partition, IP]) ->
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
-<<<<<<< HEAD
-=======
-    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
->>>>>>> d044370ce20c58892ea8607455c09d0d4fa811c0
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
