@@ -60,17 +60,6 @@ init([Remote, Transport, Socket, Version]) ->
     async_pull(State),
     {ok, State}.
 
-%% @doc BinObjs are in new riak binary object format. If the remote sink
-%%      is storing older non-binary objects, then we need to downconvert
-%%      the objects before sending. V is the format expected by the sink.
-maybe_downconvert_binary_objs(BinObjs, w0) ->
-    %% old sink. downconvert
-    Objs = riak_repl_util:from_wire(w1, BinObjs),
-    riak_repl_util:to_wire(w0, Objs);
-maybe_downconvert_binary_objs(BinObjs, w1) ->
-    %% great! nothing to do.
-    BinObjs.
-
 handle_call({pull, {error, Reason}}, _From, State) ->
     riak_repl_stats:rt_source_errors(),
     {stop, {queue_error, Reason}, ok, State};
@@ -103,7 +92,7 @@ handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
     Map2 = orddict:erase(Seq, Map),
     {noreply, State#state{v1_seq_map = Map2}};
 
-handle_cast(Msg, State) ->
+handle_cast(Msg, _State) ->
     lager:info("Realtime source helper received unexpected cast - ~p\n", [Msg]).
 
 
@@ -143,7 +132,7 @@ encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {
     Offset = State#state.v1_offset + Skips,
     Seq2 = Seq - Offset,
     V1Map = orddict:store(Seq2, Seq, State#state.v1_seq_map),
-    BinObjs2 = maybe_downconvert_binary_objs(BinObjs, w0),
+    BinObjs2 = riak_repl_util:maybe_downconvert_binary_objs(BinObjs, w0),
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};
