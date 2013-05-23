@@ -232,7 +232,7 @@ init(Defaults) ->
 
     %% Schedule a delayed connection to know clusters
     schedule_cluster_connections(),
-   case riak_repl2_leader:leader_node() of
+    case riak_repl2_leader:leader_node() of
         undefined ->
             % there's an election in progress, so we can just hang on until
             % that finishes
