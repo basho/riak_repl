@@ -222,9 +222,11 @@ handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
     %% this will allow the realtime repl hook to determine if it should send
     %% to another host
     riak_repl2_rtq_proxy:start(),
+    lager:info("Shutting down"),
     {reply, ok, State#state{shutting_down = true}};
 
 handle_call(stop, _From, State) ->
+    lager:info("Stopping"),
     {stop, normal, ok, State};
 
 handle_call(is_running, _From,

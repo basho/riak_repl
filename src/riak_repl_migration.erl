@@ -69,10 +69,16 @@ drain_queue(false, Peer, PeerWireVer) ->
     % would have made this a standard function, but I need a closure for the
     % value Peer
     riak_repl2_rtq:pull_sync(qm,
-             fun ({Seq, NumItem, W1BinObjs}) ->
+             fun ({Seq, NumItem, W1BinObjs, Meta}) ->
                 try
                     BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, PeerWireVer),
-                    gen_server:cast({riak_repl2_rtq,Peer}, {push, NumItem, BinObjs}),
+                    CastObj = case W1BinObjs of
+                        w0 ->
+                            {push, NumItem, BinObjs};
+                        w1 ->
+                            {push, NumItem, BinObjs, Meta}
+                    end,
+                    gen_server:cast({riak_repl2_rtq,Peer}, CastObj),
                     %% Note - the next line is casting, not calling.
                     riak_repl2_rtq:ack(qm, Seq)
                 catch
