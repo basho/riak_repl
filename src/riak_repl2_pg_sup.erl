@@ -24,7 +24,7 @@ init([]) ->
 
   {riak_repl2_pg_block_requester_sup,
     {riak_repl2_pg_block_requester_sup, start_link, []},
-    permanent, infinity, supervisor,
+    temporary, infinity, supervisor,
     [riak_repl2_pg_block_requester_sup]},
 
   {riak_repl2_pg, {riak_repl2_pg, start_link, []},
