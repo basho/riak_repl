@@ -72,7 +72,7 @@ drain_queue(false, Peer, PeerWireVer) ->
              fun ({Seq, NumItem, W1BinObjs, Meta}) ->
                 try
                     BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, PeerWireVer),
-                    CastObj = case W1BinObjs of
+                    CastObj = case PeerWireVer of
                         w0 ->
                             {push, NumItem, BinObjs};
                         w1 ->
