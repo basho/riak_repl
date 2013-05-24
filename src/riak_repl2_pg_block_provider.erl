@@ -138,7 +138,8 @@ handle_info(_Msg, State) ->
 
 handle_msg(get_cluster_info, State=#state{transport=Transport, socket=Socket}) ->
     ThisClusterName = riak_core_connection:symbolic_clustername(),
-    ClusterID = riak_core_cluster_mgr:get_cluster_id(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterID = riak_core_ring:cluster_name(Ring),
     lager:debug("Cluster ID=~p, Cluster Name = ~p",[ClusterID, ThisClusterName]),
     Data = term_to_binary({get_cluster_info_resp, ClusterID, ThisClusterName}),
     Transport:send(Socket, Data),

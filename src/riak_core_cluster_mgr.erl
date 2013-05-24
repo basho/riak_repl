@@ -77,8 +77,7 @@
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
                 balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
-                clusters = orddict:new() :: orddict:orddict(),  % resolved clusters by name
-                cluster_id :: term()
+                clusters = orddict:new() :: orddict:orddict()  % resolved clusters by name
                }).
 
 -export([start_link/0,
@@ -95,8 +94,7 @@
          get_connections/0,
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
-         stop/0,
-         get_cluster_id/0
+         stop/0
          ]).
 
 %% gen_server callbacks
@@ -198,13 +196,6 @@ set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
 
-%% @doc gets the cached cluster_id. This value is different than the
-%% bravenewworld clustername. It's a unique identifier generated when
-%% the ring is created.
--spec get_cluster_id() -> term().
-get_cluster_id() ->
-    gen_server:call(?SERVER, get_cluster_id).
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -227,8 +218,7 @@ init(Defaults) ->
     ClusterID = riak_core_ring:cluster_name(Ring),
     State = register_defaults(Defaults, #state{
                 is_leader = false,
-                balancer_fun = BalancerFun,
-                cluster_id=ClusterID}),
+                balancer_fun = BalancerFun}),
 
     %% Schedule a delayed connection to know clusters
     schedule_cluster_connections(),
@@ -247,9 +237,6 @@ init(Defaults) ->
 
 handle_call(get_is_leader, _From, State) ->
     {reply, State#state.is_leader, State};
-
-handle_call(get_cluster_id, _From, State) ->
-    {reply, State#state.cluster_id, State};
 
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to call the leader.
