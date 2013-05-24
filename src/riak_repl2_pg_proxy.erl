@@ -16,7 +16,7 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-        terminate/2, code_change/3, proxy_get/4, register_pg_node/2]).
+        terminate/2, code_change/3, proxy_get/4]).
 
 -define(SERVER, ?MODULE).
 
@@ -30,9 +30,6 @@
 %%%===================================================================
 proxy_get(Pid, Bucket, Key, Options) ->
     gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
-
-register_pg_node(Pid, Node) ->
-    gen_server:call(Pid, {register, Node}).
 
 %%--------------------------------------------------------------------
 %% @doc
