@@ -130,7 +130,7 @@ handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
   when Reason == normal; Reason == shutdown ->
     {noreply, State};
 handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State0) ->
-    lager:info("Re-registering pg_proxy service 2"),
+    lager:debug("Re-registering pg_proxy service 2"),
     State = register_with_leader(State0),
     {noreply, State};
 handle_info({Proto, Socket, Data},
