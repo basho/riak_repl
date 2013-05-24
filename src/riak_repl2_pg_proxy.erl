@@ -54,7 +54,7 @@ handle_call({proxy_get, Bucket, Key, GetOptions}, _From, #state{pg_node=Node} = 
     case Node of
         undefined ->
             lager:warning("No proxy_get node registered"),
-            {reply, ok, State};
+            {reply, {error, no_proxy_get_node}, State};
         N ->
             RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
             Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
