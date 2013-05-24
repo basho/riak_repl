@@ -217,7 +217,8 @@ register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->
             supervisor:start_child({riak_repl2_pg_proxy_sup, Leader},
                                    make_pg_proxy(Cluster))
     end,
-    gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node()}),
+    gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node(),
+                                                self()}),
     Monitor = erlang:monitor(process, {ProxyForCluster, Leader}),
     State#state{leader_mref=Monitor}.
 
