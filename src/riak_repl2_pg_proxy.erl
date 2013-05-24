@@ -21,8 +21,7 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {
-        source_cluster = undefined,
-        pg_nodes = []
+        pg_pids = []
         }).
 
 %%%===================================================================
@@ -51,8 +50,8 @@ init(ProxyName) ->
     {ok, #state{}}.
 
 handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
-            #state{pg_nodes=RequesterNodes} = State) ->
-    case RequesterNodes of
+            #state{pg_pids=RequesterPids} = State) ->
+    case RequesterPids of
         [] ->
             lager:warning("No proxy_get node registered"),
             {reply, {error, no_proxy_get_node}, State};
@@ -64,29 +63,29 @@ handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
                 %% remove this bad pid from the list and try another
                 exit:{noproc, _} ->
                     handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
-                        State#state{pg_nodes=T});
+                        State#state{pg_pids=T});
                 exit:{{nodedown, _}, _} ->
                     handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
-                        State#state{pg_nodes=T})
+                        State#state{pg_pids=T})
             end
     end;
 
 handle_call({register, ClusterName, RequesterNode, RequesterPid},
-            _From, State = #state{pg_nodes = PGNodes}) ->
+            _From, State = #state{pg_pids = RequesterPids}) ->
     lager:info("registered node for cluster name ~p ~p ~p", [ClusterName,
                                                              RequesterNode,
                                                              RequesterPid]),
     Monitor = erlang:monitor(process, RequesterPid),
-    NewState = State#state{pg_nodes = [{RequesterNode, RequesterPid, Monitor} | PGNodes],
-                           source_cluster=ClusterName},
+    NewState = State#state{pg_pids = [{RequesterNode, RequesterPid, Monitor} |
+                                      RequesterPids]},
     {reply, ok, NewState}.
 
 handle_info({'DOWN', MRef, process, _Pid, _Reason}, State =
-            #state{pg_nodes=RequesterNodes}) ->
-    NewRequesterNodes = [ {RNode, RPid, RMon} ||
-            {RNode,RPid,RMon} <- RequesterNodes,
+            #state{pg_pids=RequesterPids}) ->
+    NewRequesterPids = [ {RNode, RPid, RMon} ||
+            {RNode,RPid,RMon} <- RequesterPids,
             RMon /= MRef],
-    {noreply, State#state{pg_nodes=NewRequesterNodes}};
+    {noreply, State#state{pg_pids=NewRequesterPids}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
