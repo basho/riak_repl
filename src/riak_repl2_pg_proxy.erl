@@ -16,13 +16,12 @@
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-        terminate/2, code_change/3, proxy_get/4, register_pg_node/2]).
+        terminate/2, code_change/3, proxy_get/4]).
 
 -define(SERVER, ?MODULE).
 
 -record(state, {
-        source_cluster = undefined,
-        pg_node = undefined
+        pg_pids = []
         }).
 
 %%%===================================================================
@@ -30,9 +29,6 @@
 %%%===================================================================
 proxy_get(Pid, Bucket, Key, Options) ->
     gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
-
-register_pg_node(Pid, Node) ->
-    gen_server:call(Pid, {register, Node}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -53,26 +49,47 @@ init(ProxyName) ->
     erlang:register(ProxyName, self()),
     {ok, #state{}}.
 
-handle_call({proxy_get, Bucket, Key, GetOptions}, _From, #state{pg_node=Node} = State) ->
-    case Node of
-        undefined ->
+handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
+            #state{pg_pids=RequesterPids} = State) ->
+    case RequesterPids of
+        [] ->
             lager:warning("No proxy_get node registered"),
-            {reply, ok, State};
-        N ->
-            RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
-            Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
-            {reply, Result, State}
+            {reply, {error, no_proxy_get_node}, State};
+        [{_RNode, RPid, _} | T] ->
+            try gen_server:call(RPid, {proxy_get, Bucket, Key, GetOptions}) of
+                Result ->
+                    {reply, Result, State}
+            catch
+                %% remove this bad pid from the list and try another
+                exit:{noproc, _} ->
+                    handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
+                        State#state{pg_pids=T});
+                exit:{{nodedown, _}, _} ->
+                    handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
+                        State#state{pg_pids=T})
+            end
     end;
 
-handle_call({register, ClusterName, Node}, _From, State) ->
-    lager:debug("registered node for cluster name ~p", [ClusterName]),
-    NewState = State#state{pg_node = Node, source_cluster=ClusterName},
+handle_call({register, ClusterName, RequesterNode, RequesterPid},
+            _From, State = #state{pg_pids = RequesterPids}) ->
+    lager:info("registered node for cluster name ~p ~p ~p", [ClusterName,
+                                                             RequesterNode,
+                                                             RequesterPid]),
+    Monitor = erlang:monitor(process, RequesterPid),
+    NewState = State#state{pg_pids = [{RequesterNode, RequesterPid, Monitor} |
+                                      RequesterPids]},
     {reply, ok, NewState}.
 
-handle_cast(_Msg, State) ->
+handle_info({'DOWN', MRef, process, _Pid, _Reason}, State =
+            #state{pg_pids=RequesterPids}) ->
+    NewRequesterPids = [ {RNode, RPid, RMon} ||
+            {RNode,RPid,RMon} <- RequesterPids,
+            RMon /= MRef],
+    {noreply, State#state{pg_pids=NewRequesterPids}};
+handle_info(_Info, State) ->
     {noreply, State}.
 
-handle_info(_Info, State) ->
+handle_cast(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->

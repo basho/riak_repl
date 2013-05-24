@@ -75,8 +75,7 @@ init([Socket, Transport, _Proto, Props]) ->
                                         SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-    State0 = #state{cluster=Cluster, transport=Transport, socket=Socket},
-    State = register_with_leader(State0),
+    State = #state{cluster=Cluster, transport=Transport, socket=Socket},
     {ok, State}.
 
 handle_call({proxy_get, Bucket, Key, Options}, From,
@@ -127,11 +126,8 @@ handle_info({ssl_error, _Socket, Reason}, State) ->
         [State#state.cluster, Reason]),
     {stop, normal, State};
 
-handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
-  when Reason == normal; Reason == shutdown ->
-    {noreply, State};
-handle_info({'DOWN', _MRef, process, _Pid, _Reason}, State0) ->
-    lager:info("Re-registering pg_proxy service 2"),
+handle_info({'DOWN', _MRef, _Type, _Pid, _Reason}, State0) ->
+    lager:debug("Re-registering pg_proxy service 2"),
     State = register_with_leader(State0),
     {noreply, State};
 handle_info({Proto, Socket, Data},
@@ -158,11 +154,9 @@ handle_info({Proto, Socket, Data},
                 RemoteClusterID = list_to_binary(io_lib:format("~p",[ClusterID])),
                 lager:debug("Remote cluster id = ~p", [RemoteClusterID]),
                 lager:debug("Remote cluster name = ~p", [RemoteClusterName]),
-        RegName = riak_repl_util:make_pg_name(RemoteClusterName),
-        lager:debug("RegName = ~p",[RegName]),
-        erlang:register(RegName, self()),
-                {noreply, State#state{remote_cluster_id=RemoteClusterID,
-                                      remote_cluster_name=RemoteClusterName}};
+                State2 = register_with_leader(State#state{remote_cluster_id=RemoteClusterID,
+                                                 remote_cluster_name=RemoteClusterName}),
+                {noreply, State2};
             _ ->
                 {noreply, State}
         end,
@@ -196,20 +190,31 @@ register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->
     end,
     Leader = riak_core_cluster_mgr:get_leader(),
     ProxyForCluster = riak_repl_util:make_pg_proxy_name(Cluster),
-    Child = [{Remote, Pid} || {Remote, Pid, _, _} <-
-        supervisor:which_children({riak_repl2_pg_proxy_sup, Leader}),
-                      is_pid(Pid),
-                      Remote == ProxyForCluster],
-    case Child of
-        [{_Remote, _Pid}] ->
-            lager:debug("Not starting a new proxy process, one already exists"),
-            ok;
-        _ ->
-            lager:debug("Starting a new proxy process"),
-            supervisor:start_child({riak_repl2_pg_proxy_sup, Leader},
-                                   make_pg_proxy(Cluster))
+    %% this can fail if the leader node is shutting down
+    try supervisor:which_children({riak_repl2_pg_proxy_sup, Leader}) of
+        Children ->
+            Child = [{Remote, Pid} || {Remote, Pid, _, _} <- Children,
+                is_pid(Pid),
+                Remote == ProxyForCluster],
+            case Child of
+                [{_Remote, _Pid}] ->
+                    lager:debug("Not starting a new proxy process, one already exists"),
+                    ok;
+                _ ->
+                    lager:debug("Starting a new proxy process"),
+                    %% this can fail if the leader node is shutting down
+                    catch(supervisor:start_child({riak_repl2_pg_proxy_sup, Leader},
+                            make_pg_proxy(Cluster)))
+            end,
+            %% this can fail if the leader node is shutting down
+            catch(gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node(),
+                        self()}))
+    catch
+        _:_ ->
+            %% the monitor below will take care of us...
+            ok
     end,
-    gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node()}),
+    %% if the leader node is shutting down or already stopped, we'll get a
+    %% DOWN message real soon
     Monitor = erlang:monitor(process, {ProxyForCluster, Leader}),
     State#state{leader_mref=Monitor}.
-
