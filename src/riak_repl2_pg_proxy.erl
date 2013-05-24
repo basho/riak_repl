@@ -22,7 +22,7 @@
 
 -record(state, {
         source_cluster = undefined,
-        pg_nodes = undefined
+        pg_nodes = []
         }).
 
 %%%===================================================================
@@ -56,11 +56,19 @@ handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
         [] ->
             lager:warning("No proxy_get node registered"),
             {reply, {error, no_proxy_get_node}, State};
-        [{_RNode, RPid, _} | _] ->
-            %RegName = riak_repl_util:make_pg_name(State#state.source_cluster),
-            %%Result = gen_server:call({RegName, N}, {proxy_get, Bucket, Key, GetOptions}),
-            Result = gen_server:call(RPid, {proxy_get, Bucket, Key, GetOptions}),
-            {reply, Result, State}
+        [{_RNode, RPid, _} | T] ->
+            try gen_server:call(RPid, {proxy_get, Bucket, Key, GetOptions}) of
+                Result ->
+                    {reply, Result, State}
+            catch
+                %% remove this bad pid from the list and try another
+                exit:{noproc, _} ->
+                    handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
+                        State#state{pg_nodes=T});
+                exit:{{nodedown, _}, _} ->
+                    handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
+                        State#state{pg_nodes=T})
+            end
     end;
 
 handle_call({register, ClusterName, RequesterNode, RequesterPid},
@@ -73,9 +81,6 @@ handle_call({register, ClusterName, RequesterNode, RequesterPid},
                            source_cluster=ClusterName},
     {reply, ok, NewState}.
 
-handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
-  when Reason == normal; Reason == shutdown ->
-    {noreply, State};
 handle_info({'DOWN', MRef, process, _Pid, _Reason}, State =
             #state{pg_nodes=RequesterNodes}) ->
     NewRequesterNodes = [ {RNode, RPid, RMon} ||
