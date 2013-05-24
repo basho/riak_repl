@@ -75,8 +75,7 @@ init([Socket, Transport, _Proto, Props]) ->
                                         SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-    State0 = #state{cluster=Cluster, transport=Transport, socket=Socket},
-    State = register_with_leader(State0),
+    State = #state{cluster=Cluster, transport=Transport, socket=Socket},
     {ok, State}.
 
 handle_call({proxy_get, Bucket, Key, Options}, From,
@@ -169,8 +168,9 @@ handle_info({Proto, Socket, Data},
                     ok
                 end,
                 erlang:register(RegName, self()),
-                {noreply, State#state{remote_cluster_id=RemoteClusterID,
-                                      remote_cluster_name=RemoteClusterName}};
+                State2 = register_with_leader(State#state{remote_cluster_id=RemoteClusterID,
+                                                 remote_cluster_name=RemoteClusterName}),
+                {noreply, State2};
             _ ->
                 {noreply, State}
         end,
