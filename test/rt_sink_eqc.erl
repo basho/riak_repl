@@ -1,10 +1,14 @@
 -module(rt_sink_eqc).
 
+-compile(export_all).
+
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
+
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
 
 -define(SINK_PORT, 5008).
 -define(all_remotes, ["a", "b", "c", "d", "e"]).
@@ -616,3 +620,6 @@ fake_source_loop(State) ->
         What ->
             fake_source_loop(State)
     end.
+
+-endif(TEST).
+-endif(EQC).

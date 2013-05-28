@@ -353,7 +353,7 @@ lookup_leaders(Nodes, LeaderByNode) ->
 
 maybe_start_net_kernel() ->
     [] = os:cmd("epmd -daemon"),
-    case net_kernel:start(['repl_leader_eqc@127.0.0.1', longnames]) of
+    case net_kernel:start(['repl_leader_eqc@127.0.0.1', shortnames]) of
         {ok, _} ->
             ?DBG("Net kernel started as ~p\n", [node()]);
         {error, {already_started, _}} ->

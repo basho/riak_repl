@@ -1,10 +1,13 @@
 -module(rt_source_eqc).
 
+-compile(export_all).
+
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
 
 -define(SINK_PORT, 5007).
 -define(all_remotes, ["a", "b", "c", "d", "e"]).
@@ -691,3 +694,6 @@ fake_sink_nom_frames({ok, Frame, Rest}, History) ->
     fake_sink_nom_frames(Rest, [Frame | History]);
 fake_sink_nom_frames(Bin, History) ->
     fake_sink_nom_frames(riak_repl2_rtframe:decode(Bin), History).
+
+-endif(TEST).
+-endif(EQC).

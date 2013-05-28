@@ -852,7 +852,6 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
     riak_object:from_binary(B, K, BinObj);
 from_wire(X) when is_binary(X) ->
     lager:error("unknown wire format: ~p", [X]),
-    throw({error, unknown_wire_format}),
     {error, unknown_wire_format};
 from_wire(RObj) ->
     RObj.
@@ -867,7 +866,8 @@ maybe_downconvert_binary_objs(BinObjs, SinkVer) ->
             BinObjs;
         w0 ->
             %% old sink. downconvert
-            Objs = from_wire(w1, BinObjs),
+            %% use a fully qualified call to make mecking of from_wire possible
+            Objs = ?MODULE:from_wire(w1, BinObjs),
             to_wire(w0, Objs)
     end.
 
@@ -939,9 +939,9 @@ do_wire_unknown_format_test() ->
     Key = <<"key">>,
     RObj = riak_object:new(Bucket, Key, <<"val">>),
     Encoded = to_wire(w9, Bucket, Key, term_to_binary(RObj)),
-    ?assert(Encoded == {error, unsupported_wire_version}),
-    Decoded = from_wire(Encoded),
-    ?assert(Decoded == {error, unknown_wire_format}).
+    ?assertEqual({error, unsupported_wire_version}, Encoded),
+    Decoded = from_wire(<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>),
+    ?assertEqual({error, unknown_wire_format}, Decoded).
 
 do_wire_list_w0_test() ->
     Bucket = <<"0b:foo">>,

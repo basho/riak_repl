@@ -26,7 +26,7 @@ rtq_trim_test() ->
 ask(Pid) ->
     Self = self(),
     gen_server:call(Pid, {pull_with_ack, rtq_test,
-             fun ({Seq, NumItem, Bin}) ->
+             fun ({Seq, NumItem, Bin, _Meta}) ->
                     Self ! {rtq_entry, {NumItem, Bin}}, 
                     gen_server:cast(Pid, {ack, rtq_test, Seq}),
                     ok

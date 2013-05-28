@@ -364,7 +364,7 @@ cleanup() ->
 maybe_start_master() ->
     case node() of
         'nonode@nohost' ->
-            net_kernel:start([riak_repl_tests]),
+            net_kernel:start([riak_repl_tests, shortnames]),
             {started, node()};
         Node ->
             {kept, Node}

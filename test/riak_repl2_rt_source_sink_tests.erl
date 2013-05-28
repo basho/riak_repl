@@ -156,6 +156,8 @@ assert_living_pids([Pid | Tail]) ->
 connection_test_teardown_pids(Source, Sink) ->
     meck:unload(riak_core_service_mgr),
     meck:unload(riak_core_connection_mgr),
+    unlink(Source),
+    unlink(Sink),
     riak_repl2_rtsource_conn:stop(Source),
     riak_repl2_rtsink_conn:stop(Sink),
     wait_for_pid(Source),

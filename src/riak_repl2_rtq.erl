@@ -325,7 +325,8 @@ handle_info(_Msg, State) ->
 
 %% @private
 terminate(Reason, #state{cs = Cs}) ->
-    erlang:unregister(?SERVER),
+    %% when started from tests, we may not be registered
+    catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
     [case DeliverFun of
          undefined ->
