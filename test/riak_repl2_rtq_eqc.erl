@@ -275,8 +275,7 @@ next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
                             TC#tc{tout=trim(TC#tc.tout ++ [Item], S)}
                     end, S#state.cs),
             S#state{cs=Clients}
-    end,
-    simulate_trimq(S1);
+    end;
 next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     Client = get_client(Name, S),
     %lager:info("tout is ~p~n", [Client#tc.tout]),
