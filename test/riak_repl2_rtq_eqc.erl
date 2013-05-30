@@ -202,14 +202,14 @@ precondition(_S,{call,_,_,_}) ->
 postcondition(S,{call,?MODULE,pull,[Name, _]},R) ->
     C = get_client(Name, S),
     Tout = C#tc.tout,
-    NothingRoutable = lists:all(fun(Qed) ->
+    {_Drops, RealTout} = lists:splitwith(fun(Qed) ->
         lists:member(C#tc.name, Qed#qed_item.meta)
     end, Tout),
     case R of
         none ->
-            Tout == [] orelse NothingRoutable orelse {not_empty, C#tc.name, Tout};
+            RealTout == [] orelse {not_empty, C#tc.name, Tout};
         {Seq, Size, Item} ->
-            case Tout of
+            case RealTout of
                 [] ->
                     {unexpected_item, C#tc.name, {Seq, Size, Item}};
                 [#qed_item{seq = Seq, num_items = Size, item_list = Item}|_] ->
