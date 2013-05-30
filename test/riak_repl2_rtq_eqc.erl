@@ -271,15 +271,19 @@ next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
         [] ->
             S#state{tout_no_clients=trim(S#state.tout_no_clients ++ [Item], S)};
         _ ->
+            MasterQ = lists:umerge([Tout || #tc{tout = Tout} <- S#state.cs]) ++ [Item],
+            TrimmedQ = trim(MasterQ, S),
+            DroppedObjs = MasterQ -- TrimmedQ,
             Clients = lists:map(fun(TC) ->
-                            TC#tc{tout=trim(TC#tc.tout ++ [Item], S)}
-                    end, S#state.cs),
+                Tout2 = TC#tc.tout -- DroppedObjs,
+                TC#tc{tout = Tout2}
+            end, S#state.cs),
             S#state{cs=Clients}
     end;
 next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     Client = get_client(Name, S),
     %lager:info("tout is ~p~n", [Client#tc.tout]),
-    {Tout, Trec} = case Client#tc.tout of
+    {Tout, Trec} = case get_first_routable(Client) of
         [] ->
             %% nothing to get
             {[], Client#tc.trec};
@@ -295,6 +299,14 @@ next_state(S,_V,{call, _, ack, [{Name,N}, _Q]}) ->
             tack=Client#tc.tack ++ H ++ [X]}, S);
 next_state(S,_V,{call, _, _, _}) ->
     S.
+
+get_first_routable(Client) ->
+    #tc{tout = Tout, name = Name} = Client,
+    SplitFun = fun(#qed_item{meta = Meta}) ->
+        not lists:member(Name, Meta)
+    end,
+    {Dropped, NewOut} = lists:splitwith(SplitFun, Tout),
+    NewOut.
 
 simulate_trimq(State) ->
     RawItems = get_queued_items(State),
