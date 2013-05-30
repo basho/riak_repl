@@ -303,7 +303,7 @@ next_state(S,_V,{call, _, _, _}) ->
 get_first_routable(Client) ->
     #tc{tout = Tout, name = Name} = Client,
     SplitFun = fun(#qed_item{meta = Meta}) ->
-        not lists:member(Name, Meta)
+        lists:member(Name, Meta)
     end,
     {Dropped, NewOut} = lists:splitwith(SplitFun, Tout),
     NewOut.
