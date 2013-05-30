@@ -308,53 +308,6 @@ get_first_routable(Client) ->
     {Dropped, NewOut} = lists:splitwith(SplitFun, Tout),
     NewOut.
 
-simulate_trimq(State) ->
-    RawItems = get_queued_items(State),
-    Ets = ets:new(?MODULE, [ordered_set, private]),
-    MaxSeq = length(RawItems),
-    Keyed = case MaxSeq of
-        0 ->
-            [];
-        _ ->
-            Keys = lists:seq(1, MaxSeq),
-            lists:zip(Keys, RawItems)
-    end,
-    ets:insert(Ets, Keyed),
-    WordSize = erlang:system_info(wordsize),
-    simulate_trimq(State, Ets, WordSize, RawItems, []).
-
-simulate_trimq(State, Ets, _WordSize, [], Acc) ->
-    finish_simulate_trimq(State, Ets, Acc);
-
-simulate_trimq(State, Ets, WordSize, RawItems, Acc) ->
-    Words = ets:info(Ets, memory),
-    TableBytes = WordSize * Words,
-    ObjectBytes = lists:sum([?BINARIED_OBJ_SIZE * length(Item#qed_item.item_list) || Item <- RawItems]),
-    TotalBytes = TableBytes + ObjectBytes,
-    if
-        TotalBytes > State#state.max_bytes ->
-            [Dropping | RawItems2] = RawItems,
-            ets:delete(Ets, ets:first(Ets)),
-            simulate_trimq(State, Ets, WordSize, RawItems2, [Dropping | Acc]);
-        true ->
-            finish_simulate_trimq(State, Ets, Acc)
-    end.
-
-finish_simulate_trimq(State, Ets, Acc) ->
-    ets:delete(Ets),
-    case State#state.tout_no_clients of
-        [] ->
-            Dropping = lists:reverse(Acc),
-            MapFun = fun(Tc) ->
-                Tout = Tc#tc.tout -- Dropping,
-                Tc#tc{tout = Tout}
-            end,
-            Tcs2 = lists:map(MapFun, State#state.cs),
-            State#state{cs = Tcs2};
-        ToutNoClients ->
-            {_Dropped, NewTout} = lists:split(length(Acc), ToutNoClients),
-            State#state{tout_no_clients = NewTout}
-    end.
 
 
 get_queued_items(#state{cs = [], tout_no_clients = Items}) ->
