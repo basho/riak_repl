@@ -202,9 +202,12 @@ precondition(_S,{call,_,_,_}) ->
 postcondition(S,{call,?MODULE,pull,[Name, _]},R) ->
     C = get_client(Name, S),
     Tout = C#tc.tout,
+    NothingRoutable = lists:all(fun(Qed) ->
+        lists:member(C#tc.name, Qed#qed_item.meta)
+    end, Tout),
     case R of
         none ->
-            Tout == [] orelse {not_empty, C#tc.name, Tout};
+            Tout == [] orelse NothingRoutable orelse {not_empty, C#tc.name, Tout};
         {Seq, Size, Item} ->
             case Tout of
                 [] ->
