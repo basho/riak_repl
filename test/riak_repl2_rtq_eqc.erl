@@ -291,7 +291,7 @@ next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     update_client(Client#tc{tout=Tout, trec=Trec}, S);
 next_state(S,_V,{call, _, ack, [{Name,N}, _Q]}) ->
     Client = get_client(Name, S),
-    {H, [X|T]} = lists:splitwith(fun({Seq, _, _}) -> Seq /= N end, Client#tc.trec),
+    {H, [X|T]} = lists:splitwith(fun(#qed_item{seq = Seq}) -> Seq /= N end, Client#tc.trec),
     update_client(Client#tc{trec=T,
             tack=Client#tc.tack ++ H ++ [X]}, S);
 next_state(S,_V,{call, _, _, _}) ->
@@ -421,8 +421,8 @@ pull(Name, Q) ->
     end,
     riak_repl2_rtq:pull(Name, F),
     receive
-        {Ref, {Seq, Size, Item}} ->
-            lager:info("~p got ~p size ~p seq ~p~n", [Name, Item, Size, Seq]),
+        {Ref, {Seq, Size, Item, Meta}} ->
+            lager:info("~p got ~p size ~p seq ~p meta~n", [Name, Item, Size, Seq, Meta]),
             Q ! {Ref, ok},
             {Seq, Size, binary_to_term(Item)};
         {Ref, Wut} ->
