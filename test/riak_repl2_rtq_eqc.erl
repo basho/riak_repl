@@ -275,7 +275,7 @@ next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
             TrimmedQ = trim(MasterQ, S),
             DroppedObjs = MasterQ -- TrimmedQ,
             Clients = lists:map(fun(TC) ->
-                Tout2 = TC#tc.tout -- DroppedObjs,
+                Tout2 = (TC#tc.tout ++ [Item]) -- DroppedObjs,
                 TC#tc{tout = Tout2}
             end, S#state.cs),
             S#state{cs=Clients}
