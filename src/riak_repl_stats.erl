@@ -339,7 +339,7 @@ is_rt_dirty() ->
 -ifdef(TEST).
 
 repl_stats_test_() ->
-    {setup, fun() ->
+    {"stats test", setup, fun() ->
                     folsom:start(),
                     meck:new(folsom_utils, [passthrough]),
                     meck:new(riak_core_cluster_mgr, [passthrough]),
