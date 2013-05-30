@@ -445,7 +445,7 @@ update_client(C, S) ->
 
 gen_seq(#tc{trec = []}) -> no_seq;
 gen_seq(C) ->
-    ?LET(E, elements(C#tc.trec), element(1, E)).
+    ?LET(E, elements(C#tc.trec), E#qed_item.seq).
 
 trim(Q, #state{max_bytes=Max}) ->
     {_Size, NewQ} = lists:foldl(fun(#qed_item{seq = Seq, num_items = NumItems, item_list = NotYetBin} = Item, {Size, Acc}) ->
