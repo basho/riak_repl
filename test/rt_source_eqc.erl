@@ -695,5 +695,5 @@ fake_sink_nom_frames({ok, Frame, Rest}, History) ->
 fake_sink_nom_frames(Bin, History) ->
     fake_sink_nom_frames(riak_repl2_rtframe:decode(Bin), History).
 
--endif(TEST).
--endif(EQC).
+-endif.
+-endif.

@@ -130,6 +130,7 @@ teardown() ->
     read_all_rt_bugs(),
     read_all_fake_rtq_bugs(),
     % murder and restore all processes/mecks
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl_test_util:kill_and_wait(riak_core_service_manager),
     riak_repl_test_util:kill_and_wait(riak_repl2_rtsink_conn_sup, kill),
     riak_repl2_rtsink_conn_sup:start_link(),
@@ -621,5 +622,5 @@ fake_source_loop(State) ->
             fake_source_loop(State)
     end.
 
--endif(TEST).
--endif(EQC).
+-endif.
+-endif.
