@@ -439,8 +439,20 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables)
             C#c{deliver = DeliverFun}
     end.
 
-maybe_deliver_item(C = #c{deliver = undefined}, _QEntry) ->
-    {no_fun, C};
+maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
+    {Seq, _NumItem, _Bin, Meta} = QEntry,
+    Name = C#c.name,
+    Routed = case orddict:find(routed_clusters, Meta) of
+        error -> [];
+        {ok, V} -> V
+    end,
+    Cause = case lists:member(Name, Routed) of
+        true ->
+            skipped;
+        false ->
+            no_fun
+    end,
+    {Cause, C};
 maybe_deliver_item(C, QEntry) ->
     {Seq, _NumItem, _Bin, Meta} = QEntry,
     #c{name = Name} = C,

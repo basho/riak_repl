@@ -236,23 +236,15 @@ postcondition(_S,{call,_,_,_},_R) ->
 
 next_state(S,V,{call, _, test_init, [{size, MaxBytes}]}) ->
     S#state{rtq=V, max_bytes=MaxBytes};
-next_state(S,_V,{call, _, new_consumer, [Name, _Q]}) ->
-    %% IF there's other clients, this client's outstanding messages will
-    %% be the longest REC+OUT queue from one of the other consumers.
-    %% Otherwise use the tout_no_clients value and wipe from the state.
-    Tout = lists:foldl(fun(#tc{trec = Trec, tout=Tout}, Longest) ->
-                    Q = trim(Trec ++ Tout, S),
-                    case length(Q) > length(Longest) of
-                        true ->
-                            Q;
-                        _ ->
-                            Longest
-                    end
-            end, S#state.tout_no_clients, S#state.cs),
-    lager:info("starting client ~p with backlog of ~p~n", [Name, length(Tout)]),
-    S#state{cs=[#tc{name=Name, tout=Tout}|S#state.cs],
-            tout_no_clients = [],
-            pcs=S#state.pcs -- [Name]};
+next_state(#state{cs = []} = S, _V, {call, _, new_consumer, [Name, _Q]}) ->
+    Tc = #tc{name = Name, tout = S#state.tout_no_clients},
+    S#state{cs = [Tc], tout_no_clients = [], pcs = S#state.pcs -- [Name]};
+next_state(S, _V, {call, _, new_consumer, [Name, _Q]}) ->
+    MasterQ = generate_master_q(S),
+    TrueMaster = trim(MasterQ, S),
+    TC = #tc{name = Name, tout = TrueMaster},
+    ?debugFmt("Giving new consumer ~s the queue ~p",[Name, MasterQ]),
+    S#state{cs = [TC|S#state.cs], pcs = S#state.pcs -- [Name]};
 next_state(S,_V,{call, _, rm_consumer, [Name, _Q]}) ->
     delete_client(Name, S#state{pcs=[Name|S#state.pcs]});
 next_state(S,_V,{call, _, replace_consumer, [Name, _Q]}) ->
@@ -286,17 +278,20 @@ next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
 next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     Client = get_client(Name, S),
     %lager:info("tout is ~p~n", [Client#tc.tout]),
-    {Tout, Trec} = case get_first_routable(Client) of
-        [] ->
-            %% nothing to get
-            {[], Client#tc.trec};
-        [H|T] ->
-            {T, Client#tc.trec ++ [H]}
+    SplitFun = fun(#qed_item{meta = Meta}) ->
+        lists:member(Name, Meta)
     end,
-    %lager:info("trec ~p, tout ~p~n", [Trec, Tout]),
-    update_client(Client#tc{tout=Tout, trec=Trec}, S);
+    {TrecTail, ToutLeft} = case lists:splitwith(SplitFun, Client#tc.tout) of
+            {SkippedOrDeliverd, []} ->
+                {SkippedOrDeliverd, []};
+            {SkippedOrDeliverd, [Delivered | Left]} ->
+                {SkippedOrDeliverd ++ [Delivered], Left}
+    end,
+    Trec = Client#tc.trec ++ TrecTail,
+    update_client(Client#tc{tout = ToutLeft, trec = Trec}, S);
 next_state(S,_V,{call, _, ack, [{Name,N}, _Q]}) ->
     Client = get_client(Name, S),
+    ?debugFmt("acking up to seq ~p", [N]),
     {H, [X|T]} = lists:splitwith(fun(#qed_item{seq = Seq}) -> Seq /= N end, Client#tc.trec),
     update_client(Client#tc{trec=T,
             tack=Client#tc.tack ++ H ++ [X]}, S);
@@ -389,7 +384,7 @@ pull(Name, Q) ->
     riak_repl2_rtq:pull(Name, F),
     receive
         {Ref, {Seq, Size, Item, Meta}} ->
-            lager:info("~p got ~p size ~p seq ~p meta~n", [Name, Item, Size, Seq, Meta]),
+            lager:info("~p got ~p size ~p seq ~p meta ~p~n", [Name, Item, Size, Seq, Meta]),
             Q ! {Ref, ok},
             {Seq, Size, binary_to_term(Item)};
         {Ref, Wut} ->
@@ -413,7 +408,38 @@ update_client(C, S) ->
 
 gen_seq(#tc{trec = []}) -> no_seq;
 gen_seq(C) ->
-    ?LET(E, elements(C#tc.trec), E#qed_item.seq).
+    ?LET(E, elements(C#tc.trec), begin ?debugFmt("the item: ~n    ~p", [E]), E#qed_item.seq end).
+
+generate_master_q(S) ->
+    MasterQ = lists:foldl(fun(TC, Acc) ->
+        #tc{tout = Tout, trec = Trec} = TC,
+        NotDeliverFilter = fun(Qed) ->
+            not lists:member(TC#tc.name, Qed#qed_item.meta)
+        end,
+        Tout2 = lists:filter(NotDeliverFilter, Tout),
+        Trec2 = lists:filter(NotDeliverFilter, Trec),
+        ?debugFmt("merging tout ~p, trec ~p, and acc ~p for ~p", [Tout2, Trec2, Acc, TC#tc.name]),
+        lists:umerge([Tout2, Trec2, Acc])
+    end, [], S#state.cs).
+
+trim(S) ->
+    MasterQ = generate_master_q(S),
+    case trim(MasterQ, S) of
+        MasterQ ->
+            S;
+        Trimmed ->
+            Dropped = MasterQ -- Trimmed,
+            nuke_dropped(Dropped, S)
+    end.
+
+nuke_dropped(Dropped, S) ->
+    MapFun = fun(TC) ->
+        Tout = TC#tc.tout -- Dropped,
+        Trec = TC#tc.trec -- Dropped,
+        TC#tc{tout = Tout, trec = Trec}
+    end,
+    Clients = lists:map(MapFun, S#state.cs),
+    S#state{cs = Clients}.
 
 trim(Q, #state{max_bytes=Max}) ->
     {_Size, NewQ} = lists:foldl(fun(#qed_item{seq = Seq, num_items = NumItems, item_list = NotYetBin} = Item, {Size, Acc}) ->
