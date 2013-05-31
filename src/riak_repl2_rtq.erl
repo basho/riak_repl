@@ -315,9 +315,9 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
     NewState = cleanup(QTab, MinSeq, State),
-    Undeliverables = clear_non_deliverables(QTab, UpdCs),
+    {ShrinkBy, Undeliverables} = clear_non_deliverables(QTab, UpdCs, State#state.word_size),
     Undeliverables2 = union_undeliverables(NewState#state.undeliverables, Undeliverables, MinSeq),
-    NewState#state{cs = UpdCs, undeliverables = Undeliverables2}.
+    NewState#state{cs = UpdCs, undeliverables = Undeliverables2, qsize_bytes = NewState#state.qsize_bytes - ShrinkBy}.
 
 %% @private
 handle_info(_Msg, State) ->
@@ -370,9 +370,9 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                      end,
             NewState0 = cleanup(QTab, MinSeq, State),
             NewState = NewState0#state{cs = Cs2},
-            Undeliverables = clear_non_deliverables(QTab, Cs2),
+            {ShrinkBy, Undeliverables} = clear_non_deliverables(QTab, Cs2, NewState#state.word_size),
             Undeliverables2 = union_undeliverables(State#state.undeliverables, Undeliverables, 0),
-            {ok, NewState#state{undeliverables = Undeliverables2}};
+            {ok, NewState#state{undeliverables = Undeliverables2, qsize_bytes = NewState#state.qsize_bytes - ShrinkBy}};
         false ->
             {{error, not_registered}, State}
     end.
@@ -524,6 +524,8 @@ cleanup(QTab, Seq, State) ->
     end.
 
 ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
+  ets_obj_size(Obj, WordSize);
+ets_obj_size(Obj, WordSize) when is_binary(Obj) ->
   BSize = erlang:byte_size(Obj),
   case BSize > 64 of
         true -> BSize - (6 * WordSize);
@@ -535,7 +537,7 @@ ets_obj_size(Obj, _) ->
 update_q_size(State = #state{qsize_bytes = CurrentQSize}, Diff) ->
   State#state{qsize_bytes = CurrentQSize + Diff}.
 
-clear_non_deliverables(QTab, ActiveConsumers) ->
+clear_non_deliverables(QTab, ActiveConsumers, WordSize) ->
     Accumulator = fun(QEntry, Acc) ->
         {Seq, _, _, Meta} = QEntry,
         Routed = case orddict:find(routed_clusters, Meta) of
@@ -551,8 +553,14 @@ clear_non_deliverables(QTab, ActiveConsumers) ->
         end
     end,
     ToDelete = ets:foldl(Accumulator, [], QTab),
-    [ets:delete(QTab, Key) || Key <- ToDelete],
-    ToDelete.
+    DeleteFun = fun(Key, Acc) ->
+      [{Key, _NumItems, Bin, _Meta}] = ets:lookup(QTab, Key),
+      Size = ets_obj_size(Bin, WordSize),
+      ets:delete(QTab, Key),
+      Acc + Size
+    end,
+    Shrink = lists:foldl(DeleteFun, 0, ToDelete),
+    {Shrink, ToDelete}.
 
 union_undeliverables(SeqSet1, SeqSet2, MinSeq) ->
     Undeliverables = ordsets:union(SeqSet1, SeqSet2),
