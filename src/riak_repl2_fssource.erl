@@ -175,7 +175,7 @@ handle_cast(_Msg, State) ->
 handle_info({'DOWN', Ref, process, Pid, not_responsible}, State=#state{partition=Partition}) ->
     erlang:demonitor(Ref),
     lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
-    lager:info("Probable cause is one or more differing bucket N values between source and sink clusters."),
+    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
     lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
     Strategy = keylist,
     case connect(State#state.ip, Strategy, Partition) of
