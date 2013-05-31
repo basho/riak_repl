@@ -250,10 +250,10 @@ next_state(S,_V,{call, _, rm_consumer, [Name, _Q]}) ->
 next_state(S,_V,{call, _, replace_consumer, [Name, _Q]}) ->
     Client = get_client(Name, S),
     %% anything we didn't ack will be considered dropped by the queue
+    MasterQ = generate_master_q(S),
     NewClient = Client#tc{tack=[],
                           trec=[],
-                          tout=trim(Client#tc.trec
-                          ++ Client#tc.tout, S)},
+                          tout=MasterQ},
     update_client(NewClient, S);
 next_state(S0,V,{call, M, push, [Value, _Q]}) ->
     next_state(S0,V,{call,M,push,[Value,[],_Q]});
@@ -266,14 +266,11 @@ next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
         [] ->
             S#state{tout_no_clients=trim(S#state.tout_no_clients ++ [Item], S)};
         _ ->
-            MasterQ = lists:umerge([Tout || #tc{tout = Tout} <- S#state.cs]) ++ [Item],
-            TrimmedQ = trim(MasterQ, S),
-            DroppedObjs = MasterQ -- TrimmedQ,
             Clients = lists:map(fun(TC) ->
-                Tout2 = (TC#tc.tout ++ [Item]) -- DroppedObjs,
+                Tout2 = TC#tc.tout ++ [Item],
                 TC#tc{tout = Tout2}
             end, S#state.cs),
-            S#state{cs=Clients}
+            trim(S#state{cs = Clients})
     end;
 next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     Client = get_client(Name, S),
