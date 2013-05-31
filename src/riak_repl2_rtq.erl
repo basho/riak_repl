@@ -440,7 +440,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables)
     end.
 
 maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
-    {Seq, _NumItem, _Bin, Meta} = QEntry,
+    {_Seq, _NumItem, _Bin, Meta} = QEntry,
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -489,17 +489,6 @@ set_skip_meta(QEntry, _Seq, _C = #c{delivered = false}) ->
     set_meta(QEntry, skip_count, 0);
 set_skip_meta(QEntry, _Seq, _C = #c{skips = S}) ->
     set_meta(QEntry, skip_count, S).
-
-% if the sequence we are testing is more than one above the last sequence
-% skipped, then there was at least one sequence sent to the sink side.
-count_skips(Seq, [SeqMin1 | Tail], N) when Seq - 1 == SeqMin1 ->
-    count_skips(SeqMin1, Tail, N + 1);
-% a skipped seq can happen when a source connects to a sink, and a seq was
-% marked as unroutable.
-count_skips(Seq, [SeqBig | Tail], N) when Seq < SeqBig ->
-    count_skips(Seq, Tail, N);
-count_skips(_Seq, _Count, N) ->
-    N.
 
 set_local_forwards_meta(LocalForwards, QEntry) ->
     set_meta(QEntry, local_forwards, LocalForwards).
