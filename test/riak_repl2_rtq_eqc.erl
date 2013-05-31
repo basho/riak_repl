@@ -243,7 +243,6 @@ next_state(S, _V, {call, _, new_consumer, [Name, _Q]}) ->
     MasterQ = generate_master_q(S),
     TrueMaster = trim(MasterQ, S),
     TC = #tc{name = Name, tout = TrueMaster},
-    ?debugFmt("Giving new consumer ~s the queue ~p",[Name, MasterQ]),
     S#state{cs = [TC|S#state.cs], pcs = S#state.pcs -- [Name]};
 next_state(S,_V,{call, _, rm_consumer, [Name, _Q]}) ->
     delete_client(Name, S#state{pcs=[Name|S#state.pcs]});
@@ -257,12 +256,12 @@ next_state(S,_V,{call, _, replace_consumer, [Name, _Q]}) ->
     update_client(NewClient, S);
 next_state(S0,V,{call, M, push, [Value, _Q]}) ->
     next_state(S0,V,{call,M,push,[Value,[],_Q]});
-next_state(S0, _V, {call, _, push, [Value, RoutedClusters, Q]}) ->
+next_state(S0, _V, {call, _, push, [Value, RoutedClusters, _Q]}) ->
     %Item2 = set_meta(Item, routed_clusters, RoutedClusters),
     S = S0#state{qseq = S0#state.qseq+1},
     %Item = {S#state.qseq, length(Value), Value},
     Item = #qed_item{seq = S#state.qseq, num_items = length(Value), item_list = Value, meta = RoutedClusters},
-    S1 = case S#state.cs of
+    case S#state.cs of
         [] ->
             S#state{tout_no_clients=trim(S#state.tout_no_clients ++ [Item], S)};
         _ ->
@@ -288,7 +287,6 @@ next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     update_client(Client#tc{tout = ToutLeft, trec = Trec}, S);
 next_state(S,_V,{call, _, ack, [{Name,N}, _Q]}) ->
     Client = get_client(Name, S),
-    ?debugFmt("acking up to seq ~p", [N]),
     {H, [X|T]} = lists:splitwith(fun(#qed_item{seq = Seq}) -> Seq /= N end, Client#tc.trec),
     update_client(Client#tc{trec=T,
             tack=Client#tc.tack ++ H ++ [X]}, S);
@@ -300,7 +298,7 @@ get_first_routable(Client) ->
     SplitFun = fun(#qed_item{meta = Meta}) ->
         lists:member(Name, Meta)
     end,
-    {Dropped, NewOut} = lists:splitwith(SplitFun, Tout),
+    {_Skipped, NewOut} = lists:splitwith(SplitFun, Tout),
     NewOut.
 
 
@@ -350,11 +348,11 @@ new_consumer(Name, Q) ->
     lager:info("registering ~p to ~p~n", [Name, Q]),
     riak_repl2_rtq:register(Name).
 
-rm_consumer(Name, Q) ->
+rm_consumer(Name, _Q) ->
     lager:info("unregistering ~p", [Name]),
     riak_repl2_rtq:unregister(Name).
 
-replace_consumer(Name, Q) ->
+replace_consumer(Name, _Q) ->
     lager:info("replacing ~p", [Name]),
     riak_repl2_rtq:register(Name).
 
@@ -384,7 +382,7 @@ pull(Name, Q) ->
             lager:info("~p got ~p size ~p seq ~p meta ~p~n", [Name, Item, Size, Seq, Meta]),
             Q ! {Ref, ok},
             {Seq, Size, binary_to_term(Item)};
-        {Ref, Wut} ->
+        {Ref, _Wut} ->
             none
     after
         20 ->
@@ -405,17 +403,16 @@ update_client(C, S) ->
 
 gen_seq(#tc{trec = []}) -> no_seq;
 gen_seq(C) ->
-    ?LET(E, elements(C#tc.trec), begin ?debugFmt("the item: ~n    ~p", [E]), E#qed_item.seq end).
+    ?LET(E, elements(C#tc.trec), E#qed_item.seq).
 
 generate_master_q(S) ->
-    MasterQ = lists:foldl(fun(TC, Acc) ->
+    lists:foldl(fun(TC, Acc) ->
         #tc{tout = Tout, trec = Trec} = TC,
         NotDeliverFilter = fun(Qed) ->
             not lists:member(TC#tc.name, Qed#qed_item.meta)
         end,
         Tout2 = lists:filter(NotDeliverFilter, Tout),
         Trec2 = lists:filter(NotDeliverFilter, Trec),
-        ?debugFmt("merging tout ~p, trec ~p, and acc ~p for ~p", [Tout2, Trec2, Acc, TC#tc.name]),
         lists:umerge([Tout2, Trec2, Acc])
     end, [], S#state.cs).
 
@@ -439,8 +436,7 @@ nuke_dropped(Dropped, S) ->
     S#state{cs = Clients}.
 
 trim(Q, #state{max_bytes=Max}) ->
-    {_Size, NewQ} = lists:foldl(fun(#qed_item{seq = Seq, num_items = NumItems, item_list = NotYetBin} = Item, {Size, Acc}) ->
-                Bin = term_to_binary(NotYetBin),
+    {_Size, NewQ} = lists:foldl(fun(Item, {Size, Acc}) ->
                 case (?BINARIED_OBJ_SIZE + Size) > Max of
                     true ->
                         {Size, Acc};
