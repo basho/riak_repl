@@ -34,15 +34,19 @@
 
 -ifdef(TEST).
 rtq_test_() ->
-    {timeout, 60,
-     fun() ->
-                ?assert(eqc:quickcheck(eqc:testing_time(25,
-                                                        ?MODULE:prop_main()))),
-                ?assert(eqc:quickcheck(eqc:testing_time(25,
-                                                        ?MODULE:prop_parallel()))),
-                catch(meck:unload(riak_repl_stats))
-        end
-    }.
+    {timeout, 60, {setup, fun() -> ok end,
+    fun(_) -> catch(meck:unload(riak_repl_stats)) end,
+    fun(_) -> [
+
+        {"prop_main", timeout, 30,
+            ?_assert(eqc:quickcheck(eqc:testing_time(25,
+                                                        ?MODULE:prop_main())))},
+
+        {"prop_parallel", timeout, 30,
+            ?_assert(eqc:quickcheck(eqc:testing_time(25,
+                                                        ?MODULE:prop_parallel())))}
+
+    ] end}}.
 -endif.
 
 
