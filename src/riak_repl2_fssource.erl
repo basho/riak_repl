@@ -54,11 +54,6 @@ legacy_status(Pid, Timeout) ->
 %% gen server
 
 init([Partition, IP]) ->
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 4},
-                  {active, false}],
-
     DefaultStrategy = ?DEFAULT_FULLSYNC_STRATEGY,
 
     %% Determine what kind of fullsync worker strategy we want to start with,
@@ -67,27 +62,7 @@ init([Partition, IP]) ->
     OurCaps = decide_our_caps(DefaultStrategy),
     SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
 
-    %% use 1,1 proto for new binary object
-    %% use 2,0 for AAE fullsync + binary objects
-    {Major,Minor} = case SupportedStrategy of
-                        keylist -> {1,1};
-                        aae -> {2,0}
-                    end,
-    ClientSpec = {{fullsync,[{Major,Minor}]}, {TcpOptions, ?MODULE, self()}},
-
-    %% TODO: check for bad remote name
-    lager:info("connecting to remote ~p", [IP]),
-    case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
-        {ok, Ref} ->
-            lager:info("connection ref ~p", [Ref]),
-            {ok, #state{strategy = SupportedStrategy, ip = IP,
-                        connection_ref = Ref, partition=Partition}};
-        {error, Reason}->
-            lager:warning("Error connecting to remote"),
-            {stop, Reason}
-    end.
-
-
+    connect(IP, SupportedStrategy, Partition).
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
@@ -128,6 +103,8 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                    Transport, Socket,
                                                                    Partition,
                                                                    self()),
+            %% We want a 'DOWN' message when the aae worker stops itself for not_responsible
+            erlang:monitor(process, FullsyncWorker),
             %% Give control of socket to AAE worker. It will consume all TCP messages.
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
@@ -195,6 +172,16 @@ handle_cast({connect_failed, _Pid, Reason},
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+handle_info({'DOWN', Ref, process, Pid, not_responsible}, State=#state{partition=Partition}) ->
+    erlang:demonitor(Ref),
+    lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
+    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
+    lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
+    Strategy = keylist,
+    case connect(State#state.ip, Strategy, Partition) of
+        {ok, State2} -> {noreply, State2};
+        Error -> Error
+    end;
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),
@@ -218,7 +205,8 @@ handle_info({Proto, Socket, Data},
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
     end;
-handle_info(_Msg, State) ->
+handle_info(Msg, State) ->
+    lager:info("ignored handle_info ~p", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
@@ -284,3 +272,30 @@ maybe_exchange_caps(_, Caps, Socket, Transport) ->
         end,
     Transport:send(Socket, term_to_binary(Caps)),
     TheirCaps.
+
+%% Start a connection to the remote sink node at IP, using the given fullsync strategy,
+%% for the given partition. The protocol version will be determined from the strategy.
+connect(IP, Strategy, Partition) ->
+    lager:info("connecting to remote ~p", [IP]),
+    TcpOptions = [{keepalive, true},
+                  {nodelay, true},
+                  {packet, 4},
+                  {active, false}],
+
+    %% use 1,1 proto for new binary object
+    %% use 2,0 for AAE fullsync + binary objects
+    ProtocolVersion = case Strategy of
+                          keylist -> {1,1};
+                          aae -> {2,0}
+                      end,
+
+    ClientSpec = {{fullsync,[ProtocolVersion]}, {TcpOptions, ?MODULE, self()}},
+    case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
+        {ok, Ref} ->
+            lager:info("connection ref ~p", [Ref]),
+            {ok, #state{strategy = Strategy, ip = IP,
+                        connection_ref = Ref, partition=Partition}};
+        {error, Reason}->
+            lager:warning("Error connecting to remote"),
+            {stop, Reason}
+    end.
