@@ -29,17 +29,23 @@ status() ->
         undefined ->
             {[], []};
         _ ->
-            ReqStats = case riak_repl2_pg_block_requester_sup:started(LeaderNode) of
+            ReqStats = try riak_repl2_pg_block_requester_sup:started(LeaderNode) of
                 [] ->
                     [];
                 PGRs ->
                     [riak_repl2_pg_block_requester:status(Pid) || {_Remote, Pid} <- PGRs]
+            catch
+                _:_ ->
+                    []
             end,
-            ProStats = case riak_repl2_pg_block_provider_sup:enabled(LeaderNode) of
+            ProStats = try riak_repl2_pg_block_provider_sup:enabled(LeaderNode) of
                 [] ->
                     [];
                 PGPs ->
                     [{Remote, riak_repl2_pg_block_provider:status(Pid)} || {Remote, Pid} <- PGPs]
+                catch
+                    _:_ ->
+                        []
             end,
             [{proxy_get,[{requester,ReqStats}, {provider, ProStats}]}]
     end.
