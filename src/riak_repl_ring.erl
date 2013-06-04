@@ -257,17 +257,17 @@ set_clusterIpAddrs(Ring, {ClusterName, Addrs}) ->
     OldClusters = get_list(clusters, Ring),
     %% replace Cluster in the list of Clusters
     Cluster = {ClusterName, Addrs},
-    Clusters = case lists:keymember(ClusterName, 1, OldClusters) of
-                   true ->
-                       case Addrs of
-                           [] ->
-                               lists:keydelete(ClusterName, 1, OldClusters);
-                           _Addrs ->
-                               lists:keyreplace(ClusterName, 1, OldClusters, Cluster)
-                       end;
-                   _ ->
-                       [Cluster | OldClusters]
-               end,
+    Clusters = case Addrs of
+        [] ->
+            lists:keydelete(ClusterName, 1, OldClusters);
+        _ ->
+            case lists:keymember(ClusterName, 1, OldClusters) of
+                true ->
+                    lists:keyreplace(ClusterName, 1, OldClusters, Cluster);
+                _ ->
+                    [Cluster | OldClusters]
+            end
+    end,
     %% replace Clusters in ring
     RC2 = dict:store(clusters, Clusters, RC),
     case RC == RC2 of
