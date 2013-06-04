@@ -35,9 +35,9 @@ init() ->
     % get the current repl modes and stash them in the state
     % I suppose riak_repl_pb_get would need to be restarted if these values
     % changed
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring0} = riak_core_ring_manager:get_my_ring(),
+    Ring = riak_repl_ring:ensure_config(Ring0),
     ClusterID = riak_core_ring:cluster_name(Ring),
-    riak_repl_ring:ensure_config(Ring),
     Modes = riak_repl_ring:get_modes(Ring),
     #state{client=C, repl_modes=Modes, cluster_id=ClusterID}.
 
