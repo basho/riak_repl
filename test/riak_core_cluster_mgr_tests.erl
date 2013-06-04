@@ -152,7 +152,10 @@ wait_for(Fun, Remaining, Interval) ->
             wait_for(Fun, Remaining - Interval, Interval)
     end.
 
-multinode_test_() ->
+%% XXX this test is disabled because it doesn't run when certain gostname
+%% configurations are used. Disabling it until we can rewrite it as a
+%% riak_test.
+multinode_test__() ->
     {setup, fun() ->
         % superman, batman, and wonder woman are all part of the JLA
         % (Justice League of America). Superman is the defacto leader, with
