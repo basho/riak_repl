@@ -117,8 +117,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                     {Value, notconnected} -> Value;
                     {_, Value} ->
                         lager:warning("proxy_get received a result from multiple versions of replication for cluster ~p", [CName]),
-                        Value; %% default to 1.3 if both are valid
-                    _ -> notconnected
+                        Value %% default to 1.3 if both are valid
                 end,
             case Result of
                 notconnected ->
