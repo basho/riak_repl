@@ -33,7 +33,7 @@ status(Pid) ->
     end.
 
 stop(Pid) ->
-    gen_server:call(Pid, stop).
+    gen_server:call(Pid, stop, infinity).
 
 %% gen_server
 

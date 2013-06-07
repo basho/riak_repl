@@ -29,16 +29,16 @@ start_link(Partition, IP) ->
 connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
     Transport:controlling_process(Socket, Pid),
     gen_server:call(Pid,
-        {connected, Socket, Transport, Endpoint, Proto, Props}).
+        {connected, Socket, Transport, Endpoint, Proto, Props}, ?LONG_TIMEOUT).
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
     gen_server:cast(RtSourcePid, {connect_failed, self(), Reason}).
 
 start_fullsync(Pid) ->
-    gen_server:call(Pid, start_fullsync).
+    gen_server:call(Pid, start_fullsync, ?LONG_TIMEOUT).
 
 stop_fullsync(Pid) ->
-    gen_server:call(Pid, stop_fullsync).
+    gen_server:call(Pid, stop_fullsync, ?LONG_TIMEOUT).
 
 fullsync_complete(Pid) ->
     %% cast to avoid deadlock in terminate
@@ -46,7 +46,7 @@ fullsync_complete(Pid) ->
 
 %% get the cluster name
 cluster_name(Pid) ->
-    gen_server:call(Pid, cluster_name).
+    gen_server:call(Pid, cluster_name, ?LONG_TIMEOUT).
 
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
@@ -172,7 +172,7 @@ handle_cast({connect_failed, _Pid, Reason},
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', Ref, process, Pid, not_responsible}, State=#state{partition=Partition}) ->
+handle_info({'DOWN', Ref, process, _Pid, not_responsible}, State=#state{partition=Partition}) ->
     erlang:demonitor(Ref),
     lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
     lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),

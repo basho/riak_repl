@@ -18,6 +18,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
         terminate/2, code_change/3, proxy_get/4]).
 
+-include("riak_repl.hrl").
+
 -define(SERVER, ?MODULE).
 
 -record(state, {
@@ -28,7 +30,7 @@
 %%% API
 %%%===================================================================
 proxy_get(Pid, Bucket, Key, Options) ->
-    gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
+    gen_server:call(Pid, {proxy_get, Bucket, Key, Options}, ?LONG_TIMEOUT).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -56,7 +58,7 @@ handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
             lager:warning("No proxy_get node registered"),
             {reply, {error, no_proxy_get_node}, State};
         [{_RNode, RPid, _} | T] ->
-            try gen_server:call(RPid, {proxy_get, Bucket, Key, GetOptions}) of
+            try gen_server:call(RPid, {proxy_get, Bucket, Key, GetOptions}, ?LONG_TIMEOUT) of
                 Result ->
                     {reply, Result, State}
             catch

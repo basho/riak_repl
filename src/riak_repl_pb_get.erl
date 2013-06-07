@@ -1,5 +1,7 @@
 -module(riak_repl_pb_get).
 
+-include("riak_repl.hrl").
+
 -include_lib("riak_repl_pb_api/include/riak_repl_pb.hrl").
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
@@ -165,7 +167,7 @@ proxy_get_13(State, CName, CNames, B, K, GetOptions) ->
                 true ->
                     Leader = riak_core_cluster_mgr:get_leader(),
                     ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
-                    gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions});
+                    gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions}, ?LONG_TIMEOUT);
                 false ->
                     notconnected
             end
