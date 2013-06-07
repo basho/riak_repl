@@ -1,5 +1,6 @@
 -module(rt_source_eqc).
 
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -691,3 +692,5 @@ fake_sink_nom_frames({ok, Frame, Rest}, History) ->
     fake_sink_nom_frames(Rest, [Frame | History]);
 fake_sink_nom_frames(Bin, History) ->
     fake_sink_nom_frames(riak_repl2_rtframe:decode(Bin), History).
+
+-endif. % EQC

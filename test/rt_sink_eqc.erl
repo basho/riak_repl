@@ -1,5 +1,6 @@
 -module(rt_sink_eqc).
 
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -616,3 +617,5 @@ fake_source_loop(State) ->
         What ->
             fake_source_loop(State)
     end.
+
+-endif. % EQC
