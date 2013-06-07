@@ -64,7 +64,7 @@ stop(Pid) ->
 %% a gen_fsm event {Ref, merkle_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_merkle(Pid, Partition, Filename) ->
-    riak_core_gen_server:call(Pid, {make_merkle, Partition, Filename}).
+    riak_core_gen_server:call(Pid, {make_merkle, Partition, Filename}, ?LONG_TIMEOUT).
 
 %% Make a sorted file of key/object hashes.
 %% 
@@ -72,7 +72,7 @@ make_merkle(Pid, Partition, Filename) ->
 %% a gen_fsm event {Ref, keylist_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_keylist(Pid, Partition, Filename) ->
-    riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename}).
+    riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename}, ?LONG_TIMEOUT).
    
 %% Convert a couch_btree to a sorted keylist file.
 %%
@@ -80,17 +80,17 @@ make_keylist(Pid, Partition, Filename) ->
 %% Sends a gen_fsm event {Ref, converted} on success or
 %% {Ref, {error, Reason}} on failure
 merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
-    riak_core_gen_server:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}).
+    riak_core_gen_server:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}, ?LONG_TIMEOUT).
     
 %% Computes the difference between two keylist sorted files.
 %% Returns {ok, Ref} or {error, Reason}
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
 %% and finally {Ref, diff_done}.  Any errors as {Ref, {error, Reason}}.
 diff(Pid, Partition, TheirFn, OurFn) ->
-    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true}).
+    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, -1, true}, ?LONG_TIMEOUT).
 
 diff_stream(Pid, Partition, TheirFn, OurFn, Count) ->
-    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false}).
+    riak_core_gen_server:call(Pid, {diff, Partition, TheirFn, OurFn, Count, false}, ?LONG_TIMEOUT).
 
 %% ====================================================================
 %% gen_server callbacks

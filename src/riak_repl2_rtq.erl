@@ -68,17 +68,17 @@ start_test() ->
     gen_server:start(?MODULE, [], []).
 
 register(Name) ->
-    gen_server:call(?SERVER, {register, Name}).
+    gen_server:call(?SERVER, {register, Name}, infinity).
 
 unregister(Name) ->
-    gen_server:call(?SERVER, {unregister, Name}).
+    gen_server:call(?SERVER, {unregister, Name}, infinity).
 
 
 is_empty(Name) ->
-    gen_server:call(?SERVER, {is_empty, Name}).
+    gen_server:call(?SERVER, {is_empty, Name}, infinity).
 
 all_queues_empty() ->
-    gen_server:call(?SERVER, all_queues_empty).
+    gen_server:call(?SERVER, all_queues_empty, infinity).
 
 %% Set the maximum number of bytes to use - could take a while to return
 %% on a big queue
@@ -93,28 +93,28 @@ pull(Name, DeliverFun) ->
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
 pull_sync(Name, DeliverFun) ->
-    gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}).
+    gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}, infinity).
 
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
 
 ack_sync(Name, Seq) ->
-    gen_server:call(?SERVER, {ack_sync, Name, Seq}).
+    gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
 
 status() ->
-    gen_server:call(?SERVER, status).
+    gen_server:call(?SERVER, status, infinity).
 
 dumpq() ->
-    gen_server:call(?SERVER, dumpq).
+    gen_server:call(?SERVER, dumpq, infinity).
 
 shutdown() ->
-    gen_server:call(?SERVER, shutting_down).
+    gen_server:call(?SERVER, shutting_down, infinity).
 
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 is_running() ->
-    gen_server:call(?SERVER, is_running).
+    gen_server:call(?SERVER, is_running, infinity).
 
 
 %% Internals
@@ -353,7 +353,6 @@ cleanup(QTab, Seq, State) ->
         _ ->
             lager:warning("Unexpected object in RTQ")
     end.
-
 
 ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
   BSize = erlang:byte_size(Obj),

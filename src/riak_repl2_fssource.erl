@@ -28,20 +28,20 @@ start_link(Partition, IP) ->
 connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
     Transport:controlling_process(Socket, Pid),
     gen_server:call(Pid,
-        {connected, Socket, Transport, Endpoint, Proto, Props}).
+        {connected, Socket, Transport, Endpoint, Proto, Props}, ?LONG_TIMEOUT).
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
     gen_server:cast(RtSourcePid, {connect_failed, self(), Reason}).
 
 start_fullsync(Pid) ->
-    gen_server:call(Pid, start_fullsync).
+    gen_server:call(Pid, start_fullsync, ?LONG_TIMEOUT).
 
 stop_fullsync(Pid) ->
-    gen_server:call(Pid, stop_fullsync).
+    gen_server:call(Pid, stop_fullsync, ?LONG_TIMEOUT).
 
 %% get the cluster name
 cluster_name(Pid) ->
-    gen_server:call(Pid, cluster_name).
+    gen_server:call(Pid, cluster_name, ?LONG_TIMEOUT).
 
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).

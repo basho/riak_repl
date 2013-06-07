@@ -246,7 +246,7 @@ clusters([]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
     %% TODO: include our own cluster in the listing
     %% MyAddr = ???
-    %% MyMembers = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, MyAddr}),
+    %% MyMembers = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, MyAddr}, infinity),
     %% io:format("~-20s ~-15s ~p~n", [string_of_ipaddr(MyAddr), " ", MyMembers]),
     lists:foreach(
       fun(ClusterName) ->

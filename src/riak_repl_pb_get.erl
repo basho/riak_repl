@@ -1,5 +1,7 @@
 -module(riak_repl_pb_get).
 
+-include("riak_repl.hrl").
+
 -include_lib("riak_repl_pb_api/include/riak_repl_pb.hrl").
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").

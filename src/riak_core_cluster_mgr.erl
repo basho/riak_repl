@@ -139,12 +139,12 @@ set_leader(LeaderNode, _LeaderPid) ->
 %% Reply with the current leader node.
 -spec get_leader() -> node().
 get_leader() ->
-    gen_server:call(?SERVER, leader_node).
+    gen_server:call(?SERVER, leader_node, infinity).
 
 %% @doc True if the local manager is the leader.
 -spec get_is_leader() -> boolean().
 get_is_leader() ->
-    gen_server:call(?SERVER, get_is_leader).
+    gen_server:call(?SERVER, get_is_leader, infinity).
 
 %% @doc Register a function that will get called to get out local riak node
 %% member's IP addrs. MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
@@ -172,24 +172,24 @@ remove_remote_cluster(Cluster) ->
 %% @doc Retrieve a list of known remote clusters that have been resolved (they responded).
 -spec(get_known_clusters() -> {ok,[clustername()]} | term()).
 get_known_clusters() ->
-    gen_server:call(?SERVER, get_known_clusters).
+    gen_server:call(?SERVER, get_known_clusters, infinity).
 
 %% @doc Retrieve a list of IP,Port tuples we are connected to or trying to connect to
 get_connections() ->
-    gen_server:call(?SERVER, get_connections).
+    gen_server:call(?SERVER, get_connections, infinity).
 
 get_my_members(MyAddr) ->
-    gen_server:call(?SERVER, {get_my_members, MyAddr}).
+    gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity).
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 -spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
-        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}).
+        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 -spec set_gc_interval(Interval :: timeout()) -> 'ok'.
 set_gc_interval(Interval) ->
@@ -781,7 +781,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
                 {error, closed} ->
                     {error, connection_closed};
                 {ok, MyAddr} ->
-                    BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}),
+                    BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity),
                     ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
                     ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
                 Error ->
