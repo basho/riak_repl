@@ -64,7 +64,7 @@ ensure_config(Ring) ->
 get_repl_config(Ring) ->
     case riak_core_ring:get_meta(?MODULE, Ring) of
         {ok, RC} -> RC;
-        undefined -> undefined
+        undefined -> initial_config()
     end.
 
 -spec(set_repl_config/2 :: (ring(), dict()) -> ring()).
