@@ -354,8 +354,18 @@ schedule_reactivate_socket(State = #state{transport = T,
             self() ! reactivate_socket,
             State#state{active = false, deactivated = Deactivated + 1};
         false ->
-            %% already deactivated, try again in 10ms
-            erlang:send_after(10, self(), reactivate_socket),
+            %% already deactivated, try again in configured interval, or 10ms
+            CheckActiveInterval = case app_helper:get_env(riak_repl, rtsink_recheck_active_flag) of
+                undefined ->
+                    lager:error("rtsink_recheck_active_flag is not configured in 
+                      riak_repl, defaulting to 10ms."),
+                    10;
+                Res ->
+                  lager:error("rtsink_recheck_active_flag is configured in 
+                    riak_repl is configured to: ~sms.", [Res]),
+                   Res
+            end,
+            erlang:send_after(CheckActiveInterval, self(), reactivate_socket),
             State#state{active = {false, scheduled}};
         {false, scheduled} ->
             %% have a check scheduled already
