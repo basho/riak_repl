@@ -12,6 +12,10 @@
 %% API
 -include("riak_repl.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([register_service/0, start_service/5]).
 -export([start_link/2,
          stop/1,
@@ -22,6 +26,9 @@
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+% how long to wait to reschedule socket reactivate.
+-define(REACTIVATE_SOCK_INT, 10).
 
 -record(state, {remote,           %% Remote site name
                 transport,        %% Module for sending
@@ -314,6 +321,7 @@ reset_ref_seq(Seq, State) ->
 %% Work out the highest sequence number that can be acked
 %% and return it, completed always has one or more elements on first
 %% call.
+
 ack_to(Acked, []) ->
     {Acked, []};
 ack_to(Acked, [Seq | Completed2] = Completed) -> 
@@ -354,11 +362,46 @@ schedule_reactivate_socket(State = #state{transport = T,
             self() ! reactivate_socket,
             State#state{active = false, deactivated = Deactivated + 1};
         false ->
-            %% already deactivated, try again in 10ms
-            erlang:send_after(10, self(), reactivate_socket),
+            %% already deactivated, try again in configured interval, or default
+            ReactivateSockInt = get_reactivate_socket_interval(),
+            lager:debug("reactivate_socket_interval is configured in 
+              riak_repl to: ~sms.", [ReactivateSockInt]),
+
+            erlang:send_after(ReactivateSockInt, self(), reactivate_socket),
             State#state{active = {false, scheduled}};
         {false, scheduled} ->
             %% have a check scheduled already
             State
     end.
-    
+
+get_reactivate_socket_interval() ->
+    app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT).
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-define(REACTIVATE_SOCK_INT_TEST_VAL, 20).
+
+riak_repl2_rtsink_conn_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun reactivate_socket_interval_test_case/0
+      ]
+    }.
+
+setup() ->
+    ok.
+cleanup(_Ctx) ->
+    ok.
+
+reactivate_socket_interval_test_case() ->
+
+    ?assertEqual(?REACTIVATE_SOCK_INT, get_reactivate_socket_interval()),
+ 
+    application:set_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_TEST_VAL),
+    ?assertEqual(?REACTIVATE_SOCK_INT_TEST_VAL, get_reactivate_socket_interval()).
+-endif.
