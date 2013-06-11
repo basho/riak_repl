@@ -24,7 +24,7 @@
          terminate/2, code_change/3]).
 
 % how long to wait to reschedule socket reactivate.
--define(REACTIVATE_SOCK_INT, 5000).
+-define(REACTIVATE_SOCK_INT, 10).
 
 -record(state, {remote,           %% Remote site name
                 transport,        %% Module for sending
@@ -316,7 +316,7 @@ reset_ref_seq(Seq, State) ->
 
 %% Work out the highest sequence number that can be acked
 %% and return it, completed always has one or more elements on first
-%% call
+%% call.
 
 ack_to(Acked, []) ->
     {Acked, []};
@@ -361,7 +361,7 @@ schedule_reactivate_socket(State = #state{transport = T,
             %% already deactivated, try again in configured interval, or default
             ReactivateSockInt = app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT),
  
-            lager:info("reactivate_socket_interval is configured in 
+            lager:debug("reactivate_socket_interval is configured in 
               riak_repl to: ~sms.", [ReactivateSockInt]),
 
             erlang:send_after(ReactivateSockInt, self(), reactivate_socket),
