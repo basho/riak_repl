@@ -23,6 +23,10 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+% how long to wait for a reply from remote cluster before moving on to
+% next partition.
+-define(REACTIVATE_SOCK_INT, 5000).
+
 -record(state, {remote,           %% Remote site name
                 transport,        %% Module for sending
                 socket,           %% Socket
@@ -355,17 +359,17 @@ schedule_reactivate_socket(State = #state{transport = T,
             State#state{active = false, deactivated = Deactivated + 1};
         false ->
             %% already deactivated, try again in configured interval, or 10ms
-            CheckActiveInterval = case app_helper:get_env(riak_repl, rtsink_recheck_active_flag) of
+            ReactivateSockInt = case app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT) of
                 undefined ->
                     lager:error("rtsink_recheck_active_flag is not configured in 
-                      riak_repl, defaulting to 10ms."),
+                      riak_repl, defaulting to ~sms.", [?REACTIVATE_SOCK_INT]),
                     10;
                 Res ->
                   lager:error("rtsink_recheck_active_flag is configured in 
                     riak_repl is configured to: ~sms.", [Res]),
                    Res
             end,
-            erlang:send_after(CheckActiveInterval, self(), reactivate_socket),
+            erlang:send_after(ReactivateSockInt, self(), reactivate_socket),
             State#state{active = {false, scheduled}};
         {false, scheduled} ->
             %% have a check scheduled already
