@@ -12,6 +12,10 @@
 %% API
 -include("riak_repl.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([register_service/0, start_service/5]).
 -export([start_link/2,
          stop/1,
@@ -359,8 +363,7 @@ schedule_reactivate_socket(State = #state{transport = T,
             State#state{active = false, deactivated = Deactivated + 1};
         false ->
             %% already deactivated, try again in configured interval, or default
-            ReactivateSockInt = app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT),
- 
+            ReactivateSockInt = get_reactivate_socket_interval(),
             lager:debug("reactivate_socket_interval is configured in 
               riak_repl to: ~sms.", [ReactivateSockInt]),
 
@@ -370,3 +373,35 @@ schedule_reactivate_socket(State = #state{transport = T,
             %% have a check scheduled already
             State
     end.
+
+get_reactivate_socket_interval() ->
+    app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT).
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-define(REACTIVATE_SOCK_INT_TEST_VAL, 20).
+
+app_helper_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun reactivate_socket_interval_test_case/0
+      ]
+    }.
+
+setup() ->
+    ok.
+cleanup(_Ctx) ->
+    ok.
+
+reactivate_socket_interval_test_case() ->
+
+    ?assertEqual(?REACTIVATE_SOCK_INT, get_reactivate_socket_interval()),
+ 
+    application:set_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_TEST_VAL),
+    ?assertEqual(?REACTIVATE_SOCK_INT_TEST_VAL, get_reactivate_socket_interval()).
+-endif.
