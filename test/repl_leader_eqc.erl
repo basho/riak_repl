@@ -560,6 +560,7 @@ mock_repl_controller() ->
 start_leader(Candidates, Workers) ->
     ?DBG("Starting repl on ~p\n", [node()]),
 
+    application:start(ranch),
     %% Set up the application config so multiple leaders do not
     %% tread on one anothers toes
     application:load(riak_repl),
