@@ -37,7 +37,8 @@
 
 prop_test_() ->
     {timeout, 60000, fun() ->
-        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main())))
+        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main()))),
+        riak_repl_test_util:stop_test_ring()
     end}.
 
 prop_main() ->
@@ -119,6 +120,8 @@ precondition(_S, _Call) ->
 
 initial_state() ->
     process_flag(trap_exit, true),
+    riak_repl_test_util:stop_test_ring(),
+    riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
     riak_repl_test_util:abstract_stats(),
     riak_repl_test_util:abstract_stateful(),

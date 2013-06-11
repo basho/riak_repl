@@ -22,6 +22,7 @@
 
 connection_test_() ->
     {foreach, fun() ->
+        riak_repl_test_util:start_test_ring(),
         riak_repl_test_util:abstract_gen_tcp(),
         abstract_stats(),
         abstract_util(),
@@ -47,7 +48,8 @@ connection_test_() ->
         wait_for_pid(Rtq),
         meck:unload(gen_tcp),
         meck:unload(riak_repl_stats),
-        meck:unload(riak_repl_util)
+        meck:unload(riak_repl_util),
+        riak_repl_test_util:stop_test_ring()
     end, [
 
         fun(State) -> {"v1 to v1 communication", setup,
