@@ -28,7 +28,7 @@
          terminate/2, code_change/3]).
 
 % how long to wait to reschedule socket reactivate.
--define(REACTIVATE_SOCK_INT, 10).
+-define(REACTIVATE_SOCK_INT_MILLIS, 10).
 
 -record(state, {remote,           %% Remote site name
                 transport,        %% Module for sending
@@ -375,14 +375,15 @@ schedule_reactivate_socket(State = #state{transport = T,
     end.
 
 get_reactivate_socket_interval() ->
-    app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT).
+    app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_MILLIS).
+
 
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
 -ifdef(TEST).
 
--define(REACTIVATE_SOCK_INT_TEST_VAL, 20).
+-define(REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, 20).
 
 riak_repl2_rtsink_conn_test_() ->
     { setup,
@@ -400,8 +401,8 @@ cleanup(_Ctx) ->
 
 reactivate_socket_interval_test_case() ->
 
-    ?assertEqual(?REACTIVATE_SOCK_INT, get_reactivate_socket_interval()),
+    ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS, get_reactivate_socket_interval()),
  
-    application:set_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_TEST_VAL),
-    ?assertEqual(?REACTIVATE_SOCK_INT_TEST_VAL, get_reactivate_socket_interval()).
+    application:set_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL),
+    ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, get_reactivate_socket_interval()).
 -endif.
