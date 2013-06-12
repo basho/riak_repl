@@ -384,7 +384,7 @@ get_reactivate_socket_interval() ->
 
 -define(REACTIVATE_SOCK_INT_TEST_VAL, 20).
 
-app_helper_test_() ->
+riak_repl2_rtsink_conn_test_() ->
     { setup,
       fun setup/0,
       fun cleanup/1,
