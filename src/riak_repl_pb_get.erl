@@ -70,7 +70,8 @@ process(#rpbreplgetclusteridreq{}, State) ->
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                        basic_quorum=BQ, if_modified=VClock,
                        head=Head, deletedvclock=DeletedVClock,
-                       cluster_id=CName},
+                       cluster_id=CName,
+                       n_val=N_val, sloppy_quorum=SloppyQuorum},
         #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
@@ -79,7 +80,9 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
         make_option(r, R) ++
         make_option(pr, PR) ++
         make_option(notfound_ok, NFOk) ++
-        make_option(basic_quorum, BQ),
+        make_option(basic_quorum, BQ) ++
+        make_option(n_val, N_val) ++
+        make_option(sloppy_quorum, SloppyQuorum),
     case C:get(B, K, GetOptions) of
         {ok, O} ->
             make_object_response(O, VClock, Head, State);
