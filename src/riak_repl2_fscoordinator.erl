@@ -359,7 +359,7 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             Waiting = State#state.whereis_waiting,
             case {EmptyRunning, QEmpty, Waiting} of
                 {true, true, []} ->
-                    lager:info("Fullsync complete"),
+                    lager:info("Fullsync complete to ~p", [State#state.other_cluster]),
                     % clear the "rt dirty" stat if it's set,
                     % otherwise, don't do anything
                     State3 = notify_rt_dirty_nodes(State),
