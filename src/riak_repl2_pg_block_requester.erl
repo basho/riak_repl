@@ -53,7 +53,7 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 
 
 proxy_get(Pid, Bucket, Key, Options) ->
-    gen_server:call(Pid, {proxy_get, Bucket, Key, Options}).
+    gen_server:call(Pid, {proxy_get, Bucket, Key, Options}, ?LONG_TIMEOUT).
 
 status(Pid) ->
     gen_server:call(Pid, status, infinity).
@@ -62,7 +62,7 @@ status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
 provider_cluster_info(Pid) ->
-    gen_server:call(Pid, provider_cluster_info).
+    gen_server:call(Pid, provider_cluster_info, ?LONG_TIMEOUT).
 
 %% gen server
 
@@ -207,8 +207,9 @@ register_with_leader(#state{leader_mref=MRef, cluster=Cluster}=State) ->
                             make_pg_proxy(Cluster)))
             end,
             %% this can fail if the leader node is shutting down
-            catch(gen_server:call({ProxyForCluster, Leader}, {register, Cluster, node(),
-                        self()}))
+            catch(gen_server:call({ProxyForCluster, Leader},
+                                  {register, Cluster, node(), self()},
+                                  ?LONG_TIMEOUT))
     catch
         _:_ ->
             %% the monitor below will take care of us...

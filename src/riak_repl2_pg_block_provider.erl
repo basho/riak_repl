@@ -44,7 +44,7 @@ status(Pid, Timeout) ->
 connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
     Transport:controlling_process(Socket, Pid),
     gen_server:call(Pid,
-        {connected, Socket, Transport, Endpoint, Proto, Props}).
+        {connected, Socket, Transport, Endpoint, Proto, Props}, ?LONG_TIMEOUT).
 
 connect_failed(_ClientProto, Reason, Pid) ->
     gen_server:cast(Pid, {connect_failed, self(), Reason}).

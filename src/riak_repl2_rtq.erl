@@ -85,22 +85,22 @@ start_test() ->
 %% sequence number.
 -spec register(Name :: string()) -> {'ok', number()}.
 register(Name) ->
-    gen_server:call(?SERVER, {register, Name}).
+    gen_server:call(?SERVER, {register, Name}, infinity).
 
 %% @doc Removes a consumer.
 -spec unregister(Name :: string()) -> 'ok' | {'error', 'not_registered'}.
 unregister(Name) ->
-    gen_server:call(?SERVER, {unregister, Name}).
+    gen_server:call(?SERVER, {unregister, Name}, infinity).
 
 %% @doc True if the given consumer has no items to consume.
 -spec is_empty(Name :: string()) -> boolean().
 is_empty(Name) ->
-    gen_server:call(?SERVER, {is_empty, Name}).
+    gen_server:call(?SERVER, {is_empty, Name}, infinity).
 
 %% @doc True if no consumer has items to consume.
 -spec all_queues_empty() -> boolean().
 all_queues_empty() ->
-    gen_server:call(?SERVER, all_queues_empty).
+    gen_server:call(?SERVER, all_queues_empty, infinity).
 
 %% @doc Set the maximum number of bytes to use - could take a while to return
 %% on a big queue. The maximum is for the backend data structure used itself,
@@ -142,7 +142,7 @@ pull(Name, DeliverFun) ->
 %% @doc Block the caller while the pull is done.
 -spec pull_sync(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull_sync(Name, DeliverFun) ->
-    gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}).
+    gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}, infinity).
 
 %% @doc Asynchronously acknowldge delivery of all objects with a sequence
 %% equal or lower to Seq for the consumer.
@@ -153,7 +153,7 @@ ack(Name, Seq) ->
 %% @doc Same as ack/2, but blocks the caller.
 -spec ack_sync(Name :: string(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
-    gen_server:call(?SERVER, {ack_sync, Name, Seq}).
+    gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
 
 %% @doc The status of the queue.
 %% <dl>
@@ -172,27 +172,27 @@ ack_sync(Name, Seq) ->
 %% </dl>
 -spec status() -> [any()].
 status() ->
-    gen_server:call(?SERVER, status).
+    gen_server:call(?SERVER, status, infinity).
 
 %% @doc return the data store as a list.
 -spec dumpq() -> [any()].
 dumpq() ->
-    gen_server:call(?SERVER, dumpq).
+    gen_server:call(?SERVER, dumpq, infinity).
 
 %% @doc Signal that this node is doing down, and so a proxy process needs to
 %% start to avoid dropping, or aborting unacked results.
 -spec shutdown() -> 'ok'.
 shutdown() ->
-    gen_server:call(?SERVER, shutting_down).
+    gen_server:call(?SERVER, shutting_down, infinity).
 
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 %% @doc Will explode if the server is not started, but will tell you if it's
 %% in shutdown.
 -spec is_running() -> boolean().
 is_running() ->
-    gen_server:call(?SERVER, is_running).
+    gen_server:call(?SERVER, is_running, infinity).
 
 
 %% Internals

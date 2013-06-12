@@ -623,4 +623,4 @@ fake_source_loop(State) ->
     end.
 
 -endif.
--endif.
+-endif. % EQC

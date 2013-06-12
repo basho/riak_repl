@@ -99,3 +99,5 @@
 -define(REPL_MODES, [{mode_repl12,?REPL_HOOK12}, {mode_repl13,?REPL_HOOK_BNW}]).
 
 
+-define(LONG_TIMEOUT, 120*1000).
+

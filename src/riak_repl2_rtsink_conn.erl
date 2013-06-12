@@ -73,13 +73,13 @@ set_socket(Pid, Socket, Transport) ->
     gen_server:call(Pid, {set_socket, Socket, Transport}, infinity).
 
 status(Pid) ->
-    status(Pid, 5000).
+    status(Pid, ?LONG_TIMEOUT).
 
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
 legacy_status(Pid) ->
-    legacy_status(Pid, 5000).
+    legacy_status(Pid, ?LONG_TIMEOUT).
 
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).

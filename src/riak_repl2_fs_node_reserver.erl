@@ -40,6 +40,8 @@ start_link() ->
 reserve(Partition) ->
     Node = get_partition_node(Partition),
     % I don't want to crash the caller if the node is down
+    %% TODO: add explicit timeout to this call
+    %% TODO: add timeout handling to catch?
     try gen_server:call({?SERVER, Node}, {reserve, Partition}) of
         Out -> Out
     catch

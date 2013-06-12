@@ -127,12 +127,12 @@ register_remote_locator() ->
 
 %% Register an active realtime sink (supervised under ranch)
 register_sink(Pid) ->
-    gen_server:call(?SERVER, {register_sink, Pid}).
+    gen_server:call(?SERVER, {register_sink, Pid}, infinity).
 
 %% Get list of sink pids 
 %% TODO: Remove this once rtsink_sup is working right
 get_sink_pids() ->
-    gen_server:call(?SERVER, get_sink_pids).
+    gen_server:call(?SERVER, get_sink_pids, infinity).
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->

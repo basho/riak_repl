@@ -13,6 +13,8 @@
          v1_ack/2,
          status/1, status/2, send_heartbeat/1]).
 
+-include("riak_repl.hrl").
+
 -define(SERVER, ?MODULE).
 
 %% gen_server callbacks
@@ -33,7 +35,7 @@ start_link(Remote, Transport, Socket, Version) ->
     gen_server:start_link(?MODULE, [Remote, Transport, Socket, Version], []).
 
 stop(Pid) ->
-    gen_server:call(Pid, stop).
+    gen_server:call(Pid, stop, ?LONG_TIMEOUT).
 
 %% @doc v1 sinks require fully sequential sequence numbers sent. The outgoing
 %% Seq's are munged, and thus must be munged back when the sink replies.
@@ -41,7 +43,7 @@ v1_ack(Pid, Seq) ->
     gen_server:cast(Pid, {v1_ack, Seq}).
 
 status(Pid) ->
-    status(Pid, app_helper:get_env(riak_repl, riak_repl2_rtsource_helper_status_to, 5000)).
+    status(Pid, app_helper:get_env(riak_repl, riak_repl2_rtsource_helper_status_to, ?LONG_TIMEOUT)).
 
 status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
@@ -54,7 +56,7 @@ send_heartbeat(Pid) ->
 init([Remote, Transport, Socket, Version]) ->
     riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
-    Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}) end,
+    Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}, infinity) end,
     State = #state{remote = Remote, transport = Transport, proto = Version,
                    socket = Socket, deliver_fun = Deliver},
     async_pull(State),

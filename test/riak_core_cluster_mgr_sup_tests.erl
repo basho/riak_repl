@@ -1,5 +1,6 @@
 -module(riak_core_cluster_mgr_sup_tests).
 -compile(export_all).
+-ifdef(EQC).
 -include_lib("riak_core/include/riak_core_connection.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -113,3 +114,5 @@ wait(WaitFun, Wait, Itor) ->
             timer:sleep(Wait),
             wait(WaitFun, Wait, Itor - 1)
     end.
+
+-endif. % EQC

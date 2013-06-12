@@ -107,7 +107,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                       keylist ->
                           gen_fsm:sync_send_all_state_event(FSW, status);
                       aae ->
-                          gen_server:call(FSW, status, 5000)
+                          gen_server:call(FSW, status, ?LONG_TIMEOUT)
                   end;
               false -> []
           end,
@@ -204,7 +204,7 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strate
                 keylist ->
                     gen_fsm:sync_send_all_state_event(FSW, stop);
                 aae ->
-                    gen_server:call(FSW, stop)
+                    gen_server:call(FSW, stop, ?LONG_TIMEOUT)
             end;
         _ ->
             ok
