@@ -8,8 +8,8 @@
 
 -compile(export_all).
 
--define(SINK_PORT, 5007).
--define(SOURCE_PORT, 4007).
+-define(SINK_PORT, 5006).
+-define(SOURCE_PORT, 4006).
 -define(VER1, {1,0}).
 -define(VER2, {2,0}).
 -define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
@@ -22,11 +22,15 @@
 
 connection_test_() ->
     {foreach, fun() ->
+        riak_repl_test_util:start_test_ring(),
         riak_repl_test_util:abstract_gen_tcp(),
         abstract_stats(),
         abstract_util(),
+        riak_repl_test_util:kill_and_wait(riak_repl2_rt),
         {ok, RT} = riak_repl2_rt:start_link(),
+        riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
         {ok, _} = riak_repl2_rtq:start_link(),
+        riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
         {ok, TCPMon} = riak_core_tcp_mon:start_link(),
         #connection_tests{tcp_mon = TCPMon, rt = RT}
     end,
@@ -44,7 +48,8 @@ connection_test_() ->
         wait_for_pid(Rtq),
         meck:unload(gen_tcp),
         meck:unload(riak_repl_stats),
-        meck:unload(riak_repl_util)
+        meck:unload(riak_repl_util),
+        riak_repl_test_util:stop_test_ring()
     end, [
 
         fun(State) -> {"v1 to v1 communication", setup,
@@ -156,6 +161,8 @@ assert_living_pids([Pid | Tail]) ->
 connection_test_teardown_pids(Source, Sink) ->
     meck:unload(riak_core_service_mgr),
     meck:unload(riak_core_connection_mgr),
+    unlink(Source),
+    unlink(Sink),
     riak_repl2_rtsource_conn:stop(Source),
     riak_repl2_rtsink_conn:stop(Sink),
     wait_for_pid(Source),
@@ -174,11 +181,13 @@ abstract_rt() ->
     end).
 
 abstract_stats() ->
+    catch(meck:unload(riak_repl_stats)),
     meck:new(riak_repl_stats),
     meck:expect(riak_repl_stats, rt_source_errors, fun() -> ok end),
     meck:expect(riak_repl_stats, objects_sent, fun() -> ok end).
 
 abstract_util() ->
+    catch(meck:unload(riak_repl_util)),
     meck:new(riak_repl_util, [passthrough]),
     meck:expect(riak_repl_util, from_wire, fun
         (<<131, _Rest/binary>> = Obj) ->
@@ -198,6 +207,7 @@ start_sink() ->
 
 start_sink(Version) ->
     TellMe = self(),
+    catch(meck:unload(riak_core_service_mgr)),
     meck:new(riak_core_service_mgr, [passthrough]),
     meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
@@ -225,6 +235,7 @@ start_source() ->
     start_source(?VER1).
 
 start_source(NegotiatedVer) ->
+    catch(meck:unload(riak_core_connection_mgr)),
     meck:new(riak_core_connection_mgr, [passthrough]),
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         spawn_link(fun() ->

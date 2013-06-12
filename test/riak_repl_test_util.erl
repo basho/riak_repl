@@ -5,6 +5,17 @@
 -export([kill_and_wait/1, kill_and_wait/2]).
 -export([wait_for_pid/1, wait_for_pid/2]).
 -export([maybe_unload_mecks/1]).
+-export([start_test_ring/0, stop_test_ring/0]).
+
+
+start_test_ring() ->
+    stop_test_ring(),
+    riak_core_ring_events:start_link(),
+    riak_core_ring_manager:start_link(test).
+
+stop_test_ring() ->
+    kill_and_wait(riak_core_ring_events, kill),
+    kill_and_wait(riak_core_ring_manager, kill).
 
 maybe_unload_mecks(Mecks) when is_list(Mecks) ->
     Unload = fun(Meck) ->

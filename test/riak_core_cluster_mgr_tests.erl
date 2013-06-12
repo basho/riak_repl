@@ -152,7 +152,10 @@ wait_for(Fun, Remaining, Interval) ->
             wait_for(Fun, Remaining - Interval, Interval)
     end.
 
-multinode_test_() ->
+%% XXX this test is disabled because it doesn't run when certain gostname
+%% configurations are used. Disabling it until we can rewrite it as a
+%% riak_test.
+multinode_test__() ->
     {setup, fun() ->
         % superman, batman, and wonder woman are all part of the JLA
         % (Justice League of America). Superman is the defacto leader, with
@@ -277,7 +280,13 @@ multinode_test_() ->
             Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
             Rotated1 = [{"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
             Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
-            {[R1, R2, R3], []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
+            %{[R1, R2, R3], []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
+            R1 = rpc:call(Superman, riak_core_cluster_mgr,
+                          get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
+            R2 = rpc:call(Batman, riak_core_cluster_mgr,
+                          get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
+            R3 = rpc:call(Wonder, riak_core_cluster_mgr,
+                          get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
             ?assertEqual({ok, Original}, R1),
             ?assertEqual({ok, Rotated1}, R2),
             ?assertEqual({ok, Rotated2}, R3)
@@ -364,7 +373,7 @@ cleanup() ->
 maybe_start_master() ->
     case node() of
         'nonode@nohost' ->
-            net_kernel:start([riak_repl_tests]),
+            net_kernel:start([riak_repl_tests, shortnames]),
             {started, node()};
         Node ->
             {kept, Node}

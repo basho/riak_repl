@@ -315,9 +315,9 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
     NewState = cleanup(QTab, MinSeq, State),
-    Undeliverables = clear_non_deliverables(QTab, UpdCs),
+    {ShrinkBy, Undeliverables} = clear_non_deliverables(QTab, UpdCs, State#state.word_size),
     Undeliverables2 = union_undeliverables(NewState#state.undeliverables, Undeliverables, MinSeq),
-    NewState#state{cs = UpdCs, undeliverables = Undeliverables2}.
+    NewState#state{cs = UpdCs, undeliverables = Undeliverables2, qsize_bytes = NewState#state.qsize_bytes - ShrinkBy}.
 
 %% @private
 handle_info(_Msg, State) ->
@@ -325,7 +325,8 @@ handle_info(_Msg, State) ->
 
 %% @private
 terminate(Reason, #state{cs = Cs}) ->
-    erlang:unregister(?SERVER),
+    %% when started from tests, we may not be registered
+    catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
     [case DeliverFun of
          undefined ->
@@ -369,9 +370,9 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                      end,
             NewState0 = cleanup(QTab, MinSeq, State),
             NewState = NewState0#state{cs = Cs2},
-            Undeliverables = clear_non_deliverables(QTab, Cs2),
+            {ShrinkBy, Undeliverables} = clear_non_deliverables(QTab, Cs2, NewState#state.word_size),
             Undeliverables2 = union_undeliverables(State#state.undeliverables, Undeliverables, 0),
-            {ok, NewState#state{undeliverables = Undeliverables2}};
+            {ok, NewState#state{undeliverables = Undeliverables2, qsize_bytes = NewState#state.qsize_bytes - ShrinkBy}};
         false ->
             {{error, not_registered}, State}
     end.
@@ -438,8 +439,20 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables)
             C#c{deliver = DeliverFun}
     end.
 
-maybe_deliver_item(C = #c{deliver = undefined}, _QEntry) ->
-    {no_fun, C};
+maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
+    {_Seq, _NumItem, _Bin, Meta} = QEntry,
+    Name = C#c.name,
+    Routed = case orddict:find(routed_clusters, Meta) of
+        error -> [];
+        {ok, V} -> V
+    end,
+    Cause = case lists:member(Name, Routed) of
+        true ->
+            skipped;
+        false ->
+            no_fun
+    end,
+    {Cause, C};
 maybe_deliver_item(C, QEntry) ->
     {Seq, _NumItem, _Bin, Meta} = QEntry,
     #c{name = Name} = C,
@@ -477,17 +490,6 @@ set_skip_meta(QEntry, _Seq, _C = #c{delivered = false}) ->
 set_skip_meta(QEntry, _Seq, _C = #c{skips = S}) ->
     set_meta(QEntry, skip_count, S).
 
-% if the sequence we are testing is more than one above the last sequence
-% skipped, then there was at least one sequence sent to the sink side.
-count_skips(Seq, [SeqMin1 | Tail], N) when Seq - 1 == SeqMin1 ->
-    count_skips(SeqMin1, Tail, N + 1);
-% a skipped seq can happen when a source connects to a sink, and a seq was
-% marked as unroutable.
-count_skips(Seq, [SeqBig | Tail], N) when Seq < SeqBig ->
-    count_skips(Seq, Tail, N);
-count_skips(_Seq, _Count, N) ->
-    N.
-
 set_local_forwards_meta(LocalForwards, QEntry) ->
     set_meta(QEntry, local_forwards, LocalForwards).
 
@@ -511,6 +513,8 @@ cleanup(QTab, Seq, State) ->
     end.
 
 ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
+  ets_obj_size(Obj, WordSize);
+ets_obj_size(Obj, WordSize) when is_binary(Obj) ->
   BSize = erlang:byte_size(Obj),
   case BSize > 64 of
         true -> BSize - (6 * WordSize);
@@ -522,7 +526,7 @@ ets_obj_size(Obj, _) ->
 update_q_size(State = #state{qsize_bytes = CurrentQSize}, Diff) ->
   State#state{qsize_bytes = CurrentQSize + Diff}.
 
-clear_non_deliverables(QTab, ActiveConsumers) ->
+clear_non_deliverables(QTab, ActiveConsumers, WordSize) ->
     Accumulator = fun(QEntry, Acc) ->
         {Seq, _, _, Meta} = QEntry,
         Routed = case orddict:find(routed_clusters, Meta) of
@@ -538,8 +542,14 @@ clear_non_deliverables(QTab, ActiveConsumers) ->
         end
     end,
     ToDelete = ets:foldl(Accumulator, [], QTab),
-    [ets:delete(QTab, Key) || Key <- ToDelete],
-    ToDelete.
+    DeleteFun = fun(Key, Acc) ->
+      [{Key, _NumItems, Bin, _Meta}] = ets:lookup(QTab, Key),
+      Size = ets_obj_size(Bin, WordSize),
+      ets:delete(QTab, Key),
+      Acc + Size
+    end,
+    Shrink = lists:foldl(DeleteFun, 0, ToDelete),
+    {Shrink, ToDelete}.
 
 union_undeliverables(SeqSet1, SeqSet2, MinSeq) ->
     Undeliverables = ordsets:union(SeqSet1, SeqSet2),

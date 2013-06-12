@@ -320,7 +320,9 @@ get_matching_address_test_() ->
                 application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
                         9090}),
                 lager:start(),
-                lager:set_loglevel(lager_console_backend, debug)
+                %% for debugging
+                %%lager:set_loglevel(lager_console_backend, debug)
+                ok
         end,
         fun(_) ->
                 application:unset_env(riak_core, cluster_mgr),

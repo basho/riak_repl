@@ -1,10 +1,14 @@
 -module(rt_sink_eqc).
 
+-compile(export_all).
+
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
+
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
 
 -define(SINK_PORT, 5008).
 -define(all_remotes, ["a", "b", "c", "d", "e"]).
@@ -126,6 +130,7 @@ teardown() ->
     read_all_rt_bugs(),
     read_all_fake_rtq_bugs(),
     % murder and restore all processes/mecks
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl_test_util:kill_and_wait(riak_core_service_manager),
     riak_repl_test_util:kill_and_wait(riak_repl2_rtsink_conn_sup, kill),
     riak_repl2_rtsink_conn_sup:start_link(),
@@ -616,3 +621,6 @@ fake_source_loop(State) ->
         What ->
             fake_source_loop(State)
     end.
+
+-endif.
+-endif.
