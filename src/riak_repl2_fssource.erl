@@ -28,8 +28,9 @@ start_link(Partition, IP) ->
 %% connection manager callbacks
 connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
     Transport:controlling_process(Socket, Pid),
+    %% Pid is running local when connection manager calls us here.
     gen_server:call(Pid,
-        {connected, Socket, Transport, Endpoint, Proto, Props}, ?LONG_TIMEOUT).
+        {connected, Socket, Transport, Endpoint, Proto, Props}, infinity).
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
     gen_server:cast(RtSourcePid, {connect_failed, self(), Reason}).
