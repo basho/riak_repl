@@ -39,15 +39,18 @@ start_link() ->
 -spec reserve(Partition :: any()) -> 'ok' | 'busy' | 'down'.
 reserve(Partition) ->
     Node = get_partition_node(Partition),
-    % I don't want to crash the caller if the node is down
-    %% TODO: add explicit timeout to this call
-    %% TODO: add timeout handling to catch?
-    try gen_server:call({?SERVER, Node}, {reserve, Partition}) of
+    % I don't want to crash the caller if the node is down or too slow to respond
+    try gen_server:call({?SERVER, Node}, {reserve, Partition}, ?RESERVE_TIMEOUT) of
         Out -> Out
     catch
         exit:{noproc, _} ->
             down;
         exit:{{nodedown, _}, _} ->
+            down;
+        exit:{timeout,_} ->
+            %% call to reserve timed out. we're too busy?
+            %% send 'down' so source coordinator will try a different
+            %% node or try back later.
             down
     end.
 
