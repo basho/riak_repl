@@ -364,7 +364,7 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                                [MyClusterName, State#state.other_cluster]),
                     % clear the "rt dirty" stat if it's set,
                     % otherwise, don't do anything
-                    State3 = notify_rt_dirty_nodes(State),
+                    State3 = notify_rt_dirty_nodes(State2),
                     %% update legacy stats too! some riak_tests depend on them.
                     riak_repl_stats:server_fullsyncs(),
                     TotalFullsyncs = State#state.fullsyncs_completed + 1,
