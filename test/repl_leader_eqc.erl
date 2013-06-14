@@ -436,6 +436,9 @@ wait_for_helper(_Node, 0) ->
     helper_timeout;
 wait_for_helper(Node, Retries) ->
     case rpc:call(Node, riak_repl_leader, helper_pid, []) of
+        undefined ->
+            timer:sleep(10),
+            wait_for_helper(Node, Retries -1);
         Pid when is_pid(Pid) ->
             {ok, Pid};
         {killed, _OldPid} ->
