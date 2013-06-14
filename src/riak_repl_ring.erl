@@ -52,7 +52,8 @@
 -spec(ensure_config/1 :: (ring()) -> ring()).
 %% @doc Ensure that Ring has replication config entry in the ring metadata dict.
 ensure_config(Ring) ->
-    case get_repl_config(Ring) of
+    % can't use get_repl_config becuase that's guarenteed to return a config.
+    case riak_core_ring:get_meta(?MODULE, Ring) of
         undefined ->
             riak_core_ring:update_meta(?MODULE, initial_config(), Ring);
         _ ->
