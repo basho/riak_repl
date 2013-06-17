@@ -3,7 +3,7 @@
 % api
 -export([start_link/0, stop/0]).
 -export([known_clusters/0]).
--export([replications/0, add_replicaton/2, drop_replication/2]).
+-export([replications/0, add_replication/2, drop_replication/2, drop_cluster/1]).
 
 % gen_server
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -23,11 +23,14 @@ stop() ->
 known_clusters() ->
     gen_server:call(?MODULE, known_clusters).
 
+drop_cluster(ClusterName) ->
+    gen_server:cast(?MODULE, {drop_cluster, ClusterName}).
+
 replications() ->
     gen_server:call(?MODULE, replications).
 
-add_replicaton(Source, Sink) ->
-    gen_server:cast(?MODULE, {add_replicaton, Source, Sink}).
+add_replication(Source, Sink) ->
+    gen_server:cast(?MODULE, {add_replication, Source, Sink}).
 
 drop_replication(Source, Sink) ->
     gen_server:cast(?MODULE, {drop_replication, Source, Sink}).
@@ -53,15 +56,11 @@ handle_call(_Msg, _From, Graph) ->
 handle_cast(stop, Graph) ->
     {stop, normal, Graph};
 
-handle_cast({add_cluster, ClusterName}, Graph) ->
-    digraph:add_vertex(Graph, ClusterName),
-    {noreply, Graph};
-
 handle_cast({drop_cluster, ClusterName}, Graph) ->
     digraph:del_vertex(Graph, ClusterName),
     {noreply, Graph};
 
-handle_cast({add_replicaton, Source, Sink}, Graph) ->
+handle_cast({add_replication, Source, Sink}, Graph) ->
     Sinks = digraph:out_neighbours(Graph, Source),
     case lists:member(Sink, Sinks) of
         true ->
@@ -144,7 +143,7 @@ functionality_test_() ->
         end},
 
         {"add a replication", fun() ->
-            ?MODULE:add_replicaton("source", "sink"),
+            ?MODULE:add_replication("source", "sink"),
             ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:known_clusters())),
             Repls = ?MODULE:replications(),
             ?assertEqual(["sink"], proplists:get_value("source", Repls)),
@@ -152,13 +151,21 @@ functionality_test_() ->
         end},
 
         {"drop replication", fun() ->
-            ?MODULE:add_replicaton("source", "sink"),
+            ?MODULE:add_replication("source", "sink"),
             ?MODULE:drop_replication("source", "sink"),
             ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:known_clusters())),
             Repls = ?MODULE:replications(),
             ?assertEqual([], proplists:get_value("source", Repls)),
             ?assertEqual([], proplists:get_value("sink", Repls))
+        end},
 
+        {"drop cluster drops replications", fun() ->
+            ?debugMsg("bing"),
+            ?MODULE:add_replication("source", "sink"),
+            ?debugMsg("bing"),
+            ?MODULE:drop_cluster("sink"),
+            ?debugMsg("bing"),
+            ?assertEqual([{"source", []}], ?MODULE:replications())
         end},
 
         {"tear down", fun() ->
