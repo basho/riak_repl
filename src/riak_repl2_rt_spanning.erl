@@ -2,7 +2,7 @@
 
 % api
 -export([start_link/0, stop/0]).
--export([known_clusters/0]).
+-export([clusters/0]).
 -export([replications/0, add_replication/2, drop_replication/2, drop_cluster/1]).
 
 % gen_server
@@ -20,8 +20,8 @@ start_link() ->
 stop() ->
     gen_server:cast(?MODULE, stop).
 
-known_clusters() ->
-    gen_server:call(?MODULE, known_clusters).
+clusters() ->
+    gen_server:call(?MODULE, clusters).
 
 drop_cluster(ClusterName) ->
     gen_server:cast(?MODULE, {drop_cluster, ClusterName}).
@@ -39,7 +39,7 @@ drop_replication(Source, Sink) ->
 init(_) ->
     {ok, digraph:new()}.
 
-handle_call(known_clusters, _From, Graph) ->
+handle_call(clusters, _From, Graph) ->
     {reply, digraph:vertices(Graph), Graph};
 
 handle_call(replications, _From, Graph) ->
@@ -134,7 +134,7 @@ functionality_test_() ->
         end},
 
         {"get list of known clusters", fun() ->
-            ?assertEqual([], ?MODULE:known_clusters())
+            ?assertEqual([], ?MODULE:clusters())
         end},
 
         {"list replications", fun() ->
@@ -144,7 +144,7 @@ functionality_test_() ->
 
         {"add a replication", fun() ->
             ?MODULE:add_replication("source", "sink"),
-            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:known_clusters())),
+            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:clusters())),
             Repls = ?MODULE:replications(),
             ?assertEqual(["sink"], proplists:get_value("source", Repls)),
             ?assertEqual([], proplists:get_value("sink", Repls))
@@ -153,18 +153,15 @@ functionality_test_() ->
         {"drop replication", fun() ->
             ?MODULE:add_replication("source", "sink"),
             ?MODULE:drop_replication("source", "sink"),
-            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:known_clusters())),
+            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:clusters())),
             Repls = ?MODULE:replications(),
             ?assertEqual([], proplists:get_value("source", Repls)),
             ?assertEqual([], proplists:get_value("sink", Repls))
         end},
 
         {"drop cluster drops replications", fun() ->
-            ?debugMsg("bing"),
             ?MODULE:add_replication("source", "sink"),
-            ?debugMsg("bing"),
             ?MODULE:drop_cluster("sink"),
-            ?debugMsg("bing"),
             ?assertEqual([{"source", []}], ?MODULE:replications())
         end},
 
