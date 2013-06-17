@@ -9,10 +9,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
     code_change/3]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 % api
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -114,73 +110,3 @@ add_edges_with_vertices(Graph, Source, Sink, {error, {bad_vertex, Sink}}) ->
 
 add_edges_with_vertices(_Graph, _Source, _Sink, _Edge) ->
     ok.
-
--ifdef(TEST).
-
-functionality_test_() ->
-    {setup, fun() ->
-        ok
-    end,
-    fun(ok) ->
-        case whereis(?MODULE) of
-            undefined ->
-                ok;
-            Pid ->
-                exit(Pid, kill)
-        end
-    end,
-    fun(ok) -> [
-
-        {"start up", fun() ->
-            Got = ?MODULE:start_link(),
-            ?assertMatch({ok, _Pid}, Got),
-            ?assert(is_pid(element(2, Got))),
-            unlink(element(2, Got))
-        end},
-
-        {"get list of known clusters", fun() ->
-            ?assertEqual([], ?MODULE:clusters())
-        end},
-
-        {"list replications", fun() ->
-            Got = ?MODULE:replications(),
-            ?assertEqual([], Got)
-        end},
-
-        {"add a replication", fun() ->
-            ?MODULE:add_replication("source", "sink"),
-            ?assertEqual(["sink", "source"], ?MODULE:clusters()),
-            Repls = ?MODULE:replications(),
-            ?assertEqual([{"sink", []}, {"source", ["sink"]}], Repls)
-        end},
-
-        {"drop replication", fun() ->
-            ?MODULE:add_replication("source", "sink"),
-            ?MODULE:drop_replication("source", "sink"),
-            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:clusters())),
-            Repls = ?MODULE:replications(),
-            ?assertEqual([{"sink", []},{"source",[]}], Repls)
-        end},
-
-        {"drop cluster drops replications", fun() ->
-            ?MODULE:add_replication("source", "sink"),
-            ?MODULE:drop_cluster("sink"),
-            ?assertEqual([{"source", []}], ?MODULE:replications())
-        end},
-
-        {"tear down", fun() ->
-            Pid = whereis(?MODULE),
-            Mon = erlang:monitor(process, Pid),
-            ?MODULE:stop(),
-            Got = receive
-                {'DOWN', Mon, process, Pid, _Why} ->
-                    true
-            after 1000 ->
-                {error, timeout}
-            end,
-            ?assert(Got)
-        end}
-
-    ] end}.
-
--endif.

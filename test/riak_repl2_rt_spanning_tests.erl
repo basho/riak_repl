@@ -10,6 +10,99 @@
 
 -compile(export_all).
 
+functionality_test_() ->
+    {setup, fun() ->
+        ok
+    end,
+    fun(ok) ->
+        case whereis(?MODULE) of
+            undefined ->
+                ok;
+            Pid ->
+                exit(Pid, kill)
+        end
+    end,
+    fun(ok) -> [
+
+        {"start up", fun() ->
+            Got = riak_repl2_rt_spanning:start_link(),
+            ?assertMatch({ok, _Pid}, Got),
+            ?assert(is_pid(element(2, Got))),
+            unlink(element(2, Got))
+        end},
+
+        {"get list of known clusters", fun() ->
+            ?assertEqual([], riak_repl2_rt_spanning:clusters())
+        end},
+
+        {"list replications", fun() ->
+            Got = riak_repl2_rt_spanning:replications(),
+            ?assertEqual([], Got)
+        end},
+
+        {"add a replication", fun() ->
+            ?MODULE:add_replication("source", "sink"),
+            ?assertEqual(["sink", "source"], riak_repl2_rt_spanning:clusters()),
+            Repls = ?MODULE:replications(),
+            ?assertEqual([{"sink", []}, {"source", ["sink"]}], Repls)
+        end},
+
+        {"drop replication", fun() ->
+            ?MODULE:add_replication("source", "sink"),
+            ?MODULE:drop_replication("source", "sink"),
+            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(riak_repl2_rt_spanning:clusters())),
+            Repls = riak_repl2_rt_spanning:replications(),
+            ?assertEqual([{"sink", []},{"source",[]}], Repls)
+        end},
+
+        {"drop cluster drops replications", fun() ->
+            ?MODULE:add_replication("source", "sink"),
+            ?MODULE:drop_cluster("sink"),
+            ?assertEqual([{"source", []}], riak_repl2_rt_spanning:replications())
+        end},
+
+        {"tear down", fun() ->
+            Pid = whereis(riak_repl2_rt_spanning),
+            Mon = erlang:monitor(process, Pid),
+            riak_repl2_rt_spanning:stop(),
+            Got = receive
+                {'DOWN', Mon, process, Pid, _Why} ->
+                    true
+            after 1000 ->
+                {error, timeout}
+            end,
+            ?assert(Got)
+        end}
+
+    ] end}.
+
+path_finding_test_() ->
+    {setup, fun() ->
+        {ok, Pid} = riak_repl2_rt_spanning:start_link(),
+        unlink(Pid)
+    end,
+    fun(_Pid) ->
+        riak_repl2_rt_spanning:stop()
+    end,
+    fun(_) -> [
+
+        {"create a path", fun() ->
+            Clusters = ["1", "2", "3", "4", "5", "6"],
+            lists:foldl(fun
+                (_, [B]) ->
+                    riak_repl2_rt_spanning:add_replication(B, "1"),
+                    [];
+                (_, [A, B | Tail]) ->
+                    riak_repl2_rt_spanning:add_replication(A, B),
+                    [B | Tail]
+            end, Clusters, Clusters),
+            [_ | Expected] = Clusters,
+            Got = riak_repl2_rt_spanning:path("1"),
+            ?assertEqual(Expected, Got)
+        end}
+
+    ] end}.
+
 prop_test_() ->
     {timeout, 60000, fun() ->
         ?assert(eqc:quickcheck(?MODULE:prop_statem()))
