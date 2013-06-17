@@ -3,7 +3,7 @@
 % api
 -export([start_link/0, stop/0]).
 -export([known_clusters/0]).
--export([replications/0, add_replicaton/2]).
+-export([replications/0, add_replicaton/2, drop_replication/2]).
 
 % gen_server
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -28,6 +28,9 @@ replications() ->
 
 add_replicaton(Source, Sink) ->
     gen_server:cast(?MODULE, {add_replicaton, Source, Sink}).
+
+drop_replication(Source, Sink) ->
+    gen_server:cast(?MODULE, {drop_replication, Source, Sink}).
 
 % gen_server
 init(_) ->
@@ -66,6 +69,18 @@ handle_cast({add_replicaton, Source, Sink}, Graph) ->
         false ->
             add_edges_with_vertices(Graph, Source, Sink)
     end,
+    {noreply, Graph};
+
+handle_cast({drop_replication, Source, Sink}, Graph) ->
+    OutEdges = digraph:out_edges(Graph, Source),
+    lists:map(fun(Edge) ->
+        case digraph:edge(Graph, Edge) of
+            {Edge, Source, Sink, _Label} ->
+                digraph:del_edge(Graph, Edge);
+            _ ->
+                ok
+        end
+    end, OutEdges),
     {noreply, Graph};
 
 handle_cast(_Msg, Graph) ->
@@ -134,6 +149,16 @@ functionality_test_() ->
             Repls = ?MODULE:replications(),
             ?assertEqual(["sink"], proplists:get_value("source", Repls)),
             ?assertEqual([], proplists:get_value("sink", Repls))
+        end},
+
+        {"drop replication", fun() ->
+            ?MODULE:add_replicaton("source", "sink"),
+            ?MODULE:drop_replication("source", "sink"),
+            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:known_clusters())),
+            Repls = ?MODULE:replications(),
+            ?assertEqual([], proplists:get_value("source", Repls)),
+            ?assertEqual([], proplists:get_value("sink", Repls))
+
         end},
 
         {"tear down", fun() ->
