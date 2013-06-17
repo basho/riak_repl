@@ -21,13 +21,18 @@ stop() ->
     gen_server:cast(?MODULE, stop).
 
 clusters() ->
-    gen_server:call(?MODULE, clusters).
+    ordsets:from_list(gen_server:call(?MODULE, clusters)).
 
 drop_cluster(ClusterName) ->
     gen_server:cast(?MODULE, {drop_cluster, ClusterName}).
 
 replications() ->
-    gen_server:call(?MODULE, replications).
+    Replications = gen_server:call(?MODULE, replications),
+    Repls = lists:map(fun({Source, Sinks}) ->
+        Sinks2 = ordsets:from_list(Sinks),
+        {Source, Sinks2}
+    end, Replications),
+    orddict:from_list(Repls).
 
 add_replication(Source, Sink) ->
     gen_server:cast(?MODULE, {add_replication, Source, Sink}).
@@ -144,10 +149,9 @@ functionality_test_() ->
 
         {"add a replication", fun() ->
             ?MODULE:add_replication("source", "sink"),
-            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:clusters())),
+            ?assertEqual(["sink", "source"], ?MODULE:clusters()),
             Repls = ?MODULE:replications(),
-            ?assertEqual(["sink"], proplists:get_value("source", Repls)),
-            ?assertEqual([], proplists:get_value("sink", Repls))
+            ?assertEqual([{"sink", []}, {"source", ["sink"]}], Repls)
         end},
 
         {"drop replication", fun() ->
@@ -155,8 +159,7 @@ functionality_test_() ->
             ?MODULE:drop_replication("source", "sink"),
             ?assertEqual(lists:sort(["source", "sink"]), lists:sort(?MODULE:clusters())),
             Repls = ?MODULE:replications(),
-            ?assertEqual([], proplists:get_value("source", Repls)),
-            ?assertEqual([], proplists:get_value("sink", Repls))
+            ?assertEqual([{"sink", []},{"source",[]}], Repls)
         end},
 
         {"drop cluster drops replications", fun() ->
