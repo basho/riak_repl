@@ -223,9 +223,9 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
                     {reply, ok, State2};
                 _ ->
                     %% 1.1 and above, start with a heartbeat
-                    HBInterval = app_helper:get_env(riak_repl, rt_hearbeat_interval,
+                    HBInterval = app_helper:get_env(riak_repl, rt_heartbeat_interval,
                                                     ?DEFAULT_HBINTERVAL),
-                    HBTimeout = app_helper:get_env(riak_repl, rt_hearbeat_timeout,
+                    HBTimeout = app_helper:get_env(riak_repl, rt_heartbeat_timeout,
                                                    ?DEFAULT_HBTIMEOUT),
                     State3 = State2#state{hb_interval = HBInterval,
                                           hb_timeout = HBTimeout},
