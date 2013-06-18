@@ -104,6 +104,11 @@ next_routes_test_() ->
         fun(_) -> ok end,
         fun(_) -> [
 
+            {"starting out", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("1", "1"),
+                ?assertEqual(["2"], Got)
+            end},
+
             {"hitting four", fun() ->
                 Got = riak_repl2_rt_spanning:choose_nexts("1", "4"),
                 Expected = ["5"],
@@ -118,6 +123,16 @@ next_routes_test_() ->
             {"starting 4, hitting six", fun() ->
                 Got = riak_repl2_rt_spanning:choose_nexts("4", "6"),
                 ?assertEqual(["1"], Got)
+            end},
+
+            {"walk routes", fun() ->
+                Clusters = ["1", "2", "3", "4", "5", "6"],
+                OrdExpected = ordsets:from_list(Clusters),
+                lists:map(fun(C) ->
+                    Got = walk_route(C),
+                    ?debugFmt("Walking route for ~p got raw ~p", [C, Got]),
+                    ?assertEqual(OrdExpected, lists:sort(Got))
+                end, Clusters)
             end}
 
         ] end} end,
@@ -162,10 +177,35 @@ next_routes_test_() ->
             {"hitting 2 from 4", fun() ->
                 Got = riak_repl2_rt_spanning:choose_nexts("4", "2"),
                 ?assertEqual(["1"], Got)
-            end}
+            end},
 
+            {"walk routes", fun() ->
+                Clusters = ["1", "2", "3", "4", "5", "6"],
+                OrdExpected = ordsets:from_list(Clusters),
+                lists:map(fun(C) ->
+                    Got = walk_route(C),
+                    ?debugFmt("Walking route for ~p got raw ~p", [C, Got]),
+                    ?assertEqual(OrdExpected, lists:sort(Got))
+                end, Clusters)
+            end}
         ] end} end
     ]}.
+
+walk_route(Start) ->
+    Nexts = riak_repl2_rt_spanning:choose_nexts(Start, Start),
+    ?debugFmt("Der nexts: ~p", [Nexts]),
+    [Start] ++ step(Start, Nexts).
+
+step(Start, []) ->
+    ?debugFmt("Empty stepping from ~p", [Start]),
+    [];
+step(Start, Nexts) ->
+    ?debugFmt("doing stepping from ~p with nexts ~p", [Start, Nexts]),
+    lists:foldl(fun(N, Acc) ->
+        NextNexts = riak_repl2_rt_spanning:choose_nexts(Start, N),
+        ?debugFmt("Der nexts in step: ~p", [NextNexts]),
+        Acc ++ step(Start, NextNexts)
+    end, Nexts, Nexts).
 
 prop_test_() ->
     {timeout, 60000, fun() ->
