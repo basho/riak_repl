@@ -76,32 +76,96 @@ functionality_test_() ->
 
     ] end}.
 
-path_finding_test_() ->
-    {setup, fun() ->
+next_routes_test_() ->
+    {foreach, fun() ->
         {ok, Pid} = riak_repl2_rt_spanning:start_link(),
-        unlink(Pid)
+        unlink(Pid),
+        Pid
     end,
-    fun(_Pid) ->
-        riak_repl2_rt_spanning:stop()
+    fun(Pid) ->
+        riak_repl2_rt_spanning:stop(),
+        riak_repl_test_util:wait_for_pid(Pid)
     end,
-    fun(_) -> [
+    [
 
-        {"create a path", fun() ->
+        fun(_) -> {"siimple one way cirlce", setup, fun() ->
             Clusters = ["1", "2", "3", "4", "5", "6"],
-            lists:foldl(fun
-                (_, [B]) ->
-                    riak_repl2_rt_spanning:add_replication(B, "1"),
-                    [];
-                (_, [A, B | Tail]) ->
-                    riak_repl2_rt_spanning:add_replication(A, B),
-                    [B | Tail]
-            end, Clusters, Clusters),
-            [_ | Expected] = Clusters,
-            Got = riak_repl2_rt_spanning:path("1"),
-            ?assertEqual(Expected, Got)
-        end}
+            lists:foldl(fun(_Cluster, Acc) ->
+                case Acc of
+                    [Last] ->
+                        riak_repl2_rt_spanning:add_replication(Last, "1"),
+                        [];
+                    [Current, Next | Tail] ->
+                        riak_repl2_rt_spanning:add_replication(Current, Next),
+                        [Next | Tail]
+                end
+            end, Clusters, Clusters)
+        end,
+        fun(_) -> ok end,
+        fun(_) -> [
 
-    ] end}.
+            {"hitting four", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("1", "4"),
+                Expected = ["5"],
+                ?assertEqual(Expected,Got)
+            end},
+
+            {"hitting six", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("1", "6"),
+                ?assertEqual([], Got)
+            end},
+
+            {"starting 4, hitting six", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("4", "6"),
+                ?assertEqual(["1"], Got)
+            end}
+
+        ] end} end,
+
+        fun(_) -> {"two way circle", setup, fun() ->
+            Clusters = ["1", "2", "3", "4", "5", "6"],
+            FoldFun = fun
+                (Cluster, {First, [Cluster]}) ->
+                    riak_repl2_rt_spanning:add_replication(Cluster, First),
+                    {First, []};
+                (Cluster, {First, [Cluster, Next | Tail]}) ->
+                    riak_repl2_rt_spanning:add_replication(Cluster, Next),
+                    {First, [Next | Tail]}
+            end,
+            lists:foldl(FoldFun, {hd(Clusters), Clusters}, Clusters),
+            Rev = lists:reverse(Clusters),
+            lists:foldl(FoldFun, {hd(Rev), Rev}, Rev)
+        end,
+        fun(_) -> ok end,
+        fun(_) -> [
+
+            {"hitting 2", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("1", "2"),
+                ?assertEqual(["3"], Got)
+            end},
+
+            {"hitting 3", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("1", "3"),
+                ?assertEqual(["4"], Got)
+            end},
+
+            {"hitting 5", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("1", "5"),
+                ?assertEqual([], Got)
+            end},
+
+            {"hitting 6 from 4", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("4", "6"),
+                ?assertEqual([], Got)
+            end},
+
+            {"hitting 2 from 4", fun() ->
+                Got = riak_repl2_rt_spanning:choose_nexts("4", "2"),
+                ?assertEqual(["1"], Got)
+            end}
+
+        ] end} end
+    ]}.
 
 prop_test_() ->
     {timeout, 60000, fun() ->
