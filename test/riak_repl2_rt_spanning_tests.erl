@@ -188,7 +188,42 @@ next_routes_test_() ->
                     ?assertEqual(OrdExpected, lists:sort(Got))
                 end, Clusters)
             end}
-        ] end} end
+        ] end} end,
+
+        {"highly connected mesh", setup, fun() ->
+            %   1<->2<->3
+            %   ^   ^   ^
+            %  / \ / \ /
+            % V   V   V
+            % 6<->5<->4
+            MeshData = [
+                {"1", ["2", "5", "6"]},
+                {"2", ["1", "3", "4", "5"]},
+                {"3", ["2", "4"]},
+                {"4", ["2", "3", "5"]},
+                {"5", ["1", "2", "4", "6"]},
+                {"6", ["1", "5"]}
+            ],
+            lists:map(fun({Source, Sinks}) ->
+                lists:map(fun(Sink) ->
+                    riak_repl2_rt_spanning:add_replication(Source, Sink)
+                end, Sinks)
+            end, MeshData)
+        end,
+        fun(_) -> ok end,
+        fun(_) -> [
+
+            {"walk routes", fun() ->
+                Clusters = ["1", "2", "3", "4", "5", "6"],
+                OrdExpected = ordsets:from_list(Clusters),
+                lists:map(fun(C) ->
+                    Got = walk_route(C),
+                    ?assertEqual(OrdExpected, lists:sort(Got))
+                end, Clusters)
+            end}
+
+        ] end}
+
     ]}.
 
 walk_route(Start) ->
