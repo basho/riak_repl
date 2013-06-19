@@ -12,6 +12,10 @@
 %% API
 -include("riak_repl.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([register_service/0, start_service/5]).
 -export([start_link/2,
          stop/1,
@@ -27,6 +31,7 @@
                 transport,        %% Module for sending
                 socket,           %% Socket
                 proto,            %% Protocol version negotiated
+                peername,         %% peername of socket
                 ver,              %% wire format agreed with rt source
                 max_pending,      %% Maximum number of operations
                 active = true,    %% If socket is set active
@@ -137,7 +142,8 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
 handle_call({set_socket, Socket, Transport}, _From, State) ->
     Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
-    {reply, ok, State#state{socket=Socket, transport=Transport}};
+    P = peername(Transport, Socket),
+    {reply, ok, State#state{socket=Socket, transport=Transport, peername = P}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
@@ -171,15 +177,15 @@ handle_info({Closed, _S}, State = #state{cont = Cont})
         0 ->
             ok;
         NumBytes ->
-            %%TODO: Add remote name somehow
             riak_repl_stats:rt_sink_errors(),
+            %% cached_peername not caclulated from socket, so should be valid
             lager:warning("Realtime connection from ~p closed with partial receive of ~b bytes\n",
                           [peername(State), NumBytes])
     end,
     {stop, normal, State};
 handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
         Error == tcp_error; Error == ssl_error ->
-    %%TODO: Add remote name somehow
+    %% peername not calculated from socket, so should be valid
     riak_repl_stats:rt_sink_errors(),
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Reason, size(Cont)]),
@@ -331,16 +337,21 @@ pending(#state{acked_seq = undefined}) ->
 pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
                completed = Completed}) ->
     ExpSeq - AckedSeq - length(Completed) - 1.
-    
-peername(#state{transport = T, socket = S}) ->
-    case T:peername(S) of
+
+%% get the peername from the transport; this will fail if the socket 
+%% is closed
+peername(Transport, Socket) ->
+    case Transport:peername(Socket) of
         {ok, Res} ->
             Res;
         {error, Reason} ->
             riak_repl_stats:rt_sink_errors(),
             {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
-            
+%% get the peername from #state; this should have been stashed at 
+%% initialization.
+peername(#state{peername = P}) ->
+    P.
 
 schedule_reactivate_socket(State = #state{transport = T,
                                           socket = S,
@@ -361,4 +372,47 @@ schedule_reactivate_socket(State = #state{transport = T,
             %% have a check scheduled already
             State
     end.
-    
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-define(LOOPBACK_TEST_SOCK, 20020).
+-define(LOOPBACK_TEST_PEER, {127,0,0,1}).
+
+riak_repl2_rtsink_conn_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun cache_peername_test_case/0
+      ]
+    }.
+
+setup() ->
+    ok.
+cleanup(_Ctx) ->
+    ok.
+
+%% test for https://github.com/basho/riak_repl/issues/247
+%% cache the peername so that when the local socket is closed
+%% peername will still be around for logging
+cache_peername_test_case() ->
+
+    {ok, ListenSocket} = gen_tcp:listen(?LOOPBACK_TEST_SOCK, [{active,true}, binary]),
+
+    {ok, Socket} = gen_tcp:connect({127,0,0,1}, ?LOOPBACK_TEST_SOCK, [binary, {active,true}]),
+
+    %% First, set_socket to initialize peername    
+    {Reply, Res, State } = handle_call({set_socket, Socket, inet}, ?LOOPBACK_TEST_PEER, #state{socket=Socket, transport=inet}),
+
+    %% Now close the socket
+    inet:close(Socket),
+
+    %% Now make sure we still get the peername, after socket close
+    ?assertEqual(reply, Reply),
+    ?assertEqual(ok, Res),
+    ?assertEqual({?LOOPBACK_TEST_PEER, ?LOOPBACK_TEST_SOCK}, peername(State)),
+     
+    inet:close(ListenSocket).
+-endif.
