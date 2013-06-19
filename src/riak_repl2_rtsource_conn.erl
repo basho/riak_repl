@@ -36,6 +36,10 @@
 -behaviour(gen_server).
 -include("riak_repl.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% API
 -export([start_link/1,
          stop/1,
@@ -58,6 +62,7 @@
                 connection_ref, % reference handed out by connection manager
                 transport, % transport module 
                 socket,    % socket to use with transport 
+                peername,  % cached when socket becomes active
                 proto,     % protocol version negotiated
                 ver,       % wire format negotiated
                 helper_pid,% riak_repl2_rtsource_helper pid
@@ -215,9 +220,11 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
                                  socket = Socket,
                                  address = EndPoint,
                                  proto = Proto,
+                                 peername = peername(Transport, Socket),
                                  helper_pid = HelperPid},
             lager:info("Established realtime connection to site ~p address ~s",
                       [Remote, peername(State2)]),
+
             case Proto of
                 {realtime, _OurVer, {1, 0}} ->
                     {reply, ok, State2};
@@ -274,6 +281,7 @@ handle_info(send_heartbeat, State) ->
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent = HBSent,
                                                         remote = Remote}) ->
     Duration = safe_now_diff(HBSent),
+    
     lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                   "after ~p milliseconds\n",
                   [peername(State), Remote, Duration]),
@@ -341,8 +349,11 @@ recv(TcpBin, State = #state{remote = Name,
             {stop, {framing_error, Reason}, State}
     end.
 
-peername(#state{transport = T, socket = S}) ->
-    riak_repl_util:peername(S, T).
+peername(Transport, Socket) ->
+    riak_repl_util:peername(Socket, Transport).
+
+peername(#state{peername = P}) ->
+    P.
 
 %% Heartbeat is disabled, do nothing
 send_heartbeat(State = #state{hb_interval = undefined}) ->
@@ -371,3 +382,88 @@ safe_now_diff({_,_,_} = Sooner, {_,_,_} = Later) ->
     timer:now_diff(Sooner, Later) div 1000;
 safe_now_diff(_,_) ->
     0.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-define(SINK_PORT, 5007).
+
+riak_repl2_rtsource_conn_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun cache_peername_test_case/0
+      ]
+    }.
+
+setup() ->
+    process_flag(trap_exit, true),
+    riak_repl_test_util:stop_test_ring(),
+    riak_repl_test_util:start_test_ring(),
+    riak_repl_test_util:abstract_gen_tcp(),
+    riak_repl_test_util:abstract_stats(),
+    riak_repl_test_util:abstract_stateful(),
+    ok.
+cleanup(_Ctx) ->
+    ok.
+
+%% test for https://github.com/basho/riak_repl/issues/247
+%% cache the peername so that when the local socket is closed
+%% peername will still be around for logging
+cache_peername_test_case() ->
+
+    setup_connection_for_peername(),
+
+    {ok, _RTPid} = rt_source_eqc:start_rt(),
+    {ok, _RTQPid} = rt_source_eqc:start_rtq(),
+    {ok, _TCPMonPid} = rt_source_eqc:start_tcp_mon(),
+    {ok, _FakeSinkPid} = rt_source_eqc:start_fake_sink(),
+
+    connect({127,0,0,1, ?SINK_PORT}).
+
+%% Set up the test
+setup_connection_for_peername() ->
+    riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
+    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
+        proc_lib:spawn_link(fun() ->
+            Version = stateful:version(),
+            {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
+            {ok, Socket} = gen_tcp:connect("127.0.0.1", ?SINK_PORT, [binary | TcpOpts]),
+
+            ok = Module:connected(Socket, gen_tcp, {"127.0.0.1", ?SINK_PORT}, Version, Pid, []),
+
+            % simulate local socket problem
+            inet:close(Socket),
+
+            % get the State from the source connection.
+            {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
+
+            % getting the peername from the socket should produce error string
+            ?assertEqual("error:einval", peername(inet, Socket)),
+
+            % while getting the peername from the State should produce the cached string
+            ?assertEqual("127.0.0.1:5007", peername(State))
+
+        end),
+
+        {ok, make_ref()}
+    end).
+
+%% Connect to the 'fake' sink
+connect(RemoteName) ->
+
+    stateful:set(version, {realtime, {1,0}, {1,0}}),
+    stateful:set(remote, RemoteName),
+
+    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
+    receive
+        {sink_started, SinkPid} -> 
+            {SourcePid, SinkPid}
+    after 1000 ->
+        {error, timeout}
+    end.
+
+-endif.
