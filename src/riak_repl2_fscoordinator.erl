@@ -181,7 +181,7 @@ connect_failed(_ClientProto, Reason, SourcePid) ->
 init(Cluster) ->
     process_flag(trap_exit, true),
     TcpOptions = [
-        {kepalive, true},
+        {keepalive, true},
         {nodelay, true},
         {packet, 4},
         {active, false}
