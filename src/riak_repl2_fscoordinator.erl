@@ -104,14 +104,9 @@ status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            {[], []};
-        _ ->
-            case riak_repl2_fscoordinator_sup:started(LeaderNode) of
-                [] ->
-                    [];
-                Repls ->
-                    [{Remote, status(Pid)} || {Remote, Pid} <- Repls]
-            end
+            [];
+        _ -> [{Remote, status(Pid)} || {Remote, Pid} <-
+                riak_repl2_fscoordinator_sup:started(LeaderNode)]
     end.
 
 %% @doc Get the status proplist for the given fullsync process. Same as
