@@ -35,30 +35,30 @@ functionality_test_() ->
             ?assertEqual([], riak_repl2_rt_spanning:clusters())
         end},
 
-        {"list replications", fun() ->
-            Got = riak_repl2_rt_spanning:replications(),
+        {"list cascades", fun() ->
+            Got = riak_repl2_rt_spanning:cascades(),
             ?assertEqual([], Got)
         end},
 
-        {"add a replication", fun() ->
-            riak_repl2_rt_spanning:add_replication("source", "sink"),
+        {"add a cascade", fun() ->
+            riak_repl2_rt_spanning:add_cascade("source", "sink"),
             ?assertEqual(["sink", "source"], riak_repl2_rt_spanning:clusters()),
-            Repls = riak_repl2_rt_spanning:replications(),
+            Repls = riak_repl2_rt_spanning:cascades(),
             ?assertEqual([{"sink", []}, {"source", ["sink"]}], Repls)
         end},
 
-        {"drop replication", fun() ->
-            riak_repl2_rt_spanning:add_replication("source", "sink"),
-            riak_repl2_rt_spanning:drop_replication("source", "sink"),
+        {"drop cascade", fun() ->
+            riak_repl2_rt_spanning:add_cascade("source", "sink"),
+            riak_repl2_rt_spanning:drop_cascade("source", "sink"),
             ?assertEqual(lists:sort(["source", "sink"]), lists:sort(riak_repl2_rt_spanning:clusters())),
-            Repls = riak_repl2_rt_spanning:replications(),
+            Repls = riak_repl2_rt_spanning:cascades(),
             ?assertEqual([{"sink", []},{"source",[]}], Repls)
         end},
 
-        {"drop cluster drops replications", fun() ->
-            riak_repl2_rt_spanning:add_replication("source", "sink"),
+        {"drop cluster drops cascades", fun() ->
+            riak_repl2_rt_spanning:add_cascade("source", "sink"),
             riak_repl2_rt_spanning:drop_cluster("sink"),
-            ?assertEqual([{"source", []}], riak_repl2_rt_spanning:replications())
+            ?assertEqual([{"source", []}], riak_repl2_rt_spanning:cascades())
         end},
 
         {"tear down", fun() ->
@@ -93,10 +93,10 @@ next_routes_test_() ->
             lists:foldl(fun(_Cluster, Acc) ->
                 case Acc of
                     [Last] ->
-                        riak_repl2_rt_spanning:add_replication(Last, "1"),
+                        riak_repl2_rt_spanning:add_cascade(Last, "1"),
                         [];
                     [Current, Next | Tail] ->
-                        riak_repl2_rt_spanning:add_replication(Current, Next),
+                        riak_repl2_rt_spanning:add_cascade(Current, Next),
                         [Next | Tail]
                 end
             end, Clusters, Clusters)
@@ -141,10 +141,10 @@ next_routes_test_() ->
             Clusters = ["1", "2", "3", "4", "5", "6"],
             FoldFun = fun
                 (Cluster, {First, [Cluster]}) ->
-                    riak_repl2_rt_spanning:add_replication(Cluster, First),
+                    riak_repl2_rt_spanning:add_cascade(Cluster, First),
                     {First, []};
                 (Cluster, {First, [Cluster, Next | Tail]}) ->
-                    riak_repl2_rt_spanning:add_replication(Cluster, Next),
+                    riak_repl2_rt_spanning:add_cascade(Cluster, Next),
                     {First, [Next | Tail]}
             end,
             lists:foldl(FoldFun, {hd(Clusters), Clusters}, Clusters),
@@ -206,7 +206,7 @@ next_routes_test_() ->
             ],
             lists:map(fun({Source, Sinks}) ->
                 lists:map(fun(Sink) ->
-                    riak_repl2_rt_spanning:add_replication(Source, Sink)
+                    riak_repl2_rt_spanning:add_cascade(Source, Sink)
                 end, Sinks)
             end, MeshData)
         end,
@@ -235,7 +235,7 @@ next_routes_test_() ->
             ],
             lists:map(fun({Source, Sinks}) ->
                 lists:map(fun(Sink) ->
-                    riak_repl2_rt_spanning:add_replication(Source, Sink)
+                    riak_repl2_rt_spanning:add_cascade(Source, Sink)
                 end, Sinks)
             end, MeshData)
         end,
@@ -389,16 +389,16 @@ precondition(_State, _Call) ->
     true.
 
 add_replication(Source, Sink) ->
-    riak_repl2_rt_spanning:add_replication(Source, Sink).
+    riak_repl2_rt_spanning:add_cascade(Source, Sink).
 
 drop_replication(Source, Sink) ->
-    riak_repl2_rt_spanning:drop_replication(Source, Sink).
+    riak_repl2_rt_spanning:drop_cascade(Source, Sink).
 
 drop_cluster(ClusterName) ->
     riak_repl2_rt_spanning:drop_cluster(ClusterName).
 
 replications() ->
-    riak_repl2_rt_spanning:replications().
+    riak_repl2_rt_spanning:cascades().
 
 clusters() ->
     riak_repl2_rt_spanning:clusters().

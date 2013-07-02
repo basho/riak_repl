@@ -3,7 +3,7 @@
 % api
 -export([start_link/0, stop/0]).
 -export([clusters/0]).
--export([replications/0, add_replication/2, drop_replication/2, drop_cluster/1]).
+-export([cascades/0, add_cascade/2, drop_cascade/2, drop_cluster/1]).
 -export([drop_all_cascades/1]).
 -export([path/2, choose_nexts/2]).
 
@@ -24,7 +24,7 @@ clusters() ->
 drop_cluster(ClusterName) ->
     gen_server:cast(?MODULE, {drop_cluster, ClusterName}).
 
-replications() ->
+cascades() ->
     Replications = gen_server:call(?MODULE, replications),
     Repls = lists:map(fun({Source, Sinks}) ->
         Sinks2 = ordsets:from_list(Sinks),
@@ -32,10 +32,10 @@ replications() ->
     end, Replications),
     orddict:from_list(Repls).
 
-add_replication(Source, Sink) ->
+add_cascade(Source, Sink) ->
     gen_server:cast(?MODULE, {add_replication, Source, Sink}).
 
-drop_replication(Source, Sink) ->
+drop_cascade(Source, Sink) ->
     gen_server:cast(?MODULE, {drop_replication, Source, Sink}).
 
 drop_all_cascades(Sink) ->
