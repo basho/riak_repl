@@ -150,11 +150,11 @@ setup() ->
     start_fake_rtq().
 
 next_state(S, Res, {call, _, connect_from_v1, [Remote]}) ->
-    SrcState = #src_state{pids = Res, version = 1},
+    SrcState = #src_state{pids = Res, version = {1,0}},
     next_state_connect(Remote, SrcState, S);
 
 next_state(S, Res, {call, _, connect_from_v2, [Remote]}) ->
-    SrcState = #src_state{pids = Res, version = 2},
+    SrcState = #src_state{pids = Res, version = {2,0}},
     next_state_connect(Remote, SrcState, S);
 
 next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
@@ -164,12 +164,12 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
 
 next_state(S, Res, {call, _, push_object, [{Remote, SrcState}, _RiakObj, PreviouslyRouted]}) ->
     case SrcState#src_state.version of
-        1 ->
+        {1,_} ->
             DoneQueue2 = SrcState#src_state.done_fun_queue ++ [{call, ?MODULE, extract_queue_object, [Res]}],
             SrcState2 = SrcState#src_state{done_fun_queue = DoneQueue2},
             Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
             S#state{sources = Sources2};
-        2 ->
+        {2,_} ->
             case lists:member(Remote, PreviouslyRouted) of
                 true ->
                     S;
@@ -242,7 +242,7 @@ postcondition(_S, {call, _, disconnect, [_Remote]}, {Source, Sink}) ->
     end,
     Out;
 
-postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = SrcState}, _RiakObj, _AlreadyRouted]}, Reses) ->
+postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = {1,_}} = SrcState}, _RiakObj, _AlreadyRouted]}, Reses) ->
     #push_result{rtq_res = RTQRes, donefun = HelperRes} = Reses,
     case RTQRes of
         {error, timeout} ->
@@ -256,7 +256,7 @@ postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = Sr
         _QWhat ->
             false
     end;
-postcondition(S, {call, _, push_object, [{Remote, #src_state{version = 2} = SrcState}, RiakObj, AlreadyRouted]}, Res) ->
+postcondition(S, {call, _, push_object, [{Remote, #src_state{version = {2,_}} = SrcState}, RiakObj, AlreadyRouted]}, Res) ->
     RTQRes = Res#push_result.rtq_res,
     HelperRes = Res#push_result.donefun,
     Routed = lists:member(Remote, Res#push_result.already_routed),
@@ -284,7 +284,7 @@ postcondition(_S, {call, _, call_donefun, [{Remote, SrcState}, NthDoneFun]}, Res
             Binary = riak_repl_util:to_wire(w1, [RiakObj]),
             AllCalled = lists:all(fun(called) -> true; (_) -> false end, PreviousDones),
             case {Version, Res} of
-                {2, {{ok, {push, _NumItems, Binary, Meta}}, {ok, TcpBin}}} when AllCalled ->
+                {{2,_}, {{ok, {push, _NumItems, Binary, Meta}}, {ok, TcpBin}}} when AllCalled ->
                     Routed = orddict:fetch(routed_clusters, Meta),
                     Got = ordsets:from_list(Routed),
                     Expected = ordsets:from_list([Remote | AlreadyRouted]),
@@ -295,19 +295,19 @@ postcondition(_S, {call, _, call_donefun, [{Remote, SrcState}, NthDoneFun]}, Res
                         _ ->
                             false
                     end;
-                {2, {{ok, {push, _NumItems, Binary, Meta}}, {error, timeout}}} ->
+                {{2,_}, {{ok, {push, _NumItems, Binary, Meta}}, {error, timeout}}} ->
                     Routed = orddict:fetch(routed_clusters, Meta),
                     Got = ordsets:from_list(Routed),
                     Expected = ordsets:from_list([Remote | AlreadyRouted]),
                     Got =:= Expected;
-                {1, {{error, timeout}, {ok, TCPBin}}} when AllCalled ->
+                {{1,_}, {{error, timeout}, {ok, TCPBin}}} when AllCalled ->
                     case riak_repl2_rtframe:decode(TCPBin) of
                         {ok, {ack, _SomeSeq}, <<>>} ->
                             true;
                         FrameDecode ->
                             false
                     end;
-                {1, {{error, timeout}, {error, timeout}}} ->
+                {{1,_}, {{error, timeout}, {error, timeout}}} ->
                     true;
                 _ ->
                     ?debugFmt("No valid returns on call_donefun~n"
@@ -355,7 +355,7 @@ disconnect({_Remote, State}) ->
     riak_repl_test_util:wait_for_pid(Sink),
     {Source, Sink}.
 
-push_object({_Remote, #src_state{version = 2} = SrcState}, RiakObj, AlreadyRouted) ->
+push_object({_Remote, #src_state{version = {2,0}} = SrcState}, RiakObj, AlreadyRouted) ->
     {Source, _Sink} = SrcState#src_state.pids,
     ok = fake_source_push_obj(Source, RiakObj, AlreadyRouted),
     RTQRes = read_fake_rtq_bug(),
