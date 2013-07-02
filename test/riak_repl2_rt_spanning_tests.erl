@@ -222,6 +222,47 @@ next_routes_test_() ->
                 end, Clusters)
             end}
 
+        ] end},
+
+        {"cascade set to never", setup, fun() ->
+            % 1 <-> 2 <-> 3 (never) <-> 4 <-> 5
+            MeshData = [
+                {"1", ["2"]},
+                {"2", ["1", "3"]},
+                {"3", ["2", "4"]},
+                {"4", ["3", "5"]},
+                {"5", ["4"]}
+            ],
+            lists:map(fun({Source, Sinks}) ->
+                lists:map(fun(Sink) ->
+                    riak_repl2_rt_spanning:add_replication(Source, Sink)
+                end, Sinks)
+            end, MeshData)
+        end,
+        fun(_) -> ok end,
+        fun(_) -> [
+
+            {"set 3 to never cascade", fun() ->
+                riak_repl2_rt_spanning:drop_all_cascades("3")
+            end},
+
+            {"ensure 1 can reach 3", fun() ->
+                Got = riak_repl2_rt_spanning:path("1", "3"),
+                ?assertEqual(["1", "2", "3"], Got)
+            end},
+
+            {"ensure 3 cannot reach 5", fun() ->
+                % the graph is only useful for cascades, initial
+                % replication needs to take care of itself.
+                Got = riak_repl2_rt_spanning:path("3", "5"),
+                ?assertEqual(false, Got)
+            end},
+
+            {"there's no path from 1 to 5", fun() ->
+                Got = riak_repl2_rt_spanning:path("1", "5"),
+                ?assertEqual(false, Got)
+            end}
+
         ] end}
 
     ]}.

@@ -4,6 +4,7 @@
 -export([start_link/0, stop/0]).
 -export([clusters/0]).
 -export([replications/0, add_replication/2, drop_replication/2, drop_cluster/1]).
+-export([drop_all_cascades/1]).
 -export([path/2, choose_nexts/2]).
 
 % gen_server
@@ -36,6 +37,9 @@ add_replication(Source, Sink) ->
 
 drop_replication(Source, Sink) ->
     gen_server:cast(?MODULE, {drop_replication, Source, Sink}).
+
+drop_all_cascades(Sink) ->
+    gen_server:cast(?MODULE, {drop_all_cascades, Sink}).
 
 path(Start, End) ->
     Graph = gen_server:call(?MODULE, graph),
@@ -132,6 +136,11 @@ handle_cast({drop_replication, Source, Sink}, Graph) ->
                 ok
         end
     end, OutEdges),
+    {noreply, Graph};
+
+handle_cast({drop_all_cascades, Sink}, Graph) ->
+    OutEdges = digraph:out_edges(Graph, Sink),
+    digraph:del_edges(Graph, OutEdges),
     {noreply, Graph};
 
 handle_cast(_Msg, Graph) ->
