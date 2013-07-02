@@ -15,7 +15,7 @@ functionality_test_() ->
         ok
     end,
     fun(ok) ->
-        case whereis(?MODULE) of
+        case whereis(riak_repl2_rt_spanning) of
             undefined ->
                 ok;
             Pid ->
@@ -41,23 +41,23 @@ functionality_test_() ->
         end},
 
         {"add a replication", fun() ->
-            ?MODULE:add_replication("source", "sink"),
+            riak_repl2_rt_spanning:add_replication("source", "sink"),
             ?assertEqual(["sink", "source"], riak_repl2_rt_spanning:clusters()),
-            Repls = ?MODULE:replications(),
+            Repls = riak_repl2_rt_spanning:replications(),
             ?assertEqual([{"sink", []}, {"source", ["sink"]}], Repls)
         end},
 
         {"drop replication", fun() ->
-            ?MODULE:add_replication("source", "sink"),
-            ?MODULE:drop_replication("source", "sink"),
+            riak_repl2_rt_spanning:add_replication("source", "sink"),
+            riak_repl2_rt_spanning:drop_replication("source", "sink"),
             ?assertEqual(lists:sort(["source", "sink"]), lists:sort(riak_repl2_rt_spanning:clusters())),
             Repls = riak_repl2_rt_spanning:replications(),
             ?assertEqual([{"sink", []},{"source",[]}], Repls)
         end},
 
         {"drop cluster drops replications", fun() ->
-            ?MODULE:add_replication("source", "sink"),
-            ?MODULE:drop_cluster("sink"),
+            riak_repl2_rt_spanning:add_replication("source", "sink"),
+            riak_repl2_rt_spanning:drop_cluster("sink"),
             ?assertEqual([{"source", []}], riak_repl2_rt_spanning:replications())
         end},
 
