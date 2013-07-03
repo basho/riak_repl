@@ -68,7 +68,7 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
                                                                  OurKeyListFn),
     TheirMerkleFn = riak_repl_util:merkle_filename(WorkDir, Partition, theirs),
     TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
-    {ok, FP} = file:open(TheirMerkleFn, [write, raw, binary, delayed_write]),
+    {ok, FP} = file:open(TheirMerkleFn, [write, raw, binary]),
     {next_state, merkle_recv, State#state{merkle_fp=FP, 
                                           their_merkle_fn=TheirMerkleFn,
                                           their_merkle_sz=Size, 
