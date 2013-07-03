@@ -149,7 +149,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
     OwnerNode = riak_core_ring:index_owner(Ring, Partition),
     case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
         true ->
-            {ok, FP} = file:open(Filename, [raw, write, binary, delayed_write]),
+            {ok, FP} = file:open(Filename, [raw, write, binary]),
             Self = self(),
             Worker = fun() ->
                              %% Spend as little time on the vnode as possible,
@@ -189,7 +189,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
 
     %% Iterate over the couch file and write out to the keyfile
     {ok, InFileFd, InFileBtree} = open_couchdb(MerkleFn),
-    {ok, OutFile} = file:open(KeyListFn, [binary, write, raw, delayed_write]),
+    {ok, OutFile} = file:open(KeyListFn, [binary, write, raw]),
     couch_btree:foldl(InFileBtree, fun({K, V}, _Acc) ->
                                            B = term_to_binary({K, V}),
                                            ok = file:write(OutFile, <<(size(B)):32, B/binary>>),
@@ -286,6 +286,7 @@ handle_cast(merkle_finish, State) ->
     couch_merkle:close(State#state.merkle_pid),
     {noreply, State};
 handle_cast({kl_finish, Count}, State) ->
+    %% note: delayed_write has been removed as of 1.4.0
     %% delayed_write can mean sync/close might not work the first time around
     %% because of a previous error that is only now being reported. In this case,
     %% call close again. See http://www.erlang.org/doc/man/file.html#open-2

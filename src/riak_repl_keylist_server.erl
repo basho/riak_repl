@@ -244,8 +244,7 @@ wait_keylist(kl_wait, State) ->
 wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
     FH = case FH0 of
         undefined ->
-            {ok, F} = file:open(State#state.their_kl_fn, [write, raw, binary,
-                    delayed_write]),
+            {ok, F} = file:open(State#state.their_kl_fn, [write, raw, binary]),
             F;
         _ ->
             FH0
