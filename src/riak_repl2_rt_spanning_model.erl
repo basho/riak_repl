@@ -1,4 +1,4 @@
--module(riak_repl2_rt_spanning).
+-module(riak_repl2_rt_spanning_model).
 
 % api
 -export([start_link/0, stop/0]).

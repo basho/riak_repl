@@ -1,4 +1,4 @@
--module(riak_repl2_rt_spanning_tests).
+-module(riak_repl2_rt_spanning_model_tests).
 
 -ifdef(EQC).
 -ifdef(TEST).
@@ -15,7 +15,7 @@ functionality_test_() ->
         ok
     end,
     fun(ok) ->
-        case whereis(riak_repl2_rt_spanning) of
+        case whereis(riak_repl2_rt_spanning_model) of
             undefined ->
                 ok;
             Pid ->
@@ -25,46 +25,46 @@ functionality_test_() ->
     fun(ok) -> [
 
         {"start up", fun() ->
-            Got = riak_repl2_rt_spanning:start_link(),
+            Got = riak_repl2_rt_spanning_model:start_link(),
             ?assertMatch({ok, _Pid}, Got),
             ?assert(is_pid(element(2, Got))),
             unlink(element(2, Got))
         end},
 
         {"get list of known clusters", fun() ->
-            ?assertEqual([], riak_repl2_rt_spanning:clusters())
+            ?assertEqual([], riak_repl2_rt_spanning_model:clusters())
         end},
 
         {"list cascades", fun() ->
-            Got = riak_repl2_rt_spanning:cascades(),
+            Got = riak_repl2_rt_spanning_model:cascades(),
             ?assertEqual([], Got)
         end},
 
         {"add a cascade", fun() ->
-            riak_repl2_rt_spanning:add_cascade("source", "sink"),
-            ?assertEqual(["sink", "source"], riak_repl2_rt_spanning:clusters()),
-            Repls = riak_repl2_rt_spanning:cascades(),
+            riak_repl2_rt_spanning_model:add_cascade("source", "sink"),
+            ?assertEqual(["sink", "source"], riak_repl2_rt_spanning_model:clusters()),
+            Repls = riak_repl2_rt_spanning_model:cascades(),
             ?assertEqual([{"sink", []}, {"source", ["sink"]}], Repls)
         end},
 
         {"drop cascade", fun() ->
-            riak_repl2_rt_spanning:add_cascade("source", "sink"),
-            riak_repl2_rt_spanning:drop_cascade("source", "sink"),
-            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(riak_repl2_rt_spanning:clusters())),
-            Repls = riak_repl2_rt_spanning:cascades(),
+            riak_repl2_rt_spanning_model:add_cascade("source", "sink"),
+            riak_repl2_rt_spanning_model:drop_cascade("source", "sink"),
+            ?assertEqual(lists:sort(["source", "sink"]), lists:sort(riak_repl2_rt_spanning_model:clusters())),
+            Repls = riak_repl2_rt_spanning_model:cascades(),
             ?assertEqual([{"sink", []},{"source",[]}], Repls)
         end},
 
         {"drop cluster drops cascades", fun() ->
-            riak_repl2_rt_spanning:add_cascade("source", "sink"),
-            riak_repl2_rt_spanning:drop_cluster("sink"),
-            ?assertEqual([{"source", []}], riak_repl2_rt_spanning:cascades())
+            riak_repl2_rt_spanning_model:add_cascade("source", "sink"),
+            riak_repl2_rt_spanning_model:drop_cluster("sink"),
+            ?assertEqual([{"source", []}], riak_repl2_rt_spanning_model:cascades())
         end},
 
         {"tear down", fun() ->
-            Pid = whereis(riak_repl2_rt_spanning),
+            Pid = whereis(riak_repl2_rt_spanning_model),
             Mon = erlang:monitor(process, Pid),
-            riak_repl2_rt_spanning:stop(),
+            riak_repl2_rt_spanning_model:stop(),
             Got = receive
                 {'DOWN', Mon, process, Pid, _Why} ->
                     true
@@ -78,12 +78,12 @@ functionality_test_() ->
 
 next_routes_test_() ->
     {foreach, fun() ->
-        {ok, Pid} = riak_repl2_rt_spanning:start_link(),
+        {ok, Pid} = riak_repl2_rt_spanning_model:start_link(),
         unlink(Pid),
         Pid
     end,
     fun(Pid) ->
-        riak_repl2_rt_spanning:stop(),
+        riak_repl2_rt_spanning_model:stop(),
         riak_repl_test_util:wait_for_pid(Pid)
     end,
     [
@@ -93,10 +93,10 @@ next_routes_test_() ->
             lists:foldl(fun(_Cluster, Acc) ->
                 case Acc of
                     [Last] ->
-                        riak_repl2_rt_spanning:add_cascade(Last, "1"),
+                        riak_repl2_rt_spanning_model:add_cascade(Last, "1"),
                         [];
                     [Current, Next | Tail] ->
-                        riak_repl2_rt_spanning:add_cascade(Current, Next),
+                        riak_repl2_rt_spanning_model:add_cascade(Current, Next),
                         [Next | Tail]
                 end
             end, Clusters, Clusters)
@@ -105,23 +105,23 @@ next_routes_test_() ->
         fun(_) -> [
 
             {"starting out", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("1", "1"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("1", "1"),
                 ?assertEqual(["2"], Got)
             end},
 
             {"hitting four", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("1", "4"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("1", "4"),
                 Expected = ["5"],
                 ?assertEqual(Expected,Got)
             end},
 
             {"hitting six", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("1", "6"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("1", "6"),
                 ?assertEqual([], Got)
             end},
 
             {"starting 4, hitting six", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("4", "6"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("4", "6"),
                 ?assertEqual(["1"], Got)
             end},
 
@@ -141,10 +141,10 @@ next_routes_test_() ->
             Clusters = ["1", "2", "3", "4", "5", "6"],
             FoldFun = fun
                 (Cluster, {First, [Cluster]}) ->
-                    riak_repl2_rt_spanning:add_cascade(Cluster, First),
+                    riak_repl2_rt_spanning_model:add_cascade(Cluster, First),
                     {First, []};
                 (Cluster, {First, [Cluster, Next | Tail]}) ->
-                    riak_repl2_rt_spanning:add_cascade(Cluster, Next),
+                    riak_repl2_rt_spanning_model:add_cascade(Cluster, Next),
                     {First, [Next | Tail]}
             end,
             lists:foldl(FoldFun, {hd(Clusters), Clusters}, Clusters),
@@ -155,27 +155,27 @@ next_routes_test_() ->
         fun(_) -> [
 
             {"hitting 2", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("1", "2"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("1", "2"),
                 ?assertEqual(["3"], Got)
             end},
 
             {"hitting 3", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("1", "3"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("1", "3"),
                 ?assertEqual(["4"], Got)
             end},
 
             {"hitting 5", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("1", "5"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("1", "5"),
                 ?assertEqual([], Got)
             end},
 
             {"hitting 6 from 4", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("4", "6"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("4", "6"),
                 ?assertEqual([], Got)
             end},
 
             {"hitting 2 from 4", fun() ->
-                Got = riak_repl2_rt_spanning:choose_nexts("4", "2"),
+                Got = riak_repl2_rt_spanning_model:choose_nexts("4", "2"),
                 ?assertEqual(["1"], Got)
             end},
 
@@ -206,7 +206,7 @@ next_routes_test_() ->
             ],
             lists:map(fun({Source, Sinks}) ->
                 lists:map(fun(Sink) ->
-                    riak_repl2_rt_spanning:add_cascade(Source, Sink)
+                    riak_repl2_rt_spanning_model:add_cascade(Source, Sink)
                 end, Sinks)
             end, MeshData)
         end,
@@ -235,7 +235,7 @@ next_routes_test_() ->
             ],
             lists:map(fun({Source, Sinks}) ->
                 lists:map(fun(Sink) ->
-                    riak_repl2_rt_spanning:add_cascade(Source, Sink)
+                    riak_repl2_rt_spanning_model:add_cascade(Source, Sink)
                 end, Sinks)
             end, MeshData)
         end,
@@ -243,23 +243,23 @@ next_routes_test_() ->
         fun(_) -> [
 
             {"set 3 to never cascade", fun() ->
-                riak_repl2_rt_spanning:drop_all_cascades("3")
+                riak_repl2_rt_spanning_model:drop_all_cascades("3")
             end},
 
             {"ensure 1 can reach 3", fun() ->
-                Got = riak_repl2_rt_spanning:path("1", "3"),
+                Got = riak_repl2_rt_spanning_model:path("1", "3"),
                 ?assertEqual(["1", "2", "3"], Got)
             end},
 
             {"ensure 3 cannot reach 5", fun() ->
                 % the graph is only useful for cascades, initial
                 % replication needs to take care of itself.
-                Got = riak_repl2_rt_spanning:path("3", "5"),
+                Got = riak_repl2_rt_spanning_model:path("3", "5"),
                 ?assertEqual(false, Got)
             end},
 
             {"there's no path from 1 to 5", fun() ->
-                Got = riak_repl2_rt_spanning:path("1", "5"),
+                Got = riak_repl2_rt_spanning_model:path("1", "5"),
                 ?assertEqual(false, Got)
             end}
 
@@ -268,7 +268,7 @@ next_routes_test_() ->
     ]}.
 
 walk_route(Start) ->
-    Nexts = riak_repl2_rt_spanning:choose_nexts(Start, Start),
+    Nexts = riak_repl2_rt_spanning_model:choose_nexts(Start, Start),
     ?debugFmt("Der nexts: ~p", [Nexts]),
     [Start] ++ step(Start, Nexts).
 
@@ -278,7 +278,7 @@ step(Start, []) ->
 step(Start, Nexts) ->
     ?debugFmt("doing stepping from ~p with nexts ~p", [Start, Nexts]),
     lists:foldl(fun(N, Acc) ->
-        NextNexts = riak_repl2_rt_spanning:choose_nexts(Start, N),
+        NextNexts = riak_repl2_rt_spanning_model:choose_nexts(Start, N),
         ?debugFmt("Der nexts in step: ~p", [NextNexts]),
         Acc ++ step(Start, NextNexts)
     end, Nexts, Nexts).
@@ -293,7 +293,7 @@ prop_statem() ->
         aggregate(command_names(Cmds), begin
             {H, S, Res} = run_commands(?MODULE, Cmds),
             Out = pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok),
-            riak_repl2_rt_spanning:stop(),
+            riak_repl2_rt_spanning_model:stop(),
             Out
         end)).
 
@@ -311,18 +311,18 @@ g_cluster() ->
         "nine", "ten"]).
 
 initial_state() ->
-    case whereis(riak_repl2_rt_spanning) of
+    case whereis(riak_repl2_rt_spanning_model) of
         undefined ->
             ok;
         LivingPid ->
             Mon = erlang:monitor(process, LivingPid),
-            riak_repl2_rt_spanning:stop(),
+            riak_repl2_rt_spanning_model:stop(),
             receive
                 {'DOWN', Mon, process, LivingPid, _} ->
                     ok
             end
     end,
-    {ok, Pid} = riak_repl2_rt_spanning:start_link(),
+    {ok, Pid} = riak_repl2_rt_spanning_model:start_link(),
     unlink(Pid),
     [].
 
@@ -389,19 +389,19 @@ precondition(_State, _Call) ->
     true.
 
 add_replication(Source, Sink) ->
-    riak_repl2_rt_spanning:add_cascade(Source, Sink).
+    riak_repl2_rt_spanning_model:add_cascade(Source, Sink).
 
 drop_replication(Source, Sink) ->
-    riak_repl2_rt_spanning:drop_cascade(Source, Sink).
+    riak_repl2_rt_spanning_model:drop_cascade(Source, Sink).
 
 drop_cluster(ClusterName) ->
-    riak_repl2_rt_spanning:drop_cluster(ClusterName).
+    riak_repl2_rt_spanning_model:drop_cluster(ClusterName).
 
 replications() ->
-    riak_repl2_rt_spanning:cascades().
+    riak_repl2_rt_spanning_model:cascades().
 
 clusters() ->
-    riak_repl2_rt_spanning:clusters().
+    riak_repl2_rt_spanning_model:clusters().
 
 %% === internal ==========
 
