@@ -68,6 +68,7 @@
                   'riak_repl2_rtsource_helper',
                   'riak_repl2_rtsource_sup',
                   'riak_repl2_rt_spanning_model',
+                  'riak_repl2_rt_spanning_coord',
                   'riak_repl_migration',
                   'riak_repl2_pg_block_provider',
                   'riak_repl2_pg_block_provider_sup',
