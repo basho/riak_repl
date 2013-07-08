@@ -12,6 +12,10 @@
 %% API
 -include("riak_repl.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([register_service/0, start_service/5]).
 -export([start_link/2,
          stop/1,
@@ -27,6 +31,7 @@
                 transport,        %% Module for sending
                 socket,           %% Socket
                 proto,            %% Protocol version negotiated
+                peername,         %% peername of socket
                 ver,              %% wire format agreed with rt source
                 max_pending,      %% Maximum number of operations
                 active = true,    %% If socket is set active
@@ -89,7 +94,7 @@ init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OkProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:debug("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
+    lager:error("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
@@ -137,7 +142,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
 handle_call({set_socket, Socket, Transport}, _From, State) ->
     Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
-    {reply, ok, State#state{socket=Socket, transport=Transport}};
+    {reply, ok, State#state{socket=Socket, transport=Transport, peername = peername(Transport, Socket)}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
@@ -171,15 +176,15 @@ handle_info({Closed, _S}, State = #state{cont = Cont})
         0 ->
             ok;
         NumBytes ->
-            %%TODO: Add remote name somehow
             riak_repl_stats:rt_sink_errors(),
+            %% cached_peername not caclulated from socket, so should be valid
             lager:warning("Realtime connection from ~p closed with partial receive of ~b bytes\n",
                           [peername(State), NumBytes])
     end,
     {stop, normal, State};
 handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
         Error == tcp_error; Error == ssl_error ->
-    %%TODO: Add remote name somehow
+    %% peername not calculated from socket, so should be valid
     riak_repl_stats:rt_sink_errors(),
     lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Reason, size(Cont)]),
@@ -331,16 +336,21 @@ pending(#state{acked_seq = undefined}) ->
 pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
                completed = Completed}) ->
     ExpSeq - AckedSeq - length(Completed) - 1.
-    
-peername(#state{transport = T, socket = S}) ->
-    case T:peername(S) of
+
+%% get the peername from the transport; this will fail if the socket 
+%% is closed
+peername(Transport, Socket) ->
+    case Transport:peername(Socket) of
         {ok, Res} ->
             Res;
         {error, Reason} ->
             riak_repl_stats:rt_sink_errors(),
             {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
-            
+%% get the peername from #state; this should have been stashed at 
+%% initialization.
+peername(#state{peername = P}) ->
+    P.
 
 schedule_reactivate_socket(State = #state{transport = T,
                                           socket = S,
@@ -361,4 +371,120 @@ schedule_reactivate_socket(State = #state{transport = T,
             %% have a check scheduled already
             State
     end.
-    
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-define(SINK_PORT, 5008).
+-define(LOOPBACK_TEST_PEER, {127,0,0,1}).
+-define(VER1, {1,0}).
+-define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
+-define(PROTOCOL_V1, ?PROTOCOL(?VER1)).
+-compile(export_all).
+
+riak_repl2_rtsink_conn_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun cache_peername_test_case/0
+      ]
+    }.
+
+setup() ->
+    riak_repl_test_util:start_test_ring(),
+    riak_repl_test_util:abstract_gen_tcp(),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
+    {ok, _RT} = riak_repl2_rt:start_link(),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
+    {ok, _} = riak_repl2_rtq:start_link(),
+    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
+    {ok, _TCPMon} = riak_core_tcp_mon:start_link(),
+
+    ok.
+cleanup(_Ctx) ->
+    ok.
+
+%% test for https://github.com/basho/riak_repl/issues/247
+%% cache the peername so that when the local socket is closed
+%% peername will still be around for logging
+cache_peername_test_case() ->
+
+    TellMe = self(),
+
+    catch(meck:unload(riak_core_service_mgr)),
+    meck:new(riak_core_service_mgr, [passthrough]),
+    meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->     
+        {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
+        {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
+        TellMe ! sink_listening,
+        {ok, Socket} = gen_tcp:accept(Listen),
+        {ok, Pid} = riak_repl2_rtsink_conn:start_link({ok, ?PROTOCOL(?VER1)}, "source_cluster"),
+        %unlink(Pid),
+        ok = gen_tcp:controlling_process(Socket, Pid),
+        ok = riak_repl2_rtsink_conn:set_socket(Pid, Socket, gen_tcp),
+
+        % Socket is set, close it to simulate error
+        inet:close(Socket),
+ 
+        % grab the State from the rtsink_conn process
+        {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
+
+        % check to make sure peername is cached, not calculated from (now closed) Socket
+        case peername(State) of 
+           {Peer, _Port} ->
+               ?assertEqual(?LOOPBACK_TEST_PEER, Peer),
+               ?debugMsg("test passed");
+           _ ->
+               ?assertError(test_failed, "peer not cached")
+        end,
+        
+        %?assertEqual("error:einval", peername(inet, Socket)),
+
+        TellMe ! {sink_started, Pid}
+    end),
+
+    {ok, _SinkPid} = start_sink(),
+    {ok, {_Source, _Sink}} = start_source(?VER1).
+
+     
+listen_sink() ->
+    riak_repl2_rtsink_conn:register_service().
+
+start_source() ->
+    start_source(?VER1).
+
+start_source(NegotiatedVer) ->
+    catch(meck:unload(riak_core_connection_mgr)),
+    meck:new(riak_core_connection_mgr, [passthrough]),
+    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
+        spawn_link(fun() ->
+            {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
+            {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
+            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, 
+              ?PROTOCOL(NegotiatedVer), Pid, [])
+        end),
+        {ok, make_ref()}
+    end),
+    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
+    %unlink(SourcePid),
+    receive
+        {sink_started, SinkPid} ->
+            {ok, {SourcePid, SinkPid}}
+    after 1000 ->
+        {error, timeout}
+    end.
+
+start_sink() ->
+
+    Pid = proc_lib:spawn_link(?MODULE, listen_sink, []),
+    receive
+        sink_listening ->
+            {ok, Pid}
+    after 10000 ->
+            {error, timeout}
+    end.
+
+
+-endif.
