@@ -25,4 +25,8 @@ spanning_update(SourceName, SinkName, ConnectAction, Routed) ->
     ok.
 
 set_model(Source, Sink, connect) ->
-    riak_repl2_rt_spanning_model:add_cascade(Source, Sink).
+    riak_repl2_rt_spanning_model:add_cascade(Source, Sink);
+set_model(Source, Sink, disconnect) ->
+    riak_repl2_rt_spanning_model:drop_cascade(Source, Sink);
+set_model(Source, _Sink, disconnect_all) ->
+    riak_repl2_rt_spanning_model:drop_all_cascades(Source).

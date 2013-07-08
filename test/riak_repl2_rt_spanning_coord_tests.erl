@@ -57,6 +57,23 @@ functionality_test_() ->
                 Got = lists:sort(recv_conn_mecks()),
                 ?assertEqual(Expected, Got),
                 ?assertEqual(["source", "sink"], riak_repl2_rt_spanning_model:path("source", "sink"))
+            end} end,
+
+            fun(_) -> {"define a disconnect", fun() ->
+                set_conn_mecks(),
+                riak_repl2_rt_spanning_model:add_cascade("source", "sink"),
+                riak_repl2_rt_spanning_coord:spanning_update("source", "sink", disconnect, []),
+                recv_conn_mecks(),
+                ?assertNot(riak_repl2_rt_spanning_model:path("source", "sink"))
+            end} end,
+
+            fun(_) -> {"disconnect all sinks", fun() ->
+                set_conn_mecks(),
+                TestSinks = [integer_to_list(N) ++ "_test_sink" || N <- lists:seq(1, 3)],
+                [riak_repl2_rt_spanning_model:add_cascade("source", TestSink) || TestSink <- TestSinks],
+                riak_repl2_rt_spanning_coord:spanning_update("source", undefined, disconnect_all, []),
+                recv_conn_mecks(),
+                [?assertNot(riak_repl2_rt_spanning_model:path("source", TestSink)) || TestSink <- TestSinks]
             end} end
 
         ]}
