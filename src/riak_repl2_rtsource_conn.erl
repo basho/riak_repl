@@ -36,6 +36,10 @@
 -behaviour(gen_server).
 -include("riak_repl.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% API
 -export([start_link/1,
          stop/1,
@@ -58,6 +62,7 @@
                 connection_ref, % reference handed out by connection manager
                 transport, % transport module 
                 socket,    % socket to use with transport 
+                peername,  % cached when socket becomes active
                 proto,     % protocol version negotiated
                 ver,       % wire format negotiated
                 helper_pid,% riak_repl2_rtsource_helper pid
@@ -215,9 +220,11 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
                                  socket = Socket,
                                  address = EndPoint,
                                  proto = Proto,
+                                 peername = peername(Transport, Socket),
                                  helper_pid = HelperPid},
             lager:info("Established realtime connection to site ~p address ~s",
                       [Remote, peername(State2)]),
+
             case Proto of
                 {realtime, _OurVer, {1, 0}} ->
                     {reply, ok, State2};
@@ -274,6 +281,7 @@ handle_info(send_heartbeat, State) ->
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent = HBSent,
                                                         remote = Remote}) ->
     Duration = safe_now_diff(HBSent),
+    
     lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                   "after ~p milliseconds\n",
                   [peername(State), Remote, Duration]),
@@ -341,8 +349,11 @@ recv(TcpBin, State = #state{remote = Name,
             {stop, {framing_error, Reason}, State}
     end.
 
-peername(#state{transport = T, socket = S}) ->
-    riak_repl_util:peername(S, T).
+peername(Transport, Socket) ->
+    riak_repl_util:peername(Socket, Transport).
+
+peername(#state{peername = P}) ->
+    P.
 
 %% Heartbeat is disabled, do nothing
 send_heartbeat(State = #state{hb_interval = undefined}) ->
@@ -371,3 +382,42 @@ safe_now_diff({_,_,_} = Sooner, {_,_,_} = Later) ->
     timer:now_diff(Sooner, Later) div 1000;
 safe_now_diff(_,_) ->
     0.
+    %% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-define(LOOPBACK_TEST_SOCK, 20020).
+-define(LOOPBACK_TEST_PEER, {127,0,0,1}).
+
+riak_repl2_rtsource_conn_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun cache_peername_test_case/0
+      ]
+    }.
+
+setup() ->
+    ok.
+cleanup(_Ctx) ->
+    ok.
+
+%% test for https://github.com/basho/riak_repl/issues/247
+%% cache the peername so that when the local socket is closed
+%% peername will still be around for logging
+cache_peername_test_case() ->
+
+    {ok, ListenSocket} = gen_tcp:listen(?LOOPBACK_TEST_SOCK, [{active,true}, binary]),
+
+    {ok, Socket} = gen_tcp:connect(?LOOPBACK_TEST_PEER, ?LOOPBACK_TEST_SOCK, [binary, {active,true}]),
+
+    TestState = #state{peername = peername(inet, Socket)},
+ 
+    ?assertEqual(TestState#state.peername, peername(TestState)),
+
+    %% Now close the sockets
+    inet:close(Socket),
+    inet:close(ListenSocket).
+-endif.
