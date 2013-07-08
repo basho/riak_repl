@@ -48,6 +48,15 @@ functionality_test_() ->
                 Got = lists:sort(recv_conn_mecks()),
                 ?assertEqual(Expected, Got),
                 ?assertEqual(["source", "sink"], riak_repl2_rt_spanning_model:path("source", "sink"))
+            end} end,
+
+            fun(_) -> {"forwarding to all sinks", fun() ->
+                set_conn_mecks(),
+                riak_repl2_rt_spanning_coord:spanning_update("source", "sink", connect, ["sink_a"]),
+                Expected = lists:sort([{spanning_update, Pid} || Pid <- Pids]),
+                Got = lists:sort(recv_conn_mecks()),
+                ?assertEqual(Expected, Got),
+                ?assertEqual(["source", "sink"], riak_repl2_rt_spanning_model:path("source", "sink"))
             end} end
 
         ]}
