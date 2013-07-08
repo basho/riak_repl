@@ -94,7 +94,7 @@ init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OkProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:error("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
+    lager:debug("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
@@ -421,7 +421,7 @@ cache_peername_test_case() ->
         TellMe ! sink_listening,
         {ok, Socket} = gen_tcp:accept(Listen),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link({ok, ?PROTOCOL(?VER1)}, "source_cluster"),
-        %unlink(Pid),
+
         ok = gen_tcp:controlling_process(Socket, Pid),
         ok = riak_repl2_rtsink_conn:set_socket(Pid, Socket, gen_tcp),
 
@@ -440,8 +440,6 @@ cache_peername_test_case() ->
                ?assertError(test_failed, "peer not cached")
         end,
         
-        %?assertEqual("error:einval", peername(inet, Socket)),
-
         TellMe ! {sink_started, Pid}
     end),
 
@@ -468,7 +466,6 @@ start_source(NegotiatedVer) ->
         {ok, make_ref()}
     end),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
-    %unlink(SourcePid),
     receive
         {sink_started, SinkPid} ->
             {ok, {SourcePid, SinkPid}}
