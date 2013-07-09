@@ -59,7 +59,7 @@ prop_main() ->
 unload_mecks() ->
     riak_repl_test_util:maybe_unload_mecks([
         stateful, riak_core_ring_manager, riak_core_ring,
-        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq]).
+        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq, riak_repl2_rtsource_conn_sup]).
 
 %% ====================================================================
 %% Generators (including commands)
@@ -69,7 +69,9 @@ command(S) ->
     frequency(
         [{1, {call, ?MODULE, connect_from_v1, [remote_name(S)]}} || S#state.remotes_available /= []] ++
         [{1, {call, ?MODULE, connect_from_v2, [remote_name(S)]}} || S#state.remotes_available /= []] ++
+        [{1, {call, ?MODULE, connect_from_v2_2, [remote_name(S)]}} || S#state.remotes_available /= []] ++
         [{2, {call, ?MODULE, disconnect, [elements(S#state.sources)]}} || S#state.sources /= []] ++
+        [{5, {call, ?MODULE, push_spanning_update, [elements(S#state.sources), elements(S#state.sources), elements(S#state.sources), g_connected(), g_routed_list()]}} || length(S#state.sources) > 1] ++
         [{5, {call, ?MODULE, push_object, [elements(S#state.sources), g_riak_object(), g_unique(["sink_cluster" | ?all_remotes])]}} || S#state.sources /= []] ++
         [{3, {call, ?MODULE, call_donefun, ?LET({Remote, Source}, elements(S#state.sources),[{Remote, Source}, g_donefun(Source#src_state.done_fun_queue)])}} || S#state.sources /= []]
         ).
@@ -85,6 +87,12 @@ g_donefun(DoneFuns) ->
 
 g_unique(Possibilites) ->
     ?LET(List, list(elements(Possibilites)), lists:usort(List)).
+
+g_connected() ->
+    oneof([connect, disconnect, disconnect_all]).
+
+g_routed_list() ->
+    g_unique(["sink_cluster" | ?all_remotes]).
 
 remote_name(#state{remotes_available = []}) ->
     erlang:error(no_name_available);
@@ -106,7 +114,9 @@ precondition(#state{sources = Sources}, {call, _, disconnect, [{Remote, _}]}) ->
     is_tuple(lists:keyfind(Remote, 1, Sources));
 precondition(S, {call, _, push_object, _Args}) ->
     S#state.sources /= [];
-precondition(S, {call, _, Connect, [Remote]}) when Connect == connect_from_v1; Connect == connect_from_v2 ->
+precondition(S, {call, _, push_spanning_update, [{Name, _SrcState}, {Name, _SrcState}, _Connect, _RouteList]}) ->
+    false;
+precondition(S, {call, _, Connect, [Remote]}) when Connect == connect_from_v1; Connect == connect_from_v2; Connect == connect_from_v2_2 ->
     lists:member(Remote, S#state.remotes_available);
 precondition(S, {call, _, Connect, [#src_state{done_fun_queue = []}, _]}) ->
     false;
@@ -139,6 +149,7 @@ teardown() ->
 setup() ->
     riak_core_tcp_mon:start_link(),
     riak_repl_test_util:abstract_stateful(),
+    stateful:set(base_test_pid, self()),
     abstract_ring_manager(),
     abstract_ranch(),
     abstract_rtsink_helper(),
@@ -147,6 +158,7 @@ setup() ->
     start_service_manager(),
     riak_repl2_rtsink_conn:register_service(),
     abstract_fake_source(),
+    abstract_source_conn_sup(),
     start_fake_rtq().
 
 next_state(S, Res, {call, _, connect_from_v1, [Remote]}) ->
@@ -155,6 +167,10 @@ next_state(S, Res, {call, _, connect_from_v1, [Remote]}) ->
 
 next_state(S, Res, {call, _, connect_from_v2, [Remote]}) ->
     SrcState = #src_state{pids = Res, version = {2,0}},
+    next_state_connect(Remote, SrcState, S);
+
+next_state(S, Res, {call, _, connect_from_v2_2, [Remote]}) ->
+    SrcState = #src_state{pids = Res, version = {2,2}},
     next_state_connect(Remote, SrcState, S);
 
 next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
@@ -193,7 +209,10 @@ next_state(S, _Res, {call, _, call_donefun, [{Remote, SrcState}, DoneFunN]}) ->
             SrcState2 = SrcState#src_state{done_fun_queue = DoneFun2},
             Sources2 = lists:keystore(Remote, 1, S#state.sources, {Remote, SrcState2}),
             S#state{sources = Sources2}
-    end.
+    end;
+
+next_state(S, _Res, {call, _, push_spanning_update, _Args}) ->
+    S.
 
 next_state_connect(Remote, SrcState, State) ->
     Sources = State#state.sources,
@@ -231,6 +250,27 @@ postcondition(_S, {call, _, connect_from_v2, [_Remote]}, {Source, Sink}) ->
             ok
     end,
     Out;
+postcondition(_S, {call, _, connect_from_v2_2, [_Remote]}, {error, _Reses}) ->
+    false;
+postcondition(_S, {call, _, connect_from_v2_2, [_Remote]}, {Source, Sink}) ->
+    if
+        is_pid(Source) andalso is_pid(Sink) ->
+            Lives = is_process_alive(Source) andalso is_process_alive(Sink),
+            if
+                Lives ->
+                    true;
+                true ->
+                    ?debugFmt("Either Source or sink is dead:~n"
+                        "    Source: ~p~n"
+                        "    Sink: ~p", [is_process_alive(Source), is_process_alive(Sink)]),
+                    false
+            end;
+        true ->
+            ?debugFmt("Either source or sink is not a pid:~n"
+                "    Source: ~p~n"
+                "    Sink: ~p", [Source, Sink]),
+            false
+    end;
 
 postcondition(_S, {call, _, disconnect, [_Remote]}, {Source, Sink}) ->
     Out = not ( is_process_alive(Source) orelse is_process_alive(Sink) ),
@@ -270,7 +310,42 @@ postcondition(S, {call, _, push_object, [{Remote, #src_state{version = {2,_}} = 
     end;
 postcondition(_S, {call, _, push_object, _Args}, {error, _What}) ->
     false;
-
+postcondition(S, {call, _, push_spanning_update, [{Using,_}, {FromCluster, _}, {ToCluster, _}, _Connect, _Routed]}, {error, too_old}) ->
+    {Using, RealUsing} = lists:keyfind(Using, 1, S#state.sources),
+    % it's okay, we wouldn't expect it anyway for older versions
+    RealUsing#src_state.version =< {2,2};
+postcondition(S, {call, _, push_spanning_update, [Using, {FromCluster, _}, {ToCluster, _}, Connect, Routed]}, Res) ->
+    ExpectingMsg = [{Name, FakeSourcePid} || {Name, #src_state{pids = {FakeSourcePid, _Sink}}} <- S#state.sources, not lists:member(Name, Routed)],
+    lists:all(fun({Name, FakeSourcePid}) ->
+        ExpectedRouted = ordsets:add_element(Name, Routed),
+        ExpectedMessage = case Connect of
+            disconnect_all ->
+                {spanning_update, {FromCluster, undefined, Connect, ExpectedRouted}};
+            _ ->
+                {spanning_update, {FromCluster, ToCluster, Connect, ExpectedRouted}}
+        end,
+        {ok, Bin} = fake_source_tcp_bug(FakeSourcePid),
+        case riak_repl2_rtframe:decode(Bin) of
+            {ok, Frame, _Rest} ->
+                if
+                    ExpectedMessage =:= Frame ->
+                        true;
+                    true ->
+                        ?debugFmt("did not get expectedFrame:~n"
+                            "    Name: ~p~n"
+                            "    FakeSourcePid: ~p~n"
+                            "    ExpectedMessage: ~p~n"
+                            "    Frame: ~p~n", [Name, FakeSourcePid, ExpectedMessage, Frame]),
+                        false
+                end;
+            Else ->
+                ?debugFmt("did not get expected frame:~n"
+                    "    FakeSourcePid: ~p~n"
+                    "    Expected: ~p~n"
+                    "    Got: ~p", [FakeSourcePid, ExpectedMessage, Else]),
+                false
+        end
+    end, ExpectingMsg);
 postcondition(_S, {call, _, call_donefun, [{_Remote, #src_state{done_fun_queue = []}}, _NthDoneFun]}, {ok, empty}) ->
     true;
 postcondition(_S, {call, _, call_donefun, [{Remote, SrcState}, NthDoneFun]}, Res) ->
@@ -330,17 +405,16 @@ postcondition(_S, _C, _R) ->
 %% ====================================================================
 
 connect_from_v1(Remote) ->
-    SourceRes = connect_source({1,0}, Remote),
-    SinkRes = read_rt_bug(),
-    case {SourceRes, SinkRes} of
-        {{ok, Source}, {ok, Sink}} ->
-            {Source, Sink};
-        _ ->
-            {error, {SourceRes, SinkRes}}
-    end.
+    connect_from({1,0}, Remote).
 
 connect_from_v2(Remote) ->
-    SourceRes = connect_source({2,0}, Remote),
+    connect_from({2,0}, Remote).
+
+connect_from_v2_2(Remote) ->
+    connect_from({2,2}, Remote).
+
+connect_from(Version, Remote) ->
+    SourceRes = connect_source(Version, Remote),
     SinkRes = read_rt_bug(),
     case {SourceRes, SinkRes} of
         {{ok, Source}, {ok, Sink}} ->
@@ -355,7 +429,7 @@ disconnect({_Remote, State}) ->
     riak_repl_test_util:wait_for_pid(Sink),
     {Source, Sink}.
 
-push_object({_Remote, #src_state{version = {2,0}} = SrcState}, RiakObj, AlreadyRouted) ->
+push_object({_Remote, #src_state{version = {2,_}} = SrcState}, RiakObj, AlreadyRouted) ->
     {Source, _Sink} = SrcState#src_state.pids,
     ok = fake_source_push_obj(Source, RiakObj, AlreadyRouted),
     RTQRes = read_fake_rtq_bug(),
@@ -368,6 +442,12 @@ push_object({_Remote, SrcState}, Binary, AlreadyRouted) ->
     RTQRes = read_fake_rtq_bug(),
     HelperRes = read_rtsink_helper_donefun(),
     #push_result{rtq_res = RTQRes, donefun = HelperRes, binary = Binary, already_routed = AlreadyRouted}.
+
+push_spanning_update(Using, From, To, Connect, Routed) ->
+    {_Name, #src_state{pids = {UsingPid, _}}} = Using,
+    {FromName, _} = From,
+    {ToName, _} = To,
+    fake_source_push_spanning_update(UsingPid, FromName, ToName, Connect, Routed).
 
 call_donefun({_Remote, #src_state{done_fun_queue = []}}, empty) ->
     {ok, empty};
@@ -404,7 +484,13 @@ abstract_ring_manager() ->
     riak_repl_test_util:reset_meck(riak_core_ring, [no_link, passthrough]),
     meck:expect(riak_core_ring, get_meta, fun
         (symbolic_clustername, fake_ring) ->
-            {ok, "sink_cluster"};
+            Self = self(),
+            case stateful:base_test_pid() of
+                Self ->
+                    {ok, stateful:current_clustername()};
+                Other ->
+                    {ok, "sink_cluster"}
+            end;
         (_Key, fake_ring) ->
             undefined;
         (Key, Ring) ->
@@ -424,6 +510,10 @@ abstract_rtsink_helper() ->
         ReturnTo ! {rtsink_helper, done_fun, DoneFun},
         ok
     end).
+
+abstract_source_conn_sup() ->
+    riak_repl_test_util:reset_meck(riak_repl2_rtsource_conn_sup, [no_link]),
+    meck:expect(riak_repl2_rtsource_conn_sup, enabled, fun() -> [] end).
 
 read_rtsink_helper_donefun() ->
     read_rtsink_helper_donefun(3000).
@@ -532,6 +622,7 @@ read_all_fake_rtq_bugs(_) ->
     read_all_fake_rtq_bugs(read_fake_rtq_bug(0)).
 
 connect_source(Version, Remote) ->
+    stateful:set(current_clustername, Remote),
     Pid = proc_lib:spawn_link(?MODULE, fake_source_loop, [undefined, Version, Remote]),
     TcpOptions = [{keepalive, true}, {nodelay, true}, {packet, 0},
         {active, false}],
@@ -542,6 +633,20 @@ connect_source(Version, Remote) ->
 
 fake_source_push_obj(Source, Binary, AlreadyRouted) ->
     gen_server:call(Source, {push, Binary, AlreadyRouted}).
+
+fake_source_push_spanning_update(Source, From, To, disconnect_all, Routed) when To =/= undefined ->
+    fake_source_push_spanning_update(Source, From, undefined, disconnect_all, Routed);
+
+fake_source_push_spanning_update(Source, From, To, Connect, Routed) ->
+    Msg = {spanning_update, From, To, Connect, Routed},
+    try gen_server:call(Source, Msg) of
+        Res -> Res
+    catch
+        exit:{timeout,_} ->
+            {error, timeout};
+        exit:{function_clause,_} ->
+            {error, function_clause}
+    end.
 
 fake_source_tcp_bug(Source) ->
     try gen_server:call(Source, bug) of
@@ -557,13 +662,15 @@ fake_source_loop(undefined, Version, Cluster) ->
 
 fake_source_loop(#fake_source{socket = undefined} = State) ->
     #fake_source{version = Version} = State,
+    {Major, _Minor} = Version,
     receive
-        {'$gen_call', From, {connected, Socket, _EndPoint, {realtime, Version, Version}}} ->
+        {'$gen_call', From, {connected, Socket, _EndPoint, {realtime, {Major,_}, {Major,_}}}} ->
             inet:setopts(Socket, [{active, once}]),
             gen_server:reply(From, ok),
             fake_source_loop(State#fake_source{socket = Socket});
         {'$gen_call', From, Aroo} ->
             gen_server:reply(From, {error, badcall}),
+            ?debugFmt("Fake Source ~p exiting due to bad call from ~p: ~p", [self(), From, Aroo]),
             exit({badcall, Aroo});
         What ->
             fake_source_loop(State)
@@ -577,7 +684,7 @@ fake_source_loop(State) ->
             gen_tcp:send(Socket, Payload),
             gen_server:reply(From, ok),
             fake_source_loop(State#fake_source{seq = Seq + 1});
-        {'$gen_call', From, {push, RiakObj, AlreadyRouted}} when State#fake_source.version == {2,0} ->
+        {'$gen_call', From, {push, RiakObj, AlreadyRouted}} when State#fake_source.version >= {2,0} ->
             #fake_source{seq = Seq, clustername = ClusterName} = State,
             Skips2 = case lists:member(ClusterName, AlreadyRouted) of
                 true ->
@@ -592,6 +699,14 @@ fake_source_loop(State) ->
             end,
             gen_server:reply(From, ok),
             fake_source_loop(State#fake_source{seq = Seq + 1, skips = Skips2});
+        {'$gen_call', From, {spanning_update, _FromName, _ToName, _Connect, _Routed}} when State#fake_source.version < {2,2} ->
+            gen_server:reply(From, {error, too_old}),
+            fake_source_loop(State);
+        {'$gen_call', From, {spanning_update, FromName, ToName, Connect, Routed}} ->
+            Payload = riak_repl2_rtframe:encode(spanning_update, {FromName, ToName, Connect, Routed}),
+            gen_tcp:send(State#fake_source.socket, Payload),
+            gen_server:reply(From, ok),
+            fake_source_loop(State);
         {'$gen_call', From, bug} ->
             NewBug = case State#fake_source.tcp_bug of
                 {data, Bin} ->
@@ -603,6 +718,7 @@ fake_source_loop(State) ->
             fake_source_loop(State#fake_source{tcp_bug = NewBug});
         {'$gen_call', From, Aroo} ->
             gen_server:reply(From, {error, badcall}),
+            ?debugFmt("Fake Source ~p exiting due to bad call from ~p: ~p", [self(), From, Aroo]),
             exit({badcall, Aroo});
         {tcp, Socket, Bin} ->
             %?debugFmt("tcp nom: ~p", [Bin]),

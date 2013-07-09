@@ -6,6 +6,7 @@
 -define(MSG_OBJECTS,   16#10). %% List of objects to write
 -define(MSG_ACK,       16#20). %% Ack
 -define(MSG_OBJECTS_AND_META, 16#30). %% List of objects and rt meta data
+-define(MSG_SPANNING_UPDATE, 16#40). %% alteration of the cascade model
 
 %% Build an IOlist suitable for sending over a socket
 encode(Type, Payload) ->
@@ -27,9 +28,11 @@ encode_payload(ack, Seq) ->
     [?MSG_ACK,
      <<Seq:64/unsigned-big-integer>>];
 encode_payload(heartbeat, undefined) ->
-    [?MSG_HEARTBEAT].
+    [?MSG_HEARTBEAT];
+encode_payload(spanning_update, {_FromName, _ToName, _Connect, _Routed} = Msg) ->
+    [?MSG_SPANNING_UPDATE, term_to_binary(Msg)].
 
-decode(<<Size:32/unsigned-big-integer, 
+decode(<<Size:32/unsigned-big-integer,
          Msg:Size/binary, % MsgCode is included in size calc
          Rest/binary>>) ->
     <<MsgCode:8/unsigned, Payload/binary>> = Msg,
@@ -45,4 +48,6 @@ decode_payload(?MSG_OBJECTS, <<Seq:64/unsigned-big-integer, BinObjs/binary>>) ->
 decode_payload(?MSG_ACK, <<Seq:64/unsigned-big-integer>>) ->
     {ack, Seq};
 decode_payload(?MSG_HEARTBEAT, <<>>) ->
-    heartbeat.
+    heartbeat;
+decode_payload(?MSG_SPANNING_UPDATE, UpdateData) ->
+    {spanning_update, binary_to_term(UpdateData)}.

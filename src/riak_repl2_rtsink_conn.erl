@@ -16,6 +16,7 @@
 -export([start_link/2,
          stop/1,
          set_socket/3,
+         spanning_update/5,
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
@@ -71,6 +72,9 @@ stop(Pid) ->
 %% Call after control handed over to socket
 set_socket(Pid, Socket, Transport) ->
     gen_server:call(Pid, {set_socket, Socket, Transport}, infinity).
+
+spanning_update(Pid, From, To, Action, Routed) ->
+    gen_server:cast(Pid, {spanning_update, From, To, Action, Routed}).
 
 status(Pid) ->
     status(Pid, ?LONG_TIMEOUT).
@@ -142,7 +146,7 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 %% Note pattern patch on Ref
-handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S, 
+handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
                                             seq_ref = Ref,
                                             acked_seq = AckedTo,
                                             completed = Completed}) ->
@@ -156,6 +160,17 @@ handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
             TcpIOL = riak_repl2_rtframe:encode(ack, AckTo),
             T:send(S, TcpIOL),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
+    end;
+handle_cast({spanning_update, From, To, Action, Routed}, State) ->
+    case lists:member(State#state.remote, Routed) of
+      true ->
+        {noreply, State};
+      false ->
+        Routed2 = ordsets:add_element(State#state.remote, Routed),
+        Frame = riak_repl2_rtframe:encode(spanning_update, {From, To, Action, Routed2}),
+        #state{transport = T, socket = S} = State,
+        T:send(S, Frame),
+        {noreply, State}
     end;
 handle_cast({ack, Ref, Seq, _Skips}, State) ->
     %% Nothing to send, it's old news.
@@ -224,6 +239,9 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             recv(Cont, State#state{hb_last = os:timestamp()});
         {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
+        {ok, {spanning_update, {From, To, ConnectAction, Routed}}, Cont} ->
+            riak_repl2_rt_spanning_coord:spanning_update(From, To, ConnectAction, Routed),
+            recv(Cont, State);
         {error, Reason} ->
             %% TODO: Log Something bad happened
             riak_repl_stats:rt_sink_errors(),
@@ -286,7 +304,7 @@ do_write_objects(Seq, BinObjs, State) ->
     %%
     %% If the source dropped (rtq consumer behind tail of queue), there
     %% is no point acknowledging any more if it is unable to resend anyway.
-    %% Reset seq ref/completion array and start over at new sequence. 
+    %% Reset seq ref/completion array and start over at new sequence.
     %%
     %% If the sequence number wrapped?  don't worry about acks, happens infrequently.
     %%
@@ -316,7 +334,7 @@ reset_ref_seq(Seq, State) ->
 %% call.
 ack_to(Acked, []) ->
     {Acked, []};
-ack_to(Acked, [Seq | Completed2] = Completed) -> 
+ack_to(Acked, [Seq | Completed2] = Completed) ->
     case Acked + 1 of
         Seq ->
             ack_to(Seq, Completed2);
@@ -331,7 +349,7 @@ pending(#state{acked_seq = undefined}) ->
 pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
                completed = Completed}) ->
     ExpSeq - AckedSeq - length(Completed) - 1.
-    
+
 peername(#state{transport = T, socket = S}) ->
     case T:peername(S) of
         {ok, Res} ->
@@ -340,7 +358,7 @@ peername(#state{transport = T, socket = S}) ->
             riak_repl_stats:rt_sink_errors(),
             {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
-            
+
 
 schedule_reactivate_socket(State = #state{transport = T,
                                           socket = S,
@@ -361,4 +379,4 @@ schedule_reactivate_socket(State = #state{transport = T,
             %% have a check scheduled already
             State
     end.
-    
+
