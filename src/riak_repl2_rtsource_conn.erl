@@ -408,6 +408,14 @@ setup() ->
     riak_repl_test_util:abstract_stateful(),
     ok.
 cleanup(_Ctx) ->
+    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
+    riak_repl_test_util:stop_test_ring(),
+    riak_repl_test_util:maybe_unload_mecks(
+      [riak_core_service_mgr,
+       riak_core_connection_mgr,
+       gen_tcp]),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247

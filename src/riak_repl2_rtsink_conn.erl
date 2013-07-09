@@ -401,9 +401,17 @@ setup() ->
     {ok, _} = riak_repl2_rtq:start_link(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     {ok, _TCPMon} = riak_core_tcp_mon:start_link(),
-
     ok.
+
 cleanup(_Ctx) ->
+    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
+    riak_repl_test_util:stop_test_ring(),
+    riak_repl_test_util:maybe_unload_mecks(
+      [riak_core_service_mgr,
+       riak_core_connection_mgr,
+       gen_tcp]),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247
@@ -432,13 +440,7 @@ cache_peername_test_case() ->
         {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
 
         % check to make sure peername is cached, not calculated from (now closed) Socket
-        case peername(State) of 
-           {Peer, _Port} ->
-               ?assertEqual(?LOOPBACK_TEST_PEER, Peer),
-               ?debugMsg("test passed");
-           _ ->
-               ?assertError(test_failed, "peer not cached")
-        end,
+        ?assertMatch({?LOOPBACK_TEST_PEER, _Port}, peername(State)),
         
         TellMe ! {sink_started, Pid}
     end),
@@ -482,6 +484,10 @@ start_sink() ->
     after 10000 ->
             {error, timeout}
     end.
+unload_mecks() ->
+    riak_repl_test_util:maybe_unload_mecks([
+        stateful, riak_core_ring_manager, riak_core_ring,
+        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq]).
 
 
 -endif.
