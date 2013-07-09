@@ -57,6 +57,7 @@ command(S) ->
     oneof(
         [{call, ?MODULE, connect_to_v1, [remote_name(S), S#state.master_queue]} || S#state.remotes_available /= []] ++
         [{call, ?MODULE, connect_to_v2, [remote_name(S), S#state.master_queue]} || S#state.remotes_available /= []] ++
+        [{call, ?MODULE, connect_to_v2_2, [remote_name(S), S#state.master_queue]} || S#state.remotes_available /= []] ++
         [{call, ?MODULE, disconnect, [elements(S#state.sources)]} || S#state.sources /= []] ++
         % push an object that may already have been rt'ed
         [{call, ?MODULE, push_object, [g_unique_remotes(), g_riak_object(), S]} || S#state.sources /= []] ++
@@ -107,7 +108,7 @@ precondition(S, {call, _, push_object, [_, _, S]}) ->
 precondition(S, {call, _, push_object, [_, _, NotS]}) ->
     ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
     false;
-precondition(#state{master_queue = MasterQ} = S, {call, _, Connect, [Remote, MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
+precondition(#state{master_queue = MasterQ} = S, {call, _, Connect, [Remote, MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2; Connect =:= connect_to_v2_2 ->
     lists:member(Remote, S#state.remotes_available);
 precondition(_S, {call, _, Connect, [_Remote, _MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
     false;
@@ -133,11 +134,15 @@ initial_state() ->
     #state{}.
 
 next_state(S, Res, {call, _, connect_to_v1, [Remote, MQ]}) ->
-    SrcState = #src_state{pids = Res, version = 1},
+    SrcState = #src_state{pids = Res, version = {1, 0}},
     next_state_connect(Remote, SrcState, S);
 
 next_state(S, Res, {call, _, connect_to_v2, [Remote, MQ]}) ->
-    SrcState = #src_state{pids = Res, version = 2},
+    SrcState = #src_state{pids = Res, version = {2, 0}},
+    next_state_connect(Remote, SrcState, S);
+
+next_state(S, Res, {call, _, connect_to_v2_2, [Remote, MQ]}) ->
+    SrcState = #src_state{pids = Res, version = {2,2}},
     next_state_connect(Remote, SrcState, S);
 
 next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
@@ -312,6 +317,22 @@ postcondition(_State, {call, _, connect_to_v2, _Args}, {error, _}) ->
 postcondition(_State, {call, _, connect_to_v2, _Args}, {Source, Sink}) ->
     is_pid(Source) andalso is_pid(Sink);
 
+postcondition(_State, {call, _, connect_to_v2_2, _Args}, {error, _}) ->
+    false;
+postcondition(_State, {call, _, connect_to_v2_2, _Args}, {Source, Sink}) ->
+    if
+        is_pid(Source) andalso is_pid(Sink) ->
+            case {is_process_alive(Source), is_process_alive(Sink)} of
+                {true, true} ->
+                    true;
+                Else ->
+                    ?debugFmt("Either source or sink wasn't alive: ~p", [Else]),
+                    false
+            end;
+        true ->
+            false
+    end;
+
 postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
     lists:all(fun(ok) -> true; (_) -> false end, Waits);
 
@@ -356,9 +377,9 @@ assert_sink_bug({_Num, RiakObj, BadMeta}, Remotes, Remote, Active, SrcState) ->
     Routed = ordsets:from_list(Remotes ++ [Remote] ++ Active ++ ["undefined"]),
     Meta = orddict:store(routed_clusters, Routed, BadMeta2),
     ObjBin = case SrcState#src_state.version of
-        1 ->
+        {1,0} ->
             term_to_binary([RiakObj]);
-        2 ->
+        {2,_} ->
             riak_repl_util:to_wire(w1, [RiakObj])
     end,
     if
@@ -377,9 +398,9 @@ assert_sink_bug({_Num, RiakObj, BadMeta}, Remotes, Remote, Active, SrcState) ->
         true ->
             Frame = hd(History),
             case {Version, Frame} of
-                {1, {objects, {_Seq, ObjBin}}} ->
+                {{1,0}, {objects, {_Seq, ObjBin}}} ->
                     true;
-                {2, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
+                {{2,_}, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
                     true;
                 _ ->
                     ?debugFmt("assert sink bug failure!~n"
@@ -421,13 +442,13 @@ assert_sink_acking(Remote, Version, Pushed, Got) ->
     PushMeta2 = fix_routed_meta(PushMeta1, ordsets:add_element(Remote, UpRemotes)),
     Meta = PushMeta2,
     ObjBin = case Version of
-        1 -> riak_repl_util:to_wire(w0, [RiakObj]);
-        2 -> riak_repl_util:to_wire(w1, [RiakObj])
+        {1,0} -> riak_repl_util:to_wire(w0, [RiakObj]);
+        {2,_} -> riak_repl_util:to_wire(w1, [RiakObj])
     end,
     case {Version, Got} of
-        {1, {objects, {V1Seq, ObjBin}}} ->
+        {{1,0}, {objects, {V1Seq, ObjBin}}} ->
             true;
-        {2, {objects_and_meta, {Seq, ObjBin, Meta}}} ->
+        {{2,_}, {objects_and_meta, {Seq, ObjBin, Meta}}} ->
             true;
         _ ->
             ?debugFmt("Sink ack failure!~n"
@@ -477,6 +498,20 @@ connect_to_v2(RemoteName, MasterQueue) ->
     Before = now(),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
     After = now(),
+    receive
+        {sink_started, SinkPid} ->
+            erlang:monitor(process, SinkPid),
+            wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
+            ok = ensure_registered(RemoteName),
+            {SourcePid, SinkPid}
+    after 1000 ->
+        {error, timeout}
+    end.
+
+connect_to_v2_2(RemoteName, MasterQueue) ->
+    stateful:set(version, {realtime, {2,2},{2,2}}),
+    stateful:set(remote, RemoteName),
+    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
     receive
         {sink_started, SinkPid} ->
             erlang:monitor(process, SinkPid),

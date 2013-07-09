@@ -74,7 +74,7 @@ handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta} = Entry}, From,
     {noreply, State2#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-handle_call(status, _From, State = 
+handle_call(status, _From, State =
                 #state{sent_seq = SentSeq, objects = Objects}) ->
     {reply, [{sent_seq, SentSeq},
              {objects, Objects}], State}.
@@ -138,7 +138,7 @@ encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};
-encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = {2,0}}) ->
+encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = {2,_Minor}}) ->
     {riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}), State}.
 
 get_routed(Meta) ->
