@@ -61,6 +61,7 @@ command(S) ->
         [{call, ?MODULE, disconnect, [elements(S#state.sources)]} || S#state.sources /= []] ++
         % push an object that may already have been rt'ed
         [{call, ?MODULE, push_object, [g_unique_remotes(), g_riak_object(), S]} || S#state.sources /= []] ++
+        [{call, ?MODULE, spanning_update, [elements(S#state.sources), g_remote_name(), g_remote_name(), g_spanning_action(), list(g_remote_name())]} || S#state.sources /= []] ++
         [?LET({_Remote, SrcState} = Source, elements(S#state.sources), {call, ?MODULE, ack_objects, [g_up_to_length(SrcState#src_state.unacked_objects), Source]}) || S#state.sources /= []]
     ).
 
@@ -78,6 +79,9 @@ g_unique_remotes() ->
 
 g_remote_name() ->
     oneof(?all_remotes).
+
+g_spanning_action() ->
+    oneof([connect, disconnect, disconnect_all]).
 
 % name of a remote
 remote_name(#state{remotes_available = []}) ->
@@ -178,6 +182,9 @@ next_state(S, Res, {call, _, push_object, [Remotes, RiakObj, _S]}) ->
             [{Seq, Remotes, RiakObj, Res} | Master]
     end,
     S#state{sources = Sources, master_queue = Master2, seq = Seq};
+
+next_state(S, _Res, {call, _, spanning_update, _Args}) ->
+    S;
 
 next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
     case lists:keytake(Remote, 1, S#state.sources) of
@@ -339,6 +346,21 @@ postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
 postcondition(_State, {call, _, push_object, [Remotes, _RiakObj, State]}, Res) ->
     assert_sink_bugs(Res, Remotes, State#state.sources);
 
+postcondition(State, {call, _, spanning_update, [Sender, FromCluster, ToCluster, Action, Routed]}, _Res) ->
+    ExpectedRouted = lists:foldl(fun({Name, _}, Routed2) ->
+        ordsets:add_element(Name, Routed2)
+    end, Routed, State#state.sources),
+    lists:all(fun({Name, SrcState}) ->
+        ExpectedLastSpanning = case lists:member(Name, Routed) of
+            true -> undefined;
+            false -> {spanning_update, {FromCluster, ToCluster, Action, ExpectedRouted}}
+        end,
+        {_Source, SinkPid} = SrcState#src_state.pids,
+        Got = fake_sink_get_last_spanning(SinkPid),
+        catch ?assertEqual(ExpectedLastSpanning, Got),
+        ExpectedLastSpanning =:= Got
+    end, State#state.sources);
+
 postcondition(State, {call, _, ack_objects, [NumAck, {Remote, Source}]}, AckedStack) ->
     RemoteLives = is_tuple(lists:keyfind(Remote, 1, State#state.sources)),
     #src_state{unacked_objects = UnAcked} = Source,
@@ -482,9 +504,10 @@ connect_to_v1(RemoteName, MasterQueue) ->
     stateful:set(version, {realtime, {1,0}, {1,0}}),
     stateful:set(remote, RemoteName),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
+    monit(SourcePid),
     receive
         {sink_started, SinkPid} ->
-            erlang:monitor(process, SinkPid),
+            monit(SinkPid),
             wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
             ok = ensure_registered(RemoteName),
             {SourcePid, SinkPid}
@@ -497,6 +520,7 @@ connect_to_v2(RemoteName, MasterQueue) ->
     stateful:set(remote, RemoteName),
     Before = now(),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
+    monit(SourcePid),
     After = now(),
     receive
         {sink_started, SinkPid} ->
@@ -655,37 +679,62 @@ sink_listener(TcpOpts, WhoToTell) ->
 sink_acceptor(Listen, WhoToTell) ->
     {ok, Socket} = gen_tcp:accept(Listen),
     Version = stateful:version(),
-    Pid = proc_lib:spawn_link(?MODULE, fake_sink, [Socket, Version, undefined, []]),
+    Pid = proc_lib:spawn_link(?MODULE, fake_sink, [Socket, Version]),
     ok = gen_tcp:controlling_process(Socket, Pid),
     Pid ! start,
     WhoToTell ! {sink_started, Pid},
     sink_acceptor(Listen, WhoToTell).
 
-fake_sink(Socket, Version, Bug, History) ->
+fake_sink_get_last_spanning(SinkPid) ->
+    gen_server:call(SinkPid, last_spanning_update).
+
+-record(fake_sink, {socket, version, bug, history = [], last_spanning_update}).
+
+monme() ->
+    monit(self()).
+
+monit(Pid) ->
+    proc_lib:spawn(fun() ->
+        Mon = erlang:monitor(process, Pid),
+        receive
+            {'DOWN', Mon, process, Pid, Why} ->
+                ?debugFmt("Monitor process ~p exited: ~p", [Pid, Why])
+        end
+    end).
+
+fake_sink(Socket, Version) ->
+    State = #fake_sink{socket = Socket, version = Version},
+    fake_sink(State).
+
+fake_sink(State) ->
+    #fake_sink{socket = Socket, version = Version, bug = Bug, history = History} = State,
     receive
         start ->
             inet:setopts(Socket, [{active, once}]),
-            fake_sink(Socket, Version, Bug, History);
+            fake_sink(State);
         stop ->
             ok;
         {'$gen_call', From, history} ->
             gen_server:reply(From, History),
-            fake_sink(Socket, Version, Bug, History);
+            fake_sink(State);
         {'$gen_call', From, {ack, Num}} when Num =< length(History) ->
             {NewHistory, Return} = lists:split(length(History) - Num, History),
             gen_server:reply(From, {ok, Return}),
-            fake_sink(Socket, Version, Bug, NewHistory);
+            fake_sink(State#fake_sink{history = NewHistory});
         {'$gen_call', {NewBug, _Tag} = From, bug} ->
             gen_server:reply(From, ok),
-            fake_sink(Socket, Version, {once_bug, NewBug}, History);
+            fake_sink(State#fake_sink{bug = {once_bug, NewBug}});
         {'$gen_call', From, {block_until, HistoryLength}} when length(History) >= HistoryLength ->
             gen_server:reply(From, ok),
-            fake_sink(Socket, Version, Bug, History);
+            fake_sink(State);
         {'$gen_call', From, {block_until, HistoryLength}} ->
-            fake_sink(Socket, Version, {block_until, From, HistoryLength}, History);
+            fake_sink(State#fake_sink{bug = {block_until, From, HistoryLength}});
+        {'$gen_call', From, last_spanning_update} ->
+            gen_server:reply(From, State#fake_sink.last_spanning_update),
+            fake_sink(State);
         {'$gen_call', From, Msg} ->
             gen_server:reply(From, {error, badcall}),
-            fake_sink(Socket, Version, Bug, History);
+            fake_sink(State);
         {tcp, Socket, Bin} ->
             History2 = fake_sink_nom_frames(Bin, History),
             % hearbeats can come at any time, but we don't actually test for
@@ -693,25 +742,38 @@ fake_sink(Socket, Version, Bug, History) ->
             % TODO extend this so a sink can be made to act badly (ie, no
             % hearbeat sent back)
             History3 = fake_sink_heartbeats(History2, Socket),
+            {Spannings, History4} = fake_sink_extract_spannings(History3),
             NewBug = case Bug of
                 {once_bug, Target} ->
                     Self = self(),
-                    [Frame | _] = History3,
+                    [Frame | _] = History4,
                     Target ! {got_data, Self, Frame},
                     undefined;
-                {block_until, From, Length} when length(History3) >= Length ->
+                {block_until, From, Length} when length(History4) >= Length ->
                     gen_server:reply(From, ok),
                     undefined;
                 _ ->
                     Bug
             end,
             inet:setopts(Socket, [{active, once}]),
-            fake_sink(Socket, Version, NewBug, History3);
+            LastSpanning = case Spannings of
+                [] ->
+                    undefined;
+                [Hd | _] ->
+                    Hd
+            end,
+            fake_sink(State#fake_sink{bug = NewBug, history = History4, last_spanning_update = LastSpanning});
         {tcp_error, Socket, Err} ->
             exit(Err);
         {tcp_closed, Socket} ->
             ok
     end.
+
+fake_sink_extract_spannings(History) ->
+    lists:partition(fun
+        ({spanning_update, _} = Frame) -> true;
+        (_) -> false
+    end, History).
 
 fake_sink_heartbeats(History, Socket) ->
     FoldFun = fun
