@@ -27,6 +27,9 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+% how long to wait to reschedule socket reactivate.
+-define(REACTIVATE_SOCK_INT_MILLIS, 10).
+
 -record(state, {remote,           %% Remote site name
                 transport,        %% Module for sending
                 socket,           %% Socket
@@ -364,13 +367,20 @@ schedule_reactivate_socket(State = #state{transport = T,
             self() ! reactivate_socket,
             State#state{active = false, deactivated = Deactivated + 1};
         false ->
-            %% already deactivated, try again in 10ms
-            erlang:send_after(10, self(), reactivate_socket),
+            %% already deactivated, try again in configured interval, or default
+            ReactivateSockInt = get_reactivate_socket_interval(),
+            lager:debug("reactivate_socket_interval_millis: ~sms.", 
+              [ReactivateSockInt]),
+
+            erlang:send_after(ReactivateSockInt, self(), reactivate_socket),
             State#state{active = {false, scheduled}};
         {false, scheduled} ->
             %% have a check scheduled already
             State
     end.
+get_reactivate_socket_interval() ->
+    app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -381,6 +391,8 @@ schedule_reactivate_socket(State = #state{transport = T,
 -define(VER1, {1,0}).
 -define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
 -define(PROTOCOL_V1, ?PROTOCOL(?VER1)).
+-define(REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, 20).
+
 -compile(export_all).
 
 riak_repl2_rtsink_conn_test_() ->
@@ -388,7 +400,8 @@ riak_repl2_rtsink_conn_test_() ->
       fun setup/0,
       fun cleanup/1,
       [
-       fun cache_peername_test_case/0
+        fun cache_peername_test_case/0,
+        fun reactivate_socket_interval_test_case/0
       ]
     }.
 
@@ -412,6 +425,8 @@ cleanup(_Ctx) ->
       [riak_core_service_mgr,
        riak_core_connection_mgr,
        gen_tcp]),
+    application:set_env(riak_repl, reactivate_socket_interval_millis, 
+          ?REACTIVATE_SOCK_INT_MILLIS),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247
@@ -448,6 +463,12 @@ cache_peername_test_case() ->
     {ok, _SinkPid} = start_sink(),
     {ok, {_Source, _Sink}} = start_source(?VER1).
 
+% test case for https://github.com/basho/riak_repl/issues/252
+reactivate_socket_interval_test_case() ->
+    ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS, get_reactivate_socket_interval()),
+ 
+    application:set_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL),
+    ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, get_reactivate_socket_interval()).
      
 listen_sink() ->
     riak_repl2_rtsink_conn:register_service().
