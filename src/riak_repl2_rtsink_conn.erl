@@ -369,8 +369,8 @@ schedule_reactivate_socket(State = #state{transport = T,
         false ->
             %% already deactivated, try again in configured interval, or default
             ReactivateSockInt = get_reactivate_socket_interval(),
-            lager:debug("reactivate_socket_interval is configured in 
-              riak_repl to: ~sms.", [ReactivateSockInt]),
+            lager:debug("reactivate_socket_interval_millis: ~sms.", 
+              [ReactivateSockInt]),
 
             erlang:send_after(ReactivateSockInt, self(), reactivate_socket),
             State#state{active = {false, scheduled}};
@@ -379,7 +379,7 @@ schedule_reactivate_socket(State = #state{transport = T,
             State
     end.
 get_reactivate_socket_interval() ->
-    app_helper:get_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_MILLIS).
+    app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 %% ===================================================================
 %% EUnit tests
@@ -465,7 +465,7 @@ cache_peername_test_case() ->
 reactivate_socket_interval_test_case() ->
     ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS, get_reactivate_socket_interval()),
  
-    application:set_env(riak_repl, reactivate_socket_interval, ?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL),
+    application:set_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL),
     ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, get_reactivate_socket_interval()).
      
 listen_sink() ->
