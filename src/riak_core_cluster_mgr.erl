@@ -748,7 +748,7 @@ ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
 ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args, Props) ->
     {ok, ClientAddr} = Transport:peername(Socket),
     RemoteClusterName = proplists:get_value(clustername, Props),
-    lager:debug("Cluster Manager: accepted connection from cluster at ~p namded ~p",
+    lager:debug("Cluster Manager: accepted connection from cluster at ~p named ~p",
                [ClientAddr, RemoteClusterName]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
