@@ -150,7 +150,7 @@ get_config() ->
           app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS)));
       Other ->
         lager:log(debug,self(),"using ~s backend",[Other]),
-        get_expiry([{<<"riak_repl2_fullsync_expiry_hood_default_backend">>,Other,[]}],
+        get_expiry([{<<"riak_repl2_fullsync_expiry_hook_default_backend">>,Other,[]}],
           app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS))
     end.
  
