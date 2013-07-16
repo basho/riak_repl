@@ -27,8 +27,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--define(MAXVER, "1.4.0").
- 
+
 %% proplist of {backend, {app_env section name, expiry key name, unit}} 
 %% for each expiry-enabled backend
 %% unit should be the number of seconds
@@ -46,8 +45,6 @@ start_link() ->
  
  
 init(_Args) -> 
-    version_check(),
-
     case get_config() of
         no_expiry -> 
            lager:log(debug,self(),"No backends expire - stopping gen_server ~p",[?MODULE]),
@@ -88,7 +85,7 @@ send_realtime(_,_) -> ok.
 send(Robject, C) ->
     Name = case catch proplists:get_value(backend,C:get_bucket(riak_object:bucket(Robject))) of
                N when is_binary(N) -> N;
-               _ -> <<"default">>
+               _ -> <<"riak_repl2_fullsync_expiry_hook_default_backend">>
     end,
     case catch gen_server:call(?MODULE,{expiry,Name}) of
         Secs when is_integer(Secs) -> check_age(Robject,Secs);
@@ -105,12 +102,6 @@ send(Robject, C) ->
  
  
 %% private functions
-version_check() ->
-  case lists:keyfind(riak_repl,1,application:which_applications()) of
-            {riak_repl, _, Vsn} when Vsn =< ?MAXVER -> ok;
-            {riak_repl, _, Vsn} -> lager:log(warning,self(), "~s not tested on riak_repl version ~p",[?MODULE,Vsn]);
-            _ -> lager:log(warning,self(),"~s unable to check riak_repl version")
-        end.
  
 check_age(Robject,Limit) when is_integer(Limit) ->
 
@@ -138,7 +129,7 @@ choose_default(Tab) when is_list(Tab) ->
         case proplists:get_value(Name,Tab) of
             Secs when is_integer(Secs) -> 
                  lager:log(debug,self(),"Default backend ~p expiry: ~B",[Name,Secs]),
-                 [{<<"default">>,Secs}|Tab];
+                 [{<<"riak_repl2_fullsync_expiry_hook_default_backend">>,Secs}|Tab];
             _ -> 
                  lager:log(debug,self(),"Default backend ~p does not expire",[Name]),
                  Tab
@@ -150,14 +141,17 @@ get_config() ->
 
     case app_helper:get_env(riak_kv,storage_backend) of
       riak_kv_multi_backend ->
-        lager:log(debug,self(),"riak_kv,multi_backend: ~s", [app_helper:get_env(riak_kv,multi_backend)]),
-        lager:log(debug,self(),"?MODULE,backends: ~s", [app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS)]),
+        lager:log(debug,self(),"riak_kv,multi_backend: ~s", 
+          [app_helper:get_env(riak_kv,multi_backend)]),
+        lager:log(debug,self(),"?MODULE,backends: ~s", 
+          [app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS)]),
 
         choose_default(get_expiry(app_helper:get_env(riak_kv,multi_backend),
           app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS)));
       Other ->
         lager:log(debug,self(),"using ~s backend",[Other]),
-        get_expiry([{<<"default">>,Other,[]}],app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS))
+        get_expiry([{<<"riak_repl2_fullsync_expiry_hood_default_backend">>,Other,[]}],
+          app_helper:get_env(?MODULE,backends,?DEFAULT_BACKENDS))
     end.
  
 get_expiry(undefined,_) ->
@@ -259,7 +253,7 @@ mock_riak_core_register() ->
     catch(meck:unload(riak_core)),
     meck:new(riak_core),
     meck:expect(riak_core, register, fun(_Params) ->   
-        % do nothing, just here so we can run send()
+        % do nothing, just here so we can run send/2
         ok
     end).
 
