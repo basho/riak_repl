@@ -24,7 +24,8 @@
     version,
     skips = 0,
     offset = 0,
-    unacked_objects = []
+    unacked_objects = [],
+    acked_stack = []
 }).
 
 -record(pushed, {
@@ -109,12 +110,20 @@ precondition(S, {call, _, ack_objects, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, push_object, [_, _, S]}) ->
     S#state.sources /= [];
-precondition(S, {call, _, push_object, [_, _, NotS]}) ->
-    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
-    false;
+%precondition(S, {call, _, push_object, [_, _, NotS]}) ->
+%    ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
+%    false;
+precondition(S, {call, _, spanning_update, [{Remote, _SrcState}, _From, _To, _Action, _Routed]}) ->
+    case lists:keyfind(Remote, 1, S#state.sources) of
+        false ->
+            ?debugFmt("Remote ~p not in the sources list", [Remote]),
+            false;
+        _ ->
+            true
+    end;
 precondition(#state{master_queue = MasterQ} = S, {call, _, Connect, [Remote, MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2; Connect =:= connect_to_v2_2 ->
     lists:member(Remote, S#state.remotes_available);
-precondition(_S, {call, _, Connect, [_Remote, _MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2 ->
+precondition(_S, {call, _, Connect, [_Remote, _MasterQ]}) when Connect =:= connect_to_v1; Connect =:= connect_to_v2; Connect =:= connect_to_v2_2 ->
     false;
 precondition(_S, _Call) ->
     true.
@@ -125,6 +134,8 @@ precondition(_S, _Call) ->
 
 initial_state() ->
     process_flag(trap_exit, true),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rtsource_conn_sup, kill),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rtsink_conn_sup, kill),
     riak_repl_test_util:stop_test_ring(),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
@@ -135,6 +146,8 @@ initial_state() ->
     {ok, _RTQPid} = start_rtq(),
     {ok, _TCPMonPid} = start_tcp_mon(),
     {ok, _FakeSinkPid} = start_fake_sink(),
+    {ok, _ConnSupPid} = riak_repl2_rtsource_conn_sup:start_link(),
+    {ok, _SinkSup} = riak_repl2_rtsink_conn_sup:start_link(),
     #state{}.
 
 next_state(S, Res, {call, _, connect_to_v1, [Remote, MQ]}) ->
@@ -171,29 +184,34 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
     S#state{master_queue = Master, sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
 next_state(S, Res, {call, _, push_object, [Remotes, RiakObj, _S]}) ->
-    Seq = S#state.seq + 1,
-    Sources = update_unacked_objects(Remotes, Seq, Res, S),
+    ?debugMsg("next stating the push object!"),
+    Seq = {call, ?MODULE, inc_seq, [S#state.seq, Res]},
+    Pushed = {1, RiakObj, [{routed_clusters, Remotes}]},
+    Sources = update_unacked_objects(Remotes, Seq, Pushed, S),
     RoutingSources = [R || {R, _} <- Sources, not lists:member(R, Remotes)],
     Master2 = case RoutingSources of
         [] ->
             [{Seq, tombstone} | S#state.master_queue];
         _ ->
             Master = S#state.master_queue,
-            [{Seq, Remotes, RiakObj, Res} | Master]
+            [{Seq, Remotes, RiakObj, Pushed} | Master]
     end,
     S#state{sources = Sources, master_queue = Master2, seq = Seq};
 
 next_state(S, _Res, {call, _, spanning_update, _Args}) ->
     S;
 
-next_state(S, _Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
+next_state(S, Res, {call, _, ack_objects, [NumAcked, {Remote, _Source}]}) ->
     case lists:keytake(Remote, 1, S#state.sources) of
         false ->
             S;
         {value, {Remote, RealSource}, Sources} ->
             UnAcked = RealSource#src_state.unacked_objects,
             {Updated, Chopped} = model_ack_objects(NumAcked, UnAcked),
-            SrcState2 = RealSource#src_state{unacked_objects = Updated},
+            SrcState2 = RealSource#src_state{
+                unacked_objects = Updated,
+                acked_stack = {call, ?MODULE, update_acked_stack, [Res, RealSource#src_state.acked_stack]}
+            },
             Sources2 = [{Remote, SrcState2} | Sources],
             Master2 = remove_fully_acked(S#state.master_queue, Chopped, Sources2),
             S#state{sources = Sources2, master_queue = Master2}
@@ -210,6 +228,15 @@ next_state_connect(Remote, SrcState, State) ->
         _Tuple ->
             State
     end.
+
+inc_seq(Seq, _Res) ->
+    Seq + 1.
+
+dec_seq(Seq, N) ->
+    Seq - N.
+
+update_acked_stack(Stack, OldStack) ->
+    OldStack ++ Stack.
 
 generate_unacked_from_master(State, Remote) ->
     UpRemotes = running_remotes(State),
@@ -235,7 +262,7 @@ generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Re
                 _ -> Skips
             end,
             Offset2 = Offset + NextSkips,
-            Obj = #pushed{seq = Seq, v1_seq = Seq - Offset2, push_res = Res, skips = NextSkips,
+            Obj = #pushed{seq = Seq, v1_seq = {call, ?MODULE, dec_seq, [Seq, Offset2]}, push_res = Res, skips = NextSkips,
                 remotes_up = UpRemotes},
             Acc2 = [Obj | Acc],
             generate_unacked_from_master(Tail, UpRemotes, Remote, 0, Offset2, Acc2)
@@ -294,7 +321,7 @@ model_push_object(Seq, Res, UpRemotes, SrcState = #src_state{unacked_objects = O
             {Seq, SrcState#src_state.offset};
         _ ->
             Off2 = SrcState#src_state.offset + SrcState#src_state.skips,
-            {Seq - Off2, Off2}
+            {{call, ?MODULE, dec_seq, [Seq, Off2]}, Off2}
     end,
     Obj = #pushed{seq = Seq, v1_seq = Seq2, push_res = Res, skips = SrcState#src_state.skips, remotes_up = UpRemotes},
     SrcState#src_state{unacked_objects = [Obj | ObjQueue], offset = Offset2, skips = 0}.
@@ -314,51 +341,133 @@ model_ack_objects(NumAcked, Unacked) when length(Unacked) >= NumAcked ->
 %% postcondition
 %% ====================================================================
 
-postcondition(_State, {call, _, connect_to_v1, _Args}, {error, _}) ->
-    false;
-postcondition(_State, {call, _, connect_to_v1, _Args}, {Source, Sink}) ->
-    is_pid(Source) andalso is_pid(Sink);
-
-postcondition(_State, {call, _, connect_to_v2, _Args}, {error, _}) ->
-    false;
-postcondition(_State, {call, _, connect_to_v2, _Args}, {Source, Sink}) ->
-    is_pid(Source) andalso is_pid(Sink);
-
-postcondition(_State, {call, _, connect_to_v2_2, _Args}, {error, _}) ->
-    false;
-postcondition(_State, {call, _, connect_to_v2_2, _Args}, {Source, Sink}) ->
-    if
-        is_pid(Source) andalso is_pid(Sink) ->
-            case {is_process_alive(Source), is_process_alive(Sink)} of
+postcondition(State, {call, _, Connect, [Remote, _MQ]}, Res) when Connect =:= connect_to_v1; Connect =:= connect_to_v2; Connect =:= connect_to_v2_2 ->
+    case Res of
+        {error, {already_started, SrcPid}} ->
+            case lists:keyfind(Remote, 1, State#state.sources) of
+                {Remote, #src_state{pids = {SrcPid, _SinkPid}}} ->
+                    true;
+                Else ->
+                    ?debugFmt("Attempt to connect to existing remote failed:~n"
+                        "    Remote: ~p~n"
+                        "    SrcPid (Res): ~p~n"
+                        "    Else: ~p", [Remote, SrcPid, Else]),
+                    false
+            end;
+        {error, OtherError} ->
+            ?debugFmt("Could not connect to remote:~n"
+                "    Remote: ~p~n"
+                "    OtherError: ~p", [Remote, OtherError]),
+            false;
+        {SrcPid, SinkPid} when is_pid(SrcPid), is_pid(SinkPid) ->
+            case {is_process_alive(SrcPid), is_process_alive(SinkPid)} of
                 {true, true} ->
                     true;
                 Else ->
-                    ?debugFmt("Either source or sink wasn't alive: ~p", [Else]),
+                    ?debugFmt("either src or sink was not alive: ~p", [Else]),
                     false
-            end;
-        true ->
-            false
+            end
     end;
+
+%postcondition(_State, {call, _, connect_to_v1, _Args}, {error, _}) ->
+%    false;
+%postcondition(_State, {call, _, connect_to_v1, _Args}, {Source, Sink}) ->
+%    is_pid(Source) andalso is_pid(Sink);
+%
+%postcondition(_State, {call, _, connect_to_v2, _Args}, {error, _}) ->
+%    false;
+%postcondition(_State, {call, _, connect_to_v2, _Args}, {Source, Sink}) ->
+%    is_pid(Source) andalso is_pid(Sink);
+%
+%postcondition(_State, {call, _, connect_to_v2_2, _Args}, {error, _}) ->
+%    false;
+%postcondition(_State, {call, _, connect_to_v2_2, _Args}, {Source, Sink}) ->
+%    if
+%        is_pid(Source) andalso is_pid(Sink) ->
+%            case {is_process_alive(Source), is_process_alive(Sink)} of
+%                {true, true} ->
+%                    true;
+%                Else ->
+%                    ?debugFmt("Either source or sink wasn't alive: ~p", [Else]),
+%                    false
+%            end;
+%        true ->
+%            false
+%    end;
 
 postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
     lists:all(fun(ok) -> true; (_) -> false end, Waits);
 
-postcondition(_State, {call, _, push_object, [Remotes, _RiakObj, State]}, Res) ->
-    assert_sink_bugs(Res, Remotes, State#state.sources);
+postcondition(State, {call, _, push_object, [Remotes, RiakObj, _State]}, Res) ->
+    ?debugMsg("pushed the object!"),
+    Active = [Name || {Name, _} <- State#state.sources],
+    Routed = ordsets:from_list(Active ++ Remotes ++ ["undefined"]),
+    ProtoMeta = [{routed_clusters, Routed}],
+    lists:all(fun({Remote, HistRes}) ->
+        KeyFound = lists:keyfind(Remote, 1, State#state.sources),
+        ShouldSkip = lists:member(Remote, Remotes),
+        case {ShouldSkip, KeyFound} of
+            {true, _} when HistRes =:= skipped ->
+                true;
+            {false, false} ->
+                ?debugFmt("Most likely disconnected~n"
+                    "    HistRes: ~p", [HistRes]),
+                case HistRes of
+                    {exit, {noproc, _}} ->
+                        true;
+                    _ ->
+                        false
+                end;
+            {false, {Name, SrcState}} ->
+                ObjBin = case SrcState#src_state.version of
+                    {1,0} -> term_to_binary([RiakObj]);
+                    {2,_} -> riak_repl_util:to_wire(w1, [RiakObj])
+                end,
+                Skips = case SrcState#src_state.skips of
+                    undefined -> 0;
+                    N -> N
+                end,
+                Meta = orddict:store(skip_count, Skips, ProtoMeta),
+                case {SrcState#src_state.version, HistRes} of
+                    {{1,0}, {objects, {_Seq, ObjBin}}} ->
+                        true;
+                    {{2,_}, {objects_and_meta, {_Seq, ObjBin, Meta}}} ->
+                        true;
+                    {Version,_} ->
+                        ?debugFmt("push_object postcondition failed:~n"
+                            "    Remote: ~p~n"
+                            "    Meta: ~p~n"
+                            "    ObjBin: ~p~n"
+                            "    HistRes: ~p~n"
+                            "    Version: ~p~n", [Remote, Meta, ObjBin, HistRes, Version]),
+                        false
+                end
+        end
+    end, Res);
 
 postcondition(State, {call, _, spanning_update, [Sender, FromCluster, ToCluster, Action, Routed]}, _Res) ->
     ExpectedRouted = lists:foldl(fun({Name, _}, Routed2) ->
         ordsets:add_element(Name, Routed2)
-    end, Routed, State#state.sources),
+    end, ordsets:from_list(Routed), State#state.sources),
     lists:all(fun({Name, SrcState}) ->
-        ExpectedLastSpanning = case lists:member(Name, Routed) of
-            true -> undefined;
-            false -> {spanning_update, {FromCluster, ToCluster, Action, ExpectedRouted}}
-        end,
-        {_Source, SinkPid} = SrcState#src_state.pids,
-        Got = fake_sink_get_last_spanning(SinkPid),
-        catch ?assertEqual(ExpectedLastSpanning, Got),
-        ExpectedLastSpanning =:= Got
+        case lists:member(Name, Routed) of
+            true ->
+                % this will explode later on if in error.
+                true;
+            false ->
+                ExpectedLastSpanning = {spanning_update, {FromCluster, ToCluster, Action, ExpectedRouted}},
+                {_Source, SinkPid} = SrcState#src_state.pids,
+                Got = fake_sink_get_spanning(SinkPid),
+                if
+                    ExpectedLastSpanning =:= Got ->
+                        true;
+                    true ->
+                        ?debugFmt("spanning update postcondition for remote ~p~n"
+                            "    Expected: ~p~n"
+                            "    Got: ~p", [Name, ExpectedLastSpanning, Got]),
+                        false
+                end
+        end
     end, State#state.sources);
 
 postcondition(State, {call, _, ack_objects, [NumAck, {Remote, Source}]}, AckedStack) ->
@@ -501,62 +610,50 @@ fix_routed_meta(Meta, AdditionalRemotes) ->
 %% ====================================================================
 
 connect_to_v1(RemoteName, MasterQueue) ->
-    stateful:set(version, {realtime, {1,0}, {1,0}}),
-    stateful:set(remote, RemoteName),
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
-    monit(SourcePid),
-    receive
-        {sink_started, SinkPid} ->
-            monit(SinkPid),
-            wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
-            ok = ensure_registered(RemoteName),
-            {SourcePid, SinkPid}
-    after 1000 ->
-        {error, timeout}
-    end.
+    connect(RemoteName, MasterQueue, {1,0}).
 
 connect_to_v2(RemoteName, MasterQueue) ->
-    stateful:set(version, {realtime, {2,0}, {2,0}}),
-    stateful:set(remote, RemoteName),
-    Before = now(),
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
-    monit(SourcePid),
-    After = now(),
-    receive
-        {sink_started, SinkPid} ->
-            erlang:monitor(process, SinkPid),
-            wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
-            ok = ensure_registered(RemoteName),
-            {SourcePid, SinkPid}
-    after 1000 ->
-        {error, timeout}
-    end.
+    connect(RemoteName, MasterQueue, {2,0}).
 
 connect_to_v2_2(RemoteName, MasterQueue) ->
-    stateful:set(version, {realtime, {2,2},{2,2}}),
+    connect(RemoteName, MasterQueue, {2,2}).
+
+connect(RemoteName, MasterQueue, Version) ->
+    stateful:set(version, {realtime, Version, Version}),
     stateful:set(remote, RemoteName),
-    {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
-    receive
-        {sink_started, SinkPid} ->
-            erlang:monitor(process, SinkPid),
-            wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
-            ok = ensure_registered(RemoteName),
-            {SourcePid, SinkPid}
-    after 1000 ->
-        {error, timeout}
+    case riak_repl2_rtsource_conn_sup:enable(RemoteName) of
+        {ok, SourcePid} ->
+            monit(SourcePid),
+            receive
+                {sink_started, SinkPid} ->
+                    monit(SinkPid),
+                    wait_for_valid_sink_history(SinkPid, RemoteName, MasterQueue),
+                    ok = ensure_registered(RemoteName),
+                    {SourcePid, SinkPid}
+            after 1000 ->
+                {error, timeout}
+            end;
+        SupStartElse ->
+            SupStartElse
     end.
 
 disconnect(ConnectState) ->
     {Remote, SrcState} = ConnectState,
     #src_state{pids = {Source, Sink}} = SrcState,
     riak_repl2_rtq:unregister(Remote),
+    riak_repl2_rtsource_conn_sup:disable(Remote),
     [riak_repl_test_util:wait_for_pid(P, 3000) || P <- [Source, Sink]].
 
 push_object(Remotes, RiakObj, State) ->
+    ?debugFmt("Pushing the object:~n"
+        "    State: ~p", [State]),
     Meta = [{routed_clusters, Remotes}],
     riak_repl2_rtq:push(1, riak_repl_util:to_wire(w1, [RiakObj]), Meta),
-    wait_for_pushes(State, Remotes),
-    {1, RiakObj, Meta}.
+    wait_for_pushes(State, Remotes).
+
+spanning_update({_Name, SrcState}, FromName, ToName, Action, Routed) ->
+    {_Source, Sink} = SrcState#src_state.pids,
+    fake_sink_spanning_update(Sink, FromName, ToName, Action, Routed).
 
 ack_objects(NumToAck, {Remote, SrcState}) ->
     {_, Sink} = SrcState#src_state.pids,
@@ -611,11 +708,18 @@ wait_for_pushes(State, Remotes) ->
 
 wait_for_push({Remote, SrcState}, Remotes) ->
     case lists:member(Remote, Remotes) of
-        true -> ok;
+        true -> {Remote, skipped};
         _ ->
             WaitLength = length(SrcState#src_state.unacked_objects) + 1,
             {_, Sink} = SrcState#src_state.pids,
-            gen_server:call(Sink, {block_until, WaitLength}, 3000)
+            try gen_server:call(Sink, {block_until, WaitLength}, 3000) of
+                ok ->
+                    Frame = fake_sink_recent_frame(Sink),
+                    {Remote, Frame}
+            catch
+                W:Y ->
+                    {Remote, {W,Y}}
+            end
     end.
 
 plant_bugs(_Remotes, []) ->
@@ -640,6 +744,10 @@ abstract_connection_mgr() ->
             ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, Version, Pid, [])
         end),
         {ok, make_ref()}
+    end),
+    %% for the conn_sup
+    meck:expect(riak_core_connection_mgr, register_locator, fun(rt_repl, _Locator) ->
+        ok
     end).
 
 start_rt() ->
@@ -685,10 +793,21 @@ sink_acceptor(Listen, WhoToTell) ->
     WhoToTell ! {sink_started, Pid},
     sink_acceptor(Listen, WhoToTell).
 
-fake_sink_get_last_spanning(SinkPid) ->
-    gen_server:call(SinkPid, last_spanning_update).
+fake_sink_get_spanning(SinkPid) ->
+    gen_server:call(SinkPid, get_spanning_update).
 
--record(fake_sink, {socket, version, bug, history = [], last_spanning_update}).
+fake_sink_spanning_update(SinkPid, FromName, ToName, Action, Routed) ->
+    gen_server:call(SinkPid, {send_spanning_update, FromName, ToName, Action, Routed}).
+
+fake_sink_recent_frame(SinkPid) ->
+    case gen_server:call(SinkPid, history) of
+        [] ->
+            undefined;
+        [Frame | _] ->
+            Frame
+    end.
+
+-record(fake_sink, {socket, version, bug, history = [], spanning_update}).
 
 monme() ->
     monit(self()).
@@ -729,8 +848,19 @@ fake_sink(State) ->
             fake_sink(State);
         {'$gen_call', From, {block_until, HistoryLength}} ->
             fake_sink(State#fake_sink{bug = {block_until, From, HistoryLength}});
-        {'$gen_call', From, last_spanning_update} ->
-            gen_server:reply(From, State#fake_sink.last_spanning_update),
+        {'$gen_call', From, get_spanning_update} ->
+            NextSpanning = case State#fake_sink.spanning_update of
+                {update, Spanning} ->
+                    gen_server:reply(From, Spanning),
+                    undefined;
+                _ ->
+                    {bug, From}
+            end,
+            fake_sink(State#fake_sink{spanning_update = NextSpanning});
+        {'$gen_call', From, {send_spanning_update, FromName, ToName, Action, Routed}} ->
+            Encoded = riak_repl2_rtframe:encode(spanning_update, {FromName, ToName, Action, Routed}),
+            gen_tcp:send(Socket, Encoded),
+            gen_server:reply(From, ok),
             fake_sink(State);
         {'$gen_call', From, Msg} ->
             gen_server:reply(From, {error, badcall}),
@@ -756,13 +886,16 @@ fake_sink(State) ->
                     Bug
             end,
             inet:setopts(Socket, [{active, once}]),
-            LastSpanning = case Spannings of
-                [] ->
+            LastSpanning = case {Spannings, State#fake_sink.spanning_update} of
+                {[], SU} ->
+                    SU;
+                {[Hd | _], {bug, ReplyTarg}} ->
+                    gen_server:reply(ReplyTarg, Hd),
                     undefined;
-                [Hd | _] ->
-                    Hd
+                {[Hd | _], _} ->
+                    {update, Hd}
             end,
-            fake_sink(State#fake_sink{bug = NewBug, history = History4, last_spanning_update = LastSpanning});
+            fake_sink(State#fake_sink{bug = NewBug, history = History4, spanning_update = LastSpanning});
         {tcp_error, Socket, Err} ->
             exit(Err);
         {tcp_closed, Socket} ->

@@ -39,6 +39,7 @@
 %% API
 -export([start_link/1,
          stop/1,
+         spanning_update/5,
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
@@ -56,8 +57,8 @@
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
                 connection_ref, % reference handed out by connection manager
-                transport, % transport module 
-                socket,    % socket to use with transport 
+                transport, % transport module
+                socket,    % socket to use with transport
                 proto,     % protocol version negotiated
                 ver,       % wire format negotiated
                 helper_pid,% riak_repl2_rtsource_helper pid
@@ -74,7 +75,10 @@ start_link(Remote) ->
 
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
-    
+
+spanning_update(Pid, From, To, Action, Routed) ->
+    gen_server:cast(Pid, {spanning_update, {From, To, Action, Routed}}).
+
 status(Pid) ->
     status(Pid, infinity).
 
@@ -197,9 +201,9 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
         QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
-handle_call({connected, Socket, Transport, EndPoint, Proto}, _From, 
+handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
             State = #state{remote = Remote}) ->
-    %% Check the socket is valid, may have been an error 
+    %% Check the socket is valid, may have been an error
     %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
     case Transport:send(Socket, <<>>) of
         ok ->
@@ -211,7 +215,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
             lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
                                                SocketTag}, Transport),
-            State2 = State#state{transport = Transport, 
+            State2 = State#state{transport = Transport,
                                  socket = Socket,
                                  address = EndPoint,
                                  proto = Proto,
@@ -242,12 +246,18 @@ handle_cast({connect_failed, _HelperPid, Reason},
             State = #state{remote = Remote}) ->
     lager:warning("Realtime replication connection to site ~p failed - ~p\n",
                   [Remote, Reason]),
-    {stop, normal, State}.
+    {stop, normal, State};
+
+handle_cast({spanning_update, UpdateParams}, State) ->
+    #state{transport = T, socket = S} = State,
+    Frame = riak_repl2_rtframe:encode(spanning_update, UpdateParams),
+    T:send(S, Frame),
+    {noreply, State}.
 
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
         when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
-handle_info({Closed, _S}, 
+handle_info({Closed, _S},
             State = #state{remote = Remote, cont = Cont})
         when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
@@ -258,11 +268,11 @@ handle_info({Closed, _S},
             lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
-    %% go to sleep for 1s so a sink that opens the connection ok but then 
+    %% go to sleep for 1s so a sink that opens the connection ok but then
     %% dies will not make the server restart too fst.
     timer:sleep(1000),
     {stop, normal, State};
-handle_info({Error, _S, Reason}, 
+handle_info({Error, _S, Reason},
             State = #state{remote = Remote, cont = Cont})
         when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
@@ -291,7 +301,7 @@ handle_info(Msg, State) ->
 terminate(_Reason, #state{helper_pid = HelperPid}) ->
     %%TODO: check if this is called, don't think it is on normal supervisor
     %%      start/shutdown without trap exit set
-    case HelperPid of 
+    case HelperPid of
         undefined ->
             ok;
         _ ->
@@ -335,6 +345,9 @@ recv(TcpBin, State = #state{remote = Name,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
             recv(Cont, schedule_heartbeat(State2));
+        {ok, {spanning_update, {From, To, Action, Routed}}, Cont} ->
+            riak_repl2_rt_spanning_coord:spanning_update(From, To, Action, Routed),
+            recv(Cont, State);
         {error, Reason} ->
             %% Something bad happened
             riak_repl_stats:rt_source_errors(),

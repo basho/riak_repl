@@ -9,7 +9,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -else.
 -define(debugMsg(_),ok).
--define(debugFmt(_,_),ok).
+-define(debugFmt(_,_1),ok).
 -endif.
 
 spanning_update(SourceName, SinkName, ConnectAction, Routed) ->
