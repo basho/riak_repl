@@ -117,25 +117,11 @@ handle_cast({drop_cluster, ClusterName}, Graph) ->
     {noreply, Graph};
 
 handle_cast({add_replication, Source, Sink}, Graph) ->
-    Sinks = digraph:out_neighbours(Graph, Source),
-    case lists:member(Sink, Sinks) of
-        true ->
-            ok;
-        false ->
-            add_edges_with_vertices(Graph, Source, Sink)
-    end,
+    add_edges_with_vertices(Graph, Source, Sink),
     {noreply, Graph};
 
 handle_cast({drop_replication, Source, Sink}, Graph) ->
-    OutEdges = digraph:out_edges(Graph, Source),
-    lists:map(fun(Edge) ->
-        case digraph:edge(Graph, Edge) of
-            {Edge, Source, Sink, _Label} ->
-                digraph:del_edge(Graph, Edge);
-            _ ->
-                ok
-        end
-    end, OutEdges),
+    digraph:del_edge(Graph, {Source, Sink}),
     {noreply, Graph};
 
 handle_cast({drop_all_cascades, Sink}, Graph) ->
@@ -158,15 +144,11 @@ code_change(_Vsn, Graph, _Extra) ->
 %% internal
 
 add_edges_with_vertices(Graph, Source, Sink) ->
-    add_edges_with_vertices(Graph, Source, Sink, digraph:add_edge(Graph, Source, Sink)).
+    case digraph:add_edge(Graph, {Source, Sink}, Source, Sink, []) of
+        {error, {bad_vertex, V}} ->
+            digraph:add_vertex(Graph, V),
+            add_edges_with_vertices(Graph, Source, Sink);
+        {Source, Sink} ->
+            ok
+    end.
 
-add_edges_with_vertices(Graph, Source, Sink, {error, {bad_vertex, Source}}) ->
-    digraph:add_vertex(Graph, Source),
-    add_edges_with_vertices(Graph, Source, Sink, digraph:add_edge(Graph, Source, Sink));
-
-add_edges_with_vertices(Graph, Source, Sink, {error, {bad_vertex, Sink}}) ->
-    digraph:add_vertex(Graph, Sink),
-    add_edges_with_vertices(Graph, Source, Sink, digraph:add_edge(Graph, Source, Sink));
-
-add_edges_with_vertices(_Graph, _Source, _Sink, _Edge) ->
-    ok.
