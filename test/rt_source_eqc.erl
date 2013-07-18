@@ -184,7 +184,6 @@ next_state(S, _Res, {call, _, disconnect, [{Remote, _}]}) ->
     S#state{master_queue = Master, sources = Sources, remotes_available = [Remote | S#state.remotes_available]};
 
 next_state(S, Res, {call, _, push_object, [Remotes, RiakObj, _S]}) ->
-    ?debugMsg("next stating the push object!"),
     Seq = {call, ?MODULE, inc_seq, [S#state.seq, Res]},
     Pushed = {1, RiakObj, [{routed_clusters, Remotes}]},
     Sources = update_unacked_objects(Remotes, Seq, Pushed, S),
@@ -369,37 +368,10 @@ postcondition(State, {call, _, Connect, [Remote, _MQ]}, Res) when Connect =:= co
             end
     end;
 
-%postcondition(_State, {call, _, connect_to_v1, _Args}, {error, _}) ->
-%    false;
-%postcondition(_State, {call, _, connect_to_v1, _Args}, {Source, Sink}) ->
-%    is_pid(Source) andalso is_pid(Sink);
-%
-%postcondition(_State, {call, _, connect_to_v2, _Args}, {error, _}) ->
-%    false;
-%postcondition(_State, {call, _, connect_to_v2, _Args}, {Source, Sink}) ->
-%    is_pid(Source) andalso is_pid(Sink);
-%
-%postcondition(_State, {call, _, connect_to_v2_2, _Args}, {error, _}) ->
-%    false;
-%postcondition(_State, {call, _, connect_to_v2_2, _Args}, {Source, Sink}) ->
-%    if
-%        is_pid(Source) andalso is_pid(Sink) ->
-%            case {is_process_alive(Source), is_process_alive(Sink)} of
-%                {true, true} ->
-%                    true;
-%                Else ->
-%                    ?debugFmt("Either source or sink wasn't alive: ~p", [Else]),
-%                    false
-%            end;
-%        true ->
-%            false
-%    end;
-
 postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
     lists:all(fun(ok) -> true; (_) -> false end, Waits);
 
 postcondition(State, {call, _, push_object, [Remotes, RiakObj, _State]}, Res) ->
-    ?debugMsg("pushed the object!"),
     Active = [Name || {Name, _} <- State#state.sources],
     Routed = ordsets:from_list(Active ++ Remotes ++ ["undefined"]),
     ProtoMeta = [{routed_clusters, Routed}],
@@ -645,8 +617,6 @@ disconnect(ConnectState) ->
     [riak_repl_test_util:wait_for_pid(P, 3000) || P <- [Source, Sink]].
 
 push_object(Remotes, RiakObj, State) ->
-    ?debugFmt("Pushing the object:~n"
-        "    State: ~p", [State]),
     Meta = [{routed_clusters, Remotes}],
     riak_repl2_rtq:push(1, riak_repl_util:to_wire(w1, [RiakObj]), Meta),
     wait_for_pushes(State, Remotes).
