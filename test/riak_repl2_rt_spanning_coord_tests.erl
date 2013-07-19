@@ -3,102 +3,123 @@
 -include_lib("eunit/include/eunit.hrl").
 
 functionality_test_() ->
-    {setup, fun() ->
-        meck:new([riak_repl2_rtsource_conn_sup, riak_repl2_rtsink_conn_sup]),
-        meck:expect(riak_repl2_rtsource_conn_sup, enabled, fun() ->
-            [{"src_a", src_a}, {"src_b", src_b}, {"src_c", src_c}]
-        end),
-        meck:expect(riak_repl2_rtsink_conn_sup, started, fun() ->
-            [sink_a, sink_b, sink_c]
-        end),
-        % TODO remove no_strict when expected functions exist on these modules.
-        meck:new([riak_repl2_rtsource_conn, riak_repl2_rtsink_conn], [non_strict]),
-        [src_a, src_b, src_c, sink_a, sink_b, sink_c]
+    {foreach, fun() ->
+        {ok, ModelPid} = riak_repl2_rt_spanning_model:start_link(),
+        {ok, CoordPid} = riak_repl2_rt_spanning_coord:start_link(),
+        meck:new(spanning_cb_mod, [non_strict]),
+        {ModelPid, CoordPid}
     end,
-    fun(_) ->
-        meck:unload([riak_repl2_rtsource_conn_sup, riak_repl2_rtsink_conn_sup,
-            riak_repl2_rtsource_conn, riak_repl2_rtsink_conn]),
-        riak_repl2_rt_spanning_model:stop()
-    end,
-    fun(Pids) -> [
+    fun({Model, Coord}) ->
+        meck:unload(spanning_cb_mod),
+        unlink(Model),
+        unlink(Coord),
+        riak_repl2_rt_spanning_model:stop(),
+        riak_repl2_rt_spanning_coord:stop(),
+        [riak_repl_test_util:wait_for_pid(P) || P <- [Model, Coord]]
+    end, [
 
-        {foreach, fun() ->
-            riak_repl2_rt_spanning_model:start_link()
-        end,
-        fun(_) ->
-            Pid = whereis(riak_repl2_rt_spanning_model),
-            unlink(Pid),
-            riak_repl2_rt_spanning_model:stop(),
-            riak_repl_test_util:wait_for_pid(Pid)
-        end, [
+        fun(_) -> {"begin_chain sets the model", [
 
-            fun(_) -> {"forwarding", fun() ->
-                set_conn_mecks(),
-                riak_repl2_rt_spanning_coord:spanning_update("source", "sink", connect, []),
-                Expected = lists:sort([{spanning_update, Pid} || Pid <- Pids]),
-                Got = lists:sort(recv_conn_mecks()),
-                ?assertEqual(Expected, Got),
-                ?assertEqual(["source", "sink"], riak_repl2_rt_spanning_model:path("source", "sink"))
-            end} end,
+            fun() ->
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink", connect),
+                Expected = [{"sink", []}, {"source", ["sink"]}],
+                Got = riak_repl2_rt_spanning_model:cascades(),
+                ?assertEqual(Expected, Got)
+            end,
 
-            fun(_) -> {"forwarding only to some sources", fun() ->
-                set_conn_mecks(),
-                riak_repl2_rt_spanning_coord:spanning_update("source", "sink", connect, ["src_a"]),
-                Expected = lists:sort([{spanning_update, Pid} || Pid <- Pids, Pid =/= src_a]),
-                Got = lists:sort(recv_conn_mecks()),
-                ?assertEqual(Expected, Got),
-                ?assertEqual(["source", "sink"], riak_repl2_rt_spanning_model:path("source", "sink"))
-            end} end,
+            fun() ->
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink", disconnect),
+                Expected = [{"sink", []}, {"source", []}],
+                Got = riak_repl2_rt_spanning_model:cascades(),
+                ?assertEqual(Expected, Got)
+            end,
 
-            fun(_) -> {"forwarding to all sinks", fun() ->
-                set_conn_mecks(),
-                riak_repl2_rt_spanning_coord:spanning_update("source", "sink", connect, ["sink_a"]),
-                Expected = lists:sort([{spanning_update, Pid} || Pid <- Pids]),
-                Got = lists:sort(recv_conn_mecks()),
-                ?assertEqual(Expected, Got),
-                ?assertEqual(["source", "sink"], riak_repl2_rt_spanning_model:path("source", "sink"))
-            end} end,
+            fun() ->
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink", connect),
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink2", connect),
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink3", connect),
+                Expected = orddict:from_list([{"source", ["sink", "sink2", "sink3"]}, {"sink", []}, {"sink2", []}, {"sink3", []}]),
+                Got = riak_repl2_rt_spanning_model:cascades(),
+                ?assertEqual(Expected, Got)
+            end,
 
-            fun(_) -> {"define a disconnect", fun() ->
-                set_conn_mecks(),
-                riak_repl2_rt_spanning_model:add_cascade("source", "sink"),
-                riak_repl2_rt_spanning_coord:spanning_update("source", "sink", disconnect, []),
-                recv_conn_mecks(),
-                ?assertNot(riak_repl2_rt_spanning_model:path("source", "sink"))
-            end} end,
+            fun() ->
+                riak_repl2_rt_spanning_coord:begin_chain("source", undefined, disconnect_all),
+                Expected = orddict:from_list([{Name, []} || Name <- ["source", "sink", "sink2", "sink3"]]),
+                Got = riak_repl2_rt_spanning_model:cascades(),
+                ?assertEqual(Expected, Got)
+            end
 
-            fun(_) -> {"disconnect all sinks", fun() ->
-                set_conn_mecks(),
-                TestSinks = [integer_to_list(N) ++ "_test_sink" || N <- lists:seq(1, 3)],
-                [riak_repl2_rt_spanning_model:add_cascade("source", TestSink) || TestSink <- TestSinks],
-                riak_repl2_rt_spanning_coord:spanning_update("source", undefined, disconnect_all, []),
-                recv_conn_mecks(),
-                [?assertNot(riak_repl2_rt_spanning_model:path("source", TestSink)) || TestSink <- TestSinks]
-            end} end
+        ]} end,
 
-        ]}
+        fun(_) -> {"chaining and subscriptions", [
 
-    ] end}.
+            {"subscribe", fun() ->
+                set_meck(),
+                Got = riak_repl2_rt_spanning_coord:subscribe("id", "node_name", spanning_cb_mod, "sub_state"),
+                Expected = {ok, {"node_name", "id"}},
+                ?assertEqual(Expected, Got)
+            end},
 
-set_conn_mecks() ->
+            {"begin chain", fun() ->
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink", connect),
+                Got = recv_sub("sub_state"),
+                Expected = {"source", "sink", connect, 1, ["node_name"]},
+                ?assertEqual(Expected, Got)
+            end},
+
+            {"version increments", fun() ->
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink", disconnect),
+                Got = recv_sub("sub_state"),
+                Expected = {"source", "sink", disconnect, 2, ["node_name"]},
+                ?assertEqual(Expected, Got)
+            end},
+
+            {"continue chain simple", fun() ->
+                riak_repl2_rt_spanning_coord:continue_chain("source", "sink", connect, 5, ["visited"]),
+                Got = recv_sub("sub_state"),
+                Expected = {"source", "sink", connect, 5, ["node_name", "visited"]},
+                ?assertEqual(Expected, Got)
+            end},
+
+            {"continue chain already routed", fun() ->
+                riak_repl2_rt_spanning_coord:continue_chain("source", "sink", disconnect, 10, ["node_name"]),
+                Got = recv_sub("sub_state"),
+                Expected = {error, timeout},
+                ?assertEqual(Expected, Got)
+            end},
+
+            {"continue chain old vsn skipped", fun() ->
+                riak_repl2_rt_spanning_coord:continue_chain("source", "sink", connect, 7, ["visited"]),
+                Got = recv_sub("sub_state"),
+                Expected = {error, timeout},
+                ?assertEqual(Expected, Got)
+            end},
+
+            {"unsubcribe", fun() ->
+                riak_repl2_rt_spanning_coord:unsubscribe({"node_name", "id"}),
+                riak_repl2_rt_spanning_coord:begin_chain("source", "sink", disconnect),
+                Got = recv_sub("sub_state"),
+                ?assertEqual({error, timeout}, Got)
+            end}
+
+        ]} end
+    ]}.
+
+set_meck() ->
     Self = self(),
-    meck:expect(riak_repl2_rtsink_conn, spanning_update, fun(SinkPid, _From, _To, _ConnectAct, _Routed) ->
-        Self ! {spanning_update, SinkPid}
-    end),
-    meck:expect(riak_repl2_rtsource_conn, spanning_update, fun(SourcePid, _From, _To, _ConnectAct, _Routed) ->
-        Self ! {spanning_update, SourcePid}
+    meck:expect(spanning_cb_mod, spanning_update, fun(Source, Sink, Act, Vsn, Routed, Name) ->
+        Self ! {spanning, Name, Source, Sink, Act, Routed, Vsn}
     end).
 
-recv_conn_mecks() ->
-    recv_conn_mecks(10).
+recv_sub(Name) ->
+    recv_sub(Name, 1000).
 
-recv_conn_mecks(Timeout) ->
-    recv_conn_mecks(Timeout, []).
-
-recv_conn_mecks(Timeout, Acc) ->
+recv_sub(Name, Timeout) ->
     receive
-        {spanning_update, _} = Msg ->
-            recv_conn_mecks(Timeout, [Msg | Acc])
+        {spanning, Name, Source, Sink, Act, Routed, Vsn} ->
+            {Source, Sink, Act, Routed, Vsn}
     after Timeout ->
-        lists:reverse(Acc)
+        {error, timeout}
     end.
+
