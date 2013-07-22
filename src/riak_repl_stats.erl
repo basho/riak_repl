@@ -140,8 +140,10 @@ rt_dirty() ->
                         riak_repl2_fscoordinator:node_dirty(node())
                       catch
                         _:_ ->
-                         lager:debug("Failed to notify coordinator of rt_dirty status")
-                      end
+                         %% This could be triggered on startup if the
+                         %% fscoordinator isn't running
+                         lager:warning("Failed to notify coordinator of rt_dirty status.")
+                       end
             end),
             ok;
         false -> ok
