@@ -1,7 +1,7 @@
 -module(riak_repl_test_util).
 
 -export([reset_meck/1, reset_meck/2]).
--export([abstract_gen_tcp/0, abstract_stats/0, abstract_stateful/0]).
+-export([abstract_gen_tcp/0, abstract_stats/0]).
 -export([kill_and_wait/1, kill_and_wait/2]).
 -export([wait_for_pid/1, wait_for_pid/2]).
 -export([maybe_unload_mecks/1]).
@@ -43,16 +43,6 @@ abstract_stats() ->
     reset_meck(riak_repl_stats, [no_link]),
     meck:expect(riak_repl_stats, rt_source_errors, fun() -> ok end),
     meck:expect(riak_repl_stats, objects_sent, fun() -> ok end).
-
-abstract_stateful() ->
-    reset_meck(stateful, [non_strict]),
-    meck:expect(stateful, set, fun(Key, Val) ->
-        Fun = fun() -> Val end,
-        meck:expect(stateful, Key, Fun)
-    end),
-    meck:expect(stateful, delete, fun(Key) ->
-        meck:delete(stateful, Key, 0)
-    end).
 
 reset_meck(Mod) ->
     reset_meck(Mod, []).
