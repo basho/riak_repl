@@ -16,7 +16,7 @@
 -export([start_link/2,
          stop/1,
          set_socket/3,
-         spanning_update/5,
+         spanning_update/6,
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
@@ -44,7 +44,7 @@
 
 %% Register with service manager
 register_service() ->
-    ProtoPrefs = {realtime,[{2,0}, {1,4}, {1,1}, {1,0}]},
+    ProtoPrefs = {realtime,[{2,2}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -71,10 +71,12 @@ stop(Pid) ->
 
 %% Call after control handed over to socket
 set_socket(Pid, Socket, Transport) ->
+    lager:debug("Setting socket for ~p to ~p via ~p", [Pid, Socket, Transport]),
     gen_server:call(Pid, {set_socket, Socket, Transport}, infinity).
 
-spanning_update(Pid, From, To, Action, Routed) ->
-    gen_server:cast(Pid, {spanning_update, From, To, Action, Routed}).
+spanning_update(From, To, Action, Vsn, Routed, Pid) ->
+    lager:debug("casting spanning update to ~p", [Pid]),
+    gen_server:cast(Pid, {spanning_update, From, To, Action, Vsn, Routed}).
 
 status(Pid) ->
     status(Pid, ?LONG_TIMEOUT).
@@ -139,12 +141,16 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
              ],
     {reply, {status, Status}, State};
 handle_call({set_socket, Socket, Transport}, _From, State) ->
+    lager:debug("about to set socket to ~p via ~p", [Socket, Transport]),
     Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
+handle_cast(Msg, #state{socket = undefined} = State) ->
+    lager:warning("cast of ~p before socket set", [Msg]),
+    {noreply, State};
 %% Note pattern patch on Ref
 handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
                                             seq_ref = Ref,
@@ -161,17 +167,21 @@ handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
             T:send(S, TcpIOL),
             {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
     end;
-handle_cast({spanning_update, From, To, Action, Routed}, State) ->
-    case lists:member(State#state.remote, Routed) of
-      true ->
-        {noreply, State};
-      false ->
-        Routed2 = ordsets:add_element(State#state.remote, Routed),
-        Frame = riak_repl2_rtframe:encode(spanning_update, {From, To, Action, Routed2}),
-        #state{transport = T, socket = S} = State,
-        T:send(S, Frame),
-        {noreply, State}
-    end;
+handle_cast({spanning_update, From, To, Action, Vsn, Routed} = Msg, State) ->
+    lager:debug("doing spanning update: ~p", [Msg]),
+    case State#state.proto of
+        {realtime, {2,Minor1}, {2,Minor2}} when Minor1 >= 2 andalso Minor2 >= 2 ->
+            % we're doing to reply on the spanning_coord to not send us stuff
+            % we told it not to send us.
+            lager:info("Forwarding spanning update on"),
+            Frame = riak_repl2_rtframe:encode(spanning_update, {From, To, Action, Vsn, Routed}),
+            #state{transport = T, socket = S} = State,
+            T:send(S, Frame);
+        _ ->
+            lager:debug("ignoring spanning update, protocol too old"),
+            ok
+    end,
+    {noreply, State};
 handle_cast({ack, Ref, Seq, _Skips}, State) ->
     %% Nothing to send, it's old news.
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
@@ -191,6 +201,7 @@ handle_info({Closed, _S}, State = #state{cont = Cont})
             lager:warning("Realtime connection from ~p closed with partial receive of ~b bytes\n",
                           [peername(State), NumBytes])
     end,
+    lager:debug("connection closed"),
     {stop, normal, State};
 handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
         Error == tcp_error; Error == ssl_error ->
@@ -220,8 +231,9 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
             end
     end.
 
-terminate(_Reason, _State) ->
+terminate(Reason, _State) ->
     %% TODO: Consider trying to do something graceful with poolboy?
+    lager:debug("sink exit: ~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -239,8 +251,8 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             recv(Cont, State#state{hb_last = os:timestamp()});
         {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
-        {ok, {spanning_update, {From, To, ConnectAction, Routed}}, Cont} ->
-            riak_repl2_rt_spanning_coord:spanning_update(From, To, ConnectAction, Routed),
+        {ok, {spanning_update, {From, To, ConnectAction, Vsn, Routed}}, Cont} ->
+            riak_repl2_rt_spanning_coord:continue_chain(From, To, ConnectAction, Vsn, Routed),
             recv(Cont, State);
         {error, Reason} ->
             %% TODO: Log Something bad happened

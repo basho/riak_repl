@@ -29,7 +29,7 @@ encode_payload(ack, Seq) ->
      <<Seq:64/unsigned-big-integer>>];
 encode_payload(heartbeat, undefined) ->
     [?MSG_HEARTBEAT];
-encode_payload(spanning_update, {_FromName, _ToName, _Connect, _Routed} = Msg) ->
+encode_payload(spanning_update, {_FromName, _ToName, _Connect, _Vsn, _Routed} = Msg) ->
     [?MSG_SPANNING_UPDATE, term_to_binary(Msg)].
 
 decode(<<Size:32/unsigned-big-integer,

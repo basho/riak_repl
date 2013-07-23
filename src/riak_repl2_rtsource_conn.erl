@@ -39,7 +39,7 @@
 %% API
 -export([start_link/1,
          stop/1,
-         spanning_update/5,
+         spanning_update/6,
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
@@ -76,8 +76,8 @@ start_link(Remote) ->
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
 
-spanning_update(Pid, From, To, Action, Routed) ->
-    gen_server:cast(Pid, {spanning_update, {From, To, Action, Routed}}).
+spanning_update(Pid, From, To, Action, Vsn, Routed) ->
+    gen_server:cast(Pid, {spanning_update, {From, To, Action, Vsn, Routed}}).
 
 status(Pid) ->
     status(Pid, infinity).
@@ -345,8 +345,8 @@ recv(TcpBin, State = #state{remote = Name,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
             recv(Cont, schedule_heartbeat(State2));
-        {ok, {spanning_update, {From, To, Action, Routed}}, Cont} ->
-            riak_repl2_rt_spanning_coord:spanning_update(From, To, Action, Routed),
+        {ok, {spanning_update, {From, To, Action, Vsn, Routed}}, Cont} ->
+            riak_repl2_rt_spanning_coord:continue_chain(From, To, Action, Vsn, Routed),
             recv(Cont, State);
         {error, Reason} ->
             %% Something bad happened
