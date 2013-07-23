@@ -58,7 +58,7 @@ prop_main() ->
 
 unload_mecks() ->
     riak_repl_test_util:maybe_unload_mecks([
-        riak_core_ring_manager, riak_core_ring, riak_repl_rt,
+        riak_core_ring_manager, riak_core_ring, riak_repl2_rt,
         riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq,
         riak_repl2_rt_spanning_coord]).
 
