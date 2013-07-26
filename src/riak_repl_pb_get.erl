@@ -70,12 +70,26 @@ process(#rpbreplgetclusteridreq{}, State) ->
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                        basic_quorum=BQ, if_modified=VClock,
                        head=Head, deletedvclock=DeletedVClock,
-                       cluster_id=CName,
+                       cluster_id=CName0,
                        n_val=N_val, sloppy_quorum=SloppyQuorum},
         #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
+
+    % check to see if there is a mapped cluser for this cluster_id
+    % to use, in case the named one has been disabled
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_repl_ring:get_cluster_mapping(Ring, CName0) of
+        {ok, MappedToClusterId} -> 
+            lager:info("Using mapped cluster_id: ~s", [MappedToClusterId]),
+            CName = MappedToClusterId;
+        [] -> 
+            lager:info("Using non-mapped cluster_id: ~s", [CName0]),
+            CName = CName0
+    end,
+
     lager:info("doing replicated GET using cluster id ~p", [CName]),
+    
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
@@ -253,3 +267,4 @@ client_cluster_names_13() ->
         P /= undefined,
         {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
     ].
+    
