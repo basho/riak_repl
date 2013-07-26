@@ -21,6 +21,8 @@
          get_nat_listener/2,
          set_clusterIpAddrs/2,
          get_clusterIpAddrs/2,
+         add_cluster_mapping/2,
+         get_cluster_mapping/2,
          get_clusters/1,
          rt_enable_trans/2,
          rt_disable_trans/2,
@@ -42,7 +44,8 @@
          pg_enabled/1,
          add_nat_map/2,
          del_nat_map/2,
-         get_nat_map/1
+         get_nat_map/1,
+         write_cluster_mapping_to_ring/2
          ]).
 
 -ifdef(TEST).
@@ -179,7 +182,7 @@ add_nat_listener(Ring,NatListener) ->
                       ?MODULE,
                       dict:store(natlisteners, NewListeners, RC),
                       Ring);
-                true ->
+                true -> 
                     Ring
             end;
         error ->
@@ -307,6 +310,46 @@ get_clusters(Ring) ->
             []
     end.
 
+add_cluster_mapping(Ring, {ClusterName, ClusterMapsTo}) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    ClusterMap = dict:store(ClusterName, ClusterMapsTo, RC),
+    RC2 = dict:store(cluster_mapping, ClusterMap, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            lager:info("no change, storing nothing in ring meta for clustering"),
+            {ignore, {not_changed, clustername}};
+        false ->
+            lager:info("storing cluster mapping from ~p to ~p in ring meta data" , 
+                [ClusterName, ClusterMapsTo]),
+            {new_ring, riak_core_ring:update_meta(
+                    ?MODULE,
+                    RC2,
+                    Ring)}
+    end.
+
+%% Persist the named cluster and it's members to the repl ring metadata.
+%% TODO: an empty Members list means "delete this cluster name"
+write_cluster_mapping_to_ring(ClusterName, ClusterMapsTo) ->
+    lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, ClusterMapsTo]),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_cluster_mapping/2,
+                                      {ClusterName, ClusterMapsTo}).
+
+
+get_cluster_mapping(Ring, ClusterName) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    case dict:find(cluster_mapping, RC) of 
+        {ok, ClusterMap} ->
+            lager:info("Found cluster_mapping, looking up ~p", [ClusterName]),
+            case dict:find(ClusterName, ClusterMap) of
+                {ok, ClusterMappedToId} ->
+                    lager:info("Found key: ~p, value: ~p", [ClusterName, ClusterMappedToId]),
+                    {ok, ClusterMappedToId};
+                error -> []
+            end;
+        error ->
+            []
+    end.
 
 %% Enable proxy_get replication for a given remote
 pg_enable_trans(Ring, Remote) ->
@@ -680,6 +723,22 @@ add_del_private_and_publicip_nat3_test() ->
     ?assertNot(undefined == get_listener(Ring3, {ListenAddr, ListenPort})),
     ?assertEqual(undefined, get_nat_listener(Ring3, Listener)).
 
+add_get_cluster_mapping_test() ->
+
+    lager:start(),
+    Ring0 = ensure_config_test(),
+    %ClusterId = "A",
+    %ClusterMappedToId = "B",
+
+    ClusterId = riak_core_ring:cluster_name(Ring0),
+    ClusterMappedToId = <<"{'dev1@127.0.0.1',{1359,730694,756806}}">>,
+    {new_ring, Ring1} = add_cluster_mapping(Ring0, {ClusterId, ClusterMappedToId}),
+
+    {ok, StoredClusterMapping} = get_cluster_mapping(Ring1, ClusterId),
+    lager:info("StoredClusterMapping = ~p", [StoredClusterMapping]),
+    %?debugVal(StoredClusterMapping).
+    ?assertEqual(StoredClusterMapping, ClusterMappedToId).
+
 %% verify that adding a listener, and then a nat listener
 %% with the same internal IP "upgrades" the current listener
 verify_adding_nat_upgrades_test() ->
@@ -731,5 +790,6 @@ realtime_cascades_invalid_set_test() ->
     Ring0 = riak_repl_ring:ensure_config(mock_ring()),
     BadOpt = sometimes,
     ?assertMatch({ignore, {invalid_option, BadOpt}}, riak_repl_ring:rt_cascades_trans(Ring0, BadOpt)).
+
 
 -endif.

@@ -34,6 +34,7 @@
 init() ->
     {ok, C} = riak:local_client(),
     lager:debug("Riak repl pb get init"),
+
     % get the current repl modes and stash them in the state
     % I suppose riak_repl_pb_get would need to be restarted if these values
     % changed
@@ -41,7 +42,22 @@ init() ->
     Ring = riak_repl_ring:ensure_config(Ring0),
     ClusterID = riak_core_ring:cluster_name(Ring),
     Modes = riak_repl_ring:get_modes(Ring),
+
+    % FIXME: This is commented out so I will remember how it is done;
+    % however, it will likely be removed since the mapping feature should be configured
+    % at run-time. Remove before merging!
+    
+    %case application:get_env(riak_repl, cluster_id_mapping) of
+    %    {ok, {Cid, MappedToCid}} ->
+    %        lager:debug("Cluster mapping configured, adding to Ring meta-data"),
+    %        riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_cluster_mapping/2,
+    %                                  Ring, {Cid, MappedToCid}).
+    %    undefined ->
+    %        lager:debug("No cluster mapping configured, continuing.")
+    %end,
+
     #state{client=C, repl_modes=Modes, cluster_id=ClusterID}.
+
 
 %% @doc decode/2 callback. Decodes an incoming message.
 decode(?PB_MSG_PROXY_GET, Bin) ->
@@ -70,12 +86,25 @@ process(#rpbreplgetclusteridreq{}, State) ->
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                        basic_quorum=BQ, if_modified=VClock,
                        head=Head, deletedvclock=DeletedVClock,
-                       cluster_id=CName,
+                       cluster_id=CName0,
                        n_val=N_val, sloppy_quorum=SloppyQuorum},
         #state{client=C} = State) ->
     R = decode_quorum(R0),
     PR = decode_quorum(PR0),
+
+    % check in ring metadata to see if there is a mapped cluser for this cluster_id
+    % to use, in case the named one has been disabled
+    
+    case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, CName0) of
+        undefined -> 
+            lager:info("Using non-mapped cluster_id: ~s", [CName0]),
+            CName = CName0;
+        MappedToClusterId ->
+            lager:info("Using mapped cluster_id: ~s", [MappedToClusterId]),
+            CName = MappedToClusterId
+    end,
     lager:info("doing replicated GET using cluster id ~p", [CName]),
+    
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
@@ -253,3 +282,5 @@ client_cluster_names_13() ->
         P /= undefined,
         {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
     ].
+
+    

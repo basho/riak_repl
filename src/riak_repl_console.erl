@@ -32,7 +32,8 @@
          cascades/1,
          show_nat_map/1,
          add_nat_map/1,
-         del_nat_map/1
+         del_nat_map/1,
+         block_provider_redirect/1
      ]).
 
 add_listener(Params) ->
@@ -569,7 +570,11 @@ del_nat_map([External, Internal]) ->
             ok
     end.
 
-%% helper functions
+block_provider_redirect([FromClusterId, ToClusterId]) ->
+    lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
+    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, 
+                           FromClusterId, ToClusterId).
+
 
 parse_ip_and_maybe_port(String, Hostname) ->
     case string:tokens(String, ":") of
