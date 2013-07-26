@@ -21,6 +21,8 @@
          get_nat_listener/2,
          set_clusterIpAddrs/2,
          get_clusterIpAddrs/2,
+         add_cluster_mapping/2,
+         get_cluster_mapping/2,
          get_clusters/1,
          rt_enable_trans/2,
          rt_disable_trans/2,
@@ -307,6 +309,35 @@ get_clusters(Ring) ->
             []
     end.
 
+add_cluster_mapping(Ring, {ClusterName, ClusterMapsTo}) ->
+    RC = get_repl_config(ensure_config(Ring)),
+
+    ClusterMap = dict:store(ClusterName, ClusterMapsTo, dict:new()),
+
+    RC2 = dict:store(cluster_mapping, ClusterMap, RC),
+    case RC == RC2 of
+        true ->
+            %% nothing changed
+            {ignore, {not_changed, clustername}};
+        false ->
+            {new_ring, riak_core_ring:update_meta(
+                    ?MODULE,
+                    RC2,
+                    Ring)}
+    end.
+
+get_cluster_mapping(Ring, ClusterName) ->
+    RC = get_repl_config(ensure_config(Ring)),
+    case dict:find(cluster_mapping, RC) of 
+        {ok, ClusterMap} ->
+            case dict:find(ClusterName, ClusterMap) of
+                {ok, ClusterMappedToId} ->
+                    {ok, ClusterMappedToId};
+                [] -> []
+            end;
+        error ->
+            []
+    end.
 
 %% Enable proxy_get replication for a given remote
 pg_enable_trans(Ring, Remote) ->
