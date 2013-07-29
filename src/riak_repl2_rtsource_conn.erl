@@ -72,7 +72,7 @@ start_link(Remote) ->
     gen_server:start_link(?MODULE, [Remote], []).
 
 stop(Pid) ->
-    gen_server:call(Pid, stop).
+    gen_server:call(Pid, stop, ?LONG_TIMEOUT).
     
 status(Pid) ->
     status(Pid, infinity).
@@ -93,7 +93,8 @@ connected(Socket, Transport, Endpoint, Proto, RtSourcePid, Props) ->
     Transport:controlling_process(Socket, RtSourcePid),
     Transport:setopts(Socket, [{active, true}]),
     gen_server:call(RtSourcePid,
-                    {connected, Socket, Transport, Endpoint, Proto}).
+                    {connected, Socket, Transport, Endpoint, Proto},
+                    ?LONG_TIMEOUT).
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
     gen_server:cast(RtSourcePid, {connect_failed, self(), Reason}).

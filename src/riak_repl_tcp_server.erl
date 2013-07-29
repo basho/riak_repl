@@ -60,19 +60,19 @@ start_link(Listener, Socket, Transport, _Opts) ->
     gen_server:start_link(?MODULE, [Listener, Socket, Transport], []).
 
 set_socket(Pid, Socket) ->
-    gen_server:call(Pid, {set_socket, Socket}).
+    gen_server:call(Pid, {set_socket, Socket}, ?LONG_TIMEOUT).
 
 start_fullsync(Pid) ->
-    gen_server:call(Pid, start_fullsync).
+    gen_server:call(Pid, start_fullsync, ?LONG_TIMEOUT).
 
 cancel_fullsync(Pid) ->
-    gen_server:call(Pid, cancel_fullsync).
+    gen_server:call(Pid, cancel_fullsync, ?LONG_TIMEOUT).
 
 pause_fullsync(Pid) ->
-    gen_server:call(Pid, pause_fullsync).
+    gen_server:call(Pid, pause_fullsync, ?LONG_TIMEOUT).
 
 resume_fullsync(Pid) ->
-    gen_server:call(Pid, resume_fullsync).
+    gen_server:call(Pid, resume_fullsync, ?LONG_TIMEOUT).
 
 status(Pid) ->
     status(Pid, infinity).

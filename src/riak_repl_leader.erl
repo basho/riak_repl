@@ -77,11 +77,11 @@ set_candidates(Candidates, Workers) ->
 
 %% Return the current leader node
 leader_node() ->
-    gen_server:call(?SERVER, leader_node).
+    gen_server:call(?SERVER, leader_node, infinity).
 
 %% Are we the leader?
 is_leader() ->
-    gen_server:call(?SERVER, is_leader).
+    gen_server:call(?SERVER, is_leader, infinity).
 
 %% Send the object to the leader
 postcommit(Object) ->
@@ -95,13 +95,13 @@ postcommit(Object) ->
 %% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
 %% and removed from the list when it exits. 
 add_receiver_pid(Pid) when is_pid(Pid) ->
-    gen_server:call(?SERVER, {add_receiver_pid, Pid}).
+    gen_server:call(?SERVER, {add_receiver_pid, Pid}, infinity).
 
 rm_receiver_pid(Pid) when is_pid(Pid) ->
-    gen_server:call(?SERVER, {rm_receiver_pid, Pid}).
+    gen_server:call(?SERVER, {rm_receiver_pid, Pid}, infinity).
 
 receiver_pids() ->
-    gen_server:call(?SERVER, receiver_pids).
+    gen_server:call(?SERVER, receiver_pids, infinity).
 
 ensure_sites() ->
     gen_server:cast(?SERVER, ensure_sites).
@@ -113,14 +113,14 @@ ensure_sites() ->
 %% Called by riak_repl_leader_helper whenever a leadership election
 %% takes place.
 set_leader(LocalPid, LeaderNode, LeaderPid) ->
-    gen_server:call(LocalPid, {set_leader_node, LeaderNode, LeaderPid}).
+    gen_server:call(LocalPid, {set_leader_node, LeaderNode, LeaderPid}, infinity).
 
 %%%===================================================================
 %%% Unit test support for riak_repl_leader_helper
 %%%===================================================================
 
 helper_pid() ->
-    gen_server:call(?SERVER, helper_pid).
+    gen_server:call(?SERVER, helper_pid, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks

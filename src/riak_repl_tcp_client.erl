@@ -63,7 +63,7 @@ status(Pid, Timeout) ->
     gen_server:call(Pid, status, Timeout).
 
 cluster_name(Pid) ->
-    gen_server:call(Pid, cluster_name).
+    gen_server:call(Pid, cluster_name, ?LONG_TIMEOUT).
 
 proxy_get(Pid, Bucket, Key, Options) ->
     gen_server:call(Pid, {proxy_get, Bucket, Key, Options}, infinity).
