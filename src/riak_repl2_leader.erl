@@ -64,11 +64,11 @@ register_notify_fun(Fun) ->
 
 %% Return the current leader node
 leader_node() ->
-    gen_server:call(?SERVER, leader_node).
+    gen_server:call(?SERVER, leader_node, infinity).
 
 %% Are we the leader?
 is_leader() ->
-    gen_server:call(?SERVER, is_leader).
+    gen_server:call(?SERVER, is_leader, infinity).
 
 %%%===================================================================
 %%% Callback for riak_repl_leader_helper
@@ -77,14 +77,14 @@ is_leader() ->
 %% Called by riak_repl_leader_helper whenever a leadership election
 %% takes place.
 set_leader(LocalPid, LeaderNode, LeaderPid) ->
-    gen_server:call(LocalPid, {set_leader_node, LeaderNode, LeaderPid}).
+    gen_server:call(LocalPid, {set_leader_node, LeaderNode, LeaderPid}, infinity).
 
 %%%===================================================================
 %%% Unit test support for riak_repl_leader_helper
 %%%===================================================================
 
 helper_pid() ->
-    gen_server:call(?SERVER, helper_pid).
+    gen_server:call(?SERVER, helper_pid, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
