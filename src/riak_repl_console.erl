@@ -790,8 +790,10 @@ proplists_get([Key | Path], Props, Default) when is_list(Props) ->
             Default;
         AList when is_list(AList) ->
             proplists_get(Path, AList, Default);
-        _Wut ->
-            erlang:error(badarg)
+        Wut ->
+            lager:warning("Can't get riak_repl stat ~p with error ~p", [Key, Wut]),
+            undefined
+
     end.
 
 get_first_kbsp(Str) ->
