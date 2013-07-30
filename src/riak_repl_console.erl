@@ -791,6 +791,8 @@ proplists_get([Key | Path], Props, Default) when is_list(Props) ->
     case proplists:get_value(Key, Props) of
         undefined ->
             Default;
+        too_busy ->
+            Default;
         AList when is_list(AList) ->
             proplists_get(Path, AList, Default);
         Wut ->
