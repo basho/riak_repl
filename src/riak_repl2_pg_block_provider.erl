@@ -16,7 +16,6 @@
     terminate/2, code_change/3, status/1, status/2]).
 
 %% send a message every KEEPALIVE milliseconds to make sure the service is running on the sink
--define(KEEPALIVE, 1000).
 
 -record(state,
         {
@@ -161,5 +160,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 keepalive_timer() ->
-    timer:send_interval(?KEEPALIVE, keepalive).
+    Millis = app_helper:get_env(riak_repl, proxy_get_keepalive_millis,
+                                ?LONG_TIMEOUT),
+    timer:send_interval(Millis, keepalive).
 
