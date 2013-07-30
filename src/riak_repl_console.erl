@@ -792,7 +792,7 @@ proplists_get([Key | Path], Props, Default) when is_list(Props) ->
             proplists_get(Path, AList, Default);
         Wut ->
             lager:warning("Can't get riak_repl stat ~p with error ~p", [Key, Wut]),
-            undefined
+            Default
 
     end.
 
