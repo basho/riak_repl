@@ -143,14 +143,14 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
              ],
     {reply, {status, Status}, State};
 handle_call({set_socket, Socket, Transport}, _From, State) ->
-    Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
+    Transport:setopts(Socket, [{active, once}]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport, peername = peername(Transport, Socket)}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 %% Note pattern patch on Ref
-handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S, 
+handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
                                             seq_ref = Ref,
                                             acked_seq = AckedTo,
                                             completed = Completed}) ->
@@ -203,7 +203,7 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
             %% Check the socket is ok
             case T:peername(S) of
                 {ok, _} ->
-                    T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
+                    T:setopts(S, [{active, once}]), % socket could die, pick it up on tcp_error msgs
                     {noreply, State#state{active = true}};
                 {error, Reason} ->
                     riak_repl_stats:rt_sink_errors(),
@@ -224,6 +224,12 @@ code_change(_OldVsn, State, _Extra) ->
 recv(TcpBin, State = #state{transport = T, socket = S}) ->
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
+            case State#state.active of
+                true ->
+                    T:setopts(S, [{active, once}]);
+                _ ->
+                    ok
+            end,
             {noreply, State#state{cont = Cont}};
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
             recv(Cont, do_write_objects(Seq, BinObjs, State));
@@ -294,7 +300,7 @@ do_write_objects(Seq, BinObjs, State) ->
     %%
     %% If the source dropped (rtq consumer behind tail of queue), there
     %% is no point acknowledging any more if it is unable to resend anyway.
-    %% Reset seq ref/completion array and start over at new sequence. 
+    %% Reset seq ref/completion array and start over at new sequence.
     %%
     %% If the sequence number wrapped?  don't worry about acks, happens infrequently.
     %%
@@ -324,7 +330,7 @@ reset_ref_seq(Seq, State) ->
 %% call.
 ack_to(Acked, []) ->
     {Acked, []};
-ack_to(Acked, [Seq | Completed2] = Completed) -> 
+ack_to(Acked, [Seq | Completed2] = Completed) ->
     case Acked + 1 of
         Seq ->
             ack_to(Seq, Completed2);
@@ -340,7 +346,7 @@ pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
                completed = Completed}) ->
     ExpSeq - AckedSeq - length(Completed) - 1.
 
-%% get the peername from the transport; this will fail if the socket 
+%% get the peername from the transport; this will fail if the socket
 %% is closed
 peername(Transport, Socket) ->
     case Transport:peername(Socket) of
@@ -350,7 +356,7 @@ peername(Transport, Socket) ->
             riak_repl_stats:rt_sink_errors(),
             {lists:flatten(io_lib:format("error:~p", [Reason])), 0}
     end.
-%% get the peername from #state; this should have been stashed at 
+%% get the peername from #state; this should have been stashed at
 %% initialization.
 peername(#state{peername = P}) ->
     P.
@@ -369,7 +375,7 @@ schedule_reactivate_socket(State = #state{transport = T,
         false ->
             %% already deactivated, try again in configured interval, or default
             ReactivateSockInt = get_reactivate_socket_interval(),
-            lager:debug("reactivate_socket_interval_millis: ~sms.", 
+            lager:debug("reactivate_socket_interval_millis: ~sms.",
               [ReactivateSockInt]),
 
             erlang:send_after(ReactivateSockInt, self(), reactivate_socket),
@@ -425,7 +431,7 @@ cleanup(_Ctx) ->
       [riak_core_service_mgr,
        riak_core_connection_mgr,
        gen_tcp]),
-    application:set_env(riak_repl, reactivate_socket_interval_millis, 
+    application:set_env(riak_repl, reactivate_socket_interval_millis,
           ?REACTIVATE_SOCK_INT_MILLIS),
     ok.
 
@@ -438,7 +444,7 @@ cache_peername_test_case() ->
 
     catch(meck:unload(riak_core_service_mgr)),
     meck:new(riak_core_service_mgr, [passthrough]),
-    meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->     
+    meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
         TellMe ! sink_listening,
@@ -450,13 +456,13 @@ cache_peername_test_case() ->
 
         % Socket is set, close it to simulate error
         inet:close(Socket),
- 
+
         % grab the State from the rtsink_conn process
         {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
 
         % check to make sure peername is cached, not calculated from (now closed) Socket
         ?assertMatch({?LOOPBACK_TEST_PEER, _Port}, peername(State)),
-        
+
         TellMe ! {sink_started, Pid}
     end),
 
@@ -466,10 +472,10 @@ cache_peername_test_case() ->
 % test case for https://github.com/basho/riak_repl/issues/252
 reactivate_socket_interval_test_case() ->
     ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS, get_reactivate_socket_interval()),
- 
+
     application:set_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL),
     ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, get_reactivate_socket_interval()).
-     
+
 listen_sink() ->
     riak_repl2_rtsink_conn:register_service().
 
@@ -483,7 +489,7 @@ start_source(NegotiatedVer) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
-            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, 
+            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT},
               ?PROTOCOL(NegotiatedVer), Pid, [])
         end),
         {ok, make_ref()}
