@@ -794,7 +794,8 @@ proplists_get([Key | Path], Props, Default) when is_list(Props) ->
         AList when is_list(AList) ->
             proplists_get(Path, AList, Default);
         Wut ->
-            erlang:error({badarg, {[Key | Path], Props, Wut}})
+            lager:warning("~p Not a list when getting stepwise key ~p: ~p", [Wut, [Key | Path], Props]),
+            Default
     end.
 
 get_first_kbsp(Str) ->
