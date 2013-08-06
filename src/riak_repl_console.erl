@@ -960,6 +960,7 @@ proplists_get([Key | Path], Props, Default) when is_list(Props) ->
         undefined ->
             Default;
         too_busy ->
+            lager:debug("Something was too busy to give stats"),
             Default;
         AList when is_list(AList) ->
             proplists_get(Path, AList, Default);
