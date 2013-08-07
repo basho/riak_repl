@@ -322,7 +322,7 @@ recv(TcpBin, State = #state{remote = Name,
                 undefined ->
                     recv(Cont, State);
                 _ ->
-                    erlang:cancel_timer(HBTRef)
+                    erlang:cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State))
             end;
         {ok, {ack, Seq}, Cont} ->
@@ -332,7 +332,7 @@ recv(TcpBin, State = #state{remote = Name,
                 undefined ->
                     recv(Cont, State);
                 _ ->
-                    erlang:cancel_timer(HBTRef)
+                    erlang:cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State))
             end;
         {ok, heartbeat, Cont} ->
