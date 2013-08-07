@@ -34,6 +34,7 @@
 init() ->
     {ok, C} = riak:local_client(),
     lager:debug("Riak repl pb get init"),
+
     % get the current repl modes and stash them in the state
     % I suppose riak_repl_pb_get would need to be restarted if these values
     % changed
@@ -41,7 +42,17 @@ init() ->
     Ring = riak_repl_ring:ensure_config(Ring0),
     ClusterID = riak_core_ring:cluster_name(Ring),
     Modes = riak_repl_ring:get_modes(Ring),
+
+    case application:get_env(riak_repl, cluster_id_mapping) of
+        {ok, Val} ->
+            lager:debug("Cluster mapping configured, adding to Ring meta-data"),
+            riak_repl_ring:add_cluster_mapping(Ring, Val);
+        undefined ->
+            lager:debug("No cluster mapping configured, continuing.")
+    end,
+
     #state{client=C, repl_modes=Modes, cluster_id=ClusterID}.
+
 
 %% @doc decode/2 callback. Decodes an incoming message.
 decode(?PB_MSG_PROXY_GET, Bin) ->
@@ -267,4 +278,5 @@ client_cluster_names_13() ->
         P /= undefined,
         {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
     ].
+
     
