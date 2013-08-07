@@ -317,10 +317,24 @@ recv(TcpBin, State = #state{remote = Name,
             %% TODO: report this better per-remote
             riak_repl_stats:objects_sent(),
             ok = riak_repl2_rtq:ack(Name, Seq),
-            recv(Cont, State);
+            %% reset heartbeat timer, since we've seen activity from the peer
+            case HBTRef of
+                undefined ->
+                    recv(Cont, State);
+                _ ->
+                    erlang:cancel_timer(HBTRef)
+                    recv(Cont, schedule_heartbeat(State))
+            end;
         {ok, {ack, Seq}, Cont} ->
             riak_repl2_rtsource_helper:v1_ack(State#state.helper_pid, Seq),
-            recv(Cont, State);
+            %% reset heartbeat timer, since we've seen activity from the peer
+            case HBTRef of
+                undefined ->
+                    recv(Cont, State);
+                _ ->
+                    erlang:cancel_timer(HBTRef)
+                    recv(Cont, schedule_heartbeat(State))
+            end;
         {ok, heartbeat, Cont} ->
             %% Compute last heartbeat roundtrip in msecs and
             %% reschedule next
