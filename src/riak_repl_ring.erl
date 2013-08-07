@@ -181,7 +181,7 @@ add_nat_listener(Ring,NatListener) ->
                       ?MODULE,
                       dict:store(natlisteners, NewListeners, RC),
                       Ring);
-                true ->
+                true -> 
                     Ring
             end;
         error ->
@@ -310,16 +310,21 @@ get_clusters(Ring) ->
     end.
 
 add_cluster_mapping(Ring, {ClusterName, ClusterMapsTo}) ->
+
+    lager:info("Got to add_cluster_mapping"),
+
     RC = get_repl_config(ensure_config(Ring)),
 
-    ClusterMap = dict:store(ClusterName, ClusterMapsTo, dict:new()),
+    ClusterMap = dict:store(ClusterName, ClusterMapsTo, RC),
 
     RC2 = dict:store(cluster_mapping, ClusterMap, RC),
     case RC == RC2 of
         true ->
             %% nothing changed
+            lager:info("no change, storing nothing in ring meta for clustering"),
             {ignore, {not_changed, clustername}};
         false ->
+            lager:info("storing cluster map ~w in ring meta data" , [RC2]),
             {new_ring, riak_core_ring:update_meta(
                     ?MODULE,
                     RC2,
@@ -330,6 +335,8 @@ get_cluster_mapping(Ring, ClusterName) ->
     RC = get_repl_config(ensure_config(Ring)),
     case dict:find(cluster_mapping, RC) of 
         {ok, ClusterMap} ->
+            lager:info("Found cluster_mapping"),
+
             case dict:find(ClusterName, ClusterMap) of
                 {ok, ClusterMappedToId} ->
                     {ok, ClusterMappedToId};
@@ -711,6 +718,24 @@ add_del_private_and_publicip_nat3_test() ->
     ?assertNot(undefined == get_listener(Ring3, {ListenAddr, ListenPort})),
     ?assertEqual(undefined, get_nat_listener(Ring3, Listener)).
 
+add_get_cluster_mapping_test() ->
+
+    lager:start(),
+    Ring0 = ensure_config_test(),
+    %ClusterId = "A",
+    %ClusterMappedToId = "B",
+
+    ClusterId = riak_core_ring:cluster_name(Ring0),
+    ClusterMappedToId= riak_core_ring:cluster_name(Ring0),
+    {new_ring, Ring1} = add_cluster_mapping(Ring0, {ClusterId, ClusterMappedToId}),
+    lager:info("Ring1 = ", [Ring1]),
+    %?debugVal(Ring1).
+
+    {ok, StoredClusterMapping} = get_cluster_mapping(Ring1, ClusterId),
+    lager:info("StoredClusterMapping = ", [StoredClusterMapping]),
+    %?debugVal(StoredClusterMapping).
+    ?assertEqual(StoredClusterMapping, ClusterMappedToId).
+
 %% verify that adding a listener, and then a nat listener
 %% with the same internal IP "upgrades" the current listener
 verify_adding_nat_upgrades_test() ->
@@ -762,5 +787,6 @@ realtime_cascades_invalid_set_test() ->
     Ring0 = riak_repl_ring:ensure_config(mock_ring()),
     BadOpt = sometimes,
     ?assertMatch({ignore, {invalid_option, BadOpt}}, riak_repl_ring:rt_cascades_trans(Ring0, BadOpt)).
+
 
 -endif.
