@@ -18,6 +18,8 @@
 %% all consumers are done with an item it is removed from the table.
 
 -behaviour(gen_server).
+
+-include("riak_repl.hrl").
 %% API
 -export([start_link/0,
          start_test/0,
@@ -47,6 +49,7 @@
 -record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
+                max_undelivered = ?DEFAULT_MAX_UNDELIVERED_OBJS,
                 cs = [],
                 undeliverables = [],
                 shutting_down=false,
@@ -200,7 +203,9 @@ is_running() ->
 init([]) ->
     %% Default maximum realtime queue size to 100Mb
     MaxBytes = app_helper:get_env(riak_repl, rtq_max_bytes, 100*1024*1024),
-    {ok, #state{max_bytes = MaxBytes}}. % lots of initialization done by defaults
+    MaxUndelivered = app_helper:get_env(riak_repl, rtq_max_undelivered, ?DEFAULT_MAX_UNDELIVERED_OBJS),
+
+    {ok, #state{max_bytes = MaxBytes, max_undelivered = MaxUndelivered}}. % lots of initialization done by defaults
 
 %% @private
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
@@ -377,14 +382,14 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
-push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
+push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq, max_undelivered = MaxUndelivered,
                                                   cs = Cs, shutting_down = false}) ->
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin, Meta},
     %% Send to any pending consumers
     CsNames = [Consumer#c.name || Consumer <- Cs],
     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
+    DeliverAndCs2 = [maybe_deliver_item(C, QEntry2, MaxUndelivered) || C <- Cs],
     {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
         (skipped) -> true;
@@ -403,32 +408,33 @@ push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
 
-pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
+pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs, max_undelivered = MaxUndelivered}) ->
     CsNames = [Consumer#c.name || Consumer <- Cs],
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, State#state.undeliverables) | Cs2];
+                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, State#state.undeliverables, MaxUndelivered) | Cs2];
                 false ->
                     lager:info("not_registered"),
                     DeliverFun({error, not_registered})
             end,
     State#state{cs = UpdCs}.
 
-maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables) ->
+maybe_pull(QTab, QSeq, C = #c{aseq = ASeq, cseq = CSeq}, CsNames, DeliverFun, Undeliverables, MaxUndelivered) ->
+    NotTooManyOutstandingAcks = (CSeq - ASeq) < MaxUndelivered,
     CSeq2 = CSeq + 1,
-    case CSeq2 =< QSeq of
+    case CSeq2 =< QSeq andalso NotTooManyOutstandingAcks of
         true -> % something reday
             case ets:lookup(QTab, CSeq2) of
                 [] -> % entry removed, due to previously being unroutable
                     C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
-                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
+                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables, MaxUndelivered);
                 [QEntry] ->
                     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
                     % if the item can't be delivered due to cascading rt, 
                     % just keep trying.
-                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
+                    case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2, MaxUndelivered) of
                         {skipped, C2} ->
-                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
+                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables, MaxUndelivered);
                         {_WorkedOrNoFun, C2} ->
                             C2
                     end
@@ -439,7 +445,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables)
             C#c{deliver = DeliverFun}
     end.
 
-maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
+maybe_deliver_item(C = #c{deliver = undefined}, QEntry, _MaxUndelivered) ->
     {_Seq, _NumItem, _Bin, Meta} = QEntry,
     Name = C#c.name,
     Routed = case orddict:find(routed_clusters, Meta) of
@@ -453,7 +459,7 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
             no_fun
     end,
     {Cause, C};
-maybe_deliver_item(C, QEntry) ->
+maybe_deliver_item(C, QEntry, _MaxUndelivered) ->
     {Seq, _NumItem, _Bin, Meta} = QEntry,
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
