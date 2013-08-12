@@ -316,7 +316,7 @@ recv(TcpBin, State = #state{remote = Name,
             %% reschedule next
             case HBSent of
                 undefined ->
-                    lager:info("hb_sent undefined in heartbeat RTT calc"),
+                    lager:debug("hb_sent undefined in heartbeat RTT calc"),
                     {noreply, State};
                 _ ->
                     HBRTT = timer:now_diff(now(), HBSent) div 1000,
