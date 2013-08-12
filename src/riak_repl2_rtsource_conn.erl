@@ -317,7 +317,7 @@ recv(TcpBin, State = #state{remote = Name,
             case HBSent of
                 undefined ->
                     lager:debug("hb_sent undefined in heartbeat RTT calc"),
-                    {noreply, State};
+                    recv(Cont, State);
                 _ ->
                     HBRTT = timer:now_diff(now(), HBSent) div 1000,
                     erlang:cancel_timer(HBTRef),
