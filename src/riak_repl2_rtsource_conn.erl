@@ -268,7 +268,7 @@ handle_info({tcp_error, _S, Reason},
 
 handle_info(send_heartbeat, State) ->
     {noreply, send_heartbeat(State)};
-handle_info({heartbeat_timeout}, State = #state{hb_sent_q = HBSentQ,
+handle_info(heartbeat_timeout, State = #state{hb_sent_q = HBSentQ,
                                                 remote = Remote}) ->
     case queue:out(HBSentQ) of 
         {TimeSent, HBSentQ2} ->
@@ -284,9 +284,7 @@ handle_info({heartbeat_timeout}, State = #state{hb_sent_q = HBSentQ,
             State2 = State#state{hb_sent_q = HBSentQ2},
             lager:debug("hb_sent_q empty when received heartbeat_timeout"),
             {stop, normal, State2}
-    end.
-
-%% handle_info({heartbeat_timeout, _HBSent}, State = #state{remote = Remote}) ->
+    end;
 handle_info({heartbeat_timeout, _HBSent}, State = #state{remote = Remote}) ->
     %% Timeout message was in the queue when we received the heartbeat
     %% already handled, ignore.
