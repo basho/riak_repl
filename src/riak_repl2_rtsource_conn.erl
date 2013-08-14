@@ -321,12 +321,18 @@ recv(TcpBin, State = #state{remote = Name,
         {ok, heartbeat, Cont} ->
             %% Compute last heartbeat roundtrip in msecs and
             %% reschedule next
-            HBRTT = timer:now_diff(now(), HBSent) div 1000,
-            erlang:cancel_timer(HBTRef),
-            State2 = State#state{hb_sent = undefined,
+            case HBSent of
+                undefined ->
+                    lager:debug("hb_sent undefined in heartbeat RTT calc"),
+                    recv(Cont, State);
+                _ ->
+                    HBRTT = timer:now_diff(now(), HBSent) div 1000,
+                    erlang:cancel_timer(HBTRef),
+                    State2 = State#state{hb_sent = undefined,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
-            recv(Cont, schedule_heartbeat(State2));
+                    recv(Cont, schedule_heartbeat(State2))
+            end;
         {error, Reason} ->
             %% Something bad happened
             riak_repl_stats:rt_source_errors(),
