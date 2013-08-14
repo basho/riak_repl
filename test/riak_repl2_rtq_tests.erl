@@ -78,6 +78,9 @@ overload_protection_start_test_() ->
 
 overload_test_() ->
     {foreach, fun() ->
+        % if you want lager started, and you're using bash, you can put
+        % ENABLE_LAGER=TRUE in front of whatever you're using to run the tests
+        % (make test, rebar eunit) and it will turn on lager for you.
         case os:getenv("ENABLE_LAGER") of
             false ->
                 ok;

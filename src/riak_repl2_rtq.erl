@@ -43,8 +43,8 @@
 
 -define(overload_ets, rtq_overload_ets).
 -define(SERVER, ?MODULE).
--define(DEFAULT_OVERLOAD, 50000).
--define(DEFAULT_RECOVER, 25000).
+-define(DEFAULT_OVERLOAD, 2000).
+-define(DEFAULT_RECOVER, 1000).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
