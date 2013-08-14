@@ -144,6 +144,22 @@ overload_test_() ->
             Seq1 = pull(5),
             Seq2 = pull(1),
             ?assertEqual(Seq1 + 1 + 5, Seq2)
+        end} end,
+
+        fun(_) -> {"rtq does recover on drop report", fun() ->
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            block_rtq_pull(),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            [riak_repl2_rtq ! goober || _ <- lists:seq(1, 10)],
+            Seq1 = unblock_rtq_pull(),
+            Seq2 = pull(1),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            timer:sleep(1200),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            Seq3 = pull(1),
+            ?assertEqual(1, Seq1),
+            ?assertEqual(2, Seq2),
+            ?assertEqual(4, Seq3)
         end} end
 
     ]}.

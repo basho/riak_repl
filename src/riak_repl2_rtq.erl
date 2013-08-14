@@ -354,7 +354,8 @@ handle_cast({report_drops, N}, State) ->
       CS#c{drops = CS#c.drops + 1}
     end, State#state.cs),
     State2 = State#state{qseq = QSeq, cs = Cs2},
-    {noreply, State2};
+    State3 = maybe_flip_overload(State2),
+    {noreply, State3};
 
 handle_cast({pull, Name, DeliverFun}, State) ->
      {noreply, pull(Name, DeliverFun, State)};
