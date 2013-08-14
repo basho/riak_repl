@@ -44,7 +44,7 @@ accumulate(Pid, Acc, C) ->
     end.
 
 
-overload_protection_test_() ->
+overload_protection_start_test_() ->
     [
         {"able to start after a crash without ets errors", fun() ->
             {ok, Rtq1} = riak_repl2_rtq:start_link(),
@@ -60,5 +60,118 @@ overload_protection_test_() ->
             Got = riak_repl2_rtq:start_link([{overload_threshold, 5000}, {overload_recover, 2500}]),
             ?assertMatch({ok, _Pid}, Got),
             riak_repl2_rtq:stop()
+        end},
+
+        {"start the rtq overload counter process", fun() ->
+            Got1 = riak_repl2_rtq_overload_counter:start_link(),
+            ?assertMatch({ok, _Pid}, Got1),
+            {ok, Pid1} = Got1,
+            unlink(Pid1),
+            exit(Pid1, kill),
+            riak_repl_test_util:wait_for_pid(Pid1),
+            Got2 = riak_repl2_rtq_overload_counter:start_link([{report_interval, 20}]),
+            ?assertMatch({ok, _Pid}, Got2),
+            riak_repl2_rtq_overload_counter:stop()
         end}
+
     ].
+
+overload_test_() ->
+    {foreach, fun() ->
+        case os:getenv("ENABLE_LAGER") of
+            false ->
+                ok;
+            _ ->
+                lager:start(),
+                lager:set_loglevel(lager_console_backend, debug)
+        end,
+        riak_repl2_rtq:start_link([{overload_threshold, 5}, {overload_recover, 1}]),
+        riak_repl2_rtq_overload_counter:start_link([{report_interval, 1000}]),
+        riak_repl2_rtq:register("overload_test")
+    end,
+    fun(_) ->
+        riak_repl2_rtq_overload_counter:stop(),
+        riak_repl2_rtq:stop()
+    end, [
+
+        fun(_) -> {"rtq increments sequence number on drop", fun() ->
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            Seq1 = pull(1),
+            riak_repl2_rtq:report_drops(5),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            Seq2 = pull(1),
+            ?assertEqual(Seq1 + 5 + 1, Seq2)
+        end} end,
+
+        fun(_) -> {"rtq overload reports drops", fun() ->
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            Seq1 = pull(1),
+            [riak_repl2_rtq_overload_counter:drop() || _ <- lists:seq(1, 5)],
+            timer:sleep(1200),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            Seq2 = pull(1),
+            ?assertEqual(Seq1 + 5 + 1, Seq2)
+        end} end,
+
+        fun(_) -> {"overload and recovery", fun() ->
+            % rtq can't process anything else while it's trying to deliver,
+            % so we're going to use that to clog up it's queue.
+            % Msgq = 0
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            % msg queue = 0 (it's handled)
+            block_rtq_pull(),
+            % msg queue = 0 (it's handled)
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            % msg queue = 1 (blocked by deliver)
+            block_rtq_pull(),
+            % msg queue = 2 (blocked by deliver)
+            [riak_repl2_rtq:push(1, term_to_binary([<<"object">>])) || _ <- lists:seq(1,5)],
+            % msg queue = 7 (blocked by deliver)
+            unblock_rtq_pull(),
+            % msq queue = 5 (push handled, blocking deliver handled)
+            % that push should have flipped the overload switch
+            % meaning these will be dropped
+            % these will end up dropped
+            [riak_repl2_rtq:push(1, term_to_binary([<<"object">>])) || _ <- lists:seq(1,5)],
+            % msq queue = 7, drops = 5
+            unblock_rtq_pull(),
+            timer:sleep(1200),
+            % msg queue = 0, totol objects dropped = 5
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            Seq1 = pull(5),
+            Seq2 = pull(1),
+            ?assertEqual(Seq1 + 1 + 5, Seq2)
+        end} end
+
+    ]}.
+
+pull(N) ->
+    lists:foldl(fun(_Nth, _LastSeq) ->
+        pull()
+    end, 0, lists:seq(1, N)).
+
+pull() ->
+    Self = self(),
+    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _}) ->
+        Self ! {seq, Seq},
+        ok
+    end),
+    get_seq().
+
+get_seq() ->
+    receive {seq, S} -> S end.
+
+block_rtq_pull() ->
+    Self = self(),
+    riak_repl2_rtq:pull("overload_test", fun({Seq, _, _, _}) ->
+        receive
+            continue ->
+                ok
+        end,
+        Self ! {seq, Seq},
+        ok
+    end).
+
+unblock_rtq_pull() ->
+    riak_repl2_rtq ! continue,
+    get_seq().

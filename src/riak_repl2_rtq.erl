@@ -38,7 +38,10 @@
          shutdown/0,
          stop/0,
          is_running/0]).
+% private api
+-export([report_drops/1]).
 
+-define(overload_ets, rtq_overload_ets).
 -define(SERVER, ?MODULE).
 -define(DEFAULT_OVERLOAD, 50000).
 -define(DEFAULT_RECOVER, 25000).
@@ -56,6 +59,8 @@
 
                 % if the rtq is in overload mode, it does not recover until =<
                 recover = ?DEFAULT_RECOVER :: pos_integer(),
+
+                overloaded = false :: boolean(),
 
                 cs = [],
                 undeliverables = [],
@@ -96,6 +101,13 @@ start_link() ->
 -type start_options() :: [start_option()].
 -spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
+    case ets:info(?overload_ets) of
+        undefined ->
+            ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
+            ets:insert(?overload_ets, {overloaded, false});
+        _ ->
+            ok
+    end,
     gen_server:start_link({local, ?SERVER}, ?MODULE, Options, []).
 
 %% @doc Test helper, starts unregistered and unlinked.
@@ -146,7 +158,17 @@ set_max_bytes(MaxBytes) ->
 %% the sink.
 -spec push(NumItems :: pos_integer(), Bin :: binary(), Meta :: orddict:orddict()) -> 'ok'.
 push(NumItems, Bin, Meta) ->
-    gen_server:cast(?SERVER, {push, NumItems, Bin, Meta}).
+    case should_drop() of
+        true ->
+            lager:debug("rtq overloaded"),
+            riak_repl2_rtq_overload_counter:drop();
+        false ->
+            gen_server:cast(?SERVER, {push, NumItems, Bin, Meta})
+    end.
+
+should_drop() ->
+    [{overloaded, Val}] = ets:lookup(?overload_ets, overloaded),
+    Val.
 
 %% @doc Like push/3, only Meta is orddict:new/0.
 -spec push(NumItems :: pos_integer(), Bin :: binary()) -> 'ok'.
@@ -217,6 +239,9 @@ stop() ->
 is_running() ->
     gen_server:call(?SERVER, is_running, infinity).
 
+%% @private
+report_drops(N) ->
+    gen_server:cast(?SERVER, {report_drops, N}).
 
 %% Internals
 %% @private
@@ -306,8 +331,10 @@ handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
 handle_call({push, NumItems, Bin}, From, State) ->
     handle_call({push, NumItems, Bin, []}, From, State);
 
+% TODO what is this code for? there's no external interface for it...
 handle_call({push, NumItems, Bin, Meta}, _From, State) ->
-    {reply, ok, push(NumItems, Bin, Meta, State)};
+    State2 = maybe_flip_overload(State),
+    {reply, ok, push(NumItems, Bin, Meta, State2)};
 
 handle_call({ack_sync, Name, Seq}, _From, State) ->
     {reply, ok, ack_seq(Name, Seq, State)}.
@@ -317,9 +344,18 @@ handle_cast({push, NumItems, Bin}, State) ->
     handle_cast({push, NumItems, Bin, []}, State);
 
 handle_cast({push, NumItems, Bin, Meta}, State) ->
-    {noreply, push(NumItems, Bin, Meta, State)};
+    State2 = maybe_flip_overload(State),
+    {noreply, push(NumItems, Bin, Meta, State2)};
 
 %% @private
+handle_cast({report_drops, N}, State) ->
+    QSeq = State#state.qseq + N,
+    Cs2 = lists:map(fun(CS) ->
+      CS#c{drops = CS#c.drops + 1}
+    end, State#state.cs),
+    State2 = State#state{qseq = QSeq, cs = Cs2},
+    {noreply, State2};
+
 handle_cast({pull, Name, DeliverFun}, State) ->
      {noreply, pull(Name, DeliverFun, State)};
 
@@ -364,6 +400,23 @@ terminate(Reason, #state{cs = Cs}) ->
 %% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+maybe_flip_overload(State) ->
+    #state{overloaded = Overloaded, overload = Overload, recover = Recover} = State,
+    {message_queue_len, MsgQLen} = erlang:process_info(self(), message_queue_len),
+    lager:debug("checking overload: ~p", [MsgQLen]),
+    if
+        Overloaded andalso MsgQLen =< Recover ->
+            lager:info("Recovered from overloaded condition"),
+            ets:insert(?overload_ets, {overloaded, false}),
+            State#state{overloaded = false};
+        (not Overloaded) andalso MsgQLen > Overload ->
+            lager:warning("Realtime queue mailbox size of ~p is greater than ~p indicating overload; objects will be dropped until size is less than or equal to ~p", [MsgQLen, Overload, Recover]),
+            ets:insert(?overload_ets, {overloaded, true}),
+            State#state{overloaded = true};
+        true ->
+            State
+    end.
 
 flush_pending_pushes() ->
     receive
