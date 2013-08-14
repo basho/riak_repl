@@ -89,12 +89,19 @@ legacy_status(Pid, Timeout) ->
 
 %% connection manager callbacks
 connected(Socket, Transport, Endpoint, Proto, RtSourcePid, Props) ->
-    _RemoteClusterName = proplists:get_value(clustername, Props),
     Transport:controlling_process(Socket, RtSourcePid),
     Transport:setopts(Socket, [{active, true}]),
-    gen_server:call(RtSourcePid,
-                    {connected, Socket, Transport, Endpoint, Proto},
-                    ?LONG_TIMEOUT).
+    try
+        gen_server:call(RtSourcePid,
+                        {connected, Socket, Transport, Endpoint, Proto},
+                        ?LONG_TIMEOUT)
+    catch
+        _:Reason ->
+            lager:warning("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
+                          [RtSourcePid]),
+            exit(RtSourcePid, {unable_to_contact, Reason}),
+            ok
+    end.
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
     gen_server:cast(RtSourcePid, {connect_failed, self(), Reason}).
