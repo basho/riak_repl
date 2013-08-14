@@ -291,8 +291,16 @@ handle_call({ack_sync, Name, Seq}, _From, State) ->
 handle_cast({push, NumItems, Bin}, State) ->
     handle_cast({push, NumItems, Bin, []}, State);
 
-handle_cast({push, NumItems, Bin, Meta}, State) ->
-    {noreply, push(NumItems, Bin, Meta, State)};
+handle_cast({push, NumItems, Bin, Meta}, State = #state{qtab = QTab, max_bytes = MaxBytes, cs = Cs}) ->
+    case qbytes(QTab, State) > MaxBytes of
+        true ->
+            lager:info("DROPPED PUSH, NumItems = ~p", [NumItems]),
+            Cs2 = [ C#c{drops = C#c.drops + 1} || C = #c{cseq = CSeq} <- Cs],
+            State2 = State#state{cs = Cs2},
+            {noreply, State2};
+        false ->  
+            {noreply, push(NumItems, Bin, Meta, State)}
+    end;
 
 %% @private
 handle_cast({pull, Name, DeliverFun}, State) ->
@@ -385,20 +393,20 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
     CsNames = [Consumer#c.name || Consumer <- Cs],
     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
     DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
-    {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
+    {DeliverResults, _Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
         (skipped) -> true;
         (_) -> false
     end, DeliverResults),
-    State2 = if
+    _State2 = if
         AllSkipped andalso length(Cs) > 0 ->
             State;
         true ->
             ets:insert(QTab, QEntry2),
             Size = ets_obj_size(Bin, State),
             update_q_size(State, Size)
-    end,
-    trim_q(State2#state{qseq = QSeq2, cs = Cs2});
+    end;
+    %%trim_q(State2#state{qseq = QSeq2, cs = Cs2});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
     State.
