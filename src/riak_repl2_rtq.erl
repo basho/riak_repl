@@ -20,6 +20,7 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/0,
+         start_link/1,
          start_test/0,
          register/1,
          unregister/1,
@@ -39,6 +40,8 @@
          is_running/0]).
 
 -define(SERVER, ?MODULE).
+-define(DEFAULT_OVERLOAD, 50000).
+-define(DEFAULT_RECOVER, 25000).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -47,6 +50,13 @@
 -record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
+
+                % if the message q exceeds this, the rtq is overloaded
+                overload = ?DEFAULT_OVERLOAD :: pos_integer(),
+
+                % if the rtq is in overload mode, it does not recover until =<
+                recover = ?DEFAULT_RECOVER :: pos_integer(),
+
                 cs = [],
                 undeliverables = [],
                 shutting_down=false,
@@ -73,7 +83,20 @@
 %% @doc Start linked, registeres to module name.
 -spec start_link() -> {ok, pid()}.
 start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    Overload = app_helper:get_env(riak_repl, rtq_overload_threshold, ?DEFAULT_OVERLOAD),
+    Recover = app_helper:get_env(riak_repl, rtq_overload_recover, ?DEFAULT_RECOVER),
+    Opts = [{overload_threshold, Overload}, {overload_recover, Recover}],
+    start_link(Opts).
+
+%% @doc Start linked, registers to module name, with given options. This makes
+%% testing some options a bit easier as it removes a dependance on app_helper.
+-type overload_threshold_option() :: {'overload_threshold', pos_integer()}.
+-type overload_recover_option() :: {'overload_recover', pos_integer()}.
+-type start_option() :: overload_threshold_option() | overload_recover_option().
+-type start_options() :: [start_option()].
+-spec start_link(Options :: start_options()) -> {'ok', pid()}.
+start_link(Options) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, Options, []).
 
 %% @doc Test helper, starts unregistered and unlinked.
 -spec start_test() -> {ok, pid()}.
@@ -197,10 +220,12 @@ is_running() ->
 
 %% Internals
 %% @private
-init([]) ->
+init(Options) ->
     %% Default maximum realtime queue size to 100Mb
     MaxBytes = app_helper:get_env(riak_repl, rtq_max_bytes, 100*1024*1024),
-    {ok, #state{max_bytes = MaxBytes}}. % lots of initialization done by defaults
+    Overloaded = proplists:get_value(overload_threshold, Options, ?DEFAULT_OVERLOAD),
+    Recover = proplists:get_value(overload_recover, Options, ?DEFAULT_RECOVER),
+    {ok, #state{max_bytes = MaxBytes, overload = Overloaded, recover = Recover}}. % lots of initialization done by defaults
 
 %% @private
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
@@ -210,7 +235,7 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                  {unacked, CSeq - ASeq},  % sent items requiring ack
                  {drops, Drops},          % number of dropped entries due to max bytes
                  {errs, Errs}]}           % number of non-ok returns from deliver fun
-         || #c{name = Name, aseq = ASeq, cseq = CSeq, 
+         || #c{name = Name, aseq = ASeq, cseq = CSeq,
                drops = Drops, errs = Errs} <- Cs],
     Status =
         [{bytes, qbytes(QTab, State)},
@@ -253,7 +278,7 @@ handle_call({register, Name}, _From, State = #state{qtab = QTab, qseq = QSeq, cs
                 true -> MinSeq;
                 false -> C#c.aseq
             end,
-            UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops, 
+            UpdCs = [C#c{cseq = CSeq, drops = PrevDrops + Drops,
                          deliver = undefined} | Cs2];
         false ->
             %% New registration, start from the beginning
@@ -265,7 +290,7 @@ handle_call({unregister, Name}, _From, State) ->
     case unregister_q(Name, State) of
         {ok, NewState} ->
             {reply, ok, NewState};
-        {{error, not_registered}, State} ->  
+        {{error, not_registered}, State} ->
             {reply, {error, not_registered}, State}
   end;
 
@@ -354,7 +379,7 @@ flush_pending_pushes() ->
 unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
      case lists:keytake(Name, #c.name, Cs) of
         {value, C, Cs2} ->
-            %% Remove C from Cs, let any pending process know 
+            %% Remove C from Cs, let any pending process know
             %% and clean up the queue
             case C#c.deliver of
                 undefined ->
@@ -362,7 +387,7 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                 Deliver ->
                     Deliver({error, unregistered})
             end,
-            MinSeq = case Cs2 of 
+            MinSeq = case Cs2 of
                          [] ->
                              State#state.qseq; % no consumers, remove it all
                          _ ->
@@ -424,7 +449,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables)
                     maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
                 [QEntry] ->
                     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
-                    % if the item can't be delivered due to cascading rt, 
+                    % if the item can't be delivered due to cascading rt,
                     % just keep trying.
                     case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
                         {skipped, C2} ->

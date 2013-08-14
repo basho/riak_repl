@@ -1,4 +1,4 @@
--module(riak_repl2_rtq_test).
+-module(riak_repl2_rtq_tests).
 -compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -27,7 +27,7 @@ ask(Pid) ->
     Self = self(),
     gen_server:call(Pid, {pull_with_ack, rtq_test,
              fun ({Seq, NumItem, Bin, _Meta}) ->
-                    Self ! {rtq_entry, {NumItem, Bin}}, 
+                    Self ! {rtq_entry, {NumItem, Bin}},
                     gen_server:cast(Pid, {ack, rtq_test, Seq}),
                     ok
         end}).
@@ -44,5 +44,21 @@ accumulate(Pid, Acc, C) ->
     end.
 
 
+overload_protection_test_() ->
+    [
+        {"able to start after a crash without ets errors", fun() ->
+            {ok, Rtq1} = riak_repl2_rtq:start_link(),
+            unlink(Rtq1),
+            exit(Rtq1, kill),
+            riak_repl_test_util:wait_for_pid(Rtq1),
+            Got = riak_repl2_rtq:start_link(),
+            ?assertMatch({ok, _Pid}, Got),
+            riak_repl2_rtq:stop()
+        end},
 
-
+        {"start with overload and recover options", fun() ->
+            Got = riak_repl2_rtq:start_link([{overload_threshold, 5000}, {overload_recover, 2500}]),
+            ?assertMatch({ok, _Pid}, Got),
+            riak_repl2_rtq:stop()
+        end}
+    ].
