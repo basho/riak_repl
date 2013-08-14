@@ -99,7 +99,8 @@ connected(Socket, Transport, Endpoint, Proto, RtSourcePid, Props) ->
         _:Reason ->
             lager:warning("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
                           [RtSourcePid]),
-            exit(RtSourcePid, {unable_to_contact, Reason})
+            exit(RtSourcePid, {unable_to_contact, Reason}),
+            ok
     end.
 
 connect_failed(_ClientProto, Reason, RtSourcePid) ->
