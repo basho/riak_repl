@@ -47,6 +47,7 @@
 -record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
+                msg_q_max_size = undefined, % maximum mailbox size for RTQ
                 cs = [],
                 undeliverables = [],
                 shutting_down=false,
@@ -200,7 +201,10 @@ is_running() ->
 init([]) ->
     %% Default maximum realtime queue size to 100Mb
     MaxBytes = app_helper:get_env(riak_repl, rtq_max_bytes, 100*1024*1024),
-    {ok, #state{max_bytes = MaxBytes}}. % lots of initialization done by defaults
+    MaxMsgQSize = app_helper:get_env(riak_repl, msg_q_max_size, 1000),
+    {ok, #state{max_bytes = MaxBytes, msg_q_max_size = MaxMsgQSize}}. % lots of initialization done by defaults
+ 
+    
 
 %% @private
 handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
@@ -291,8 +295,10 @@ handle_call({ack_sync, Name, Seq}, _From, State) ->
 handle_cast({push, NumItems, Bin}, State) ->
     handle_cast({push, NumItems, Bin, []}, State);
 
-handle_cast({push, NumItems, Bin, Meta}, State = #state{qtab = QTab, max_bytes = MaxBytes, cs = Cs}) ->
-    case qbytes(QTab, State) > MaxBytes of
+handle_cast({push, NumItems, Bin, Meta}, State = #state{qtab = QTab, msg_q_max_size = MsgQMax, cs = Cs}) ->
+
+    {message_queue_len, Len} = erlang:process_info(self(), message_queue_len),
+    case Len > MsgQMax of
         true ->
             lager:info("DROPPED PUSH, NumItems = ~p", [NumItems]),
             Cs2 = [ C#c{drops = C#c.drops + 1} || C = #c{cseq = CSeq} <- Cs],
@@ -393,19 +399,20 @@ push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
     CsNames = [Consumer#c.name || Consumer <- Cs],
     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
     DeliverAndCs2 = [maybe_deliver_item(C, QEntry2) || C <- Cs],
-    {DeliverResults, _Cs2} = lists:unzip(DeliverAndCs2),
+    {DeliverResults, Cs2} = lists:unzip(DeliverAndCs2),
     AllSkipped = lists:all(fun
         (skipped) -> true;
         (_) -> false
     end, DeliverResults),
-    _State2 = if
+    State2 = if
         AllSkipped andalso length(Cs) > 0 ->
             State;
         true ->
             ets:insert(QTab, QEntry2),
             Size = ets_obj_size(Bin, State),
             update_q_size(State, Size)
-    end;
+    end,
+    State2#state{qseq = QSeq2, cs=Cs2};
     %%trim_q(State2#state{qseq = QSeq2, cs = Cs2});
 push(NumItems, Bin, Meta, State = #state{shutting_down = true}) ->
     riak_repl2_rtq_proxy:push(NumItems, Bin, Meta),
@@ -423,6 +430,7 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     State#state{cs = UpdCs}.
 
 maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables) ->
+    lager:info("in maybe_pull, QSec: ~p, CSeq: ~p", [QSeq, CSeq]),
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
@@ -434,6 +442,7 @@ maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables)
                     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
                     % if the item can't be delivered due to cascading rt, 
                     % just keep trying.
+                    lager:info("running maybe_deliver_item, DeliverFun = ~p", [DeliverFun]),
                     case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
                         {skipped, C2} ->
                             maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
