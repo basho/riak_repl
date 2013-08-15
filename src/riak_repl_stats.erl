@@ -270,14 +270,18 @@ schedule_report_bw() ->
     erlang:send_after(BwHistoryInterval, self(), report_bw).
 
 %% Convert two values in bytes to a kbits/sec
-bytes_to_kbits_per_sec(This, Last, Delta) ->
-    trunc((This - Last) / (128 * Delta)).  %% x8/1024 = x/128
+bytes_to_kbits_per_sec(This, Last, Delta) when is_number(This), is_number(Last), is_number(Delta), Delta > 1.0e-6 ->
+    trunc((This - Last) / (128 * Delta));  %% x8/1024 = x/128
+bytes_to_kbits_per_sec(_, _, _) ->
+    undefined.
 
 lookup_stat(Name) ->
     folsom_metrics:get_metric_value({?APP, Name}).
 
-now_diff(NowSecs, ThenSecs) ->
-    NowSecs - ThenSecs.
+now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
+    NowSecs - ThenSecs;
+now_diff(_, _) ->
+    undefined.
 
 tstamp() ->
     folsom_utils:now_epoch().
