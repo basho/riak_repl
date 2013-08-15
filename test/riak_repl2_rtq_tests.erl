@@ -88,13 +88,15 @@ overload_test_() ->
                 lager:start(),
                 lager:set_loglevel(lager_console_backend, debug)
         end,
+        riak_repl_test_util:abstract_stats(),
         riak_repl2_rtq:start_link([{overload_threshold, 5}, {overload_recover, 1}]),
         riak_repl2_rtq_overload_counter:start_link([{report_interval, 1000}]),
         riak_repl2_rtq:register("overload_test")
     end,
     fun(_) ->
         riak_repl2_rtq_overload_counter:stop(),
-        riak_repl2_rtq:stop()
+        riak_repl2_rtq:stop(),
+        riak_repl_test_util:maybe_unload_mecks([riak_repl_stats])
     end, [
 
         fun(_) -> {"rtq increments sequence number on drop", fun() ->
@@ -160,6 +162,16 @@ overload_test_() ->
             ?assertEqual(1, Seq1),
             ?assertEqual(2, Seq2),
             ?assertEqual(4, Seq3)
+        end} end,
+
+        fun(_) -> {"rtq overload sets rt_dirty to true", fun() ->
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            block_rtq_pull(),
+            riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
+            [riak_repl2_rtq ! goober || _ <- lists:seq(1, 10)],
+            unblock_rtq_pull(),
+            History = meck:history(riak_repl_stats),
+            ?assertMatch([{_MeckPid, {riak_repl_stats, rt_source_errors, []}, ok}], History)
         end} end
 
     ]}.

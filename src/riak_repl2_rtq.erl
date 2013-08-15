@@ -413,6 +413,8 @@ maybe_flip_overload(State) ->
             State#state{overloaded = false};
         (not Overloaded) andalso MsgQLen > Overload ->
             lager:warning("Realtime queue mailbox size of ~p is greater than ~p indicating overload; objects will be dropped until size is less than or equal to ~p", [MsgQLen, Overload, Recover]),
+            % flip the rt_dirty flag on
+            riak_repl_stats:rt_source_errors(),
             ets:insert(?overload_ets, {overloaded, true}),
             State#state{overloaded = true};
         true ->
