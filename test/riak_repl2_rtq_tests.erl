@@ -145,7 +145,9 @@ overload_test_() ->
             riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
             Seq1 = pull(5),
             Seq2 = pull(1),
-            ?assertEqual(Seq1 + 1 + 5, Seq2)
+            ?assertEqual(Seq1 + 1 + 5, Seq2),
+            Status = riak_repl2_rtq:status(),
+            ?assertEqual(5, proplists:get_value(overload_drops, Status))
         end} end,
 
         fun(_) -> {"rtq does recover on drop report", fun() ->

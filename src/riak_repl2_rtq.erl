@@ -61,6 +61,7 @@
                 recover = ?DEFAULT_RECOVER :: pos_integer(),
 
                 overloaded = false :: boolean(),
+                overload_drops = 0 :: non_neg_integer(),
 
                 cs = [],
                 undeliverables = [],
@@ -265,7 +266,8 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
     Status =
         [{bytes, qbytes(QTab, State)},
          {max_bytes, MaxBytes},
-         {consumers, Consumers}],
+         {consumers, Consumers},
+         {overload_drops, State#state.overload_drops}],
     {reply, Status, State};
 
 handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
@@ -350,10 +352,8 @@ handle_cast({push, NumItems, Bin, Meta}, State) ->
 %% @private
 handle_cast({report_drops, N}, State) ->
     QSeq = State#state.qseq + N,
-    Cs2 = lists:map(fun(CS) ->
-      CS#c{drops = CS#c.drops + 1}
-    end, State#state.cs),
-    State2 = State#state{qseq = QSeq, cs = Cs2},
+    Drops = State#state.overload_drops + N,
+    State2 = State#state{qseq = QSeq, overload_drops = Drops},
     State3 = maybe_flip_overload(State2),
     {noreply, State3};
 
