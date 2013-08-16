@@ -600,8 +600,14 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
                 true ->
-                    RObj = binary_to_term(V),
-                    gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity),
+                    case binary_to_term(V) of 
+                        {'EXIT', _} -> 
+                            ok;
+                        RObj -> 
+                            gen_fsm:sync_send_event(MPid, 
+                                                    {diff_obj, RObj}, 
+                                                    infinity)
+                    end,
                     NSent0 - 1;
                 false ->
                     ok,
