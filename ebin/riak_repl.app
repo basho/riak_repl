@@ -59,6 +59,7 @@
                   'riak_repl2_rtframe',
                   'riak_repl2_rtq',
                   'riak_repl2_rtq_proxy',
+                  'riak_repl2_rtq_overload_counter',
                   'riak_repl2_rtsink_conn',
                   'riak_repl2_rtsink_conn_sup',
                   'riak_repl2_rtsink_helper',
