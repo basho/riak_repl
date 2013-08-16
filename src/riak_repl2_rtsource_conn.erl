@@ -310,7 +310,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
             lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                           "after ~p milliseconds\n",
                           [peername(State), Remote, Duration]),
-            lager:debug("hb_sent_q_len after heartbeat_timeout: ~s", 
+            lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", 
                         [queue:len(HBSentQ2)]),
             {stop, normal, State2}
     end;
@@ -337,9 +337,14 @@ terminate(_Reason, #state{helper_pid = HelperPid}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+cancel_timer(undefined) -> ok;
+cancel_timer(TRef)      -> erlang:cancel_timer(TRef).
+
 recv(TcpBin, State = #state{remote = Name,
                             hb_sent_q = HBSentQ,
                             hb_timeout_tref = HBTRef}) ->
+    %% hb_timeout_tref might be undefined if we have are getting
+    %% acks/heartbeats back-to-back and we haven't sent a heartbeat yet.
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
@@ -350,10 +355,12 @@ recv(TcpBin, State = #state{remote = Name,
             %% reset heartbeat timer, since we've seen activity from the peer
             case HBTRef of
                 undefined ->
+                    lager:debug("got ack"),
                     recv(Cont, State);
                 _ ->
-                    erlang:cancel_timer(HBTRef),
-                    recv(Cont, schedule_heartbeat(State))
+                    lager:debug("got ack, resetting HB timer"),
+                    cancel_timer(HBTRef),
+                    recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
         {ok, {ack, Seq}, Cont} ->
             riak_repl2_rtsource_helper:v1_ack(State#state.helper_pid, Seq),
@@ -367,15 +374,15 @@ recv(TcpBin, State = #state{remote = Name,
             end;
         {ok, heartbeat, Cont} ->
             %% Compute last heartbeat roundtrip in msecs and
-            %% reschedule next
+            %% reschedule next.
             {{value, HBSent}, HBSentQ2} = queue:out(HBSentQ),
-            lager:debug("hb_sent: ~w", [HBSent]),
+            lager:debug("got heartbeat, hb_sent: ~w", [HBSent]),
             HBRTT = timer:now_diff(now(), HBSent) div 1000,
-            erlang:cancel_timer(HBTRef),
+            cancel_timer(HBTRef),
             State2 = State#state{hb_sent_q = HBSentQ2,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
-            lager:debug("hb_sent_q_len after heartbeat_recv: ~p", [queue:len(HBSentQ2)]),
+            lager:debug("got heartbeat, hb_sent_q_len after heartbeat_recv: ~p", [queue:len(HBSentQ2)]),
             recv(Cont, schedule_heartbeat(State2));
         {error, Reason} ->
             %% Something bad happened
