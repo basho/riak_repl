@@ -405,7 +405,6 @@ code_change(_OldVsn, State, _Extra) ->
 maybe_flip_overload(State) ->
     #state{overloaded = Overloaded, overload = Overload, recover = Recover} = State,
     {message_queue_len, MsgQLen} = erlang:process_info(self(), message_queue_len),
-    lager:debug("checking overload: ~p", [MsgQLen]),
     if
         Overloaded andalso MsgQLen =< Recover ->
             lager:info("Recovered from overloaded condition"),
