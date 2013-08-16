@@ -483,36 +483,48 @@ missing_key(PBKey, DiffState) ->
 %%
 %% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
 merkle_fold({B,Key}=K, V, Pid) ->
-    riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)}),
+    try
+        riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)}),
+    catch _:_ -> 
+            ok
+    end,
     Pid.
 
 %% @private
 %%
 %% @doc Visting function for building keylists. Similar to merkle_fold.
 keylist_fold({B,Key}=K, V, {MPid, Count, Total}) ->
-    H = hash_object(B,Key,V),
-    Bin = term_to_binary({pack_key(K), H}),
-    %% write key/value hash to file
-    riak_core_gen_server:cast(MPid, {keylist, Bin}),
-    case Count of
-        100 ->
-            %% send keylist_ack to "self" every 100 key/value hashes
-            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-            {MPid, 0, Total+1};
-        _ ->
-            {MPid, Count+1, Total+1}
+    try
+        H = hash_object(B,Key,V),
+        Bin = term_to_binary({pack_key(K), H}),
+        %% write key/value hash to file
+        riak_core_gen_server:cast(MPid, {keylist, Bin}),
+        case Count of
+            100 ->
+                %% send keylist_ack to "self" every 100 key/value hashes
+                ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+                {MPid, 0, Total+1};
+            _ ->
+                {MPid, Count+1, Total+1}
+        end
+    catch _:_ ->
+            {MPid, Count, Total}
     end;
 %% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
 keylist_fold({B,Key}=K, V, {MPid, Count}) ->
-    H = hash_object(B,Key,V),
-    Bin = term_to_binary({pack_key(K), H}),
-    %% write key/value hash to file
-    riak_core_gen_server:cast(MPid, {keylist, Bin}),
-    case Count of
-        100 ->
-            %% send keylist_ack to "self" every 100 key/value hashes
-            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-            {MPid, 0};
-        _ ->
-            {MPid, Count+1}
+    try
+        H = hash_object(B,Key,V),
+        Bin = term_to_binary({pack_key(K), H}),
+        %% write key/value hash to file
+        riak_core_gen_server:cast(MPid, {keylist, Bin}),
+        case Count of
+            100 ->
+                %% send keylist_ack to "self" every 100 key/value hashes
+                ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+                {MPid, 0};
+            _ ->
+                {MPid, Count+1}
+        end
+    catch _:_ ->
+            {MPid, Count}
     end.
