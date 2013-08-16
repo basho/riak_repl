@@ -355,10 +355,8 @@ recv(TcpBin, State = #state{remote = Name,
             %% reset heartbeat timer, since we've seen activity from the peer
             case HBTRef of
                 undefined ->
-                    lager:debug("got ack"),
                     recv(Cont, State);
                 _ ->
-                    lager:debug("got ack, resetting HB timer"),
                     cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
