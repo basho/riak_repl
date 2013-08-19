@@ -10,6 +10,8 @@
          cluster_mgr_member_fun/1,
          cluster_mgr_write_cluster_members_to_ring/2,
          cluster_mgr_read_cluster_targets_from_ring/0]).
+% deprecated: proxying old commands for mixed 1.2/1.3 beams
+-export([determine_netmask/2, mask_address/2]).
 
 -include("riak_core_connection.hrl").
 
@@ -276,11 +278,16 @@ prep_stop(_State) ->
        lager:debug("There were ~p rt_sink_errors upon shutdown",
                   [SinkErrors]),
     stopping.
-
 %% This function is only here for nodes using a version < 1.3. Remove it in
 %% future version
 get_matching_address(IP, CIDR) ->
     riak_repl2_ip:get_matching_address(IP, CIDR).
+
+determine_netmask(Ifaddrs, SeekIP) ->
+    riak_repl2_ip:determine_netmask(Ifaddrs, SeekIP).
+
+mask_address(Addr, MaskBits) ->
+    riak_repl2_ip:mask_address(Addr, MaskBits).
 
 %%%%%%%%%%%%%%%%
 %% Unit Tests %%
