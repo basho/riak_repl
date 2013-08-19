@@ -1,0 +1,39 @@
+#! /bin/bash
+set -e
+
+#### Add any new 1.3 patches from here
+PATCHES="
+riak_core_cluster_mgr.beam
+riak_core_cluster_mgr_sup.beam
+riak_repl2_fs_node_reserver.beam
+riak_repl2_ip.beam
+riak_repl_app.beam
+riak_repl_sup.beam
+"
+###
+### dire warning...
+###
+echo "IMPORTANT: You must make sure your 1.3 build is hacked up to use lager 1.2.0 !!!"
+
+## Base name for patch dir
+NAME=patches-$(date +%C%y%m%d%H%M%S)
+mkdir $NAME
+
+## First the 1.2 patches they were already given (as binary, not great branches for rebuilding)
+echo "Including 1.2 patches..."
+ls -1 ebin-1.2
+cp ebin-1.2/*.beam $NAME
+
+# Now onto 1.3
+echo "Including 1.3 patches..."
+for f in $PATCHES
+do
+  echo $f
+  cp ebin/$f $NAME
+done
+
+echo
+echo "Built anya patches into $NAME and making you a tarball."
+echo
+
+tar cvfz $NAME.tar.gz $NAME
