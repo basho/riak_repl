@@ -484,7 +484,7 @@ missing_key(PBKey, DiffState) ->
 %% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
 merkle_fold({B,Key}=K, V, Pid) ->
     try
-        riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)}),
+        riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)})
     catch _:_ -> 
             ok
     end,
