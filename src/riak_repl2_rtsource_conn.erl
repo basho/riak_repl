@@ -90,7 +90,7 @@ legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
 %% connection manager callbacks
-connected(Socket, Transport, Endpoint, Proto, RtSourcePid, Props) ->
+connected(Socket, Transport, Endpoint, Proto, RtSourcePid, _Props) ->
     Transport:controlling_process(Socket, RtSourcePid),
     Transport:setopts(Socket, [{active, true}]),
     try
@@ -285,10 +285,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                                                         hb_interval_tref = IntervalTRef,
                                                         hb_timeout = HBTimeout,
                                                         remote = Remote}) ->
-    %% Heartbeats are sent and received in order - this must match
-    %% or we have a logic error and should crash.
-    {{value, HBSent}, HBSentQ2} = queue:out(HBSentQ),
-    Duration = timer:now_diff(now(), HBSent) div 1000,
+    TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
 
     %% If an ack was is received in the heartbeat timeout window, the heartbeat
     %% timeout timer is cancelled and we no longer want to exit.  It is possible
@@ -297,22 +294,19 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
     %%   heartbeat interval timer is pending - so tref NOT undefined
     %%   heartbeat interval timer fired, new hb_sent entry added - so NOT qempty
 
-    State2 = State#state{hb_rtt = Duration, hb_sent_q = HBSentQ2},
     case IntervalTRef /= undefined orelse
-         queue:len(HBSentQ2) /= 0 of
+         queue:len(HBSentQ) /= 0 of
         true ->
-            lager:info("Realtime connection ~s to ~p heartbeat rtt ~p "
-                       "milliseconds exceeded timeout ~p, "
-                       "but saved by incoming data\n",
-                       [peername(State), Remote, Duration, HBTimeout]),
-            {noreply, State2};
+            lager:info("Realtime connection ~s to ~p heartbeat "
+                       "  time since timeout ~p",
+                       [peername(State), Remote, TimeSinceTimeout]),
+            {noreply, State};
         false ->
             lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                           "after ~p milliseconds\n",
-                          [peername(State), Remote, Duration]),
-            lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", 
-                        [queue:len(HBSentQ2)]),
-            {stop, normal, State2}
+                          [peername(State), Remote, HBTimeout]),
+            lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
+            {stop, normal, State}
     end;
 handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
