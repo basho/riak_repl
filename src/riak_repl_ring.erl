@@ -310,13 +310,8 @@ get_clusters(Ring) ->
     end.
 
 add_cluster_mapping(Ring, {ClusterName, ClusterMapsTo}) ->
-
-    lager:info("Got to add_cluster_mapping"),
-
     RC = get_repl_config(ensure_config(Ring)),
-
     ClusterMap = dict:store(ClusterName, ClusterMapsTo, RC),
-
     RC2 = dict:store(cluster_mapping, ClusterMap, RC),
     case RC == RC2 of
         true ->
@@ -324,7 +319,8 @@ add_cluster_mapping(Ring, {ClusterName, ClusterMapsTo}) ->
             lager:info("no change, storing nothing in ring meta for clustering"),
             {ignore, {not_changed, clustername}};
         false ->
-            lager:info("storing cluster map ~w in ring meta data" , [RC2]),
+            lager:info("storing cluster mapping from ~p to ~p in ring meta data" , 
+                [ClusterName, ClusterMapsTo]),
             {new_ring, riak_core_ring:update_meta(
                     ?MODULE,
                     RC2,
@@ -726,13 +722,11 @@ add_get_cluster_mapping_test() ->
     %ClusterMappedToId = "B",
 
     ClusterId = riak_core_ring:cluster_name(Ring0),
-    ClusterMappedToId= riak_core_ring:cluster_name(Ring0),
+    ClusterMappedToId = <<"{'dev1@127.0.0.1',{1359,730694,756806}}">>,
     {new_ring, Ring1} = add_cluster_mapping(Ring0, {ClusterId, ClusterMappedToId}),
-    lager:info("Ring1 = ", [Ring1]),
-    %?debugVal(Ring1).
 
     {ok, StoredClusterMapping} = get_cluster_mapping(Ring1, ClusterId),
-    lager:info("StoredClusterMapping = ", [StoredClusterMapping]),
+    lager:info("StoredClusterMapping = ~p", [StoredClusterMapping]),
     %?debugVal(StoredClusterMapping).
     ?assertEqual(StoredClusterMapping, ClusterMappedToId).
 
