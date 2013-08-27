@@ -23,6 +23,9 @@
          status/1, status/2,
          legacy_status/1, legacy_status/2]).
 
+%% Export for intercept use in testing
+-export([send_heartbeat/2]).
+
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -220,6 +223,9 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+send_heartbeat(Transport, Socket) ->
+    Transport:send(Socket, riak_repl2_rtframe:encode(heartbeat, undefined)).
+
 %% Receive TCP data - decode framing and dispatch
 recv(TcpBin, State = #state{transport = T, socket = S}) ->
     case riak_repl2_rtframe:decode(TcpBin) of
@@ -234,7 +240,7 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
             recv(Cont, do_write_objects(Seq, BinObjs, State));
         {ok, heartbeat, Cont} ->
-            T:send(S, riak_repl2_rtframe:encode(heartbeat, undefined)),
+            send_heartbeat(T, S),
             recv(Cont, State#state{hb_last = os:timestamp()});
         {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
