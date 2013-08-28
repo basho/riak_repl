@@ -36,7 +36,8 @@
          add_block_provider_redirect/1,
          show_block_provider_redirect/1,
          show_local_cluster_id/1,
-         delete_block_provider_redirect/1
+         delete_block_provider_redirect/1,
+         full_objects/1
      ]).
 
 add_listener(Params) ->
@@ -600,6 +601,26 @@ show_local_cluster_id([]) ->
     ClusterId = lists:flatten(
         io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
     io:format("local cluster id: ~p~n", [ClusterId]).
+
+full_objects([]) ->
+    Value = riak_core_metadata:get({riak_repl, reduced_n}, full_objects, [{default, always}]),
+    io:format("full_objects value = ~p", [Value]),
+    Value;
+
+full_objects(["never"]) ->
+    riak_core_metadata:put({riak_repl, reduced_n}, full_objects, never),
+    full_objects([]);
+
+full_objects(["always"]) ->
+    riak_core_metadata:put({riak_repl, reduced_n}, full_objects, always),
+    full_objects([]);
+
+full_objects([M]) ->
+    NewVal = erlang:list_to_integer(M),
+    riak_core_metadata:put({riak_repl, reduced_n}, full_objects, NewVal),
+    full_objects([]).
+
+%% helper functions
 
 parse_ip_and_maybe_port(String, Hostname) ->
     case string:tokens(String, ":") of
