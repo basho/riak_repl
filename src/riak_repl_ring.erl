@@ -44,7 +44,8 @@
          pg_enabled/1,
          add_nat_map/2,
          del_nat_map/2,
-         get_nat_map/1
+         get_nat_map/1,
+         write_cluster_mapping_to_ring/2
          ]).
 
 -ifdef(TEST).
@@ -327,16 +328,24 @@ add_cluster_mapping(Ring, {ClusterName, ClusterMapsTo}) ->
                     Ring)}
     end.
 
+%% Persist the named cluster and it's members to the repl ring metadata.
+%% TODO: an empty Members list means "delete this cluster name"
+write_cluster_mapping_to_ring(ClusterName, ClusterMapsTo) ->
+    lager:info("Saving cluster to the ring: ~p of ~p", [ClusterName, ClusterMapsTo]),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_cluster_mapping/2,
+                                      {ClusterName, ClusterMapsTo}).
+
+
 get_cluster_mapping(Ring, ClusterName) ->
     RC = get_repl_config(ensure_config(Ring)),
     case dict:find(cluster_mapping, RC) of 
         {ok, ClusterMap} ->
-            lager:info("Found cluster_mapping"),
-
+            lager:info("Found cluster_mapping, looking up ~p", [ClusterName]),
             case dict:find(ClusterName, ClusterMap) of
                 {ok, ClusterMappedToId} ->
+                    lager:info("Found key: ~p, value: ~p", [ClusterName, ClusterMappedToId]),
                     {ok, ClusterMappedToId};
-                [] -> []
+                error -> []
             end;
         error ->
             []

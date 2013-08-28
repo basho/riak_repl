@@ -44,9 +44,10 @@ init() ->
     Modes = riak_repl_ring:get_modes(Ring),
 
     case application:get_env(riak_repl, cluster_id_mapping) of
-        {ok, Val} ->
+        {ok, {Cid, MappedToCid}} ->
             lager:debug("Cluster mapping configured, adding to Ring meta-data"),
-            riak_repl_ring:add_cluster_mapping(Ring, Val);
+            riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_cluster_mapping/2,
+                                      Ring, {Cid, MappedToCid});
         undefined ->
             lager:debug("No cluster mapping configured, continuing.")
     end,
@@ -90,11 +91,12 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
     % check to see if there is a mapped cluser for this cluster_id
     % to use, in case the named one has been disabled
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    lager:info("Ring: ~p", [Ring]),
     case riak_repl_ring:get_cluster_mapping(Ring, CName0) of
         {ok, MappedToClusterId} -> 
             lager:info("Using mapped cluster_id: ~s", [MappedToClusterId]),
             CName = MappedToClusterId;
-        [] -> 
+        _ -> 
             lager:info("Using non-mapped cluster_id: ~s", [CName0]),
             CName = CName0
     end,
