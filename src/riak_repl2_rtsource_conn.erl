@@ -289,26 +289,20 @@ handle_info({Error, _S, Reason},
 handle_info(send_heartbeat, State) ->
     {noreply, send_heartbeat(State)};
 handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
-                                                        hb_interval_tref = IntervalTRef,
+                                                        hb_timeout_tref = HBTRef,
                                                         hb_timeout = HBTimeout,
                                                         remote = Remote}) ->
     TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
 
-    %% If an ack was is received in the heartbeat timeout window, the heartbeat
-    %% timeout timer is cancelled and we no longer want to exit.  It is possible
-    %% the timer has already fired while we have an ack or heartbeat response
-    %% in the message queue.  In which case, either
-    %%   heartbeat interval timer is pending - so tref NOT undefined
-    %%   heartbeat interval timer fired, new hb_sent entry added - so NOT qempty
-
-    case IntervalTRef /= undefined orelse
-         queue:len(HBSentQ) /= 0 of
-        true ->
+    %% hb_timeout_tref is the authority of whether we should
+    %% restart the conection on heartbeat timeout or not.
+    case HBTRef of
+        undefined ->
             lager:info("Realtime connection ~s to ~p heartbeat "
-                       "  time since timeout ~p",
+                       "time since timeout ~p",
                        [peername(State), Remote, TimeSinceTimeout]),
             {noreply, State};
-        false ->
+        _ ->
             lager:warning("Realtime connection ~s to ~p heartbeat timeout "
                           "after ~p milliseconds\n",
                           [peername(State), Remote, HBTimeout]),
@@ -369,7 +363,7 @@ recv(TcpBin, State = #state{remote = Name,
                     recv(Cont, State);
                 _ ->
                     erlang:cancel_timer(HBTRef),
-                    recv(Cont, schedule_heartbeat(State))
+                    recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
         {ok, heartbeat, Cont} ->
             %% Compute last heartbeat roundtrip in msecs and
