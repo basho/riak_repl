@@ -2,7 +2,7 @@
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_rt).
 
-%% @doc Realtime replication 
+%% @doc Realtime replication
 %%
 %% High level responsibility...
 %%
@@ -98,7 +98,7 @@ ensure_rt(WantEnabled0, WantStarted0) ->
         _ ->
             %% Do enables/starts first to capture maximum amount of rtq
 
-            %% Create a registration to begin queuing, rtsource_sup:ensure_started 
+            %% Create a registration to begin queuing, rtsource_sup:ensure_started
             %% will bring up an rtsource process that will re-register
             [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
             [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
@@ -129,13 +129,14 @@ register_remote_locator() ->
 register_sink(Pid) ->
     gen_server:call(?SERVER, {register_sink, Pid}, infinity).
 
-%% Get list of sink pids 
+%% Get list of sink pids
 %% TODO: Remove this once rtsink_sup is working right
 get_sink_pids() ->
     gen_server:call(?SERVER, get_sink_pids, infinity).
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
+    lager:debug("maybe a mutate happened?~n    ~p", [RObj]),
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
         %% always put the objects onto the shared queue in the new format; we'll
         %% down-convert if we have to before sending them to the RT sinks (based
@@ -165,13 +166,13 @@ handle_call(status, _From, State = #state{sinks = SinkPids}) ->
                    riak_repl2_rtsource_conn:status(Pid, Timeout)
                catch
                    _:_ ->
-                       {Remote, Pid, unavailable} 
+                       {Remote, Pid, unavailable}
                end || {Remote, Pid} <- riak_repl2_rtsource_conn_sup:enabled()],
     Sinks = [try
                  riak_repl2_rtsink_conn:status(Pid, Timeout)
              catch
                  _:_ ->
-                     {will_be_remote_name, Pid, unavailable} 
+                     {will_be_remote_name, Pid, unavailable}
              end || Pid <- SinkPids],
     Status = [{enabled, enabled()},
               {started, started()},
@@ -190,7 +191,7 @@ handle_cast(_Msg, State) ->
     %% TODO: log unknown message
     {noreply, State}.
 
-handle_info({'DOWN', _MRef, process, SinkPid, _Reason}, 
+handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
             State = #state{sinks = Sinks}) ->
     %%TODO: Check how ranch logs sink process death
     Sinks2 = Sinks -- [SinkPid],
@@ -199,7 +200,7 @@ handle_info(Msg, State) ->
     %%TODO: Log unhandled message - e.g. timed out status result
     lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
-    
+
 terminate(_Reason, _State) ->
     ok.
 
