@@ -603,8 +603,8 @@ show_local_cluster_id([]) ->
     io:format("local cluster id: ~p~n", [ClusterId]).
 
 full_objects([]) ->
-    Value = riak_core_metadata:get({riak_repl, reduced_n}, full_objects, [{default, never}]),
-    io:format("full_objects value = ~p", [Value]),
+    Value = riak_core_metadata:get({riak_repl, reduced_n}, full_objects, [{default, always}]),
+    io:format("full_objects value = ~p~n", [Value]),
     Value;
 
 full_objects(["never"]) ->

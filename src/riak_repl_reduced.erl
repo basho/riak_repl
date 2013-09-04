@@ -21,12 +21,12 @@ mutate_put(InMeta, InVal, RevealedMeta, _In, _Props, false) ->
     lager:debug("no mutation done"),
     {InMeta, InVal, RevealedMeta};
 
-mutate_put(InMeta, InVal, RevealedMeta, _In, _Props, never) ->
-    lager:debug("never reduce"),
+mutate_put(InMeta, InVal, RevealedMeta, _In, _Props, always) ->
+    lager:debug("always full objects"),
     {InMeta, InVal, RevealedMeta};
 
-mutate_put(InMeta, InVal, RevealedMeta, In, _Props, always) ->
-    lager:debug("always reduce"),
+mutate_put(InMeta, InVal, RevealedMeta, In, _Props, never) ->
+    lager:debug("never full objects, reduce"),
     reduce(InMeta, InVal, RevealedMeta, In);
 
 mutate_put(InMeta, InVal, RevealedMeta, RObj, BucketProps, NumberReals) ->
