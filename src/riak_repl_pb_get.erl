@@ -43,14 +43,18 @@ init() ->
     ClusterID = riak_core_ring:cluster_name(Ring),
     Modes = riak_repl_ring:get_modes(Ring),
 
-    case application:get_env(riak_repl, cluster_id_mapping) of
-        {ok, {Cid, MappedToCid}} ->
-            lager:debug("Cluster mapping configured, adding to Ring meta-data"),
-            riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_cluster_mapping/2,
-                                      Ring, {Cid, MappedToCid});
-        undefined ->
-            lager:debug("No cluster mapping configured, continuing.")
-    end,
+    % FIXME: This is commented out so I will remember how it is done;
+    % however, it will likely be removed since the mapping feature should be configured
+    % at run-time. Remove before merging!
+    
+    %case application:get_env(riak_repl, cluster_id_mapping) of
+    %    {ok, {Cid, MappedToCid}} ->
+    %        lager:debug("Cluster mapping configured, adding to Ring meta-data"),
+    %        riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_cluster_mapping/2,
+    %                                  Ring, {Cid, MappedToCid}).
+    %    undefined ->
+    %        lager:debug("No cluster mapping configured, continuing.")
+    %end,
 
     #state{client=C, repl_modes=Modes, cluster_id=ClusterID}.
 
