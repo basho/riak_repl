@@ -39,7 +39,7 @@ mutate_put(InMeta, InVal, RevealedMeta, RObj, BucketProps, NumberReals) ->
             mutate_put(InMeta, InVal, RevealedMeta, RObj, BucketProps, never);
         true ->
             lager:debug("only keep ~p real copies from ~p", [NumberReals, length(Preflist)]),
-            RealsList = lists:split(NumberReals, Preflist),
+            {RealsList,_Ignored} = lists:split(NumberReals, Preflist),
             maybe_reduce(InMeta, InVal, RevealedMeta, RObj, RealsList)
     end.
 
