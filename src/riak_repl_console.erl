@@ -32,7 +32,8 @@
          cascades/1,
          show_nat_map/1,
          add_nat_map/1,
-         del_nat_map/1
+         del_nat_map/1,
+         block_provider_redirect/1
      ]).
 
 add_listener(Params) ->
@@ -568,6 +569,10 @@ del_nat_map([External, Internal]) ->
                 {ExternalIP, InternalIP}),
             ok
     end.
+
+block_provider_redirect([Cid, MappedCid]) ->
+    lager:info("Redirecting block requests from ~p to ~p", [Cid, MappedCid]),
+    riak_repl_ring:write_cluster_mapping_to_ring(Cid, MappedCid).
 
 %% helper functions
 
