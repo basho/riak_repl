@@ -4,36 +4,42 @@
 -include_lib("riak_kv/include/riak_kv_vnode.hrl").
 -include("riak_repl.hrl").
 
--export([mutate_get/3, mutate_put/5]).
+-export([mutate_get/1, mutate_put/5]).
 
-mutate_get(InMeta, InVal, InObject) ->
+mutate_get(InObject) ->
     lager:debug("mutate_get"),
-    case dict:find(?MODULE, InMeta) of
-        {ok, 0} ->
-            % proxy get
-            % TODO implement
+    Contents = riak_object:get_contents(InObject),
+    Reals = lists:foldl(fun({Meta, _Value}, N) ->
+        case dict:find(?MODULE, Meta) of
+            {ok, M} when M < N ->
+                M;
+            _ ->
+                N
+        end
+    end, always, Contents),
+    case Reals of
+        0 ->
             lager:debug("proxy get"),
-            {InMeta, InVal};
-        {ok, N} ->
-            % get from one of the reals
+            proxy_get(InObject);
+        always ->
+            % not a reduced object
+            InObject;
+        N ->
             BKey = {riak_object:bucket(InObject), riak_object:key(InObject)},
             DocIdx = riak_core_util:chash_key(BKey),
             Preflist = riak_core_apl:get_primary_apl(DocIdx, N, riak_kv),
             Nth = random:uniform(length(Preflist)),
             Self = self(),
             case lists:nth(Nth, Preflist) of
-                {{Partition, Self}, _PrimaryNess} ->
+                {{_Partition, Self}, _PrimaryNess} ->
                     lager:debug("odd that we get ourselves as a pref. doing proxy"),
-                    proxy_get(InMeta, InVal, InObject);
+                    proxy_get(InObject);
                 {Single, _PrimaryNess} ->
-                    local_ring_get(InMeta, InVal, InObject, BKey, Single)
-            end;
-        error ->
-            % not a reduced object
-            {InMeta, InVal}
+                    local_ring_get(InObject, BKey, Single)
+            end
     end.
 
-local_ring_get(InMeta, InVal, InObject, BKey, Partition) ->
+local_ring_get(InObject, BKey, Partition) ->
     {_P, MonitorTarg} = Partition,
     MonRef = erlang:monitor(process, MonitorTarg),
     Preflist = [Partition],
@@ -42,25 +48,21 @@ local_ring_get(InMeta, InVal, InObject, BKey, Partition) ->
     riak_core_vnode_master:command(Preflist, Req, {raw, ReqId, self()}, riak_kv_vnode_master),
     receive
         {ReqId, {r, {ok, RObj}, _, ReqId}} ->
-            % well, great, but I have no idea which of the contents is the
-            % right one to replace :/
-            [OutMeta | _] = riak_object:get_metadatas(RObj),
-            [OutVal | _] = riak_object:get_values(RObj),
-            {OutMeta, OutVal};
+            RObj;
         {ReqId, {r, {error, notfound}, _, ReqId}} ->
-            proxy_get(InMeta, InVal, InObject);
+            proxy_get(InObject);
         {'DOWN', MonRef, prcess, MonitorTarg, Wut} ->
             lager:info("could not get value from target due to exit: ~p", [Wut]),
-            proxy_get(InMeta, InVal, InObject)
+            proxy_get(InObject)
     after
         ?REPL_FSM_TIMEOUT ->
             lager:info("timeout"),
-            {InMeta, InVal}
+            proxy_get(InObject)
     end.
 
-proxy_get(InMeta, InVal, _Ignored) ->
+proxy_get(Object) ->
     % TODO implement
-    {InMeta, InVal}.
+    Object.
 
 mutate_put(InMeta, InVal, RevealedMeta, In, Props) ->
     FunList = [fun skip_reduce_cause_local/5, fun reduce_by_bucket/5, fun reduce_by_cluster/5],
@@ -115,7 +117,7 @@ maybe_reduce(InMeta, InVal, RevealedMeta, RObj, RealList, NumberReals) ->
             reduce(InMeta, InVal, RevealedMeta, RObj, NumberReals)
     end.
 
-reduce(InMeta, InVal, RevealedMeta, RObj, NumberReals) ->
+reduce(InMeta, _InVal, RevealedMeta, RObj, NumberReals) ->
     lager:debug("doing a reduction"),
     AAEHash = term_to_binary(riak_object:hash(RObj)),
 
