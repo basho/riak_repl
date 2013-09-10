@@ -1,3 +1,39 @@
+%% @doc A riak_kv_mutator to shrink down objects based either on cluster or
+%% bucket settings. Either due to size or legal constraints, it is sometimes
+%% desirable to reduce the amount of data stored on a sink cluster. This
+%% mutator can take objects that are stored fully on another cluster and
+%% reduce the disk space used. It can then pull the full object from the
+%% source cluster if needed. In short, one is trading CPU and (possibly)
+%% bandwidth to reduce storage cost.
+%%
+%% == Configuration ==
+%%
+%% When a put is done, the object is checked for the `cluster_of_record'
+%% metadata. If that data is missing or has the same name as the cluster,
+%% the object is not reduced. Beyond that, when to reduce can be configured.
+%%
+%% By default the mutator never reduces an object. To enable reduction
+%% cluster-wide, use riak_core_metadata and set
+%% ``{'riak_repl', 'reduced_n'}, 'full_objects}''' to one of ``'always''',
+%% ``'never''', or a positive integer.
+%%
+%% The ``'full_objects''' bucket property override cluster settings, and uses
+%% the same option values.
+%%
+%% The ``'always''' option means to always use full_objects; in other words
+%% never reduce the objects. This is the default value.
+%%
+%% A positive integer means keep that many or N full objects, whichever is
+%% smaller. N is the usual N val on put. If a full value cannot be found,
+%% a proxy get is attempted.
+%%
+%% The ``'never''' option means all requests for the object will use proxy get
+%% to the cluster of record. If the object cannot be retrieved from there,
+%% a not found value is returned.
+%%
+%% For proxy get to work, the source cluster must enable proxy get to the sink
+%% cluster.
+
 -module(riak_repl_reduced).
 -behavior(riak_kv_mutator).
 
@@ -6,6 +42,10 @@
 
 -export([mutate_get/1, mutate_put/5]).
 
+%% @doc Un-reduce an object if needed. If a real object cannot be found on this
+%% cluster, a proxy get is attempted. If that fails, a not found is returned.
+-spec mutate_get(InObject :: riak_object:riak_object()) ->
+    riak_object:riak_object() | 'notfound'.
 mutate_get(InObject) ->
     lager:debug("mutate_get"),
     Contents = riak_object:get_contents(InObject),
@@ -113,6 +153,11 @@ get_cluster_of_record(Object) ->
             Acc
     end, undefined, Metas).
 
+%% @doc Check if the object should be reduced, and do so; if nothing else, tag
+%% the cluster of record.
+-spec mutate_put(InMeta :: dict(), InVal :: term(), RevealedMeta :: dict(),
+    In :: riak_object:riak_object(), Props :: orddict:orddict()) ->
+        {dict(), term(), dict()}.
 mutate_put(InMeta, InVal, RevealedMeta, In, Props) ->
     FunList = [fun skip_reduce_cause_local/5, fun reduce_by_bucket/5, fun reduce_by_cluster/5],
     mutate_put(InMeta, InVal, RevealedMeta, In, Props, until_not_false([InMeta, InVal, RevealedMeta, In, Props], FunList)).
