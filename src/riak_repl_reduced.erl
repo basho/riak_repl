@@ -60,9 +60,58 @@ local_ring_get(InObject, BKey, Partition) ->
             proxy_get(InObject)
     end.
 
+% by the time we get here, we should have already determined that this is a
+% reduced object that does not have a full object on the local cluster
 proxy_get(Object) ->
-    % TODO implement
-    Object.
+    case get_cluster_of_record(Object) of
+        undefined ->
+            lager:debug("no cluster of record, no proxy get."),
+            notfound;
+        Cluster ->
+            proxy_get(Cluster, Object)
+    end.
+
+proxy_get(Cluster, Object) ->
+   case riak_repl2_leader:leader_node() of
+        undefined ->
+            lager:debug("no leader node, no proxy get"),
+            notfound;
+        LeaderNode ->
+            proxy_get(LeaderNode, Cluster, Object)
+    end.
+
+proxy_get(Leader, Cluster, Object) ->
+    Bucket = riak_object:bucket(Object),
+    Key = riak_object:key(Object),
+    ProcessName = riak_repl_util:make_pg_proxy_name(Cluster),
+    try riak_repl2_pg_proxy:proxy_get({ProcessName, Leader}, Bucket, Key, []) of
+        {error, notfound} ->
+            lager:debug("Couldn't find ~p on cluster ~p", [{Bucket,Key},Cluster]),
+            notfound;
+        {ok, NewObject} ->
+            NewObject;
+        Resp ->
+            lager:debug("no idea: ~p", [Resp]),
+            notfound
+    catch
+        What:Why ->
+            lager:debug("proxy get failed: ~p:~p", [What,Why]),
+            notfound
+    end.
+
+get_cluster_of_record(Object) ->
+    Metas = riak_object:get_metadatas(Object),
+    lists:foldl(fun
+        (Meta, undefined) ->
+            case dict:find(cluster_of_record, Meta) of
+                error ->
+                    undefined;
+                {ok, C} ->
+                    C
+            end;
+        (_Meta, Acc) ->
+            Acc
+    end, undefined, Metas).
 
 mutate_put(InMeta, InVal, RevealedMeta, In, Props) ->
     FunList = [fun skip_reduce_cause_local/5, fun reduce_by_bucket/5, fun reduce_by_cluster/5],
