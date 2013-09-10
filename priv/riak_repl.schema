@@ -50,8 +50,7 @@
 %% @doc Whether to initiate a fullsync on initial connection from 
 %% the secondary cluster
 {mapping, "mdc.fullsync_on_connect", "riak_repl.fullsync_on_connect", [
-    {datatype, enum},
-    {enum, [true, false]},
+    {datatype, {enum, [true, false]}},
     {default, true}
 ]}.
 
@@ -60,7 +59,7 @@
 %% {clustername, time_in_minutes} pairs for each sink 
 %% participating in fullsync replication.
 {mapping, "mdc.fullsync_interval.$cluster_name", "riak_repl.fullsync_interval", [
-    {datatype, duration},
+    {datatype, {duration, ms}},
     {include_default, "all"},
     {commented, "30m"}
 ]}.
@@ -82,13 +81,12 @@
 %% will need to be replication with a fullsync.
 {mapping, "mdc.rtq_max_bytes", "riak_repl.rtq_max_bytes", [
     {datatype, bytesize},
-    {default, "100mb"}
+    {default, "100MB"}
 ]}.
 
 %% @doc Enable Riak CS proxy_get and block filter.
 {mapping, "mdc.proxy_get", "riak_repl.proxy_get", [
-    {datatype, enum},
-    {enum, [on, off]},
+    {datatype, {enum, [on, off]}},
     {default, off}
 ]}.
 
@@ -107,7 +105,7 @@
 %% undefined disables the realtime heartbeat. This feature is only 
 %% available in Riak Enterprise 1.3.2+.
 {mapping, "mdc.real_time.heartbeat_interval", "riak_repl.rt_heartbeat_interval", [
-    {datatype, duration_secs},
+    {datatype, {duration, s}},
     {default, "15s"}
 ]}.
 
@@ -115,6 +113,6 @@
 %% seconds, then the source connection exits and will be re-established. 
 %% This feature is only available in Riak Enterprise 1.3.2+.
 {mapping, "mdc.real_time.heartbeat_timeout", "riak_repl.rt_heartbeat_timeout", [
-    {datatype, duration_secs},
+    {datatype, {duration, s}},
     {default, "15s"}
 ]}. 
