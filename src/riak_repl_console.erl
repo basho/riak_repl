@@ -572,7 +572,8 @@ del_nat_map([External, Internal]) ->
 
 block_provider_redirect([Cid, MappedCid]) ->
     lager:info("Redirecting block requests from ~p to ~p", [Cid, MappedCid]),
-    riak_repl_ring:write_cluster_mapping_to_ring(Cid, MappedCid).
+    % riak_repl_ring:write_cluster_mapping_to_ring(Cid, MappedCid).
+    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, Cid, MappedCid).
 
 %% helper functions
 
