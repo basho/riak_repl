@@ -1,6 +1,6 @@
  %% Replication config
- 
- %% @doc Path (relative or absolute) to the working directory for 
+
+ %% @doc Path (relative or absolute) to the working directory for
  %% the replication process
  {mapping, "mdc.data_root", "riak_repl.data_root", [
     {default, "{{repl_data_root}}"}
@@ -13,33 +13,33 @@
     {datatype, ip}
 ]}.
 
-%% @doc The hard limit of fullsync workers that will be running on the 
-%% source side of a cluster across all nodes on that cluster for a 
-%% fullsync to a sink cluster. This means if one has configured fullsync 
-%% for two different clusters, both with a max_fssource_cluster of 5, 10 
-%% fullsync workers can be in progress. Only affects nodes on the source 
-%% cluster on which this parameter is defined via the configuration 
+%% @doc The hard limit of fullsync workers that will be running on the
+%% source side of a cluster across all nodes on that cluster for a
+%% fullsync to a sink cluster. This means if one has configured fullsync
+%% for two different clusters, both with a max_fssource_cluster of 5, 10
+%% fullsync workers can be in progress. Only affects nodes on the source
+%% cluster on which this parameter is defined via the configuration
 %% file or command line
 {mapping, "mdc.max_fssource_cluster", "riak_repl.max_fssource_cluster", [
     {datatype, integer},
     {default, 5}
 ]}.
-%% @doc Limits the number of fullsync workers that will be running on 
-%% each individual node in a source cluster. This is a hard limit for 
-%% all fullsyncs enabled; additional fullsync configurations will not 
-%% increase the number of fullsync workers allowed to run on any node. 
-%% Only affects nodes on the source cluster on which this parameter 
+%% @doc Limits the number of fullsync workers that will be running on
+%% each individual node in a source cluster. This is a hard limit for
+%% all fullsyncs enabled; additional fullsync configurations will not
+%% increase the number of fullsync workers allowed to run on any node.
+%% Only affects nodes on the source cluster on which this parameter
 %% is defined via the configuration file or command line
 {mapping, "mdc.max_fssource_node", "riak_repl.max_fssource_node", [
     {datatype, integer},
     {default, 1}
 ]}.
 
-%% @doc Limits the number of fullsync workers allowed to run on each 
-%% individual node in a sink cluster. This is a hard limit for all 
-%% fullsync sources interacting with the sink cluster. Thus, multiple 
-%% simultaneous source connections to the sink cluster will have to 
-%% share the sink node's number of maximum connections. Only affects 
+%% @doc Limits the number of fullsync workers allowed to run on each
+%% individual node in a sink cluster. This is a hard limit for all
+%% fullsync sources interacting with the sink cluster. Thus, multiple
+%% simultaneous source connections to the sink cluster will have to
+%% share the sink node's number of maximum connections. Only affects
 %% nodes on the sink cluster on which this parameter is defined via
 %% the configuration file or command line.
 {mapping, "mdc.max_fssink_node", "riak_repl.max_fssink_node", [
@@ -47,7 +47,7 @@
     {default, 1}
 ]}.
 
-%% @doc Whether to initiate a fullsync on initial connection from 
+%% @doc Whether to initiate a fullsync on initial connection from
 %% the secondary cluster
 {mapping, "mdc.fullsync_on_connect", "riak_repl.fullsync_on_connect", [
     {datatype, {enum, [true, false]}},
@@ -55,8 +55,8 @@
 ]}.
 
 %% @doc a single integer value representing the duration to wait
-%%  in minutes between fullsyncs, or a list of 
-%% {clustername, time_in_minutes} pairs for each sink 
+%%  in minutes between fullsyncs, or a list of
+%% {clustername, time_in_minutes} pairs for each sink
 %% participating in fullsync replication.
 {mapping, "mdc.fullsync_interval.$cluster_name", "riak_repl.fullsync_interval", [
     {datatype, {duration, ms}},
@@ -64,7 +64,7 @@
     {commented, "30m"}
 ]}.
 
-{translation, 
+{translation,
  "riak_repl.fullsync_interval",
  fun(Conf) ->
     Minute = fun(Millis) -> Millis div 60000 end,
@@ -76,8 +76,8 @@
     end
  end}.
 
-%% @doc The maximum size the realtime replication queue can grow to 
-%% before new objects are dropped. Defaults to 100MB. Dropped objects 
+%% @doc The maximum size the realtime replication queue can grow to
+%% before new objects are dropped. Defaults to 100MB. Dropped objects
 %% will need to be replication with a fullsync.
 {mapping, "mdc.rtq_max_bytes", "riak_repl.rtq_max_bytes", [
     {datatype, bytesize},
@@ -90,9 +90,9 @@
     {default, off}
 ]}.
 
-{translation, 
+{translation,
  "riak_repl.proxy_get",
- fun(Conf) -> 
+ fun(Conf) ->
     case cuttlefish_util:conf_get_value("mdc.proxy_get", Conf) of
         on -> true;
         off -> false;
@@ -100,19 +100,19 @@
     end
  end}.
 
-%% @doc A heartbeat message is sent from the source to the sink every 
-%% heartbeat_interval. Setting heartbeat_interval to 
-%% undefined disables the realtime heartbeat. This feature is only 
+%% @doc A heartbeat message is sent from the source to the sink every
+%% heartbeat_interval. Setting heartbeat_interval to
+%% undefined disables the realtime heartbeat. This feature is only
 %% available in Riak Enterprise 1.3.2+.
 {mapping, "mdc.real_time.heartbeat_interval", "riak_repl.rt_heartbeat_interval", [
     {datatype, {duration, s}},
     {default, "15s"}
 ]}.
 
-%% @doc If a heartbeat response is not received in rt_heartbeat_timeout 
-%% seconds, then the source connection exits and will be re-established. 
+%% @doc If a heartbeat response is not received in rt_heartbeat_timeout
+%% seconds, then the source connection exits and will be re-established.
 %% This feature is only available in Riak Enterprise 1.3.2+.
 {mapping, "mdc.real_time.heartbeat_timeout", "riak_repl.rt_heartbeat_timeout", [
     {datatype, {duration, s}},
     {default, "15s"}
-]}. 
+]}.
