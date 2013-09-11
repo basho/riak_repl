@@ -33,7 +33,9 @@
          show_nat_map/1,
          add_nat_map/1,
          del_nat_map/1,
-         block_provider_redirect/1,
+         add_block_provider_redirect/1,
+         show_block_provider_redirect/1,
+         show_local_cluster_id/1,
          delete_block_provider_redirect/1
      ]).
 
@@ -571,15 +573,29 @@ del_nat_map([External, Internal]) ->
             ok
     end.
 
-block_provider_redirect([FromClusterId, ToClusterId]) ->
+add_block_provider_redirect([FromClusterId, ToClusterId]) ->
     lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
     riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, 
                            FromClusterId, ToClusterId).
 
+show_block_provider_redirect([FromClusterId]) ->
+    case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, FromClusterId) of
+        undefined ->
+            io:format("No mapping for ~p~n", [FromClusterId]);
+        ToClusterId ->
+            io:format("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId])
+    end.
+
 delete_block_provider_redirect([FromClusterId]) ->
     lager:info("Deleting redirect to ~p", [FromClusterId]),
     riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
-     
+
+show_local_cluster_id([]) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterId = lists:flatten(
+        io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+    io:format("local cluster id: ~p~n", [ClusterId]).
+
 parse_ip_and_maybe_port(String, Hostname) ->
     case string:tokens(String, ":") of
         [IPStr, PortStr] ->
