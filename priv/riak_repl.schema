@@ -6,20 +6,23 @@
     {default, "{{repl_data_root}}"}
  ]}.
 
-%% @doc The cluster manager will listen for connections from remote
-%% clusters on this ip and port. Every node runs one CM.
+%% @doc The cluster manager will listen for connections from remote 
+%% clusters on this ip and port. Every node runs one cluster manager, 
+%% but only the cluster manager running on the cluster_leader will 
+%% service requests. This can change as nodes enter and leave the 
+%% cluster. The value is a combination of an IP address 
+%% (**not hostname**) followed by a port number
 {mapping, "mdc.cluster_manager", "riak_core.cluster_mgr", [
     {default, {"{{cluster_manager_ip}}", {{cluster_manager_port}} }},
     {datatype, ip}
 ]}.
 
-%% @doc The hard limit of fullsync workers that will be running on the 
-%% source side of a cluster across all nodes on that cluster for a 
-%% fullsync to a sink cluster. This means if one has configured fullsync 
-%% for two different clusters, both with a max_fssource_cluster of 5, 10 
-%% fullsync workers can be in progress. Only affects nodes on the source 
-%% cluster on which this parameter is defined via the configuration 
-%% file or command line
+%% @doc The hard limit on the number of workers which will participate
+%% on the source cluster during a fullsync replication. This means if
+%% one has configured fullsync for two different clusters, both with a
+%% max_fssource_cluster of 5, 10 fullsync workers can be in progress.
+%% Only affects nodes on the source cluster on which this parameter is
+%% defined via the configuration file or command line
 {mapping, "mdc.max_fssource_cluster", "riak_repl.max_fssource_cluster", [
     {datatype, integer},
     {default, 5}
@@ -94,9 +97,9 @@
  "riak_repl.proxy_get",
  fun(Conf) -> 
     case cuttlefish_util:conf_get_value("mdc.proxy_get", Conf) of
-        on -> true;
-        off -> false;
-        _ -> false
+        on -> enabled;
+        off -> disabled;
+        _ -> disabled
     end
  end}.
 
