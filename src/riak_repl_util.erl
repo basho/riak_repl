@@ -607,10 +607,7 @@ start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
     FullsyncIval = timer:minutes(FullsyncIvalMins),
     lager:info("Fullsync for ~p scheduled in ~p minutes",
                [Cluster, FullsyncIvalMins]),
-    spawn(fun() ->
-                timer:sleep(FullsyncIval),
-                gen_server:cast(Pid, start_fullsync)
-        end).
+    timer:apply_after(FullsyncIval, gen_server, cast, [Pid, start_fullsync]).
 
 %% send a start_fullsync to the calling process for a given cluster
 %% when it is time for fullsync
@@ -620,13 +617,13 @@ schedule_cluster_fullsync(Cluster) ->
 schedule_cluster_fullsync(Cluster, Pid) ->
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
-            ok;
+            disabled;
         {ok, [{_,_} | _] = List} ->
             case proplists:lookup(Cluster, List) of
-                none -> ok;
+                none -> 
+                    ok;
                 {_, FullsyncIvalMins} ->
-                    start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
-                    ok
+                    start_fullsync_timer(Pid, FullsyncIvalMins, Cluster)
             end;
         {ok, {Cluster, FullsyncIvalMins}} ->
             start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
@@ -634,7 +631,7 @@ schedule_cluster_fullsync(Cluster, Pid) ->
             %% this will affect ALL clusters that have fullsync enabled
             start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
         _ ->
-            ok
+            {error, "Invalid fullsync_interval"}
     end.
 
 %% Work out the elapsed time in seconds, rounded to centiseconds.
