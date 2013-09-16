@@ -376,8 +376,8 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                     Finish = riak_core_util:moment(),
                     ElapsedSeconds = Finish - State#state.fullsync_start_time,
                     case timer:cancel(State#state.fullsync_schedule_tref) of
-                        {ok, cancel} -> lager:info("Fullsync schedule timer for ~p
-                                                   reset",[State#state.other_cluster]);
+                        {ok, cancel} -> lager:info("Fullsync schedule timer for ~p reset",
+                                                   [State#state.other_cluster]);
                         {error, Reason} -> ok % nothing to do, just continue
                     end, 
                     SchedTimer = case
