@@ -620,7 +620,8 @@ schedule_cluster_fullsync(Cluster, Pid) ->
             disabled;
         {ok, [{_,_} | _] = List} ->
             case proplists:lookup(Cluster, List) of
-                none -> ok;
+                none -> 
+                    ok;
                 {_, FullsyncIvalMins} ->
                     start_fullsync_timer(Pid, FullsyncIvalMins, Cluster)
             end;

@@ -375,7 +375,11 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                     TotalFullsyncs = State#state.fullsyncs_completed + 1,
                     Finish = riak_core_util:moment(),
                     ElapsedSeconds = Finish - State#state.fullsync_start_time,
-                    _Ignored = timer:cancel(State#state.fullsync_schedule_tref),
+                    case timer:cancel(State#state.fullsync_schedule_tref) of
+                        {ok, cancel} -> lager:info("Fullsync schedule timer for ~p
+                                                   reset",[State#state.other_cluster]);
+                        {error, Reason} -> ok % nothing to do, just continue
+                    end, 
                     SchedTimer = case
                         riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster) of
                         disabled -> undefined;
