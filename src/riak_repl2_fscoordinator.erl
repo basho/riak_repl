@@ -49,7 +49,8 @@
                                           % during an already running fullsync
     fullsyncs_completed = 0,
     fullsync_start_time = undefined,
-    last_fullsync_duration = undefined
+    last_fullsync_duration = undefined,
+    fullsync_schedule_tref = undefined
 }).
 
 %% ------------------------------------------------------------------
@@ -189,8 +190,17 @@ init(Cluster) ->
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
-            riak_repl_util:schedule_cluster_fullsync(Cluster),
-            {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
+            %% keep track of the fullsync scheduler timer so we can cancel if
+            %% needed. If something breaks, just set undefined in the state
+            %% for the fullsync_schedule_tref
+            SchedTimer = case riak_repl_util:schedule_cluster_fullsync(Cluster) of
+                disabled -> undefined;
+                {error, Err} -> lager:error("Can't schedule fullsync timer: ~p", [Err]),
+                    undefined;
+                {ok, TRef} -> TRef
+            end,
+            {ok, #state{other_cluster = Cluster, connection_ref = Ref,
+                        fullsync_schedule_tref=SchedTimer }};
         {error, Error} ->
             lager:warning("Error connection to remote"),
             {stop, Error}
@@ -365,12 +375,21 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
                     TotalFullsyncs = State#state.fullsyncs_completed + 1,
                     Finish = riak_core_util:moment(),
                     ElapsedSeconds = Finish - State#state.fullsync_start_time,
-                    riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster),
+                    _Ignored = timer:cancel(State#state.fullsync_schedule_tref),
+                    SchedTimer = case
+                        riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster) of
+                        disabled -> undefined;
+                        {error, Err} -> lager:error("Can't schedule fullsync timer: ~p", [Err]),
+                            undefined;
+                        {ok, TRef} -> TRef
+                    end,
+
                     {noreply, State3#state{running_sources = Running,
                                            busy_nodes = NewBusies,
                                            fullsyncs_completed = TotalFullsyncs,
                                            fullsync_start_time = undefined,
-                                           last_fullsync_duration=ElapsedSeconds
+                                           last_fullsync_duration=ElapsedSeconds,
+                                           fullsync_schedule_tref=SchedTimer
                                           }};
                 _ ->
                     % there's something waiting for a response.
