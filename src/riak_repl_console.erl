@@ -573,6 +573,11 @@ del_nat_map([External, Internal]) ->
             ok
     end.
 
+% NB: the following commands are around the "Dead Cluster" redirect feature,
+%     306. They all operate using cluster_id (tuple), not clustername, for now, as 
+%     of this writing we had no reliable way to map a clustername to an id 
+%     over disterlang. When this API becomes available, this feature may use
+%     it. 
 add_block_provider_redirect([FromClusterId, ToClusterId]) ->
     lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
     riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, 
