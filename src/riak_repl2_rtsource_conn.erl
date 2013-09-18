@@ -344,7 +344,7 @@ recv(TcpBin, State = #state{remote = Name,
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
-        {ok, {ack, Seq}, Cont} when ProtoMajor == 2 ->
+        {ok, {ack, Seq}, Cont} when ProtoMajor >= 2 ->
             %% TODO: report this better per-remote
             riak_repl_stats:objects_sent(),
             ok = riak_repl2_rtq:ack(Name, Seq),
