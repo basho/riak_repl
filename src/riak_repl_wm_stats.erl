@@ -108,7 +108,7 @@ get_stats() ->
     jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
-    ++ RTQ 
+    ++ RTQ
     ++ jsonify_stats(Coord,[])
     ++ jsonify_stats(CoordSrv,[]) ++ PGStats ++ jsonify_stats(KbpsSums, []).
 
@@ -174,6 +174,11 @@ jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega),
     jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
     jsonify_stats(T, [{K,list_to_binary(V)}|Acc]);
+jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], Acc) when is_integer(Year), is_integer(Month), is_integer(Day), is_integer(Hour), is_integer(Min), is_integer(Second) ->
+    % the guard clause may be insane, but I just want to be very sure it's a
+    % date time tuple that's being converted.
+    StrDate = httpd_util:rfc1123_date(DateTime),
+    jsonify_stats(T, [{K, StrDate} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]).
 
@@ -226,6 +231,22 @@ jsonify_stats_test_() ->
                           {fullsync_suggested_during_fs,<<>>}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
               _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Coord during fullsync",
+      fun() ->
+             Date = {{2013, 9, 19}, {20, 51, 7}},
+             StrDate = httpd_util:rfc1123_date(Date),
+             Input = [{fullsync_coordinator, [{"bar", [
+                          {last_fullsync_started, Date}
+                      ]}]}],
+             Expected = [{fullsync_coordinator, [{"bar", [
+                          {last_fullsync_started, StrDate}
+                        ]}]}],
+             Got = jsonify_stats(Input, []),
+             ?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Got}) % fail if crash
       end},
 
      {"Coordsrv, empty",
