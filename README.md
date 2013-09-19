@@ -3,7 +3,8 @@ riak_repl
 
 Riak MDC Replication
 
---- PR template
+--- 
+# Pull Request template
 
 ### Testing
 - [ ] manual verification of code
@@ -18,3 +19,15 @@ Riak MDC Replication
 - [ ] internal docs (design docs)
 - [ ] external docs (docs.basho.com)
 - [ ] man pages
+
+
+---
+
+# Deliverables
+
+- design documentation + diagrams
+- eunit tests
+- riak_tests
+- EQC + Pulse tests
+- tests at scale and under heavy load
+- notes for public documentation
