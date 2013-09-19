@@ -333,10 +333,11 @@ recv(TcpBin, State = #state{remote = Name,
                             hb_timeout_tref = HBTRef}) ->
     %% hb_timeout_tref might be undefined if we have are getting
     %% acks/heartbeats back-to-back and we haven't sent a heartbeat yet.
+    {realtime, {ProtoMajor, _}, {ProtoMajor, _}} = State#state.proto,
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
             {noreply, State#state{cont = Cont}};
-        {ok, {ack, Seq}, Cont} when State#state.proto == {2,0} ->
+        {ok, {ack, Seq}, Cont} when ProtoMajor >= 2 ->
             %% TODO: report this better per-remote
             riak_repl_stats:objects_sent(),
             ok = riak_repl2_rtq:ack(Name, Seq),
