@@ -17,6 +17,7 @@ start_link() ->
 %% @spec init([]) -> SupervisorTree
 %% @doc supervisor callback.
 init([]) ->
+    riak_kv_mutator:register(riak_repl_reduced, 5),
     Processes = [
                  {riak_repl_client_sup, {riak_repl_client_sup, start_link, []},
                   permanent, infinity, supervisor, [riak_repl_client_sup]},
