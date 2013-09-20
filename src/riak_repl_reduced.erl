@@ -1,10 +1,15 @@
-%% @doc A riak_kv_mutator to shrink down objects based either on cluster or
-%% bucket settings. Either due to size or legal constraints, it is sometimes
-%% desirable to reduce the amount of data stored on a sink cluster. This
-%% mutator can take objects that are stored fully on another cluster and
-%% reduce the disk space used. It can then pull the full object from the
-%% source cluster if needed. In short, one is trading CPU and (possibly)
+%% @doc A riak_kv_mutator to shrink down objects on a put, then expand them
+%% on a get.  Shrinking is based either on cluster or bucket settings.
+%%
+%% Either due to size or legal constraints, it is sometimes desirable to
+%% reduce the amount of data stored on a sink cluster. This mutator can
+%% take objects that are stored fully on another cluster and reduce the
+%% disk space used. It can then pull the full object from the source
+%% cluster if needed. In short, one is trading CPU and (possibly)
 %% bandwidth to reduce storage cost.
+%%
+%% Like other kv_mutators, this module is used on every put and any get
+%% when the module was used on the object's put.
 %%
 %% == Configuration ==
 %%
