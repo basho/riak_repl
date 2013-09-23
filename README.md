@@ -23,7 +23,7 @@ Riak MDC Replication
 
 ---
 
-# Large Feature Deliverables
+# New Feature Deliverables
 
 - design documentation + diagrams
   - nothing formal
