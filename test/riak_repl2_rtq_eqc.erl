@@ -297,6 +297,35 @@ next_state(S,_V,{call, _, ack, [{Name,N}, _Q]}) ->
 next_state(S,_V,{call, _, _, _}) ->
     S.
 
+invariant(S = #state{rtq=QPid}) when is_pid(QPid) ->
+    MasterQ = generate_master_q(S),
+    MasterQSize = length(MasterQ) * ?BINARIED_OBJ_SIZE,
+    Bytes =  proplists:get_value(bytes, gen_server:call(S#state.rtq,
+                                                        status, infinity)),
+    case MasterQSize ==  Bytes of
+        true ->
+            DumpQ = gen_server:call(QPid, dumpq, infinity),
+            compare_queues(MasterQ, DumpQ);
+        false ->
+            {size_mismatch, {expected, MasterQSize}, {actual, Bytes}}
+    end;
+invariant(_) ->
+    true.
+
+compare_queues(Expected, Actual) ->
+    lists:foldl(fun({A, {Seq, Count, Bin, _MD}=B}, true) ->
+                        case A#qed_item.seq == Seq andalso
+                             A#qed_item.num_items == Count andalso
+                             A#qed_item.item_list == binary_to_term(Bin) of
+                            true ->
+                                true;
+                            false ->
+                                {queue_mismatch, {expected, A}, {actual, B}}
+                        end;
+                   (_, Acc) ->
+                        Acc
+                end, true, lists:zip(Expected, Actual)).
+
 get_first_routable(Client) ->
     #tc{tout = Tout, name = Name} = Client,
     SplitFun = fun(#qed_item{meta = Meta}) ->
@@ -418,7 +447,7 @@ generate_master_q(S) ->
         Tout2 = lists:filter(NotDeliverFilter, Tout),
         Trec2 = lists:filter(NotDeliverFilter, Trec),
         lists:umerge([Tout2, Trec2, Acc])
-    end, [], S#state.cs).
+    end, S#state.tout_no_clients, S#state.cs).
 
 trim(S) ->
     MasterQ = generate_master_q(S),
