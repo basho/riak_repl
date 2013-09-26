@@ -39,7 +39,7 @@ Riak MDC Replication
   
 ---
 
-### BEAM release process
+# BEAM release process
 
 1. git tag the specific commit(s) that will be released
 2. run all eunit tests, EQC tests, store the output in a gist.
