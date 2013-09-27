@@ -328,6 +328,8 @@ reset_ref_seq(Seq, State) ->
 %% call.
 ack_to(Acked, []) ->
     {Acked, []};
+ack_to(Acked, [LessThanAck | _] = Completed) when LessThanAck =< Acked ->
+    ack_to(LessThanAck - 1, Completed);
 ack_to(Acked, [Seq | Completed2] = Completed) ->
     case Acked + 1 of
         Seq ->
@@ -343,7 +345,7 @@ pending(#state{acked_seq = undefined}) ->
 pending(#state{expect_seq = ExpSeq, acked_seq = AckedSeq,
                completed = Completed}) ->
     ExpSeq - AckedSeq - length(Completed) - 1.
-    
+
 peername(#state{transport = T, socket = S}) ->
     case T:peername(S) of
         {ok, Res} ->

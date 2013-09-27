@@ -258,11 +258,11 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                                           qseq = QSeq, cs = Cs}) ->
     Consumers =
         [{Name, [{pending, QSeq - CSeq},  % items to be send
-                 {unacked, CSeq - ASeq},  % sent items requiring ack
+                 {unacked, CSeq - ASeq - Skips},  % sent items requiring ack
                  {drops, Drops},          % number of dropped entries due to max bytes
                  {errs, Errs}]}           % number of non-ok returns from deliver fun
          || #c{name = Name, aseq = ASeq, cseq = CSeq,
-               drops = Drops, errs = Errs} <- Cs],
+               drops = Drops, errs = Errs, skips = Skips} <- Cs],
     Status =
         [{bytes, qbytes(QTab, State)},
          {max_bytes, MaxBytes},
