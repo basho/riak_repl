@@ -126,10 +126,12 @@ format_pid_stat(Pair) ->
 
 
 jsonify_stats([], Acc) ->
+    %?debugFmt("Got []: Acc: ~w", [Acc]),
     lists:flatten(lists:reverse(Acc));
 
 jsonify_stats([{fullsync, Num, _Left}|T], Acc) ->
     jsonify_stats(T, [{"partitions_left", Num} | Acc]);
+
 
 jsonify_stats([{S,PidAsBinary, IP,Port}|T], Acc) when is_atom(S) andalso
         is_list(IP) andalso is_integer(Port) andalso is_binary(PidAsBinary) ->
@@ -149,6 +151,14 @@ jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
     NewV = jsonify_stats(V,[]),
     jsonify_stats(T, [{K,NewV}|Acc]);
 
+jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V) 
+        andalso (K == active) ->
+    case V of
+      {false, Opt} ->
+         NewStats = {active, [{false, Opt}]},
+         %?debugFmt("NewStatus: ~p", [NewStats]),
+         jsonify_stats([NewStats | T], Acc)
+    end;
 jsonify_stats([{K,V}|T], Acc) when is_atom(K)
         andalso (K == server_stats orelse K == client_stats) ->
     case V of
@@ -180,8 +190,12 @@ jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], 
     StrDate = httpd_util:rfc1123_date(DateTime),
     jsonify_stats(T, [{K, StrDate} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
-    jsonify_stats(T, [{K,V}|Acc]).
-
+    jsonify_stats(T, [{K,V}|Acc]);
+%jsonify_stats([{K,V}|T], Acc) when is_integer(V); is_atom(V); is_binary(V)->
+%    jsonify_stats(T, [{K,V}|Acc]);
+jsonify_stats([KV|T], Acc) ->
+    lager:error("Could not encode stats: ~p", [KV]),
+    jsonify_stats(T, Acc).
 -ifdef(TEST).
 
 % The lines line the following:
@@ -193,6 +207,15 @@ jsonify_stats([{K,V}|T], Acc) ->
 
 jsonify_stats_test_() ->
     [
+     %% test with bad stat to make sure
+     %% the catch-all works
+     {"catch-all",
+      fun() ->
+            Actual = [{this_is_a_bad_stat_key, "bar"}],
+            Expected = [{this_is_a_bad_stat_key, <<"bar">>}],
+            ?assertEqual(Expected, jsonify_stats(Actual, [])),
+            _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
      %% simple stats w/out a ton of useful data
      {"client stats",
       fun() ->
@@ -249,6 +272,15 @@ jsonify_stats_test_() ->
              _Result = mochijson2:encode({struct, Got}) % fail if crash
       end},
 
+     {"Socket active, false scheduled",
+      fun() ->
+             Input = [{active, {false, scheduled}}],
+             Expected = [{active, [{false, scheduled}]}],
+             Got = jsonify_stats(Input, []),
+             ?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
      {"Coordsrv, empty",
       fun() ->
               Actual = [{fullsync_coordinator_srv,[]}],
