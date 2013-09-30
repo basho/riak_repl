@@ -154,10 +154,8 @@ jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
 jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V) 
         andalso (K == active) ->
     case V of
-      {false, Opt} ->
-         NewStats = {active, [{false, Opt}]},
-         %?debugFmt("NewStatus: ~p", [NewStats]),
-         jsonify_stats([NewStats | T], Acc)
+      {false, scheduled} ->
+         jsonify_stats([{active, false}, {reactivation_scheduled, true} | T], Acc)
     end;
 jsonify_stats([{K,V}|T], Acc) when is_atom(K)
         andalso (K == server_stats orelse K == client_stats) ->
@@ -191,8 +189,6 @@ jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], 
     jsonify_stats(T, [{K, StrDate} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]);
-%jsonify_stats([{K,V}|T], Acc) when is_integer(V); is_atom(V); is_binary(V)->
-%    jsonify_stats(T, [{K,V}|Acc]);
 jsonify_stats([KV|T], Acc) ->
     lager:error("Could not encode stats: ~p", [KV]),
     jsonify_stats(T, Acc).
@@ -275,9 +271,8 @@ jsonify_stats_test_() ->
      {"Socket active, false scheduled",
       fun() ->
              Input = [{active, {false, scheduled}}],
-             Expected = [{active, [{false, scheduled}]}],
+             Expected = [{active, false}, {reactivation_scheduled, true}],
              Got = jsonify_stats(Input, []),
-             ?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
              ?assertEqual(Expected, Got),
              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
