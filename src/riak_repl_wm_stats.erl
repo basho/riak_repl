@@ -141,8 +141,7 @@ jsonify_stats([{S,PidAsBinary, IP,Port}|T], Acc) when is_atom(S) andalso
                     }|Acc]);
 
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
-    jsonify_stats(T, [{S,
-                       list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
+    jsonify_stats(T, [{S, list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
     jsonify_stats(T, [{K,list_to_binary(riak_repl_util:safe_pid_to_list(V))}|Acc]);
 
@@ -174,9 +173,7 @@ jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso 
 jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
-jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega),
-                                                   is_integer(Secs),
-                                                   is_integer(Micro) ->
+jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega), is_integer(Secs), is_integer(Micro) ->
     StrDate = httpd_util:rfc1123_date(calendar:now_to_local_time(Now)),
     jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
@@ -275,6 +272,45 @@ jsonify_stats_test_() ->
              ?assertEqual(Expected, Got),
              _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
+
+     {"Test catch-all",
+      fun() ->
+             Input = [{foo, bar, baz, 100, 200}],
+             Got = jsonify_stats(Input, []),
+             Expected = [],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test pid match",
+      fun() ->
+             Input = [{foo, self()}],
+             Got = jsonify_stats(Input, []),
+             MyPid = erlang:list_to_binary(erlang:pid_to_list(self())),
+             Expected = [{foo,MyPid}],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test ip:port",
+      fun() ->
+             Input = [{foo, "127.0.0.1", 9010}],
+             Got = jsonify_stats(Input, []),
+             Expected = [{foo,<<"127.0.0.1:9010">>}],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test a,b,c,d:port",
+      fun() ->
+             Input = [{foo, {127,0,0,1}, 9010}],
+             Got = jsonify_stats(Input, []),
+             Expected = [{foo,<<"127.0.0.1:9010">>}],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+
      {"Coordsrv, empty",
       fun() ->
               Actual = [{fullsync_coordinator_srv,[]}],
