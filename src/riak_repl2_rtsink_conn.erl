@@ -336,6 +336,8 @@ reset_ref_seq(Seq, State) ->
 %% call.
 ack_to(Acked, []) ->
     {Acked, []};
+ack_to(Acked, [LessThanAck | _] = Completed) when LessThanAck =< Acked ->
+    ack_to(LessThanAck - 1, Completed);
 ack_to(Acked, [Seq | Completed2] = Completed) ->
     case Acked + 1 of
         Seq ->
