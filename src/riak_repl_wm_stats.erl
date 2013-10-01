@@ -32,7 +32,6 @@
          pretty_print/2,
          jsonify_stats/2
         ]).
-
 -include_lib("webmachine/include/webmachine.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -263,7 +262,7 @@ jsonify_stats_test_() ->
                           {last_fullsync_started, StrDate}
                         ]}]}],
              Got = jsonify_stats(Input, []),
-             ?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
+             %?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
              ?assertEqual(Expected, Got),
              _Result = mochijson2:encode({struct, Got}) % fail if crash
       end},
