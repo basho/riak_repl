@@ -136,11 +136,12 @@ get_sink_pids() ->
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
-    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
+    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined)) of
         %% always put the objects onto the shared queue in the new format; we'll
         %% down-convert if we have to before sending them to the RT sinks (based
         %% on what the RT source and sink negotiated as the common version).
-        Objects when is_list(Objects) ->
+        Objects0 when is_list(Objects0) ->
+            Objects = Objects0 ++ [RObj],
             BinObjs = riak_repl_util:to_wire(w1, Objects),
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
