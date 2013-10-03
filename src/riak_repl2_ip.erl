@@ -5,6 +5,7 @@
         maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
 
 -ifdef(TEST).
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -316,12 +317,13 @@ make_ifaddrs(Interfaces) ->
 
 
 get_matching_address_test_() ->
-    {setup, fun() ->
+        error_logger:tty(false),
+        {setup, fun() ->
                 application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
                         9090}),
                 lager:start(),
-                %% for debugging
-                %%lager:set_loglevel(lager_console_backend, debug)
+                %% skip warning and info messages during eunit runs
+                lager:set_loglevel(lager_console_backend, error),
                 ok
         end,
         fun(_) ->
@@ -481,6 +483,7 @@ get_matching_address_test_() ->
         ]}.
 
 determine_netmask_test_() ->
+    error_logger:tty(false),
     [
         {"simple case",
             fun() ->
@@ -504,6 +507,7 @@ determine_netmask_test_() ->
     ].
 
 natmap_test_() ->
+    error_logger:tty(false),
     [
         {"forward lookups work",
             fun() ->

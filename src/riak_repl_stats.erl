@@ -339,6 +339,7 @@ is_rt_dirty() ->
 -ifdef(TEST).
 
 repl_stats_test_() ->
+    error_logger:tty(false),
     {"stats test", setup, fun() ->
                     folsom:start(),
                     meck:new(folsom_utils, [passthrough]),
@@ -368,6 +369,7 @@ repl_stats_test_() ->
     }.
 
 test_register_stats() ->
+   error_logger:tty(false),
     register_stats(),
     RegisteredReplStats = [Stat || {App, Stat} <- folsom_metrics:get_metrics(),
                                    App == riak_repl],
@@ -375,6 +377,7 @@ test_register_stats() ->
     ?assertEqual(lists:sort(Stats), lists:sort(RegisteredReplStats)).
 
 test_populate_stats() ->
+    error_logger:tty(false),
     Bytes = 1000,
     ok = client_bytes_sent(Bytes),
     ok = client_bytes_recv(Bytes),
@@ -396,6 +399,7 @@ test_populate_stats() ->
     ok = rt_sink_errors().
 
 test_check_stats() ->
+   error_logger:tty(false),
     Expected = [
         {server_bytes_sent,1000},
         {server_bytes_recv,1000},

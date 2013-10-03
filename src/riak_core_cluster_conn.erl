@@ -11,6 +11,7 @@
 -include_lib("riak_core/include/riak_core_connection.hrl").
 
 -ifdef(TEST).
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 %% For testing, we need to have two different cluster manager services running
 %% on the same node, which is normally not done. The remote cluster service is
