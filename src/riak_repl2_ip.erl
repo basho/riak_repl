@@ -324,8 +324,8 @@ get_matching_address_test_() ->
                 application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
                         9090}),
                 lager:start(),
-                %% for debugging
-                %%lager:set_loglevel(lager_console_backend, debug)
+                %% skip warning and info messages during eunit runs
+                lager:set_loglevel(lager_console_backend, error),
                 ok
         end,
         fun(_) ->
