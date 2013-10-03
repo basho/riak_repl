@@ -5,6 +5,7 @@
 % Why? Because it's nice to know that system can start.
 
 can_start_test() ->
+     error_logger:tty(false),
     {timeout, 60000, {setup, fun() ->
         % core features that are needed
         {ok, _Eventer} = riak_core_ring_events:start_link(),
