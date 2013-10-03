@@ -21,6 +21,7 @@
 }).
 
 connection_test_() ->
+    error_logger:tty(false),
     {foreach, fun() ->
         riak_repl_test_util:start_test_ring(),
         riak_repl_test_util:abstract_gen_tcp(),
