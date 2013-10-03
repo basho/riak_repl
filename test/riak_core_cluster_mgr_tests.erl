@@ -6,6 +6,7 @@
 
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TRACE(Stmt),Stmt).
@@ -31,6 +32,7 @@
 -define(MULTINODE_REMOTE_ADDR, {"127.0.0.1", 6097}).
 
 single_node_test_() ->
+    error_logger:tty(false),
     {setup,
     fun start_link_setup/0,
     fun(Pids) ->
