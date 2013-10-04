@@ -2,6 +2,11 @@
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_rtq).
 
+-ifdef(TEST).
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% @doc Queue module for realtime replication.
 %%
 %% The queue strives to reliably pass on realtime replication, with the
@@ -558,7 +563,7 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
         C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
     catch
         _:_ ->
-            riak_repl_stats:rt_source_errors(),
+            %riak_repl_stats:rt_source_errors(),
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.
@@ -724,3 +729,68 @@ minseq(QTab, QSeq) ->
             MinSeq - 1
     end.
 
+-ifdef(TEST).
+-record(test_state, {rtq, %% pid of queue process
+                     qseq=0, %% Queue seq number
+                     max_seq=0,
+                     max_bytes=0}).
+-define(DUP_TESTER, "a").
+-define(NUM_TESTS, 10000).
+
+queue_dupes_test() ->
+    ?debugMsg("In queue_dupes_test!"),
+    TestState = test_init({size, 1048576}),
+    %TestState1 = push_n(TestState, ?NUM_TESTS),
+    %pull_n(TestState1, ?NUM_TESTS).
+    push_pull_n(TestState, ?NUM_TESTS, 3).
+
+%% start the RTQ *and* set the max bytes for the queue
+test_init({size, MaxBytes}) ->
+    riak_repl_test_util:maybe_unload_mecks([riak_repl_stats]),
+    {ok, Pid} = riak_repl2_rtq:start_link(),
+    unlink(Pid),
+    ?MODULE:register(?DUP_TESTER),
+    ?debugFmt("Started rtq: ~p, consumer name:~p~n", [Pid, ?DUP_TESTER]),
+    #test_state{rtq=Pid}.
+
+push_pull_n(_S, 0, _M) ->
+    ?debugMsg("Done with push_pull_n!");
+push_pull_n(S0, N, M) when N > 0 ->
+    S = push_n(S0, M),
+    pull_n(S, M),
+    push_pull_n(S, N-1, M).
+
+push_n(TestState, 0) ->
+    ?debugFmt("Done with push_n, highest seq:~p~n", [TestState#test_state.qseq]),
+    #test_state{rtq = TestState#test_state.rtq, 
+                qseq = TestState#test_state.qseq,
+                max_seq = TestState#test_state.qseq};
+push_n(TestState, N) when N > 0 ->
+    List = [make_ref()],
+    NumItems = length(List),
+    Bin = term_to_binary(List),
+    riak_repl2_rtq:push(NumItems, Bin, [{routed, [?DUP_TESTER]}]),
+    TestState1 = TestState#test_state{qseq = TestState#test_state.qseq+1},
+    push_n(TestState1, N-1).
+
+pull_n(TestState, 0) -> 
+    ?debugFmt("Done with pull, qseq is now:~p~n", [TestState#test_state.qseq]);
+pull_n(TestState, N) when N > 0 ->
+    %?debugFmt("in pull_n, N:~p~n", [N]),
+    TestState1 = pull_item(TestState),
+    pull_n(TestState1, N-1).
+
+pull_item(TestState0) ->
+    F = fun({Seq, _Size, Bin, Meta} = _Item) ->
+        ?debugFmt("In deliver fun: seq:~p, bin:~p, meta:~w~n", [Seq, binary_to_term(Bin), Meta]),
+        CheckSeq = erlang:abs(Seq - TestState0#test_state.max_seq),
+        ?assertEqual(CheckSeq, Seq),
+        ?debugFmt("TestState seq:~p~n", [CheckSeq])
+        %?MODULE:ack_sync(?DUP_TESTER, Seq)
+
+    end,
+    riak_repl2_rtq:pull(?DUP_TESTER, F),
+    #test_state{rtq = TestState0#test_state.rtq, qseq = TestState0#test_state.qseq - 1}.
+
+
+-endif.
