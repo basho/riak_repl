@@ -19,8 +19,7 @@
 -record(state, {rtq, %% pid of queue process
                 qseq=0, %% Queue seq number
                 tout_no_clients = [], % No clients available to pull
-                pcs=[a], %% potential client names
-                %pcs=[a, b, c, d, e, f, g], %% potential client names
+                pcs=[a, b, c, d, e, f, g], %% potential client names
                 cs=[], %% connected clients
                 max_bytes=0}).
 
@@ -40,7 +39,7 @@ rtq_test_() ->
     fun(_) -> [
 
         {"prop_main", timeout, 40,
-            ?_assert(eqc:quickcheck(eqc:testing_time(20,
+            ?_assert(eqc:quickcheck(eqc:testing_time(240,
                                                         ?MODULE:prop_main())))},
 
         {"prop_parallel", timeout, 40,
@@ -165,8 +164,8 @@ command(S) ->
           S#state.pcs /= []] ++
         [{call, ?MODULE, rm_consumer, [client_name(S), S#state.rtq]} ||
           S#state.cs /= []] ++
-        %[{call, ?MODULE, replace_consumer, [client_name(S), S#state.rtq]} ||
-        %  S#state.cs /= []] ++
+        [{call, ?MODULE, replace_consumer, [client_name(S), S#state.rtq]} ||
+          S#state.cs /= []] ++
         [{call, ?MODULE, pull, [client_name(S), S#state.rtq]} ||
           S#state.cs /= []] ++
         [{call, ?MODULE, ack, [
