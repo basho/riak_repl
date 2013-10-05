@@ -39,7 +39,7 @@ rtq_test_() ->
     fun(_) -> [
 
         {"prop_main", timeout, 40,
-            ?_assert(eqc:quickcheck(eqc:testing_time(20,
+            ?_assert(eqc:quickcheck(eqc:testing_time(240,
                                                         ?MODULE:prop_main())))},
 
         {"prop_parallel", timeout, 40,
@@ -79,8 +79,9 @@ prop_parallel() ->
                 cleanup(),
                 {H, S, Res} = run_parallel_commands(?MODULE,Cmds),
                 kill_all_pids({H, S}),
-                aggregate(command_names(Cmds),
-                    pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok))
+%                aggregate(command_names(Cmds),
+                command_names(Cmds),
+                    pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok)
         end))).
 
 prop_pulse() ->
@@ -366,28 +367,27 @@ get_rtq_bytes(_Q) ->
 
 
 pull(Name, Q) ->
-    lager:info("~p pulling from ~p~n", [Name, Q]),
     Ref = make_ref(),
     Self = self(),
-    F = fun(Item) ->
-            Self ! {Ref, Item},
+    F = fun(Entry) ->
+            lager:info("DeliverFun called, sending ref:~p, item:~p~n", [Ref, Entry]),
+            Self ! {Ref, Entry},
             receive
                 {Ref, ok} ->
-                    ok
+                    lager:info("DeliverFun got receive for ~p~n", [Ref]),
+                   ok
             after
-                5 ->
+                20 ->
                     lager:info("No pull ack from ~p~n", [Name]),
                     error 
             end
     end,
     riak_repl2_rtq:pull(Name, F),
     receive
-        {Ref, {Seq, Size, Item, Meta}} ->
-            lager:info("~p got ~p size ~p seq ~p meta ~p~n", [Name, Item, Size, Seq, Meta]),
+        {Ref, {Seq, Size, Item, Meta}=_Entry} ->
+            lager:info("~p got ~p size ~p seq ~p meta ~p~n", [Name, binary_to_term(Item), Size, Seq, Meta]),
             Q ! {Ref, ok},
-            {Seq, Size, binary_to_term(Item)};
-        {Ref, _Wut} ->
-            none
+            {Seq, Size, binary_to_term(Item)}
     after
         20 ->
             lager:info("queue empty: ~p~n", [Name]),
@@ -403,6 +403,7 @@ delete_client(Name, S) ->
     S#state{cs=lists:keydelete(Name, #tc.name, S#state.cs)}.
 
 update_client(C, S) ->
+    %?debugFmt("client:~p, seq:~p~n", [C#tc.name, S#state.qseq]),
     S#state{cs=[C|lists:keydelete(C#tc.name, #tc.name, S#state.cs)]}.
 
 gen_seq(#tc{trec = []}) -> no_seq;
