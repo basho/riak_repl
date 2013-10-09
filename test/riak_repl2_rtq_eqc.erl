@@ -375,7 +375,7 @@ pull(Name, Q) ->
                 {Ref, ok} ->
                     ok
             after
-                5 ->
+                100 ->
                     lager:info("No pull ack from ~p~n", [Name]),
                     error 
             end
@@ -389,7 +389,7 @@ pull(Name, Q) ->
         {Ref, _Wut} ->
             none
     after
-        20 ->
+        100 ->
             lager:info("queue empty: ~p~n", [Name]),
             none
     end.
