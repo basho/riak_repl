@@ -389,7 +389,7 @@ pull(Name, Q) ->
         {Ref, _Wut} ->
             none
     after
-        100 ->
+        500 ->
             lager:info("queue empty: ~p~n", [Name]),
             none
     end.
