@@ -52,7 +52,9 @@
 -spec mutate_get(InObject :: riak_object:riak_object()) ->
     riak_object:riak_object() | 'notfound'.
 mutate_get(InObject) ->
-    lager:debug("mutate_get"),
+    Key = riak_object:key(InObject),
+    Bucket = riak_object:bucket(InObject),
+    lager:debug("mutate_get for ~p in ~p", [Key, Bucket]),
     Contents = riak_object:get_contents(InObject),
     Reals = lists:foldl(fun({Meta, _Value}, N) ->
         case dict:find(?MODULE, Meta) of
@@ -68,6 +70,7 @@ mutate_get(InObject) ->
             proxy_get(InObject);
         always ->
             % not a reduced object
+            lager:debug("Not a reduced object"),
             InObject;
         N ->
             BKey = {riak_object:bucket(InObject), riak_object:key(InObject)},
@@ -80,11 +83,13 @@ mutate_get(InObject) ->
                     lager:debug("odd that we get ourselves as a pref. doing proxy"),
                     proxy_get(InObject);
                 {Single, _PrimaryNess} ->
+                    lager:debug("local ring get"),
                     local_ring_get(InObject, BKey, Single)
             end
     end.
 
 local_ring_get(InObject, BKey, Partition) ->
+    lager:debug("Local ring get for ~p on partition ~p", [BKey, Partition]),
     {_P, MonitorTarg} = Partition,
     MonRef = erlang:monitor(process, MonitorTarg),
     Preflist = [Partition],
@@ -93,8 +98,10 @@ local_ring_get(InObject, BKey, Partition) ->
     riak_core_vnode_master:command(Preflist, Req, {raw, ReqId, self()}, riak_kv_vnode_master),
     receive
         {ReqId, {r, {ok, RObj}, _, ReqId}} ->
+            lager:debug("successful get!"),
             RObj;
         {ReqId, {r, {error, notfound}, _, ReqId}} ->
+            lager:debug("not found, falling back to proxy"),
             proxy_get(InObject);
         {'DOWN', MonRef, prcess, MonitorTarg, Wut} ->
             lager:info("could not get value from target due to exit: ~p", [Wut]),
@@ -134,6 +141,7 @@ proxy_get(Leader, Cluster, Object) ->
             lager:debug("Couldn't find ~p on cluster ~p", [{Bucket,Key},Cluster]),
             notfound;
         {ok, NewObject} ->
+            lager:debug("successful proxy get!"),
             NewObject;
         Resp ->
             lager:debug("no idea: ~p", [Resp]),
