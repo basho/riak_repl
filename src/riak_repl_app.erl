@@ -311,8 +311,25 @@ prep_stop(_State) ->
 
 %% This function is only here for nodes using a version < 1.3. Remove it in
 %% future version
-get_matching_address(IP, CIDR) ->
+get_matching_address(IP, Mask) ->
+    %% Riak 1.2.x incorrectly calculates the netmask before passing it to this
+    %% function. This works with 1.2 nodes, that expect the wrong input, but
+    %% the bug was fixed, so we need to undo that conversion here before
+    %% calling get_matching_address.
+    CIDR = unmask_address(list_to_binary(tuple_to_list(IP)), Mask, 32),
     riak_repl2_ip:get_matching_address(IP, CIDR).
+
+%% this is kind of brute force-y, but I couldn't cook up a better solution
+unmask_address(_, _, 0) ->
+    %% should never happen in normal usage
+    error;
+unmask_address(IP, Mask, Size) ->
+    case IP of
+        <<Mask:Size, _/bitstring>> ->
+            Size;
+        _ ->
+            unmask_address(IP, Mask, Size - 1)
+    end.
 
 %%%%%%%%%%%%%%%%
 %% Unit Tests %%
