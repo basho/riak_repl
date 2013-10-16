@@ -3,7 +3,7 @@
  riak_repl,
  [{description,  "Enterprise replication for Riak"},
   {id,           "riak_repl"},
-  {vsn,          "1.4.2"},
+  {vsn,          git},
   {applications, [kernel,
                   stdlib,
                   sasl,
