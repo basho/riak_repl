@@ -199,8 +199,9 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
     Zipped = lists:zip(Results, Nodes2),
     MaybeRetry = fun
         ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
-            lager:debug("XXX Got a badrpc"),
-            rpc:call(Node, riak_repl_app, get_matching_address, Args);
+            RPCResult = rpc:call(Node, riak_repl_app, get_matching_address, Args),
+            lager:debug("rpc to get_matching_address: ~p", [RPCResult]),
+            RPCResult;
         ({Result, _Node}) ->
             Result
     end,
