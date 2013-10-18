@@ -156,14 +156,17 @@ cluster_mgr_member_fun({IP, Port}) ->
             [{IP, Port}];
         CIDR ->
             ?TRACE(lager:notice("CIDR is ~p", [CIDR])),
-            %AddressMask = mask_address(NormIP, MyMask),
+            %AddressMask = riak_repl2_ip:mask_address(NormIP, MyMask),
             %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
                 get_matching_address, [RealIP, CIDR]),
             % when this code was written, a multicall will list the results
             % in the same order as the nodes where tried.
-            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP, CIDR]),
+            %% Anya specific
+            AddressMask = riak_repl2_ip:mask_address(RealIP, CIDR),
+            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP,
+                                                                     AddressMask]),
             case RealIP == NormIP of
                 true ->
                     %% No nat, just return the results
@@ -196,6 +199,7 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
     Zipped = lists:zip(Results, Nodes2),
     MaybeRetry = fun
         ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
+            lager:debug("XXX Got a badrpc"),
             rpc:call(Node, riak_repl_app, get_matching_address, Args);
         ({Result, _Node}) ->
             Result
