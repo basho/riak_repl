@@ -667,11 +667,21 @@ trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
     end.
 
 trim_q_entries(QTab, MaxBytes, Cs, State) ->
+    {Cs2, State2, Entries, Objects} = trim_q_entries(QTab, MaxBytes, Cs, State, 0, 0),
+    if
+        Entries + Objects > 0 ->
+            lager:notice("Dropped ~p objects in ~p entries due to reaching maximum queue size of ~p bytes", [Objects, Entries, MaxBytes]);
+        true ->
+            ok
+    end,
+    {Cs2, State2}.
+
+trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
     case ets:first(QTab) of
         '$end_of_table' ->
-            {Cs, State};
+            {Cs, State, Entries, Objects};
         TrimSeq ->
-            [{_, _, Bin, _Meta}] = ets:lookup(QTab, TrimSeq),
+            [{_, NumObjects, Bin, _Meta}] = ets:lookup(QTab, TrimSeq),
             ShrinkSize = ets_obj_size(Bin, State),
             NewState = update_q_size(State, -ShrinkSize),
             ets:delete(QTab, TrimSeq),
@@ -686,9 +696,9 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
             %% Rinse and repeat until meet the target or the queue is empty
             case qbytes(QTab, NewState) > MaxBytes of
                 true ->
-                    trim_q_entries(QTab, MaxBytes, Cs2, NewState);
+                    trim_q_entries(QTab, MaxBytes, Cs2, NewState, Entries + 1, Objects + NumObjects);
                 _ ->
-                    {Cs2, NewState}
+                    {Cs2, NewState, Entries + 1, Objects + NumObjects}
             end
     end.
 
