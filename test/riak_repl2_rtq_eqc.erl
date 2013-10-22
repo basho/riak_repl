@@ -35,31 +35,39 @@
 % queued item, get it?
 -record(qed_item, {seq, num_items, item_list = [], meta = []}).
 
--ifdef(TEST).
 rtq_test_() ->
     {spawn,
      [
-      {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(240, ?QC_OUT(prop_main()))))},
-      {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(240, ?QC_OUT(prop_parallel()))))}
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [ % run qc tests
+          {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(50, ?QC_OUT(prop_main()))))},
+          {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(50, ?QC_OUT(prop_parallel()))))}
+       ]
+      }
      ]
     }.
--endif.
 
 max_bytes() ->
     ?LET(MaxBytes, nat(), {size, (MaxBytes+1) * ?BINARIED_OBJ_SIZE}).
 
-cleanup() ->
-    catch(meck:unload(riak_repl_stats)),
+setup() ->
     ok = meck:new(riak_repl_stats, [passthrough]),
     ok = meck:expect(riak_repl_stats, rt_source_errors,
         fun() -> ok end),
     ok = meck:expect(riak_repl_stats, rt_sink_errors,
-        fun() -> ok end).
+        fun() -> ok end),
+    ok.
+
+cleanup(_) ->
+    catch(meck:unload(riak_repl_stats)),
+    ok.
 
 prop_main() ->
     ?FORALL(Cmds, commands(?MODULE),
         begin
-                cleanup(),
+%                setup(),
                 {H, S, Res} = run_commands(?MODULE,Cmds),
                 catch(exit(S#state.rtq, kill)),
                 aggregate(command_names(Cmds),
@@ -71,7 +79,7 @@ prop_parallel() ->
     ?FORALL(Cmds, parallel_commands(?MODULE),
     ?ALWAYS(Repeat,
         begin
-                cleanup(),
+%                setup(),
                 {H, S, Res} = run_parallel_commands(?MODULE,Cmds),
                 kill_all_pids({H, S}),
 %                aggregate(command_names(Cmds),
@@ -83,7 +91,6 @@ prop_pulse() ->
   ?FORALL(Cmds, parallel_commands(?MODULE),
   ?PULSE(HSR={_, _, R},
     begin
-      cleanup(),
       run_parallel_commands(?MODULE, Cmds)
     end,
     %catch(exit((element(2, HSR))#state.rtq, kill)),
