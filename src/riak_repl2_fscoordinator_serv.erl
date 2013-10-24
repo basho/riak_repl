@@ -101,7 +101,7 @@ init({Socket, Transport, OkProto, _Props}) ->
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
     {ok, Proto} = OkProto,
     lager:info("Starting fullsync coordinator server (sink) with
-               max_fssink_node=~p and proto=~p", [Max, Proto]),
+               max_fssink_node=~p", [Max]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv,
