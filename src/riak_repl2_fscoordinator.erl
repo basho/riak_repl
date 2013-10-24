@@ -486,6 +486,24 @@ handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waitin
             State3 = start_fssource(Partition2, Ip, Port, State2),
             start_up_reqs(State3)
     end;
+handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} = State) ->
+    lager:debug("anya location_busy, partition = ~p", [Partition]),
+    case proplists:get_value(Partition, Waiting) of
+        undefined ->
+            State;
+        {N, OldNode, Tref} ->
+            lager:info("anya Partition ~p is too busy on cluster ~p at node ~p",
+                       [Partition, State#state.other_cluster, OldNode]),
+            erlang:cancel_timer(Tref),
+            Waiting2 = proplists:delete(Partition, Waiting),
+            State2 = State#state{whereis_waiting = Waiting2},
+            Partition2 = {Partition, N, OldNode},
+            PQueue = State2#state.partition_queue,
+            PQueue2 = queue:in(Partition2, PQueue),
+            NewBusies = sets:add_element(OldNode, State#state.busy_nodes),
+            State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
+            start_up_reqs(State3)
+    end;
 handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
         undefined ->
@@ -503,6 +521,19 @@ handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Wai
             NewBusies = sets:add_element(Node, State#state.busy_nodes),
             State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
             start_up_reqs(State3)
+    end;
+handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
+    lager:warning("anya location_down, partition = ~p", [Partition]),
+    case proplists:get_value(Partition, Waiting) of
+        undefined ->
+            State;
+        {_N, _OldNode, Tref} ->
+            lager:info("Partition ~p is unavailable on cluster ~p",
+                [Partition, State#state.other_cluster]),
+            erlang:cancel_timer(Tref),
+            Waiting2 = proplists:delete(Partition, Waiting),
+            State2 = State#state{whereis_waiting = Waiting2},
+            start_up_reqs(State2)
     end;
 handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Waiting} = State) ->
     case proplists:get_value(Partition, Waiting) of
