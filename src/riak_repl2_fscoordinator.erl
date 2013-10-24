@@ -487,7 +487,7 @@ handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waitin
             start_up_reqs(State3)
     end;
 handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} = State) ->
-    lager:info("anya location_busy, partition = ~p", [Partition]),
+    lager:debug("anya location_busy, partition = ~p", [Partition]),
     case proplists:get_value(Partition, Waiting) of
         undefined ->
             State;
