@@ -462,6 +462,7 @@ diff_hash(PBKey, DiffState) ->
 %% Called when the key is missing on the local side
 missing_key(PBKey, DiffState) ->
     BKey = unpack_key(PBKey),
+    lager:debug([{trace_key, missing}], "missing key: ~p", [BKey]),
     Fsm = DiffState#diff_state.fsm,
     Ref = DiffState#diff_state.ref,
     gen_fsm:send_event(Fsm, {Ref, {merkle_diff, {BKey, vclock:fresh()}}}),
