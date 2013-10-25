@@ -177,7 +177,7 @@ mutate_put(InMeta, InVal, RevealedMeta, In, Props) ->
 
 mutate_put(InMeta, InVal, RevealedMeta, _In, _Props, local) ->
     lager:debug("local reduction: only tagging cluster of record"),
-    Cluster = riak_core_connection:symbolic_clustername(),
+    Cluster = get_clustername(),
     Meta2 = dict:store(cluster_of_record, Cluster, InMeta),
     RevealedMeta2 = dict:store(cluster_of_record, Cluster, RevealedMeta),
     {Meta2, InVal, RevealedMeta2};
@@ -206,6 +206,26 @@ mutate_put(InMeta, InVal, RevealedMeta, RObj, BucketProps, NumberReals) ->
             lager:debug("only keep ~p real copies from ~p", [NumberReals, length(Preflist)]),
             {RealsList,_Ignored} = lists:split(NumberReals, Preflist),
             maybe_reduce(InMeta, InVal, RevealedMeta, RObj, RealsList, NumberReals)
+    end.
+
+% the symbolic_clustername functions in riak_core_connection always return
+% a string. However, if the cluster is not named, that string is useless
+% for proxy get. So, rather than do a proxy get that can never succeede
+% we check if the cluster is actually named, and if not, return
+% 'undefined' rather than lie.
+get_clustername() ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            get_clustername(Ring);
+        {error, Reason} ->
+            lager:error("Can't read symbolic clustername because: ~p", [Reason]),
+            undefined
+    end.
+
+get_clustername(Ring) ->
+    case riak_core_ring:get_meta(symbolic_clustername, Ring) of
+        {ok, Name} -> Name;
+        undefined -> undefined
     end.
 
 maybe_reduce(InMeta, InVal, RevealedMeta, RObj, RealList, NumberReals) ->
