@@ -9,6 +9,9 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) ->
+                              io:format(user, Str, Args) end, P)).
 
 -define(SINK_PORT, 5008).
 -define(all_remotes, ["a", "b", "c", "d", "e"]).
@@ -41,10 +44,37 @@
     already_routed
 }).
 
-prop_test_() ->
-    {timeout, 60000, fun() ->
-        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main())))
-    end}.
+%prop_test_() ->
+%    {timeout, 60000, fun() ->
+%        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main())))
+%    end}.
+
+eqc_test_() ->
+    {spawn,
+    [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [%% Run the quickcheck tests
+        {timeout, 6000,
+         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(?MODULE:prop_main()))))}
+       ]
+      }
+     ]
+    }.
+
+setup() ->
+    %ok = meck:new(riak_repl_stats, [passthrough]),
+    %ok = meck:expect(riak_repl_stats, rt_source_errors,
+    %    fun() -> ok end),
+    %ok = meck:expect(riak_repl_stats, rt_sink_errors,
+    %    fun() -> ok end),
+    ok.
+
+cleanup(_) ->
+    %meck:unload(riak_repl_stats),
+    %unload_mecks(),
+    ok.
 
 prop_main() ->
     ?FORALL(Cmds, commands(?MODULE),
@@ -59,7 +89,7 @@ prop_main() ->
 unload_mecks() ->
     riak_repl_test_util:maybe_unload_mecks([
         stateful, riak_core_ring_manager, riak_core_ring,
-        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq]).
+        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq, riak_repl_stats]).
 
 %% ====================================================================
 %% Generators (including commands)
@@ -108,7 +138,7 @@ precondition(S, {call, _, push_object, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, Connect, [Remote]}) when Connect == connect_from_v1; Connect == connect_from_v2 ->
     lists:member(Remote, S#state.remotes_available);
-precondition(S, {call, _, Connect, [#src_state{done_fun_queue = []}, _]}) ->
+precondition(_S, {call, _, _Connect, [#src_state{done_fun_queue = []}, _]}) ->
     false;
 precondition(_S, _Call) ->
     true.
@@ -119,12 +149,13 @@ precondition(_S, _Call) ->
 
 initial_state() ->
     teardown(),
-    setup(),
+    setup1(),
     #state{}.
 
 teardown() ->
     % we will be resetting many mecks, which link to this, but we don't
     % want to kill our test process.
+    %?debugMsg("running teardown!"),
     process_flag(trap_exit, true),
     % read out messages that may be left over from a previous run
     read_all_rt_bugs(),
@@ -136,7 +167,7 @@ teardown() ->
     riak_repl2_rtsink_conn_sup:start_link(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon).
 
-setup() ->
+setup1() ->
     riak_core_tcp_mon:start_link(),
     riak_repl_test_util:abstract_stateful(),
     abstract_ring_manager(),
@@ -256,7 +287,7 @@ postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = Sr
         _QWhat ->
             false
     end;
-postcondition(S, {call, _, push_object, [{Remote, #src_state{version = 2} = SrcState}, RiakObj, AlreadyRouted]}, Res) ->
+postcondition(_S, {call, _, push_object, [{Remote, #src_state{version = 2} = _SrcState}, _RiakObj, _AlreadyRouted]}, Res) ->
     RTQRes = Res#push_result.rtq_res,
     HelperRes = Res#push_result.donefun,
     Routed = lists:member(Remote, Res#push_result.already_routed),
@@ -304,7 +335,7 @@ postcondition(_S, {call, _, call_donefun, [{Remote, SrcState}, NthDoneFun]}, Res
                     case riak_repl2_rtframe:decode(TCPBin) of
                         {ok, {ack, _SomeSeq}, <<>>} ->
                             true;
-                        FrameDecode ->
+                        _FrameDecode ->
                             false
                     end;
                 {1, {{error, timeout}, {error, timeout}}} ->
@@ -483,7 +514,7 @@ start_service_manager() ->
 
 abstract_fake_source() ->
     riak_repl_test_util:reset_meck(fake_source, [no_link, non_strict]),
-    meck:expect(fake_source, connected, fun(Socket, Transport, Endpoint, Proto, Pid, Props) ->
+    meck:expect(fake_source, connected, fun(Socket, Transport, Endpoint, Proto, Pid, _Props) ->
         Transport:controlling_process(Socket, Pid),
         gen_server:call(Pid, {connected, Socket, Endpoint, Proto})
     end).
@@ -508,7 +539,7 @@ fake_rtq(Bug, Queue) ->
             Bug ! Got,
             Queue2 = [{NumItems, Bin, Meta} | Queue],
             fake_rtq(Bug, Queue2);
-        Else ->
+        _Else ->
             ok
     end.
 
@@ -537,7 +568,7 @@ connect_source(Version, Remote) ->
         {active, false}],
     ClientSpec = {{realtime, [Version]}, {TcpOptions, fake_source, Pid}},
     IpPort = {{127,0,0,1}, ?SINK_PORT},
-    ConnRes = riak_core_connection:sync_connect(IpPort, ClientSpec),
+    _ConnRes = riak_core_connection:sync_connect(IpPort, ClientSpec),
     {ok, Pid}.
 
 fake_source_push_obj(Source, Binary, AlreadyRouted) ->
@@ -565,7 +596,7 @@ fake_source_loop(#fake_source{socket = undefined} = State) ->
         {'$gen_call', From, Aroo} ->
             gen_server:reply(From, {error, badcall}),
             exit({badcall, Aroo});
-        What ->
+        _What ->
             fake_source_loop(State)
     end;
 fake_source_loop(State) ->
@@ -618,7 +649,7 @@ fake_source_loop(State) ->
             fake_source_loop(State#fake_source{tcp_bug = NewBug});
         {tcp_closed, Socket} when Socket == State#fake_source.socket ->
             ok;
-        What ->
+        _What ->
             fake_source_loop(State)
     end.
 

@@ -109,16 +109,18 @@ single_node_test_() ->
         end},
 
         {"connect to remote cluster", fun() ->
-            start_fake_remote_cluster_service(),
             become_leader(),
+            lager:info("Is leader:~p~n", [riak_core_cluster_mgr:get_is_leader()]),
+            timer:sleep(2000),
             DoneFun = fun() ->
-                case riak_core_cluster_mgr:get_known_clusters() of
+                Out = riak_core_cluster_mgr:get_known_clusters(),
+                case Out of
                     {ok, [?REMOTE_CLUSTER_NAME]} = Out ->
                         {done, Out};
                     _ ->
                         busy
                 end
-            end,
+            end,         
             Knowners = wait_for(DoneFun),
             ?assertEqual({ok, [?REMOTE_CLUSTER_NAME]}, Knowners)
         end},
@@ -271,7 +273,6 @@ multinode_test__() ->
             rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Superman, undefined]),
             start_fake_remote_cluster_listener(),
             rpc:call(Superman, riak_core_cluster_mgr, add_remote_cluster, [?MULTINODE_REMOTE_ADDR]),
-            timer:sleep(2000),
             ?debugFmt("Connections:  ~p", [rpc:call(Superman, riak_core_cluster_conn_sup, connections, [])]),
             {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
             Expected = repeat({ok, [?REMOTE_CLUSTER_NAME]}, 3),
@@ -280,7 +281,7 @@ multinode_test__() ->
 
         {"get ipaddres of cluster", fun() ->
             Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
-            Rotated1 = [{"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
+            Rotated1 = [{"eunit:test([riak_core_cluster_mgr_tests]).127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
             Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
             %{[R1, R2, R3], []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
             R1 = rpc:call(Superman, riak_core_cluster_mgr,
@@ -323,9 +324,10 @@ start_link_setup(ClusterAddr) ->
     {ok, Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
     {ok, Pid2} = riak_core_connection_mgr:start_link(),
     {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
-    %unlink(Pid3),
+    %unlink(Pid3ctrlClientProcess),
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
+    start_fake_remote_cluster_service(),
     Pids = [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4],
     [unlink(P) || P <- Pids],
     Pids.
@@ -351,6 +353,7 @@ watchit_loop(Pid, Mon) ->
 
 %cleanup_test() ->
 cleanup() ->
+    stop_fake_remote_cluster_service(),
     riak_core_service_mgr:stop(),
     riak_core_connection_mgr:stop(),
     %% tough to stop a supervisor
@@ -469,8 +472,13 @@ start_fake_remote_cluster_service() ->
     %% start our cluster_mgr service under a different protocol id,
     %% which the cluster manager will use during testing to connect to us.
     ServiceProto = {test_cluster_mgr, [{1,0}]},
+    %ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
     ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
     riak_core_service_mgr:register_service(ServiceSpec, {round_robin,10}).
+
+stop_fake_remote_cluster_service() ->
+    ServiceProto = {test_cluster_mgr, [{1,0}]},
+    riak_core_service_mgr:unregister_service(ServiceProto).
 
 become_leader() ->
     riak_core_cluster_mgr:set_leader(node(), self()).
