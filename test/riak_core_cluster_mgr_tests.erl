@@ -120,7 +120,7 @@ single_node_test_() ->
                     _ ->
                         busy
                 end
-            end,
+            end,         
             Knowners = wait_for(DoneFun),
             ?assertEqual({ok, [?REMOTE_CLUSTER_NAME]}, Knowners)
         end},
