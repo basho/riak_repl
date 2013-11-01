@@ -27,6 +27,7 @@ connection_test_() ->
         riak_repl_test_util:abstract_gen_tcp(),
         abstract_stats(),
         abstract_util(),
+        abstract_rt(),
         riak_repl_test_util:kill_and_wait(riak_repl2_rt),
         {ok, RT} = riak_repl2_rt:start_link(),
         riak_repl_test_util:kill_and_wait(riak_repl2_rtq),

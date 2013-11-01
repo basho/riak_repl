@@ -124,6 +124,7 @@ initial_state() ->
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
     riak_repl_test_util:abstract_stats(),
+%    riak_repl_test_util:abstract_rt(),
     riak_repl_test_util:abstract_stateful(),
     abstract_connection_mgr(),
     {ok, _RTPid} = start_rt(),

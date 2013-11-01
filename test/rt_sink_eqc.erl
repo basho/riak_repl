@@ -9,6 +9,9 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) ->
+                              io:format(user, Str, Args) end, P)).
 
 -define(SINK_PORT, 5008).
 -define(all_remotes, ["a", "b", "c", "d", "e"]).
@@ -41,10 +44,37 @@
     already_routed
 }).
 
-prop_test_() ->
-    {timeout, 60000, fun() ->
-        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main())))
-    end}.
+%prop_test_() ->
+%    {timeout, 60000, fun() ->
+%        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main())))
+%    end}.
+
+eqc_test_() ->
+    {spawn,
+    [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [%% Run the quickcheck tests
+        {timeout, 6000,
+         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(?MODULE:prop_main()))))}
+       ]
+      }
+     ]
+    }.
+
+setup() ->
+    %ok = meck:new(riak_repl_stats, [passthrough]),
+    %ok = meck:expect(riak_repl_stats, rt_source_errors,
+    %    fun() -> ok end),
+    %ok = meck:expect(riak_repl_stats, rt_sink_errors,
+    %    fun() -> ok end),
+    ok.
+
+cleanup(_) ->
+    %meck:unload(riak_repl_stats),
+    %unload_mecks(),
+    ok.
 
 prop_main() ->
     ?FORALL(Cmds, commands(?MODULE),
@@ -59,7 +89,7 @@ prop_main() ->
 unload_mecks() ->
     riak_repl_test_util:maybe_unload_mecks([
         stateful, riak_core_ring_manager, riak_core_ring,
-        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq]).
+        riak_repl2_rtsink_helper, gen_tcp, fake_source, riak_repl2_rtq, riak_repl_stats]).
 
 %% ====================================================================
 %% Generators (including commands)
@@ -119,12 +149,13 @@ precondition(_S, _Call) ->
 
 initial_state() ->
     teardown(),
-    setup(),
+    setup1(),
     #state{}.
 
 teardown() ->
     % we will be resetting many mecks, which link to this, but we don't
     % want to kill our test process.
+    %?debugMsg("running teardown!"),
     process_flag(trap_exit, true),
     % read out messages that may be left over from a previous run
     read_all_rt_bugs(),
@@ -136,7 +167,7 @@ teardown() ->
     riak_repl2_rtsink_conn_sup:start_link(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon).
 
-setup() ->
+setup1() ->
     riak_core_tcp_mon:start_link(),
     riak_repl_test_util:abstract_stateful(),
     abstract_ring_manager(),
@@ -537,7 +568,7 @@ connect_source(Version, Remote) ->
         {active, false}],
     ClientSpec = {{realtime, [Version]}, {TcpOptions, fake_source, Pid}},
     IpPort = {{127,0,0,1}, ?SINK_PORT},
-    riak_core_connection:sync_connect(IpPort, ClientSpec),
+    _ConnRes = riak_core_connection:sync_connect(IpPort, ClientSpec),
     {ok, Pid}.
 
 fake_source_push_obj(Source, Binary, AlreadyRouted) ->
@@ -565,7 +596,7 @@ fake_source_loop(#fake_source{socket = undefined} = State) ->
         {'$gen_call', From, Aroo} ->
             gen_server:reply(From, {error, badcall}),
             exit({badcall, Aroo});
-        _ ->
+        _What ->
             fake_source_loop(State)
     end;
 fake_source_loop(State) ->
@@ -618,7 +649,7 @@ fake_source_loop(State) ->
             fake_source_loop(State#fake_source{tcp_bug = NewBug});
         {tcp_closed, Socket} when Socket == State#fake_source.socket ->
             ok;
-        _ ->
+        _What ->
             fake_source_loop(State)
     end.
 
