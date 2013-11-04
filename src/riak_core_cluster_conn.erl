@@ -56,7 +56,7 @@ ctrlClientProcess(Remote, unconnected, Members0) ->
     Args = {Remote, self()},
     {ok,_Ref} = riak_core_connection_mgr:connect(
                   Remote,
-                  {{?REMOTE_CLUSTER_PROTO_ID, [{1,0}]},
+                  {{?REMOTE_CLUSTER_PROTO_ID, [{1,0},{1,10}]},
                    {?CTRL_OPTIONS, ?MODULE, Args}},
                   default),
     ctrlClientProcess(Remote, connecting, Members0);
@@ -75,7 +75,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             %% This is fatal! We are being supervised by conn_sup and if we
             %% die, it will restart us.
             {error, Error};
-        {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
+        {_From, {connected_to_remote, MyVer, RemoteVer, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
             ?TRACE(?debugFmt("Cluster Manager control channel client connected to remote ~p at ~p named ~p", [Remote, Addr, RemoteName])),
             lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
@@ -86,6 +86,19 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             %% will fail and the connection will get restarted.
             case ask_cluster_name(Socket, Transport, Remote) of
                 {ok, Name} ->
+                    BucketTypes =
+                      case MyVer == {1,1} andalso RemoteVer == {1,1} of
+                        true -> %% ask for bucket types
+                          lager:info("detected cluster mgr 1,1: asking for bucket types"),
+                          case ask_bucket_types(Sockets, Transport, Remote) of
+                                {ok, BTs} ->
+                                    lager:info("Got ~p bucket types", [BTs]),
+                                    BTs;
+                                _ -> [] %% error, just return []
+                          end,
+                        false ->
+                            [] %% no bucket types, just return []
+                    end,
                     case ask_member_ips(Socket, Transport, Addr, Remote) of
                         {ok, Members} ->
                             %% This is the first time we're updating the cluster manager
@@ -212,8 +225,39 @@ ask_member_ips(Socket, Transport, _Addr, Remote) ->
             Error
     end.
 
+
+ask_name(Socket, Transport, Remote) ->
+    Transport:send(Socket, ?CTRL_ASK_NAME),
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+        {ok, BinName} ->
+            {ok, binary_to_term(BinName)};
+        {error, closed} ->
+            %% the other side hung up. Stop quietly.
+            {error, closed};
+        Error ->
+            lager:error("cluster_conn: failed to recv name from remote cluster at ~p because ~p",
+                        [Remote, Error]),
+            Error
+    end.
+
+
+ask_bucket_types(Socket, Transport, Remote) ->
+    Transport:send(Socket, ?CTRL_ASK_BUCKET_TYPES),
+    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
+        {ok, BucketTypes} ->
+            lager:info("Got ~p bucket types", [binary_to_term(BucketTypes)]),
+            {ok, binary_to_term(BucketTypes)};
+        {error, closed} ->
+            %% the other side hung up. Stop quietly.
+            {error, closed};
+        Error ->
+            lager:error("cluster_conn: failed to recv bucket types from remote cluster at ~p because ~p",
+                        [Remote, Error]),
+            Error
+    end.
+
 connected(Socket, Transport, Addr,
-          {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer},
+          {?REMOTE_CLUSTER_PROTO_ID, MyVer, RemoteVer},
           {_Remote,Client},
           Props) ->
     %% give control over the socket to the Client process.

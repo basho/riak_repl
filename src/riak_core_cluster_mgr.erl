@@ -62,6 +62,7 @@
 -define(GC_INTERVAL, infinity).
 -define(PROXY_CALL_TIMEOUT, 30 * 1000).
 
+
 %% State of a resolved remote cluster
 -record(cluster, {name :: string(),     % obtained from the remote cluster by ask_name()
                   members :: [ip_addr()], % list of suspected ip addresses for cluster
@@ -196,6 +197,10 @@ set_gc_interval(Interval) ->
     gen_server:cast(?SERVER, {set_gc_interval, Interval}).
 
 
+get_bucket_types() ->
+    gen_Server:call(?SERVER, get_bucket_types, infinity).
+
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -204,7 +209,9 @@ init(Defaults) ->
     %% start our cluster_mgr service if not already started.
     case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
         false ->
-            ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
+            %% 1,0: classic BNW cluster mgr
+            %% 1,10: Riak 2.0 cluster mgr supporing bucket types
+            ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}, {1,10}]},
             ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
             riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS});
         true ->
@@ -269,7 +276,17 @@ handle_call(get_connections, _From, State) ->
             NoLeaderResult = {ok, []},
             proxy_call(get_connections, NoLeaderResult, State)
     end;
-    
+
+handle_call(get_bucket_types, _From, State) ->
+    case State#state.is_leader of
+        true ->
+            BTs = [], %% TODO: ...RETURN BUCKET TYPES!
+            {reply, {ok, BTs}, State};
+        false ->
+            NoLeaderResult = {ok, []},
+            proxy_call(get_bucket_types, NoLeaderResult, State)
+    end;
+
 
 %% Return possible IP addrs of nodes on the named remote cluster.
 %% If a leader has not been elected yet, return an empty list.
@@ -789,6 +806,12 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
                 Error ->
                     Error
             end;
+        {ok, ?CTRL_ASK_BUCKET_TYPES} ->
+            %TODO: case MyVer == {1,1} andalso RemoteVer == {1,1} of
+            % what's the best way to handle this?
+            MyBucketTypes = [not_implemented_for_20],
+            ok = Transport:send(Socket, term_to_binary(MyBucketTypes)),
+            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->
             %% timeouts are OK, I think.
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);

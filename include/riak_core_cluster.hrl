@@ -27,3 +27,10 @@
 
 -define(CLUSTER_PROTO_ID, cluster_mgr).
 -type(clustername() :: string()).
+
+
+%% msg used to ask for bucket types between clusters
+%% the of the message types are defined in
+%% riak_core/include/riak_core_connection.hrl
+-define(CTRL_ASK_BUCKET_TYPES, <<"riak-ctrl:ask_bucket_types">>).
+
