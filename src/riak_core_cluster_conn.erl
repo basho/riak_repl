@@ -87,15 +87,16 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             case ask_cluster_name(Socket, Transport, Remote) of
                 {ok, Name} ->
                     BucketTypes =
-                      case MyVer == {1,1} andalso RemoteVer == {1,1} of
+                      lager:info("bucket types ~p ~p", [MyVer, RemoteVer]),
+                      case MyVer == {1,10} andalso RemoteVer == {1,10} of
                         true -> %% ask for bucket types
-                          lager:info("detected cluster mgr 1,1: asking for bucket types"),
-                          case ask_bucket_types(Sockets, Transport, Remote) of
+                          lager:info("detected cluster mgr 1,10: asking for bucket types"),
+                          case ask_bucket_types(Socket, Transport, Remote) of
                                 {ok, BTs} ->
                                     lager:info("Got ~p bucket types", [BTs]),
                                     BTs;
                                 _ -> [] %% error, just return []
-                          end,
+                          end;
                         false ->
                             [] %% no bucket types, just return []
                     end,
@@ -263,7 +264,16 @@ connected(Socket, Transport, Addr,
     %% give control over the socket to the Client process.
     %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
-    Client ! {self(), {connected_to_remote, Socket, Transport, Addr, Props}},
+    lager:info("MyVer = ~p RemoteVer = ~p", [MyVer, RemoteVer]),
+    %% there isn't anything below 1,0
+    case MyVer == {1,0} of
+        true ->
+           Client ! {self(), {connected_to_remote, Socket, Transport, Addr, Props}};
+        false ->
+            %% pass MyVer + RemoteVer for bucket types negotiation
+            %% will break when sent to an older node :-(
+           Client ! {self(), {connected_to_remote, MyVer, RemoteVer, Socket, Transport, Addr, Props}}
+    end,
     ok.
 
 connect_failed({_Proto,_Vers}, {error, _Reason}=Error, {_Remote,Client}) ->

@@ -807,7 +807,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
                     Error
             end;
         {ok, ?CTRL_ASK_BUCKET_TYPES} ->
-            %TODO: case MyVer == {1,1} andalso RemoteVer == {1,1} of
+            %TODO: case MyVer == {1,10} andalso RemoteVer == {1,10} of
             % what's the best way to handle this?
             MyBucketTypes = [not_implemented_for_20],
             ok = Transport:send(Socket, term_to_binary(MyBucketTypes)),
