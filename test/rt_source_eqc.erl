@@ -37,7 +37,7 @@
 
 prop_test_() ->
     {timeout, 60000, fun() ->
-        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main()))),
+        ?assert(eqc:quickcheck(eqc:numtests(5, ?MODULE:prop_main()))),
         riak_repl_test_util:stop_test_ring()
     end}.
 
@@ -124,7 +124,6 @@ initial_state() ->
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
     riak_repl_test_util:abstract_stats(),
-%    riak_repl_test_util:abstract_rt(),
     riak_repl_test_util:abstract_stateful(),
     abstract_connection_mgr(),
     {ok, _RTPid} = start_rt(),
@@ -585,6 +584,12 @@ abstract_connection_mgr() ->
     end).
 
 start_rt() ->
+    riak_repl_test_util:reset_meck(riak_repl2_rt, [no_link, passthrough]),
+    WhoToTell = self(),
+    meck:expect(riak_repl2_rt, register_sink, fun(SinkPid) ->
+        WhoToTell ! {sink_pid, SinkPid},
+        meck:passthrough([SinkPid])
+    end),
     riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl2_rt:start_link().
 
