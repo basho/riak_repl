@@ -170,7 +170,17 @@ proxy_get_13(State, CName, CNames, B, K, GetOptions) ->
                 true ->
                     Leader = riak_core_cluster_mgr:get_leader(),
                     ProxyForCluster = riak_repl_util:make_pg_proxy_name(ClusterName),
-                    gen_server:call({ProxyForCluster, Leader}, {proxy_get, B, K, GetOptions}, ?LONG_TIMEOUT);
+                    try gen_server:call({ProxyForCluster, Leader},
+                                        {proxy_get, B, K, GetOptions},
+                                        ?LONG_TIMEOUT) of
+                        Result ->
+                            Result
+                    catch
+                        _:Error ->
+                            lager:debug("proxy_get_13 failed: ~p",
+                                        [Error]),
+                            notconnected
+                    end;
                 false ->
                     notconnected
             end
