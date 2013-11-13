@@ -337,7 +337,7 @@ connect([Address]) ->
             PortStr = string:sub_word(Address, 2, $:),
             connect([IP, PortStr]);
         _ ->
-            io:format("Error: remote connection is missing port. Expected 'connect <host:ip>'~n"),
+            io:format("Error: remote connection is missing port. Expected 'connect <host:port>'~n"),
             {error, {badarg, Address}}
     end;
 connect([IP, PortStr]) ->
