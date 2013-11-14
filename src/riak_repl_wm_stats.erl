@@ -149,7 +149,7 @@ jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
     NewV = jsonify_stats(V,[]),
     jsonify_stats(T, [{K,NewV}|Acc]);
 
-jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V) 
+jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V)
         andalso (K == active) ->
     case V of
       {false, scheduled} ->
@@ -389,7 +389,8 @@ jsonify_stats_test_() ->
      {"rtqstats",
       fun() ->
               Actual = [{realtime_queue_stats,
-                         [{bytes,768},
+                         [{percent_bytes_used, 0.001},
+                          {bytes,768},
                           {max_bytes,104857600},
                           {consumers,
                            [{"bar",
