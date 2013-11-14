@@ -203,6 +203,7 @@ ack_sync(Name, Seq) ->
 
 %% @doc The status of the queue.
 %% <dl>
+%% <dt>percent_bytes_used</dt><dd>How full the queue is in percentage to 3 significant digits</dd>
 %% <dt>bytes</dt><dd>Size of the data store backend</dd>
 %% <dt>max_bytes</dt><dd>Maximum size of the data store backend</dd>
 %% <dt>consumers</dt><dd>Key - Value pair of the consumer stats, key is the
