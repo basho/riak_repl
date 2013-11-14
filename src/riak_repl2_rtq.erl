@@ -218,7 +218,13 @@ ack_sync(Name, Seq) ->
 %% </dl>
 -spec status() -> [any()].
 status() ->
-    gen_server:call(?SERVER, status, infinity).
+    Status = gen_server:call(?SERVER, status, infinity),
+    % I'm having the calling process do derived stats because
+    % I don't want to block the rtq from processing objects.
+    MaxBytes = proplists:get_value(max_bytes, Status),
+    CurrentBytes = proplists:get_value(bytes, Status),
+    PercentBytes = round( (CurrentBytes / MaxBytes) * 100000 ) / 1000,
+    [{percent_bytes_used, PercentBytes} | Status].
 
 %% @doc return the data store as a list.
 -spec dumpq() -> [any()].
