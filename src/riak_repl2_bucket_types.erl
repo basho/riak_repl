@@ -10,6 +10,7 @@
 -behaviour(gen_server).
 
 -define(BUCKET_TYPE_PREFIX, {core, bucket_types}).
+-define(REPL_WHITELIST_PREFIX, {<<"replication">>, <<"whitelist">>}).
 
 %% API
 -export([start_link/0]).
@@ -21,6 +22,8 @@
          handle_info/2,
          terminate/2,
          code_change/3,
+         get_bucket_types_list/0,
+         store_whitelist/1,
          bucket_type_list/0,
          bucket_type_hash/0]).
 
@@ -42,6 +45,15 @@
 start_link() ->
     %% TODO: make this work for multiple sinks
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+%% @doc Retrieve the list of bucket types on this cluster
+-spec(get_bucket_types_list() -> [term()]).
+get_bucket_types_list() ->
+    gen_server:call(?SERVER, {get_bucket_types_list}).
+
+%% @doc Store the whitelist from the sink
+store_whitelist(WL) ->
+    gen_server:call(?SERVER, {store_whitelist, WL}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -77,6 +89,14 @@ init([]) ->
 %%--------------------------------------------------------------------
 handle_call(get_bucket_types, _From, State) ->
   {reply, ok, State};
+
+handle_call(get_bucket_types_list, _From, State) ->
+    BL = bucket_type_list(),
+    {reply, BL, State};
+
+handle_call({store_whitelist, BL}, _From, State) ->
+    save_whitelist(BL),
+    {reply, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -139,13 +159,14 @@ code_change(_OldVsn, State, _Extra) ->
 bucket_type_list() ->
     It = riak_core_bucket_type:iterator(),
     Acc = bucket_type_build_list(It, []),
-    io:format(user, ">>> ~p~n", [Acc]).
+    io:format(user, ">>> ~p~n", [Acc]),
+    Acc.
 
 bucket_type_build_list(It, Acc) ->
     case riak_core_bucket_type:itr_done(It) of
         true ->
             riak_core_bucket_type:itr_close(It),
-            Acc;
+            [ riak_core_connection:symbolic_clustername() | Acc ];
         false ->
             BP = {_Type, Props} = riak_core_bucket_type:itr_value(It),
             case proplists:get_value(active, Props, false) of
@@ -158,3 +179,7 @@ bucket_type_hash() ->
    io:format(user, "<<<~p~n",
              [riak_core_metadata:prefix_hash(?BUCKET_TYPE_PREFIX)]).
 
+save_whitelist(BL) ->
+    [CN | BLT] = BL,
+    lager:info("Storing whitelist for cluster: ~p", [CN]),
+    riak_core_metadata:put(?REPL_WHITELIST_PREFIX, CN, BLT).

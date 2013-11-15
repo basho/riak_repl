@@ -80,7 +80,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             ?TRACE(?debugFmt("Cluster Manager control channel client connected to remote ~p at ~p named ~p", [Remote, Addr, RemoteName])),
             lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
                        [Remote, Addr, RemoteName]),
-            %% ask it's name and member list, even if it's a previously
+            %% ask its name and member list, even if it's a previously
             %% resolved cluster. Then we can sort everything out in the
             %% gen_server. If the name or members fails, these matches
             %% will fail and the connection will get restarted.
