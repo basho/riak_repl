@@ -43,6 +43,30 @@ accumulate(Pid, Acc, C) ->
             accumulate(Pid, Acc+Size, C-1)
     end.
 
+status_test_() ->
+    {setup, fun() ->
+        application:set_env(riak_repl, rtq_max_bytes, 10 * 1024 * 1024),
+        {ok, QPid} = riak_repl2_rtq:start_link(),
+        QPid
+    end,
+    fun(QPid) ->
+        application:unset_env(riak_repl, rtq_max_bytes),
+        riak_repl_test_util:kill_and_wait(QPid)
+    end,
+    fun(QPid) -> [
+
+        {"queue size has percentage, and is correct", fun() ->
+            MyBin = crypto:rand_bytes(1024 * 1024),
+            [riak_repl2_rtq:push(1, MyBin) || _ <- lists:seq(1, 5)],
+            Status = riak_repl2_rtq:status(),
+            StatusMaxBytes = proplists:get_value(max_bytes, Status),
+            StatusBytes = proplists:get_value(bytes, Status),
+            StatusPercent = proplists:get_value(percent_bytes_used, Status),
+            ExpectedPercent = round( (StatusBytes / StatusMaxBytes) * 100000 ) / 1000,
+            ?assertEqual(ExpectedPercent, StatusPercent)
+        end}
+
+    ] end}.
 
 overload_protection_start_test_() ->
     [

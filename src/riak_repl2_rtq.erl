@@ -203,6 +203,7 @@ ack_sync(Name, Seq) ->
 
 %% @doc The status of the queue.
 %% <dl>
+%% <dt>percent_bytes_used</dt><dd>How full the queue is in percentage to 3 significant digits</dd>
 %% <dt>bytes</dt><dd>Size of the data store backend</dd>
 %% <dt>max_bytes</dt><dd>Maximum size of the data store backend</dd>
 %% <dt>consumers</dt><dd>Key - Value pair of the consumer stats, key is the
@@ -218,7 +219,13 @@ ack_sync(Name, Seq) ->
 %% </dl>
 -spec status() -> [any()].
 status() ->
-    gen_server:call(?SERVER, status, infinity).
+    Status = gen_server:call(?SERVER, status, infinity),
+    % I'm having the calling process do derived stats because
+    % I don't want to block the rtq from processing objects.
+    MaxBytes = proplists:get_value(max_bytes, Status),
+    CurrentBytes = proplists:get_value(bytes, Status),
+    PercentBytes = round( (CurrentBytes / MaxBytes) * 100000 ) / 1000,
+    [{percent_bytes_used, PercentBytes} | Status].
 
 %% @doc return the data store as a list.
 -spec dumpq() -> [any()].
