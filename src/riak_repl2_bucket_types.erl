@@ -23,7 +23,9 @@
          terminate/2,
          code_change/3,
          get_bucket_types_list/0,
+         retrieve_whitelist/1,
          store_whitelist/1,
+         get_whitelist/1,
          bucket_type_list/0,
          bucket_type_hash/0]).
 
@@ -34,6 +36,7 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -52,8 +55,11 @@ get_bucket_types_list() ->
     gen_server:call(?SERVER, {get_bucket_types_list}).
 
 %% @doc Store the whitelist from the sink
-store_whitelist(WL) ->
-    gen_server:call(?SERVER, {store_whitelist, WL}).
+store_whitelist(Whitelist) ->
+    gen_server:call(?SERVER, {store_whitelist, Whitelist}).
+
+retrieve_whitelist(Cluster) ->
+    gen_server:call(?SERVER, {get_whitelist, Cluster}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -89,15 +95,15 @@ init([]) ->
 %%--------------------------------------------------------------------
 handle_call(get_bucket_types, _From, State) ->
   {reply, ok, State};
-
 handle_call(get_bucket_types_list, _From, State) ->
     BL = bucket_type_list(),
     {reply, BL, State};
-
 handle_call({store_whitelist, BL}, _From, State) ->
     save_whitelist(BL),
     {reply, ok, State};
-
+handle_call({get_whitelist, Cluster}, _From, State) ->
+    get_whitelist(Cluster),
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -180,6 +186,10 @@ bucket_type_hash() ->
              [riak_core_metadata:prefix_hash(?BUCKET_TYPE_PREFIX)]).
 
 save_whitelist(BL) ->
-    [CN | BLT] = BL,
-    lager:info("Storing whitelist for cluster: ~p", [CN]),
-    riak_core_metadata:put(?REPL_WHITELIST_PREFIX, CN, BLT).
+    [Cluster | BucketTypeList] = BL,
+    lager:info("Storing whitelist for cluster: ~p", [Cluster]),
+    riak_core_metadata:put(?REPL_WHITELIST_PREFIX, Cluster, BucketTypeList).
+
+get_whitelist(Cluster) ->
+    lager:info("Getting whitelist associated with ~p", [Cluster]),
+    riak_core_metadata:get(?REPL_WHITELIST_PREFIX, Cluster).

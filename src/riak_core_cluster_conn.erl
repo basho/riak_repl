@@ -86,20 +86,20 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             %% will fail and the connection will get restarted.
             case ask_cluster_name(Socket, Transport, Remote) of
                 {ok, Name} ->
-                    BucketTypes =
+                    %% BucketTypes =
+                    %%  case MyVer >= {1,10} andalso RemoteVer >= {1,10} of
+                    %%    true -> %% ask for bucket types
                       lager:info("bucket types ~p ~p", [MyVer, RemoteVer]),
-                      case MyVer == {1,10} andalso RemoteVer == {1,10} of
-                        true -> %% ask for bucket types
-                          lager:info("detected cluster mgr 1,10: asking for bucket types"),
+                    %%      lager:info("detected cluster mgr 1,10: asking for bucket types"),
                           case ask_bucket_types(Socket, Transport, Remote) of
                                 {ok, BTs} ->
-                                    lager:info("Got ~p bucket types", [BTs]),
-                                    BTs;
+                                    lager:info("Got ~p bucket types, storing locally", [BTs]),
+				    raik_repl2_bucket_types:store_whitelist(BTs);
                                 _ -> [] %% error, just return []
-                          end;
-                        false ->
-                            [] %% no bucket types, just return []
-                    end,
+                          end,
+                    %%    false ->
+                    %%        [] %% no bucket types, just return []
+                    %%end,
                     case ask_member_ips(Socket, Transport, Addr, Remote) of
                         {ok, Members} ->
                             %% This is the first time we're updating the cluster manager
@@ -243,6 +243,7 @@ ask_name(Socket, Transport, Remote) ->
 
 
 ask_bucket_types(Socket, Transport, Remote) ->
+    lager:info("sending bucket type request"),
     Transport:send(Socket, ?CTRL_ASK_BUCKET_TYPES),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BucketTypes} ->

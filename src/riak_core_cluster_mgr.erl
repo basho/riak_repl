@@ -809,7 +809,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
         {ok, ?CTRL_ASK_BUCKET_TYPES} ->
             %TODO: case MyVer == {1,10} andalso RemoteVer == {1,10} of
             % what's the best way to handle this?
-            MyBucketTypes = [not_implemented_for_20],
+            MyBucketTypes = riak_repl2_bucket_types:get_bucket_types_list(),
             ok = Transport:send(Socket, term_to_binary(MyBucketTypes)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->

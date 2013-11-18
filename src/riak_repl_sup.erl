@@ -61,7 +61,10 @@ init([]) ->
                   permanent, infinity, supervisor, [riak_repl2_pg_proxy_sup]},
 
                  {riak_repl2_pg_sup, {riak_repl2_pg_sup, start_link, []},
-                  permanent, infinity, supervisor, [riak_repl2_pg_sup]}
+                  permanent, infinity, supervisor, [riak_repl2_pg_sup]},
+       
+                 {riak_repl2_bucket_types_sup, {riak_repl2_bucket_types_sup, start_link, []},
+                  permanent, infinity, supervisor, [riak_repl2_bucket_types_sup]}
 
                 ],
 
