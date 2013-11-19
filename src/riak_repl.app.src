@@ -9,6 +9,7 @@
                   sasl,
                   crypto,
                   ssl,
+                  ebloom,
                   riak_core,
                   riak_kv,
                   ranch]},
