@@ -138,7 +138,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
              ],
     {reply, {status, Status}, State};
 handle_call({set_socket, Socket, Transport}, _From, State) ->
-    Transport:setopts(Socket, [{active, once}]), % pick up errors in tcp_error msg
+    Transport:setopts(Socket, [{active, true}]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport}};
 handle_call(stop, _From, State) ->
@@ -198,7 +198,7 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
             %% Check the socket is ok
             case T:peername(S) of
                 {ok, _} ->
-                    T:setopts(S, [{active, once}]), % socket could die, pick it up on tcp_error msgs
+                    T:setopts(S, [{active, true}]), % socket could die, pick it up on tcp_error msgs
                     {noreply, State#state{active = true}};
                 {error, Reason} ->
                     riak_repl_stats:rt_sink_errors(),
@@ -222,12 +222,12 @@ send_heartbeat(Transport, Socket) ->
 recv(TcpBin, State = #state{transport = T, socket = S}) ->
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
-            case State#state.active of
-                true ->
-                    T:setopts(S, [{active, once}]);
-                _ ->
-                    ok
-            end,
+            %case State#state.active of
+            %    true ->
+            %        T:setopts(S, [{active, once}]);
+            %    _ ->
+            %        ok
+            %end,
             {noreply, State#state{cont = Cont}};
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
             recv(Cont, do_write_objects(Seq, BinObjs, State));
