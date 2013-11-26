@@ -12,6 +12,11 @@
 -define(SINK_PORT, 5007).
 -define(all_remotes, ["a", "b", "c", "d", "e"]).
 
+-define(P(EXPR), PPP = (EXPR), case PPP of true -> ok; _ -> io:format(user, "PPP ~p at line ~p\n", [PPP, ?LINE]) end, PPP).
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) ->
+                              io:format(user, Str, Args) end, P)).
+
 -record(state, {
     remotes_available = ?all_remotes,
     seq = 0,
@@ -35,11 +40,35 @@
     remotes_up
 }).
 
+
+%% ===================================================================
+%% Helper Funcs
+%% ===================================================================
+
+setup() ->
+    application:load(sasl),
+    application:set_env(sasl, sasl_error_logger, {file, "rt_source_eqc_sasl.log"}),
+    error_logger:tty(false),
+    application:start(lager).
+
+cleanup(_) ->
+    riak_repl_test_util:stop_test_ring(),
+    meck:unload(),
+    ok.
+
 prop_test_() ->
-    {timeout, 60000, fun() ->
-        ?assert(eqc:quickcheck(eqc:numtests(5, ?MODULE:prop_main()))),
-        riak_repl_test_util:stop_test_ring()
-    end}.
+    {spawn,
+     [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [%% Run the quickcheck tests
+        {timeout, 60,
+         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
+       ]
+      }
+     ]
+    }.
 
 prop_main() ->
     ?FORALL(Cmds, commands(?MODULE),
@@ -132,11 +161,11 @@ initial_state() ->
     {ok, _FakeSinkPid} = start_fake_sink(),
     #state{}.
 
-next_state(S, Res, {call, _, connect_to_v1, [Remote, MQ]}) ->
+next_state(S, Res, {call, _, connect_to_v1, [Remote, _MQ]}) ->
     SrcState = #src_state{pids = Res, version = 1},
     next_state_connect(Remote, SrcState, S);
 
-next_state(S, Res, {call, _, connect_to_v2, [Remote, MQ]}) ->
+next_state(S, Res, {call, _, connect_to_v2, [Remote, _MQ]}) ->
     SrcState = #src_state{pids = Res, version = 2},
     next_state_connect(Remote, SrcState, S);
 
@@ -205,11 +234,11 @@ generate_unacked_from_master(State, Remote) ->
 
 generate_unacked_from_master([], _UpRemotes, _Remote, Skips, Offset, Acc) ->
     {Acc, Skips, Offset};
-generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Offset, Acc) ->
+generate_unacked_from_master([{_Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Offset, Acc) ->
     generate_unacked_from_master(Tail, UpRemotes, Remote, undefined, Offset, Acc);
-generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
+generate_unacked_from_master([{_Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
     generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Offset, Acc);
-generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
+generate_unacked_from_master([{Seq, Remotes, _Binary, Res} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
     case {lists:member(Remote, Remotes), Skips} of
         {true, undefined} ->
             % on start up, we don't worry about skips until we've sent at least
@@ -303,20 +332,20 @@ model_ack_objects(NumAcked, Unacked) when length(Unacked) >= NumAcked ->
 %% ====================================================================
 
 postcondition(_State, {call, _, connect_to_v1, _Args}, {error, _}) ->
-    false;
+    ?P(false);
 postcondition(_State, {call, _, connect_to_v1, _Args}, {Source, Sink}) ->
-    is_pid(Source) andalso is_pid(Sink);
+    ?P(is_pid(Source) andalso is_pid(Sink));
 
 postcondition(_State, {call, _, connect_to_v2, _Args}, {error, _}) ->
-    false;
+    ?P(false);
 postcondition(_State, {call, _, connect_to_v2, _Args}, {Source, Sink}) ->
-    is_pid(Source) andalso is_pid(Sink);
+    ?P(is_pid(Source) andalso is_pid(Sink));
 
 postcondition(_State, {call, _, disconnect, [_SourceState]}, Waits) ->
-    lists:all(fun(ok) -> true; (_) -> false end, Waits);
+    ?P(lists:all(fun(ok) -> true; (_) -> false end, Waits));
 
 postcondition(_State, {call, _, push_object, [Remotes, _RiakObj, State]}, Res) ->
-    assert_sink_bugs(Res, Remotes, State#state.sources);
+    ?P(assert_sink_bugs(Res, Remotes, State#state.sources));
 
 postcondition(State, {call, _, ack_objects, [NumAck, {Remote, Source}]}, AckedStack) ->
     RemoteLives = is_tuple(lists:keyfind(Remote, 1, State#state.sources)),
@@ -324,12 +353,12 @@ postcondition(State, {call, _, ack_objects, [NumAck, {Remote, Source}]}, AckedSt
     {_, Acked} = lists:split(length(UnAcked) - NumAck, UnAcked),
     if
         RemoteLives == false ->
-            AckedStack == [];
+            ?P(AckedStack == []);
         length(Acked) =/= length(AckedStack) ->
             ?debugMsg("Acked length is not the same as AckedStack length"),
-            false;
+            ?P(false);
         true ->
-            assert_sink_ackings(Remote, Source#src_state.version, Acked, AckedStack)
+            ?P(assert_sink_ackings(Remote, Source#src_state.version, Acked, AckedStack))
     end;
 
 postcondition(_S, _C, _R) ->
@@ -474,9 +503,7 @@ connect_to_v1(RemoteName, MasterQueue) ->
 connect_to_v2(RemoteName, MasterQueue) ->
     stateful:set(version, {realtime, {2,0}, {2,0}}),
     stateful:set(remote, RemoteName),
-    Before = now(),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
-    After = now(),
     receive
         {sink_started, SinkPid} ->
             erlang:monitor(process, SinkPid),
@@ -654,7 +681,7 @@ fake_sink(Socket, Version, Bug, History) ->
             fake_sink(Socket, Version, Bug, History);
         {'$gen_call', From, {block_until, HistoryLength}} ->
             fake_sink(Socket, Version, {block_until, From, HistoryLength}, History);
-        {'$gen_call', From, Msg} ->
+        {'$gen_call', From, _Msg} ->
             gen_server:reply(From, {error, badcall}),
             fake_sink(Socket, Version, Bug, History);
         {tcp, Socket, Bin} ->
