@@ -12,7 +12,7 @@
 %% API
 -include("riak_repl.hrl").
 
--export([register_service/0, start_service/5]).
+-export([sync_register_service/0, start_service/5]).
 -export([start_link/2,
          stop/1,
          set_socket/3,
@@ -45,13 +45,13 @@
                }).
 
 %% Register with service manager
-register_service() ->
+sync_register_service() ->
     ProtoPrefs = {realtime,[{2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
     HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
-    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+    riak_core_service_mgr:sync_register_service(HostSpec, {round_robin, undefined}).
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->

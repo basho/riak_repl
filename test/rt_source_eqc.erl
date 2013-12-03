@@ -598,12 +598,12 @@ start_tcp_mon() ->
 start_fake_sink() ->
     riak_repl_test_util:reset_meck(riak_core_service_mgr, [no_link, passthrough]),
     WhoToTell = self(),
-    meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
+    meck:expect(riak_core_service_mgr, sync_register_service, fun(HostSpec, _Strategy) ->
         riak_repl_test_util:kill_and_wait(fake_sink),
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArgs}} = HostSpec,
         sink_listener(TcpOpts, WhoToTell)
     end),
-    riak_repl2_rtsink_conn:register_service().
+    riak_repl2_rtsink_conn:sync_register_service().
 
 sink_listener(TcpOpts, WhoToTell) ->
     TcpOpts2 = [binary, {reuseaddr, true} | TcpOpts],

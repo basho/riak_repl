@@ -147,7 +147,7 @@ handle_msg(get_cluster_info, State=#state{transport=Transport, socket=Socket}) -
 handle_msg({proxy_get, Ref, Bucket, Key, Options},
             State=#state{transport=Transport, socket=Socket,
                          proxy_gets_provided=PGCount}) ->
-    lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),
+    lager:info("Got proxy_get for ~p:~p", [Bucket, Key]),
     C = State#state.client,
     Res = C:get(Bucket, Key, Options),
     Data = term_to_binary({proxy_get_resp, Ref, Res}),

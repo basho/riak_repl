@@ -10,7 +10,12 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/4, register_service/0, start_service/5, status/1, status/2,
+-export([start_link/4,
+         sync_register_service/0,
+         sync_unregister_service/0,
+         start_service/5,
+         status/1,
+         status/2,
          proxy_get/4]).
 
 %% gen_server callbacks
@@ -31,8 +36,8 @@
 start_link(Socket, Transport, Proto, Props) ->
     gen_server:start_link(?MODULE, [Socket, Transport, Proto, Props], []).
 
-%% Register with service manager
-register_service() ->
+%% @doc Register with service manager
+sync_register_service() ->
     lager:debug("Registering proxy_get requester service"),
     ProtoPrefs = {proxy_get,[{1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
@@ -40,7 +45,11 @@ register_service() ->
                   {active, false},
                   {nodelay, true}],
     HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
-    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+    riak_core_service_mgr:sync_register_service(HostSpec, {round_robin, undefined}).
+
+%% @doc Unregister service.
+sync_unregister_service() ->
+    riak_core_service_mgr:sync_unregister_service(proxy_get).
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->

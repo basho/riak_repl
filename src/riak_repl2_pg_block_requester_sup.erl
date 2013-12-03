@@ -3,6 +3,7 @@
 -module(riak_repl2_pg_block_requester_sup).
 -behaviour(supervisor).
 -export([start_link/0, start_child/4, started/0, started/1]).
+-export([terminate_connections/0]).
 -export([init/1]).
 
 start_link() ->
@@ -18,9 +19,16 @@ started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
                       supervisor:which_children({?MODULE, Node}), is_pid(Pid)].
 
+%% @doc Terminate all connections.
+terminate_connections() ->
+    [catch supervisor:terminate_child(?MODULE, Pid) ||
+        {_, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)],
+    ok.
+
 %% @private
 init([]) ->
-    ChildSpec = {riak_repl2_pg_block_requester, {riak_repl2_pg_block_requester, start_link, []},
+    ChildSpec = {riak_repl2_pg_block_requester,
+                 {riak_repl2_pg_block_requester, start_link, []},
     temporary, 5000, worker, [riak_repl2_pg_block_requester]},
     {ok, {{simple_one_for_one, 10, 10}, [ChildSpec]}}.
 

@@ -206,7 +206,7 @@ init(Defaults) ->
         false ->
             ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
             ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
-            riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS});
+            riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
         true ->
             ok
     end,
@@ -695,28 +695,30 @@ connect_to_targets(Targets) ->
     lists:foreach(fun(Target) -> ensure_remote_connection(Target) end,
                   Targets).
 
-%% start being a cluster manager leader
+%% @doc Start being a cluster manager leader
+%%      Start leading and tell ourself to connect to known clusters in a bit.
+%%      Wait enough time for the ring to be stable.
+%%      So that the call into the repl_ring handler won't crash.
+%%      We can try several time delays because it's idempotent.
 become_leader(State, LeaderNode) when State#state.is_leader == false ->
     lager:info("ClusterManager: ~p becoming the leader", [LeaderNode]),
-    %% start leading and tell ourself to connect to known clusters in a bit.
-    %% Wait enough time for the ring to be stable
-    %% so that the call into the repl_ring handler won't crash.
-    %% We can try several time delays because it's idempotent.
+    ok = riak_repl2_pg_block_requester:sync_register_service(),
     erlang:send_after(5000, self(), connect_to_clusters),
     State#state{is_leader = true};
 become_leader(State, LeaderNode) ->
     lager:debug("ClusterManager: ~p still the leader", [LeaderNode]),
     State.
 
-%% stop being a cluster manager leader
+%% @doc Stop being a cluster manager leader, stop leading and remove
+%%      connections.
 become_proxy(State, LeaderNode) when State#state.is_leader == true ->
     lager:info("ClusterManager: ~p becoming a proxy to ~p", [node(), LeaderNode]),
-    %% stop leading
-    %% remove any outbound connections
+    ok = riak_repl2_pg_block_requester:sync_unregister_service(),
+    ok = riak_repl2_pg_block_requester_sup:terminate_connections(),
     case riak_core_cluster_conn_sup:connections() of
         [] ->
             ok;
-        Connections ->        
+        Connections ->
             lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
             [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
              || {Remote, _Pid} <- Connections]
