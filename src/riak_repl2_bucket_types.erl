@@ -193,3 +193,12 @@ save_whitelist(BL) ->
 get_whitelist(Cluster) ->
     lager:info("Getting whitelist associated with ~p", [Cluster]),
     riak_core_metadata:get(?REPL_WHITELIST_PREFIX, Cluster).
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+-compile(export_all).
+
+-endif.
