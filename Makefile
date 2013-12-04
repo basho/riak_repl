@@ -28,13 +28,13 @@ docs:
 
 APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
 	xmerl webtool eunit syntax_tools compiler mnesia public_key snmp
-PLT = $(HOME)/.riak_repl_dialyzer_plt
+COMBO_PLT = $(HOME)/.riak_repl_dialyzer_plt
 
 check_plt: compile
-	dialyzer --check_plt --plt $(PLT) --apps $(APPS)
+	dialyzer --check_plt --plt $(COMBO_PLT) --apps $(APPS) ebin deps/**/ebin
 
 build_plt: compile
-	dialyzer --build_plt --output_plt $(PLT) --apps $(APPS)
+	dialyzer --build_plt --output_plt $(COMBO_PLT) --apps $(APPS) ebin deps/**/ebin
 
 dialyzer: compile
 	@echo
@@ -42,15 +42,16 @@ dialyzer: compile
 	@echo Use "'make build_plt'" to build PLT prior to using this target.
 	@echo
 	@sleep 1
-	dialyzer -Wno_return -Wunmatched_returns --plt $(PLT) ebin
+	dialyzer -Wunmatched_returns -Werror_handling -Wrace_conditions \
+		-Wunderspecs --plt $(COMBO_PLT) ebin
 
-clean_plt:
+cleanplt:
 	@echo
 	@echo "Are you sure?  It takes about 1/2 hour to re-build."
-	@echo Deleting $(PLT) in 5 seconds.
-	@echo
+	@echo Deleting $(COMBO_PLT) in 5 seconds.
+	@ech
 	sleep 5
-	rm $(PLT)
+	rm $(COMBO_PLT)
 
 typer:
 	typer --annotate -I ../ --plt $(PLT) -r src
