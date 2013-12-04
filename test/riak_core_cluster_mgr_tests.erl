@@ -135,7 +135,7 @@ single_node_test_() ->
 wait_for(Fun) ->
     wait_for(Fun, 2000, 10).
 
-wait_for(Fun, Remaining, Interval) when Remaining =< 0 ->
+wait_for(Fun, Remaining, _Interval) when Remaining =< 0 ->
     case Fun() of
         {done, Out} ->
             Out;
