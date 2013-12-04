@@ -21,7 +21,7 @@
 
 -record(state, {nodes=[],          %% peer replication nodes
                 versions=[],     %% {node(), wire-version()}
-                meta_support=[] :: [{node(), bool()}]
+                meta_support=[] :: [{node(), boolean()}]
                 }).
 
 %%%===================================================================
