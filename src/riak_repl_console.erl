@@ -396,7 +396,7 @@ realtime([Cmd, Remote]) ->
         % than update riak_core's riak-repl bin script and make yet anothor
         % place to change/potentially break stuff.
         "cascades" ->
-            riak_repl_console:reatime_cascades(Remote)
+            riak_repl_console:realtime_cascades(Remote)
     end,
     ok;
 realtime([Cmd]) ->
