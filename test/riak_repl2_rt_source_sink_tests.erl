@@ -36,23 +36,22 @@ setup() ->
     #connection_tests{tcp_mon = TCPMon, rt = RT}.
 
 cleanup(State) ->
+    process_flag(trap_exit, true),
     #connection_tests{tcp_mon = TCPMon, rt = RT} = State,
-    %% meck:unload(gen_tcp),
-    %% meck:unload(riak_repl2_rt),
-    %% meck:unload(riak_repl_stats),
-    %% meck:unload(riak_repl_util),
-    meck:unload(),
-    unlink(TCPMon),
-    exit(TCPMon, kill),
-    unlink(RT),
-    exit(RT, kill),
-    Rtq = whereis(riak_repl2_rtq),
-    unlink(Rtq),
-    exit(Rtq, kill),
-    wait_for_pid(TCPMon),
-    wait_for_pid(RT),
-    wait_for_pid(Rtq),
-    riak_repl_test_util:stop_test_ring().
+    %% riak_repl_test_util:kill_and_wait(riak_repl2_rt),
+    %% riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
+    %% riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
+    [kill_proc(P) || P <- [TCPMon, RT, riak_repl2_rtq]],
+    riak_repl_test_util:stop_test_ring(),
+    process_flag(trap_exit, false),
+    meck:unload().
+
+kill_proc(undefined) ->
+    ok;
+kill_proc(Name) when is_atom(Name) ->
+    kill_proc(whereis(Name));
+kill_proc(Pid) when is_pid(Pid) ->
+    catch exit(Pid, kill).
 
 connection_test_() ->
     {foreach,
@@ -78,14 +77,13 @@ v2_to_v2_comms(_State) ->
                end},
               {"sending objects",
                fun() ->
+                       meck:new(riak_repl_fullsync_worker, [passthrough]),
                        Self = self(),
-                       meck:new(riak_repl_fullsync_worker),
                        %% the w1 below indicates wireformat version 1, used in
                        %% realtime protocol v2.
                        SyncWorkerFun =
                            fun(_Worker, ObjBins, DoneFun, riak_repl2_rtsink_pool, w1) ->
                                    ?assertEqual([<<"der object">>], binary_to_term(ObjBins)),
-                                   ?debugFmt("Sending continue and state to ~p: ~p", [Self, self()]),
                                    Self ! continue,
                                    Self ! {state, DoneFun},
                                    ok
@@ -99,8 +97,7 @@ v2_to_v2_comms(_State) ->
 
               {"assert done",
                fun() ->
-                       ?debugFmt("Waiting for state: ~p", [self()]),
-                       {ok, DoneFun} = extract_state_msg(),
+                        {ok, DoneFun} = extract_state_msg(),
                        DoneFun(),
                        ?assert(riak_repl2_rtq:all_queues_empty())
                end}
@@ -137,21 +134,18 @@ v1_to_v1_comms(_State) ->
               {"sending objects",
                fun() ->
                        Self = self(),
-                       ?debugFmt("Self: ~p", [self()]),
                        meck:new(riak_repl_fullsync_worker),
                        %% The w0 defines wireformat 0, used in realtime v1
                        %% protocol.
                        SyncWorkerFun =
                            fun(_Worker, BinObjs, DoneFun, riak_repl2_rtsink_pool, w0) ->
                                    ?assertEqual([<<"der object">>], binary_to_term(BinObjs)),
-                                   ?debugFmt("Sending continue to ~p: ~p", [Self, self()]),
                                    Self ! continue,
                                    Self ! {state, DoneFun},
                                    ok
                            end,
                        meck:expect(riak_repl_fullsync_worker, do_binputs, SyncWorkerFun),
                        riak_repl2_rtq:push(1, term_to_binary([<<"der object">>])),
-                       ?debugFmt("Waiting for continue: ~p", [self()]),
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)
@@ -193,12 +187,16 @@ assert_living_pids([Pid | Tail]) ->
 connection_test_teardown_pids(Source, Sink) ->
     meck:unload(riak_core_service_mgr),
     meck:unload(riak_core_connection_mgr),
-    unlink(Source),
-    unlink(Sink),
-    riak_repl2_rtsource_conn:stop(Source),
-    riak_repl2_rtsink_conn:stop(Sink),
-    wait_for_pid(Source),
-    wait_for_pid(Sink).
+    %% unlink(Source),
+    %% unlink(Sink),
+    process_flag(trap_exit, true),
+    [kill_proc(P) || P <- [Source, Sink]],
+    process_flag(trap_exit, false),
+    ok.
+    %% riak_repl2_rtsource_conn:stop(Source),
+    %% riak_repl2_rtsink_conn:stop(Sink),
+    %% wait_for_pid(Source),
+    %% wait_for_pid(Sink).
 
 abstract_gen_tcp() ->
     meck:new(gen_tcp, [unstick, passthrough]),
@@ -296,7 +294,7 @@ wait_for_pid(Pid) ->
     end.
 
 wait_for_continue() ->
-    wait_for_continue(1000).
+    wait_for_continue(5000).
 
 wait_for_continue(Timeout) ->
     receive

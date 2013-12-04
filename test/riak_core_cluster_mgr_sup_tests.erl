@@ -43,9 +43,11 @@ murdering_test_() ->
         TopSup
     end,
     fun(TopSup) ->
+            catch(exit(whereis(riak_repl_client_sup), kill)),
         application:stop(ranch),
         Mecks = [riak_repl_sup, riak_core_node_watcher_events, riak_core_node_watcher],
         [meck:unload(Meck) || Meck <- Mecks],
+            meck:unload(),
         riak_core_ring_manager:stop(),
         case whereis(riak_core_ring_events) of
             undefined ->

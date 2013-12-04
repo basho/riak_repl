@@ -1080,5 +1080,3 @@ do_wire_list_w1_bucket_type_test() ->
     Encoded = to_wire(w2, Objs),
     Decoded = from_wire(w2, Encoded),
     ?assert(Decoded == Objs).
-
--endif.
