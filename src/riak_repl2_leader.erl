@@ -121,7 +121,7 @@ handle_cast({register_notify_fun, Fun}, State) ->
     %% Notify the interested party immediately, in case leader election
     %% has already occured.
     Fun(State#state.leader_node, State#state.leader_pid),
-    {noreply, State#state{notify_funs=[Fun | State#state.notify_funs]}};
+    {noreply, State#state{notify_funs=State#state.notify_funs ++ [Fun]}};
 
 handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
     Candidates = lists:sort(CandidatesIn),
