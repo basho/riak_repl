@@ -149,7 +149,7 @@ jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
     NewV = jsonify_stats(V,[]),
     jsonify_stats(T, [{K,NewV}|Acc]);
 
-jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V) 
+jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V)
         andalso (K == active) ->
     case V of
       {false, scheduled} ->

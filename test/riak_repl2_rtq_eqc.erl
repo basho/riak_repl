@@ -8,7 +8,10 @@
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
+
+-ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").
+-endif.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -42,8 +45,8 @@ rtq_test_() ->
        fun setup/0,
        fun cleanup/1,
        [ % run qc tests
-          {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_main()))))},
-          {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_parallel()))))}
+          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_main()))))},
+          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_parallel()))))}
 
        ]
       }
@@ -54,7 +57,7 @@ max_bytes() ->
     ?LET(MaxBytes, nat(), {size, (MaxBytes+1) * ?BINARIED_OBJ_SIZE}).
 
 setup() ->
-    catch(meck:unload(riak_repl_stats)),
+    error_logger:tty(false),
     ok = meck:new(riak_repl_stats, [passthrough]),
     ok = meck:expect(riak_repl_stats, rt_source_errors,
         fun() -> ok end),
@@ -63,7 +66,9 @@ setup() ->
     ok.
 
 cleanup(_) ->
+    kill_and_wait(riak_repl2_rtq),
     catch(meck:unload(riak_repl_stats)),
+    meck:unload(),
     ok.
 
 prop_main() ->
@@ -88,6 +93,8 @@ prop_parallel() ->
                 command_names(Cmds),
                     pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok)
         end))).
+
+-ifdef(PULSE).
 
 prop_pulse() ->
   ?FORALL(Cmds, parallel_commands(?MODULE),
@@ -117,6 +124,8 @@ pulse_instrument(File) ->
   code:purge(Mod),
   code:load_file(Mod),
   Mod.
+
+-endif.
 
 kill_all_pids(Pid) when is_pid(Pid) -> exit(Pid, kill);
 kill_all_pids([H|T])                -> kill_all_pids(H), kill_all_pids(T);
@@ -379,7 +388,7 @@ pull(Name, Q) ->
             after
                 1000 ->
                     lager:info("No pull ack from ~p~n", [Name]),
-                    error 
+                    error
             end
     end,
     riak_repl2_rtq:pull(Name, F),
@@ -462,4 +471,3 @@ trim(Q, #state{max_bytes=Max}) ->
     NewQ.
 
 -endif.
-

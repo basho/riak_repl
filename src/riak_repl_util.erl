@@ -962,5 +962,3 @@ do_wire_list_w1_test() ->
     ?assert(Decoded == Objs).
 
 -endif.
-
-

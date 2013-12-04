@@ -60,8 +60,8 @@
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
                 connection_ref, % reference handed out by connection manager
-                transport, % transport module 
-                socket,    % socket to use with transport 
+                transport, % transport module
+                socket,    % socket to use with transport
                 peername,  % cached when socket becomes active
                 proto,     % protocol version negotiated
                 ver,       % wire format negotiated
@@ -80,7 +80,7 @@ start_link(Remote) ->
 
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
-    
+
 status(Pid) ->
     status(Pid, infinity).
 
@@ -210,9 +210,9 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
         QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
-handle_call({connected, Socket, Transport, EndPoint, Proto}, _From, 
+handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
             State = #state{remote = Remote}) ->
-    %% Check the socket is valid, may have been an error 
+    %% Check the socket is valid, may have been an error
     %% before turning it active (e.g. handoff of riak_core_service_mgr to handler
     case Transport:send(Socket, <<>>) of
         ok ->
@@ -224,7 +224,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
             lager:debug("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
                                                SocketTag}, Transport),
-            State2 = State#state{transport = Transport, 
+            State2 = State#state{transport = Transport,
                                  socket = Socket,
                                  address = EndPoint,
                                  proto = Proto,
@@ -263,7 +263,7 @@ handle_cast({connect_failed, _HelperPid, Reason},
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
         when Proto == tcp; Proto == ssl ->
     recv(<<Cont/binary, TcpBin/binary>>, State);
-handle_info({Closed, _S}, 
+handle_info({Closed, _S},
             State = #state{remote = Remote, cont = Cont})
         when Closed == tcp_closed; Closed == ssl_closed ->
     case size(Cont) of
@@ -274,11 +274,11 @@ handle_info({Closed, _S},
             lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
-    %% go to sleep for 1s so a sink that opens the connection ok but then 
+    %% go to sleep for 1s so a sink that opens the connection ok but then
     %% dies will not make the server restart too fst.
     timer:sleep(1000),
     {stop, normal, State};
-handle_info({Error, _S, Reason}, 
+handle_info({Error, _S, Reason},
             State = #state{remote = Remote, cont = Cont})
         when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
@@ -313,21 +313,23 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, #state{helper_pid = HelperPid}) ->
+terminate(_Reason, #state{helper_pid=_HelperPid, remote=Remote}) ->
+    riak_core_connection_mgr:disconnect({rt_repl, Remote}),
     %%TODO: check if this is called, don't think it is on normal supervisor
     %%      start/shutdown without trap exit set
-    case HelperPid of 
-        undefined ->
-            ok;
-        _ ->
-            try
-                riak_repl2_rtsource_helper:stop(HelperPid)
-            catch
-                _:Err ->
-                    lager:info("Realtime source did not cleanly stop ~p - ~p\n",
-                               [HelperPid, Err])
-            end
-    end.
+    %% case HelperPid of
+    %%     undefined ->
+    %%         ok;
+    %%     _ ->
+    %%         try
+    %%             riak_repl2_rtsource_helper:stop(HelperPid)
+    %%         catch
+    %%             _:Err ->
+    %%                 lager:info("Realtime source did not cleanly stop ~p - ~p\n",
+    %%                            [HelperPid, Err])
+    %%         end
+    %% end.
+    ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -413,7 +415,7 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
 schedule_heartbeat(State = #state{hb_interval_tref = undefined, hb_interval = HBInterval}) ->
     TRef = erlang:send_after(HBInterval, self(), send_heartbeat),
     State#state{hb_interval_tref = TRef};
- 
+
 schedule_heartbeat(State) ->
     State.
 
@@ -442,24 +444,30 @@ setup() ->
     riak_repl_test_util:abstract_stats(),
     riak_repl_test_util:abstract_stateful(),
     ok.
+
 cleanup(_Ctx) ->
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
     riak_repl_test_util:kill_and_wait(riak_repl2_rt),
+    case whereis(fake_sink) of
+        undefined ->
+            ok;
+        SinkPid ->
+            SinkPid ! kill
+    end,
     riak_repl_test_util:stop_test_ring(),
     riak_repl_test_util:maybe_unload_mecks(
       [riak_core_service_mgr,
        riak_core_connection_mgr,
        gen_tcp]),
+    meck:unload(),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247
 %% cache the peername so that when the local socket is closed
 %% peername will still be around for logging
 cache_peername_test_case() ->
-
     setup_connection_for_peername(),
-
     {ok, _RTPid} = rt_source_eqc:start_rt(),
     {ok, _RTQPid} = rt_source_eqc:start_rtq(),
     {ok, _TCPMonPid} = rt_source_eqc:start_tcp_mon(),
@@ -503,7 +511,7 @@ connect(RemoteName) ->
 
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
     receive
-        {sink_started, SinkPid} -> 
+        {sink_started, SinkPid} ->
             {SourcePid, SinkPid}
     after 1000 ->
         {error, timeout}

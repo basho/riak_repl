@@ -38,7 +38,7 @@ accumulate(_, Acc, 0) ->
 accumulate(Pid, Acc, C) ->
     ask(Pid),
     receive
-        {rtq_entry, {N, B}} ->
+        {rtq_entry, {_N, B}} ->
             Size = byte_size(B),
             accumulate(Pid, Acc+Size, C-1)
     end.
@@ -53,13 +53,17 @@ overload_protection_start_test_() ->
             riak_repl_test_util:wait_for_pid(Rtq1),
             Got = riak_repl2_rtq:start_link(),
             ?assertMatch({ok, _Pid}, Got),
-            riak_repl2_rtq:stop()
+            riak_repl2_rtq:stop(),
+            catch exit(whereis(riak_repl2_rtq), kill),
+            ets:delete(rtq_overload_ets)
         end},
 
         {"start with overload and recover options", fun() ->
             Got = riak_repl2_rtq:start_link([{overload_threshold, 5000}, {overload_recover, 2500}]),
             ?assertMatch({ok, _Pid}, Got),
-            riak_repl2_rtq:stop()
+            riak_repl2_rtq:stop(),
+            catch exit(whereis(riak_repl2_rtq), kill),
+            ets:delete(rtq_overload_ets)
         end},
 
         {"start the rtq overload counter process", fun() ->
@@ -77,7 +81,8 @@ overload_protection_start_test_() ->
     ].
 
 overload_test_() ->
-    {foreach, fun() ->
+    {foreach,
+     fun() ->
         % if you want lager started, and you're using bash, you can put
         % ENABLE_LAGER=TRUE in front of whatever you're using to run the tests
         % (make test, rebar eunit) and it will turn on lager for you.
@@ -85,7 +90,7 @@ overload_test_() ->
             false ->
                 ok;
             _ ->
-                lager:start(),
+                application:start(lager),
                 lager:set_loglevel(lager_console_backend, debug)
         end,
         riak_repl_test_util:abstract_stats(),
@@ -94,9 +99,14 @@ overload_test_() ->
         riak_repl2_rtq:register("overload_test")
     end,
     fun(_) ->
-        riak_repl2_rtq_overload_counter:stop(),
-        riak_repl2_rtq:stop(),
-        riak_repl_test_util:maybe_unload_mecks([riak_repl_stats])
+            riak_repl2_rtq_overload_counter:stop(),
+            riak_repl2_rtq:stop(),
+            catch exit(whereis(riak_repl2_rtq), kill),
+            catch exit(whereis(riak_repl2_rtq_overload_counter), kill),
+            ets:delete(rtq_overload_ets),
+            riak_repl_test_util:maybe_unload_mecks([riak_repl_stats]),
+            meck:unload(),
+            ok
     end, [
 
         fun(_) -> {"rtq increments sequence number on drop", fun() ->
@@ -174,7 +184,8 @@ overload_test_() ->
             unblock_rtq_pull(),
             History = meck:history(riak_repl_stats),
             ?assertMatch([{_MeckPid, {riak_repl_stats, rt_source_errors, []}, ok}], History)
-        end} end
+        end}
+        end
 
     ]}.
 

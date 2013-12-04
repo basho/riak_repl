@@ -120,7 +120,7 @@ single_node_test_() ->
                     _ ->
                         busy
                 end
-            end,         
+            end,
             Knowners = wait_for(DoneFun),
             ?assertEqual({ok, [?REMOTE_CLUSTER_NAME]}, Knowners)
         end},
@@ -373,7 +373,8 @@ cleanup() ->
         RingEvents -> exit(RingEvents, kill)
     end,
     meck:unload(riak_core_node_watcher),
-    meck:unload(riak_core_node_watcher_events).
+    meck:unload(riak_core_node_watcher_events),
+    meck:unload().
 
 maybe_start_master() ->
     case node() of

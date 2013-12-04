@@ -164,7 +164,7 @@ push(NumItems, Bin, Meta) ->
             lager:debug("rtq overloaded"),
             riak_repl2_rtq_overload_counter:drop();
         false ->
-            gen_server:cast(?SERVER, {push, NumItems, Bin, Meta})
+             gen_server:cast(?SERVER, {push, NumItems, Bin, Meta})
     end.
 
 should_drop() ->
@@ -457,8 +457,10 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             {{error, not_registered}, State}
     end.
 
-push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
-                                                  cs = Cs, shutting_down = false}) ->
+push(NumItems, Bin, Meta, State = #state{qtab = QTab,
+                                         qseq = QSeq,
+                                         cs = Cs,
+                                         shutting_down = false}) ->
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin, Meta},
     %% Send to any pending consumers
@@ -723,4 +725,3 @@ minseq(QTab, QSeq) ->
         MinSeq ->
             MinSeq - 1
     end.
-

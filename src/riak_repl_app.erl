@@ -99,7 +99,7 @@ start(_Type, _StartArgs) ->
 
 %% @spec stop(State :: term()) -> ok
 %% @doc The application:stop callback for riak_repl.
-stop(_State) -> 
+stop(_State) ->
     lager:info("Stopped application riak_repl"),
     ok.
 

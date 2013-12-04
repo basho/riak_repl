@@ -441,6 +441,7 @@ cleanup(_Ctx) ->
        gen_tcp]),
     application:set_env(riak_repl, reactivate_socket_interval_millis,
           ?REACTIVATE_SOCK_INT_MILLIS),
+    meck:unload(),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247
