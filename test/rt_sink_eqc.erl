@@ -44,24 +44,19 @@
     already_routed
 }).
 
-%prop_test_() ->
-%    {timeout, 60000, fun() ->
-%        ?assert(eqc:quickcheck(eqc:numtests(10, ?MODULE:prop_main())))
-%    end}.
-
-eqc_test_() ->
-    {spawn,
-    [
-      {setup,
-       fun setup/0,
-       fun cleanup/1,
-       [%% Run the quickcheck tests
-        {timeout, 6000,
-         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(1, ?QC_OUT(?MODULE:prop_main()))))}
-       ]
-      }
-     ]
-    }.
+%% eqc_test_() ->
+%%     {spawn,
+%%     [
+%%       {setup,
+%%        fun setup/0,
+%%        fun cleanup/1,
+%%        [%% Run the quickcheck tests
+%%         {timeout, 30,
+%%          ?_assertEqual(true, eqc:quickcheck(eqc:numtests(1, ?QC_OUT(?MODULE:prop_main()))))}
+%%        ]
+%%       }
+%%      ]
+%%     }.
 
 setup() ->
     %ok = meck:new(riak_repl_stats, [passthrough]),
