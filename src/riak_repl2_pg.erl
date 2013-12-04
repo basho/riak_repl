@@ -59,7 +59,7 @@ enable(Remote) ->
 
 disable(Remote) ->
     F = fun(Ring, Remote1) ->
-            R2 = case riak_repl_ring:pg_stop_trans(Ring, Remote1) of
+            R2 = case riak_repl_ring:pg_disable_trans(Ring, Remote1) of
                 {new_ring, R1} ->
                     R1;
                 {ignore, _} ->

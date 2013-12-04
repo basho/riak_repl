@@ -38,7 +38,7 @@ accumulate(_, Acc, 0) ->
 accumulate(Pid, Acc, C) ->
     ask(Pid),
     receive
-        {rtq_entry, {N, B}} ->
+        {rtq_entry, {_N, B}} ->
             Size = byte_size(B),
             accumulate(Pid, Acc+Size, C-1)
     end.
@@ -53,7 +53,7 @@ status_test_() ->
         application:unset_env(riak_repl, rtq_max_bytes),
         riak_repl_test_util:kill_and_wait(QPid)
     end,
-    fun(QPid) -> [
+    fun(_QPid) -> [
 
         {"queue size has percentage, and is correct", fun() ->
             MyBin = crypto:rand_bytes(1024 * 1024),

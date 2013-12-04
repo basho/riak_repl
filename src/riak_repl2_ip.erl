@@ -270,7 +270,7 @@ expand_hostnames({External, {Host, InternalPort}}, Acc) when is_list(Host) ->
             [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
-            case inet_res:gethostnames(Host) of
+            case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
                     lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
@@ -288,7 +288,7 @@ expand_hostnames({External, Host}, Acc) when is_list(Host) ->
             [{External, Addr} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
-            case inet_res:gethostnames(Host) of
+            case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
                     lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, Addr} || Addr <- Addresses] ++ Acc;
