@@ -145,7 +145,7 @@ setup() ->
     riak_repl_test_util:abstract_gen_tcp(),
     bug_rt(),
     start_service_manager(),
-    riak_repl2_rtsink_conn:register_service(),
+    riak_repl2_rtsink_conn:sync_register_service(),
     abstract_fake_source(),
     start_fake_rtq().
 

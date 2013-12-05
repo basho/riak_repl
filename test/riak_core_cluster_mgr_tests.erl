@@ -468,7 +468,7 @@ start_fake_remote_cluster_service() ->
     %% which the cluster manager will use during testing to connect to us.
     ServiceProto = {test_cluster_mgr, [{1,0}]},
     ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
-    riak_core_service_mgr:register_service(ServiceSpec, {round_robin,10}).
+    riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,10}).
 
 become_leader() ->
     riak_core_cluster_mgr:set_leader(node(), self()).

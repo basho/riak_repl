@@ -77,7 +77,6 @@ start(_Type, _StartArgs) ->
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
             name_this_cluster(),
-            riak_core_node_watcher:service_up(riak_repl, Pid),
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
             %% Add routes to webmachine
@@ -88,10 +87,14 @@ start(_Type, _StartArgs) ->
             register_cluster_name_locator(),
 
             %% makes service manager start connection dispatcher
-            riak_repl2_rtsink_conn:register_service(),
-            riak_repl2_fssink:register_service(),
-            riak_repl2_fscoordinator_serv:register_service(),
-            riak_repl2_pg_block_requester:register_service(),
+            ok = riak_repl2_rtsink_conn:sync_register_service(),
+            ok = riak_repl2_fssink:sync_register_service(),
+            ok = riak_repl2_fscoordinator_serv:sync_register_service(),
+
+            %% Don't announce application as ready until everything has
+            %% been started to eliminate race.
+            riak_core_node_watcher:service_up(riak_repl, Pid),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
