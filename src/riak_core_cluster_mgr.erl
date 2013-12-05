@@ -706,6 +706,9 @@ become_leader(State, LeaderNode) when State#state.is_leader == false ->
     State#state{is_leader = true};
 become_leader(State, LeaderNode) ->
     lager:debug("ClusterManager: ~p still the leader", [LeaderNode]),
+    %% if the ring transitioned, triggering an election, if re-elected
+    %% ensure we have connections to remote clusters still.
+    erlang:send_after(5000, self(), connect_to_clusters),
     State.
 
 %% stop being a cluster manager leader
