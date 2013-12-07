@@ -94,7 +94,8 @@
          get_connections/0,
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
-         stop/0
+         stop/0,
+         connect_to_clusters/0
          ]).
 
 %% gen_server callbacks
@@ -140,6 +141,11 @@ set_leader(LeaderNode, _LeaderPid) ->
 -spec get_leader() -> node().
 get_leader() ->
     gen_server:call(?SERVER, leader_node, infinity).
+
+%% Reply with the current leader node.
+-spec connect_to_clusters() -> ok.
+connect_to_clusters() ->
+    gen_server:call(?SERVER, connect_to_clusters, infinity).
 
 %% @doc True if the local manager is the leader.
 -spec get_is_leader() -> boolean().
@@ -244,6 +250,10 @@ handle_call({get_my_members, MyAddr}, _From, State) ->
 
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
+
+handle_call(connect_to_clusters, _From, State) ->
+    connect_to_persisted_clusters(State),
+    {reply, ok, State};
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -402,16 +412,7 @@ handle_info(garbage_collection_timer, State) ->
     {noreply, State1};
 
 handle_info(connect_to_clusters, State) ->
-    %% Open a connection to all known (persisted) clusters
-    case State#state.is_leader of
-        true ->
-            Fun = State#state.restore_targets_fun,
-            ClusterTargets = Fun(),
-            lager:debug("Cluster Manager will connect to clusters: ~p", [ClusterTargets]),
-            connect_to_targets(ClusterTargets);
-        _ ->
-            ok
-    end,
+    connect_to_persisted_clusters(State),
     {noreply, State};
 
 handle_info(_Unhandled, State) ->
@@ -716,7 +717,7 @@ become_proxy(State, LeaderNode) when State#state.is_leader == true ->
     case riak_core_cluster_conn_sup:connections() of
         [] ->
             ok;
-        Connections ->        
+        Connections ->
             lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
             [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
              || {Remote, _Pid} <- Connections]
@@ -805,4 +806,18 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
                         [self(), Other]),
             % ignore and keep trying to be a nice service
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
+    end.
+
+%% @doc If the current leader, connect to all clusters that have been
+%%      currently persisted in the ring.
+connect_to_persisted_clusters(State) ->
+    case State#state.is_leader of
+        true ->
+            Fun = State#state.restore_targets_fun,
+            ClusterTargets = Fun(),
+            lager:debug("Cluster Manager will connect to clusters: ~p", 
+                        [ClusterTargets]),
+            connect_to_targets(ClusterTargets);
+        _ ->
+            ok
     end.

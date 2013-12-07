@@ -45,6 +45,14 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
         _ ->
             ok
     end,
+    %% Force the cluster manager to connect to the clusters when it
+    %% learns about an event *after* an election has occurred.
+    case riak_repl2_leader:is_leader() of
+        true ->
+            riak_core_cluster_mgr:connect_to_clusters();
+        _ ->
+            ok
+    end,
     {ok, State#state{ring=FinalRing}};
 handle_event(_Event, State) ->
     {ok, State}.
