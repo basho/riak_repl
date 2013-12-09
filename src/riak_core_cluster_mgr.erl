@@ -212,7 +212,7 @@ init(Defaults) ->
         false ->
             ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
             ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
-            riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS});
+            riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
         true ->
             ok
     end,
