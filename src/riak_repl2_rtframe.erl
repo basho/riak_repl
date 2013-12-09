@@ -30,6 +30,12 @@ encode_payload(heartbeat, undefined) ->
     [?MSG_HEARTBEAT].
 
 decode(<<Size:32/unsigned-big-integer, 
+         Size:32/unsigned-big-integer,
+         Msg:Size/binary, % MsgCode is included in size calc
+         Rest/binary>>) ->
+    <<MsgCode:8/unsigned, Payload/binary>> = Msg,
+    {ok, decode_payload(MsgCode, Payload), Rest};
+decode(<<Size:32/unsigned-big-integer, 
          Msg:Size/binary, % MsgCode is included in size calc
          Rest/binary>>) ->
     <<MsgCode:8/unsigned, Payload/binary>> = Msg,
