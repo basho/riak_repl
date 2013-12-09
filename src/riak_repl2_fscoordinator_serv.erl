@@ -25,7 +25,7 @@
 %% service manager callback Function Exports
 %% ------------------------------------------------------------------
 
--export([register_service/0, start_service/5]).
+-export([sync_register_service/0, start_service/5]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -78,12 +78,12 @@ status(Pid, Timeout) ->
 %% service manager Function Definitions
 %% ------------------------------------------------------------------
 
-register_service() ->
+sync_register_service() ->
     ProtoPrefs = {fs_coordinate, [{1,0}]},
     TcpOptions = [{keepalive, true}, {packet, 4}, {active, false}, 
         {nodelay, true}],
     HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
-    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+    riak_core_service_mgr:sync_register_service(HostSpec, {round_robin, undefined}).
 
 start_service(Socket, Transport, Proto, _Args, Props) ->
     {ok, Pid} = riak_repl2_fscoordinator_serv_sup:start_child(Socket,

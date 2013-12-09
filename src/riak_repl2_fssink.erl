@@ -35,7 +35,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/4, register_service/0, start_service/5, legacy_status/2, fullsync_complete/1]).
+-export([start_link/4, sync_register_service/0, start_service/5, legacy_status/2, fullsync_complete/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -59,8 +59,8 @@ fullsync_complete(Pid) ->
     %% cast to avoid deadlock in terminate
     gen_server:cast(Pid, fullsync_complete).
 
-%% Register with service manager
-register_service() ->
+%% @doc Register with service manager
+sync_register_service() ->
     %% 1,0 and up supports keylist strategy
     %% 1,1 and up supports binary object
     %% 2,0 and up supports AAE strategy
@@ -70,7 +70,7 @@ register_service() ->
                   {active, false},
                   {nodelay, true}],
     HostSpec     = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
-    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+    riak_core_service_mgr:sync_register_service(HostSpec, {round_robin, undefined}).
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->
