@@ -437,9 +437,23 @@ schedule_cluster_connections() ->
     erlang:send_after(30000, self(), connect_to_clusters),
     erlang:send_after(60000, self(), connect_to_clusters).
 
+get_ring() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_ring:ensure_config(Ring).
+
 register_defaults(Defaults, State) ->
     %% register a default cluster locator by identity
     register_cluster_addr_locator(),
+
+    %% register cluster locator
+    Locator = fun(ClusterName, _Policy) ->
+                      Ring = get_ring(),
+                      Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
+                      lager:debug("located members for cluster ~p: ~p", [ClusterName, Addrs]),
+                      {ok,Addrs}
+              end,
+    ok = riak_core_connection_mgr:register_locator(?CLUSTER_NAME_LOCATOR_TYPE, Locator),
+
     case Defaults of
         [] ->
             State;            
