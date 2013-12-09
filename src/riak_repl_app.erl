@@ -65,35 +65,50 @@ start(_Type, _StartArgs) ->
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
             %% Register connection manager stats application with core
-            riak_core:register(riak_conn_mgr_stats, [{stat_mod, riak_core_connection_mgr_stats}]),
+            riak_core:register(riak_conn_mgr_stats,
+                               [{stat_mod, riak_core_connection_mgr_stats}]),
+
             %% register functions for cluster manager to find it's own
             %% nodes' ip addrs
             riak_core_cluster_mgr:register_member_fun(
                 fun cluster_mgr_member_fun/1),
+
             %% cluster manager leader will follow repl leader
             riak_repl2_leader:register_notify_fun(
               fun riak_core_cluster_mgr:set_leader/2),
+
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
+
             riak_repl2_leader:register_notify_fun(
               fun riak_repl2_pg_proxy_sup:set_leader/2),
+
             name_this_cluster(),
-            riak_core_node_watcher:service_up(riak_repl, Pid),
+
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
-            ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
+            ok = riak_core_ring_events:add_guarded_handler(
+                    riak_repl_ring_handler, []),
+
             %% Add routes to webmachine
             [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
-            %% Now that we have registered the ring handler, we can register the
-            %% cluster manager name locator function (which reads the ring).
+
+            %% Now that we have registered the ring handler, we can
+            %% register the cluster manager name locator function (which
+            %% reads the ring).
             register_cluster_name_locator(),
 
             %% makes service manager start connection dispatcher
-            riak_repl2_rtsink_conn:register_service(),
-            riak_repl2_fssink:register_service(),
-            riak_repl2_fscoordinator_serv:register_service(),
-            riak_repl2_pg_block_requester:register_service(),
+            ok = riak_repl2_rtsink_conn:sync_register_service(),
+            ok = riak_repl2_fssink:sync_register_service(),
+            ok = riak_repl2_fscoordinator_serv:sync_register_service(),
+            ok = riak_repl2_pg_block_requester:sync_register_service(),
+
+            %% Don't announce service is available until we've
+            %% registered all listeners.
+            riak_core_node_watcher:service_up(riak_repl, Pid),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
@@ -101,7 +116,7 @@ start(_Type, _StartArgs) ->
 
 %% @spec stop(State :: term()) -> ok
 %% @doc The application:stop callback for riak_repl.
-stop(_State) -> 
+stop(_State) ->
     lager:info("Stopped application riak_repl"),
     ok.
 
