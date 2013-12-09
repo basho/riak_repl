@@ -103,7 +103,9 @@ start_link() ->
 start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
     case valid_host_ip(IP) of
         false ->
-            erlang:error({badarg, invalid_ip});
+            ?TRACE(?debugFmt("Service Manager can not start with invalid IP: ~p", [IP])),
+            lager:warning("Service Manager can not start with invalid IP: ~p", [IP]),
+            {error, invalid_ip};
         true ->
             ?TRACE(?debugFmt("Starting Core Service Manager at ~p", [{IP,Port}])),
             lager:info("Starting Core Service Manager at ~p", [{IP,Port}]),
