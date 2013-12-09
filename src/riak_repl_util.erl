@@ -22,7 +22,6 @@
          binunpack_bkey/1,
          merkle_filename/3,
          keylist_filename/3,
-         non_loopback_interfaces/1,
          valid_host_ip/1,
          normalize_ip/1,
          format_socketaddrs/2,
@@ -108,44 +107,67 @@ get_partitions(Ring) ->
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
-    B = riak_object:bucket(Object),
-    K = riak_object:key(Object),
+    lager:info("Got do_repl_put, Object:~p", [Object]),
     case repl_helper_recv(Object) of
         ok ->
-            ReqId = erlang:phash2({self(), os:timestamp()}),
-            B = riak_object:bucket(Object),
-            K = riak_object:key(Object),
-            Opts = [asis, disable_hooks, {update_last_modified, false}],
-
-            {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
-                    ?REPL_FSM_TIMEOUT,
-                    self(), Opts),
-
-            MRef = erlang:monitor(process, PutPid),
-
-            %% block waiting for response
-            wait_for_response(ReqId, "put"),
-
-            %% wait for put FSM to exit
-            receive
-                {'DOWN', MRef, _, _, _} ->
-                    ok
-            after 60000 ->
-                    lager:warning("put fsm did not exit on schedule"),
-                    ok
-            end,
-
-            case riak_kv_util:is_x_deleted(Object) of
-                true ->
-                    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
-                    reap(ReqId, B, K),
-                    %% block waiting for response
-                    wait_for_response(ReqId, "reap");
-                false ->
-                    lager:debug("Incoming obj ~p/~p", [B, K])
+            case riak_object:bucket(Object) of
+               {T,B} ->
+                   case riak_core_bucket_type:status(T) of
+                       undefined ->
+                           lager:error("Bucket type ~p not defined on sink!", [T]);
+                       created ->
+                           lager:error("Bucket type ~p exists on sink, but is not active!", [T]);
+                       ready ->
+                           lager:error("Bucket type ~p exists on sink, but is not active!", [T]);
+                       active ->
+                           lager:info("Bucket type ~p of object ~p found on sink and is active.", [B, T]),
+                           do_put(B, Object)
+                   end;
+               B -> 
+                   lager:info("default bucket for object:~p being put on sink.", [B]),
+                   do_put(B, Object)
             end;
-        cancel ->
-            lager:debug("Skipping repl received object ~p/~p", [B, K])
+       cancel ->
+           B = case riak_object:bucket(Object) of
+	       {Bucket, _T} -> Bucket;
+	       Bucket -> Bucket
+	    end,
+           K = riak_object:key(Object),
+
+           lager:info("Skipping repl received object ~p/~p", [B, K])
+    end.
+
+do_put(B, Object) ->
+
+    ReqId = erlang:phash2({self(), os:timestamp()}),
+
+    K = riak_object:key(Object),
+    Opts = [asis, disable_hooks, {update_last_modified, false}],
+
+    {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
+					      ?REPL_FSM_TIMEOUT,
+					      self(), Opts),
+    MRef = erlang:monitor(process, PutPid),
+
+    %% block waiting for response
+    wait_for_response(ReqId, "put"),
+    %% wait for put FSM to exit
+    receive
+	{'DOWN', MRef, _, _, _} ->
+	    ok
+    after 60000 ->
+	    lager:warning("put fsm did not exit on schedule"),
+	    ok
+    end,
+
+    case riak_kv_util:is_x_deleted(Object) of
+	true ->
+	    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
+	    reap(ReqId, B, K),
+	    %% block waiting for response
+	    wait_for_response(ReqId, "reap");
+	false ->
+	    lager:debug("Incoming obj ~p/~p", [B, K])
     end.
 
 reap(ReqId, B, K) ->
@@ -194,7 +216,10 @@ repl_helper_recv([{App, Mod}|T], Object) ->
     end.
 
 repl_helper_send(Object, C) ->
-    B = riak_object:bucket(Object),
+    B = case riak_object:bucket(Object) of
+        {Bucket, _T} -> Bucket;
+        Bucket -> Bucket
+    end,
     case proplists:get_value(repl, C:get_bucket(B)) of
         Val when Val==true; Val==fullsync; Val==both ->
             case application:get_env(riak_core, repl_helper) of
@@ -296,16 +321,6 @@ keylist_filename(WorkDir, Partition, Type) ->
             ".theirs.sterm"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
-
-%% @doc IFs is in the form returned by inet:getifaddrs()
-%%      Returns interfaces with the "up" flag, but without the
-%%      "loopback" flag
-non_loopback_interfaces(IFs) ->
-    lists:filter(
-        fun({_Name, Attrs}) ->
-            Flags = proplists:get_value(flags, Attrs),
-            lists:member(up, Flags) andalso not lists:member(loopback, Flags)
-        end, IFs).
 
 %% Returns true if the IP address given is a valid host IP address
 valid_host_ip(IP) ->
@@ -680,7 +695,10 @@ proxy_get_active() ->
 
 log_dropped_realtime_obj(Obj) ->
     DroppedKey = riak_object:key(Obj),
-    DroppedBucket = riak_object:bucket(Obj),
+    DroppedBucket = case riak_object:bucket(Obj) of
+        {_T, B} -> B;
+        B -> B
+    end,
     lager:info("REPL dropped object: ~p ~p",
                [ DroppedBucket, DroppedKey]).
 
@@ -798,6 +816,15 @@ encode_obj_msg(V, {Cmd, RObj}) ->
 %% @doc Create a new binary wire formatted replication blob, complete with
 %%      bucket and key for reconstruction on the other end. BinObj should be
 %%      in the new format as obtained from riak_object:to_binary(v1, RObj).
+new_w1({T, B}, K, BinObj) when is_binary(B), is_binary(T), is_binary(K), is_binary(BinObj) ->
+    KLen = byte_size(K),
+    BLen = byte_size(B),
+    TLen = byte_size(T),
+    lager:info("in new_w1, got type:~p, bucket:~p, key:~p", [T,B,K]),
+    <<?MAGIC:8/integer, ?W1_VER:8/integer,
+      TLen:32/integer, T:TLen/binary,
+      BLen:32/integer, B:BLen/binary,
+      KLen:32/integer, K:KLen/binary, BinObj/binary>>;
 new_w1(B, K, BinObj) when is_binary(B), is_binary(K), is_binary(BinObj) ->
     KLen = byte_size(K),
     BLen = byte_size(B),
@@ -826,15 +853,21 @@ to_wire(w1, Objects) when is_list(Objects) ->
     BObjs = [to_wire(w1,O) || O <- Objects],
     term_to_binary(BObjs);
 to_wire(w1, Object) when not is_binary(Object) ->
-    B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    to_wire(w1, B, K, Object).
+    case riak_object:bucket(Object) of
+        {T, B} -> 
+            lager:info("encoding typed bucket: t:~p, b:~p, k:~p", [T,B,K]),
+            to_wire(w1, {T, B}, K, Object);
+        B ->
+            to_wire(w1, B, K, Object)
+    end.
 
 %% When the wire format is known and objects are packed in a list of binaries
 from_wire(w0, BinObjList) ->
       binary_to_term(BinObjList);
 from_wire(w1, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
+    lager:info("BinObjs:~p", [BinObjs]),
     [from_wire(BObj) || BObj <- BinObjs].
 
 to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
@@ -846,6 +879,9 @@ to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
     to_wire(w0, B, K, Bin);
 to_wire(w1, B, K, <<_/binary>>=Bin) ->
     new_w1(B, K, Bin);
+to_wire(w1, {T,B}, K, RObj) ->
+    lager:info("calling riak_boject:to_binary(v1, ~p)", [RObj]),
+    new_w1({T,B}, K, riak_object:to_binary(v1, RObj));
 to_wire(w1, B, K, RObj) ->
     new_w1(B, K, riak_object:to_binary(v1, RObj));
 to_wire(_W, _B, _K, _RObj) ->
@@ -857,6 +893,11 @@ to_wire(Obj) ->
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
+from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
+            TLen:32/integer, T:TLen/binary,
+            BLen:32/integer, B:BLen/binary,
+            KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
+    riak_object:from_binary({T, B}, K, BinObj);
 from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
             BLen:32/integer, B:BLen/binary,
             KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
@@ -972,29 +1013,18 @@ do_wire_list_w1_test() ->
     Decoded = from_wire(w1, Encoded),
     ?assert(Decoded == Objs).
 
-do_non_loopback_interfaces_test() ->
-    Addrs = [{"lo",
-                [{flags,[up,loopback,running]},
-                {hwaddr,[0,0,0,0,0,0]},
-                {addr,{127,0,0,1}},
-                {netmask,{255,0,0,0}},
-                {addr,{0,0,0,0,0,0,0,1}},
-                {netmask,{65535,65535,65535,65535,65535,65535,65535,65535}}]},
-            {"lo0",
-                [{flags,[up,loopback,running]},
-                {hwaddr,[0,0,0,0,0,0]},
-                {addr,{127,0,0,1}},
-                {netmask,{255,0,0,0}},
-                {addr,{0,0,0,0,0,0,0,1}},
-                {netmask,{65535,65535,65535,65535,65535,65535,65535,65535}}]},
-            {"eth0",
-                [{flags,[up,broadcast,running,multicast]},
-                {addr, {10, 0, 0, 99}},
-                {netmask, {255, 0, 0, 0}}]}],
-    Res = non_loopback_interfaces(Addrs),
-    ?assertEqual(false, proplists:is_defined("lo", Res)),
-    ?assertEqual(false, proplists:is_defined("lo0", Res)),
-    ?assertEqual(true, proplists:is_defined("eth0", Res)).
+do_wire_list_w1_bucket_type_test() ->
+    Type = <<"type">>,
+    Bucket = <<"0b:foo">>,
+    Key = <<"key">>,
+    RObj = riak_object:new({Type, Bucket}, Key, <<"val">>),
+    ?debugFmt("RObj:~p", [RObj]),
+    Objs = [RObj],
+    Encoded = to_wire(w1, Objs),
+    ?debugFmt("encoded:~p", [binary_to_term(Encoded)]),
+    Decoded = from_wire(w1, Encoded),
+    ?debugFmt("decoded:~p", [Decoded]),
+    ?assert(Decoded == Objs).
 
 -endif.
 
