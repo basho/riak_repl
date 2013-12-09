@@ -54,9 +54,9 @@
                 cont = <<>>       %% Continuation from previous TCP buffer
                }).
 
-%% @doc Register with service manager
+%% Register with service manager
 sync_register_service() ->
-    ProtoPrefs = {realtime,[{2,0}, {1,4}, {1,1}, {1,0}]},
+    ProtoPrefs = {realtime,[{2,1}, {2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -258,7 +258,7 @@ make_donefun({Binary, Meta}, Me, Ref, Seq) ->
         gen_server:cast(Me, {ack, Ref, Seq, Skips}),
         maybe_push(Binary, Meta)
     end,
-    {Done, Binary};
+    {Done, Binary, Meta};
 make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
     Done = fun() ->
         gen_server:cast(Me, {ack, Ref, Seq, 0})
@@ -285,8 +285,17 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    {DoneFun, BinObjs} = make_donefun(BinObjsMeta, Me, Ref, Seq),
-    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver),
+    case make_donefun(BinObjsMeta, Me, Ref, Seq) of
+        {DoneFun, BinObjs, Meta} ->
+            case write_object(Meta) of
+            true ->
+                riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
+            false ->
+                lager:info("Bucket is of a type that are not equal on both the source and sink; not writing object.")
+            end;
+        {DoneFun, BinObjs} ->
+            riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver)
+    end,
     State2 = case AckedSeq of
                  undefined ->
                      %% Handle first received sequence number
@@ -396,6 +405,27 @@ schedule_reactivate_socket(State = #state{transport = T,
     end.
 get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
+
+write_object(Meta) ->
+    case orddict:fetch(typed_bucket, Meta) of
+        false -> true;
+        true ->
+            BucketType = orddict:fetch(type, Meta),
+            case riak_core_bucket_type:get(BucketType) of
+                undefined ->
+                    lager:debug("No properties found for bucket type:~p", [BucketType]),    
+	            false;
+	        {error, _T} ->
+                    lager:debug("No properties found for bucket type:~p", [BucketType]),
+	            false;
+                AllProps ->
+                    Sink = riak_repl_util:get_bucket_props_hash(AllProps),
+                    Source = orddict:fetch(props_hash, Meta),
+                    lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [Source, Sink]),
+                    Source == Sink
+	    end
+    end.
+
 
 %% ===================================================================
 %% EUnit tests

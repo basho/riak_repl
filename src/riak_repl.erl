@@ -6,6 +6,7 @@
 -export([start/0, stop/0]).
 -export([install_hook/0, uninstall_hook/0]).
 -export([fixup/2]).
+-export([conditional_hook/3]).
 
 start() ->
     riak_core_util:start_app_deps(riak_repl),
@@ -16,13 +17,25 @@ stop() ->
     application:stop(riak_repl).
 
 install_hook() ->
+    riak_kv_hooks:add_conditional_postcommit({?MODULE, conditional_hook}),
     riak_core_bucket:append_bucket_defaults([{repl, true}]),
     ok.
 
 uninstall_hook() ->
+    riak_kv_hooks:del_conditional_postcommit({?MODULE, conditional_hook}),
     %% Cannot remove bucket defaults, best we can do is disable
     riak_core_bucket:append_bucket_defaults([{repl, false}]),
     ok.
+
+conditional_hook(_BucketType, _Bucket, BucketProps) ->
+    RTEnabled = app_helper:get_env(riak_repl, rtenabled, false),
+    BucketEnabled = not lists:member({repl, false}, BucketProps),
+    case RTEnabled and BucketEnabled of
+        true ->
+            riak_repl_util:get_hooks_for_modes();
+        false ->
+            false
+    end.
 
 fixup(_Bucket, BucketProps) ->
     CleanPostcommit = strip_postcommit(BucketProps),
