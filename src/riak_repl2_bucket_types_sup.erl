@@ -11,6 +11,7 @@
 %% @spec start_link() -> ServerRet
 %% @doc API for starting the supervisor.
 start_link() ->
+    io:format("riak_repl2_bucket_types_sup got start_link"),
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% @spec init([]) -> SupervisorTree

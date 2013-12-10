@@ -94,7 +94,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
                           case ask_bucket_types(Socket, Transport, Remote) of
                                 {ok, BTs} ->
                                     lager:info("Got ~p bucket types, storing locally", [BTs]),
-				    raik_repl2_bucket_types:store_whitelist(BTs);
+				    riak_repl2_bucket_types:store_whitelist(BTs);
                                 _ -> [] %% error, just return []
                           end,
                     %%    false ->

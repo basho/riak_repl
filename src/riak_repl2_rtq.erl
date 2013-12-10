@@ -183,11 +183,13 @@ push(NumItems, Bin) ->
 -type deliver_fun() :: fun((queue_entry() | not_reg_error()) -> 'ok').
 -spec pull(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull(Name, DeliverFun) ->
+    lager:info("in async pull, Name=~p, DeliverFun=~p", [Name, DeliverFun]),
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
 %% @doc Block the caller while the pull is done.
 -spec pull_sync(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull_sync(Name, DeliverFun) ->
+    lager:info("in sync pull, Name=~p, DeliverFun=~p", [Name, DeliverFun]),
     gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}, infinity).
 
 %% @doc Asynchronously acknowldge delivery of all objects with a sequence
@@ -535,6 +537,7 @@ maybe_deliver_item(C = #c{deliver = undefined}, QEntry) ->
     {Cause, C};
 maybe_deliver_item(C, QEntry) ->
     {Seq, _NumItem, _Bin, Meta} = QEntry,
+    lager:info("in maybe_deliver_item, QEntry=~p", [QEntry]),
     #c{name = Name} = C,
     Routed = case orddict:find(routed_clusters, Meta) of
         error -> [];
@@ -554,8 +557,13 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
     try
         Seq = C#c.cseq + 1, % bit of paranoia, remove after EQC
         QEntry2 = set_skip_meta(QEntry, Seq, C),
-        ok = DeliverFun(QEntry2),
-        C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
+        lager:info("in deliver item, QEntry2=~p", [QEntry2]),
+        case DeliverFun(QEntry2) of
+            ok ->
+                C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0};
+            skipped ->
+                      C#c{cseq = Seq, deliver = undefined, delivered = true, skips = 0}
+        end
     catch
         _:_ ->
             riak_repl_stats:rt_source_errors(),

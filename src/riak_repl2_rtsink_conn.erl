@@ -228,8 +228,10 @@ send_heartbeat(Transport, Socket) ->
 
 %% Receive TCP data - decode framing and dispatch
 recv(TcpBin, State = #state{transport = T, socket = S}) ->
+%%    lager:info("in recv, TcpBin: ~p", [binary_to_term(TcpBin)]),
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
+%%            lager:info("recv decode is undefined"),
             case State#state.active of
                 true ->
                     T:setopts(S, [{active, once}]);
@@ -238,6 +240,8 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             end,
             {noreply, State#state{cont = Cont}};
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
+            Obj = riak_object:from_binary(BinObjs),
+            lager:info("riak_repl2_rtsink_conn:recv, got BinObjs:~p", [Obj]),
             recv(Cont, do_write_objects(Seq, BinObjs, State));
         {ok, heartbeat, Cont} ->
             send_heartbeat(T, S),
@@ -246,6 +250,7 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
         {error, Reason} ->
             %% TODO: Log Something bad happened
+            lager:info("Error with decode"),
             riak_repl_stats:rt_sink_errors(),
             {stop, {framing, Reason}, State}
     end.

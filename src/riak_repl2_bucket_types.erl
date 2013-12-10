@@ -26,6 +26,7 @@
          retrieve_whitelist/1,
          store_whitelist/1,
          get_whitelist/1,
+         is_type_in_whitelist/2,
          bucket_type_list/0,
          bucket_type_hash/0]).
 
@@ -52,7 +53,7 @@ start_link() ->
 %% @doc Retrieve the list of bucket types on this cluster
 -spec(get_bucket_types_list() -> [term()]).
 get_bucket_types_list() ->
-    gen_server:call(?SERVER, {get_bucket_types_list}).
+    gen_server:call(?SERVER, get_bucket_types_list).
 
 %% @doc Store the whitelist from the sink
 store_whitelist(Whitelist) ->
@@ -60,6 +61,9 @@ store_whitelist(Whitelist) ->
 
 retrieve_whitelist(Cluster) ->
     gen_server:call(?SERVER, {get_whitelist, Cluster}).
+
+is_type_in_whitelist(Type, Cluster) ->
+    gen_server:call(?SERVER, {check_whitelist, Type, Cluster}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -104,6 +108,9 @@ handle_call({store_whitelist, BL}, _From, State) ->
 handle_call({get_whitelist, Cluster}, _From, State) ->
     get_whitelist(Cluster),
     {reply, ok, State};
+handle_call({check_whitelist, Type, Cluster}, _From, State) ->
+    IsInWhitelist = check_whitelist(Type, Cluster),
+    {reply, IsInWhitelist, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -163,16 +170,19 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 bucket_type_list() ->
+    lager:info("bucket_type_list called"),
     It = riak_core_bucket_type:iterator(),
     Acc = bucket_type_build_list(It, []),
-    io:format(user, ">>> ~p~n", [Acc]),
+    lager:info("bucket_type_list called:~p~n", [Acc]),
     Acc.
 
 bucket_type_build_list(It, Acc) ->
     case riak_core_bucket_type:itr_done(It) of
         true ->
             riak_core_bucket_type:itr_close(It),
-            [ riak_core_connection:symbolic_clustername() | Acc ];
+            BT = [ riak_core_connection:symbolic_clustername() | Acc ],
+            lager:info("Built bucket types list: ~p", [BT]),
+            BT;
         false ->
             BP = {_Type, Props} = riak_core_bucket_type:itr_value(It),
             case proplists:get_value(active, Props, false) of
@@ -193,6 +203,19 @@ save_whitelist(BL) ->
 get_whitelist(Cluster) ->
     lager:info("Getting whitelist associated with ~p", [Cluster]),
     riak_core_metadata:get(?REPL_WHITELIST_PREFIX, Cluster).
+
+check_whitelist(Type, Cluster) ->
+    lager:info("Checking if type:~p is in whitelist associated with ~p", 
+        [Type, Cluster]),
+    WL = riak_core_metadata:get(?REPL_WHITELIST_PREFIX, Cluster),
+    case lists:keysearch(Type, 2, WL) of
+        undefined ->
+            lager:info("type:~p is not in whitelist: ~p", [Type, WL]), 
+	    false;
+	{value, _V} ->
+            lager:info("type:~p is in whitelist: ~p", [Type, WL]), 
+            true
+    end.
 
 %% ===================================================================
 %% EUnit tests

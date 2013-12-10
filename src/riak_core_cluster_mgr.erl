@@ -810,6 +810,7 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
             %TODO: case MyVer == {1,10} andalso RemoteVer == {1,10} of
             % what's the best way to handle this?
             MyBucketTypes = riak_repl2_bucket_types:get_bucket_types_list(),
+            lager:info("Sink side has bucket types:~p", [MyBucketTypes]),
             ok = Transport:send(Socket, term_to_binary(MyBucketTypes)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
         {error, timeout} ->

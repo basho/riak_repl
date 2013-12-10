@@ -136,7 +136,7 @@ get_sink_pids() ->
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
-    lager:debug("maybe a mutate happened?~n    ~p", [RObj]),
+    lager:info("Got postcommit, ROobj:~n    ~p", [RObj]),
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined)) of
         %% always put the objects onto the shared queue in the new format; we'll
         %% down-convert if we have to before sending them to the RT sinks (based

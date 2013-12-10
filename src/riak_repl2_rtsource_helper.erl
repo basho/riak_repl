@@ -119,12 +119,12 @@ maybe_send(Transport, Socket, QEntry, State) ->
     Routed = get_routed(Meta),
     case lists:member(Remote, Routed) of
         true ->
-            lager:debug("Did not forward to ~p; destination already in routed list", [Remote]),
+            lager:info("Did not forward to ~p; destination already in routed list", [Remote]),
             State;
         false ->
             QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
             {Encoded, State2} = encode(QEntry2, State),
-            lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
+            lager:info("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
             Transport:send(Socket, Encoded),
             State2
     end.

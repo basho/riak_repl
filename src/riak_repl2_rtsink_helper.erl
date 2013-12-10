@@ -28,6 +28,7 @@ stop(Pid) ->
     gen_server:call(Pid, stop, infinity).
 
 write_objects(Pid, BinObjs, DoneFun, Ver) ->
+    lager:info("Got write_objects, BinObjs:~p", [BinObjs]),
     gen_server:cast(Pid, {write_objects, BinObjs, DoneFun, Ver}).
 
 %% Callbacks
@@ -39,6 +40,7 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 handle_cast({write_objects, BinObjs, DoneFun, Ver}, State) ->
+    lager:info("Got write_objects cast, obj:~p", [BinObjs]),
     do_write_objects(BinObjs, DoneFun, Ver),
     {noreply, State}.
 
@@ -61,5 +63,6 @@ code_change(_OldVsn, State, _Extra) ->
 do_write_objects(BinObjs, DoneFun, Ver) ->
     Worker = poolboy:checkout(riak_repl2_rtsink_pool, true, infinity),
     monitor(process, Worker),
+    lager:info("do_write_objects called with BinObjs:~p", [BinObjs]),
     ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun,
                                               riak_repl2_rtsink_pool, Ver).
