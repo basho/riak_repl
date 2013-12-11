@@ -60,12 +60,6 @@ is_connected(Remote) ->
 
 %% @private
 init([]) ->
-    %% %% TODO: Move before riak_core_cluster_mgr_sup start
-    %% %% once connmgr is started by core. This must be registered
-    %% %% before the connections start up. Uses an identity function
-    %% %% to boostrap cluster connections by address.
-    %% riak_core_cluster_mgr:register_cluster_locator(),
-
     %% %% TODO: remote list of test addresses.
     %% Remotes = initial clusters or ip addrs from ring
     %% Children = [make_remote(Remote) || Remote <- Remotes],
