@@ -37,7 +37,7 @@
 -author("Chris Tilt").
 -behaviour(gen_server).
 
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
