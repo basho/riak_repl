@@ -77,6 +77,7 @@
                   'riak_repl2_pg_sup',
                   'riak_repl2_pg_proxy',
                   'riak_repl2_pg_proxy_sup',
+                  'riak_core_connection',
                   'riak_core_connection_mgr',
                   'riak_core_connection_mgr_stats',
                   'riak_core_service_mgr']},
