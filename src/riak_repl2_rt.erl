@@ -143,15 +143,16 @@ postcommit(RObj) ->
         %% on what the RT source and sink negotiated as the common version).
         Objects0 when is_list(Objects0) ->
             Objects = Objects0 ++ [RObj],
+            Meta = check_for_typed_bucket(RObj),
             BinObjs = riak_repl_util:to_wire(w1, Objects),
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of
                 undefined ->
-                    riak_repl2_rtq:push(length(Objects), BinObjs);
+                    riak_repl2_rtq:push(length(Objects), BinObjs, Meta);
                 _ ->
                     %% we're shutting down and repl is stopped or stopping...
-                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs)
+                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs, Meta)
             end;
         cancel -> % repl helper callback requested not to send over realtime
             ok
@@ -208,12 +209,20 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-
-
 do_ring_trans(F, A) ->
     case riak_core_ring_manager:ring_trans(F, A) of
         {ok, _} ->
             ok;
         ER ->
             ER
+    end.
+
+check_for_typed_bucket(Obj) ->
+    M = orddict:new(),
+    case riak_object:bucket(Obj) of
+        {_T, _B } ->
+            lager:info("found typed bucket, setting meta data"),
+            orddict:store(typed_bucket, true, M);
+        _B -> 
+            orddict:store(typed_bucket, false, M)
     end.

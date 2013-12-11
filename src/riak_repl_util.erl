@@ -107,10 +107,11 @@ get_partitions(Ring) ->
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
-    lager:info("Got do_repl_put, Object:~p", [Object]),
+    Bucket = riak_object:bucket(Object),
+    Key = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
-            case riak_object:bucket(Object) of
+            case Bucket of
                {T,B} ->
                    case riak_core_bucket_type:status(T) of
                        undefined ->
@@ -120,21 +121,15 @@ do_repl_put(Object) ->
                        ready ->
                            lager:error("Bucket type ~p exists on sink, but is not active!", [T]);
                        active ->
-                           lager:info("Bucket type ~p of object ~p found on sink and is active.", [B, T]),
+                           lager:debug("Bucket type ~p of object ~p found on sink and is active.", [B, T]),
                            do_put(B, Object)
                    end;
                B -> 
-                   lager:info("default bucket for object:~p being put on sink.", [B]),
+                   lager:debug("default bucket for object:~p being put on sink.", [B]),
                    do_put(B, Object)
             end;
        cancel ->
-           B = case riak_object:bucket(Object) of
-	       {Bucket, _T} -> Bucket;
-	       Bucket -> Bucket
-	    end,
-           K = riak_object:key(Object),
-
-           lager:info("Skipping repl received object ~p/~p", [B, K])
+           lager:debug("Skipping repl received object ~p/~p", [Bucket, Key])
     end.
 
 do_put(B, Object) ->
@@ -813,18 +808,20 @@ encode_obj_msg(V, {Cmd, RObj}) ->
             term_to_binary({Cmd, BObj})
     end.
 
-%% @doc Create a new binary wire formatted replication blob, complete with
-%%      bucket and key for reconstruction on the other end. BinObj should be
+%% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
+%%      possible type, bucket and key for reconstruction on the other end. BinObj should be
 %%      in the new format as obtained from riak_object:to_binary(v1, RObj).
 new_w1({T, B}, K, BinObj) when is_binary(B), is_binary(T), is_binary(K), is_binary(BinObj) ->
     KLen = byte_size(K),
     BLen = byte_size(B),
     TLen = byte_size(T),
-    lager:info("in new_w1, got type:~p, bucket:~p, key:~p", [T,B,K]),
     <<?MAGIC:8/integer, ?W1_VER:8/integer,
       TLen:32/integer, T:TLen/binary,
       BLen:32/integer, B:BLen/binary,
       KLen:32/integer, K:KLen/binary, BinObj/binary>>;
+%% @doc Create a new binary wire formatted replication blob, complete with
+%%      bucket and key for reconstruction on the other end. BinObj should be
+%%      in the new format as obtained from riak_object:to_binary(v1, RObj).
 new_w1(B, K, BinObj) when is_binary(B), is_binary(K), is_binary(BinObj) ->
    KLen = byte_size(K),
    BLen = byte_size(B),
@@ -856,7 +853,7 @@ to_wire(w1, Object) when not is_binary(Object) ->
     K = riak_object:key(Object),
     case riak_object:bucket(Object) of
         {T, B} -> 
-            lager:info("encoding typed bucket: t:~p, b:~p, k:~p", [T,B,K]),
+            lager:debug("encoding typed bucket: t:~p, b:~p, k:~p", [T,B,K]),
             to_wire(w1, {T, B}, K, Object);
         B ->
             to_wire(w1, B, K, Object)
@@ -867,7 +864,6 @@ from_wire(w0, BinObjList) ->
       binary_to_term(BinObjList);
 from_wire(w1, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
-    lager:info("BinObjs:~p", [BinObjs]),
     [from_wire(BObj) || BObj <- BinObjs].
 
 %% @doc Convert from wire format to non-binary riak_object form
@@ -898,7 +894,6 @@ to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
 to_wire(w1, B, K, <<_/binary>>=Bin) ->
     new_w1(B, K, Bin);
 to_wire(w1, {T,B}, K, RObj) ->
-    lager:info("calling riak_object:to_binary(v1, ~p)", [RObj]),
     new_w1({T,B}, K, riak_object:to_binary(v1, RObj));
 to_wire(w1, B, K, RObj) ->
     new_w1(B, K, riak_object:to_binary(v1, RObj));

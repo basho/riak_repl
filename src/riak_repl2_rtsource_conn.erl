@@ -128,7 +128,7 @@ init([Remote]) ->
     % TODO: expand version list or remove comment when we no
     % longer support 1.3.1
     % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
-    ClientSpec = {{realtime,[{2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
+    ClientSpec = {{realtime,[{2,1}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
 
     %% Todo: check for bad remote name
     lager:debug("connecting to remote ~p", [Remote]),
@@ -229,7 +229,8 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
                                  address = EndPoint,
                                  proto = Proto,
                                  peername = peername(Transport, Socket),
-                                 helper_pid = HelperPid},
+                                 helper_pid = HelperPid,
+                                 ver = Ver},
             lager:info("Established realtime connection to site ~p address ~s",
                       [Remote, peername(State2)]),
 
@@ -416,7 +417,6 @@ schedule_heartbeat(State = #state{hb_interval_tref = undefined, hb_interval = HB
  
 schedule_heartbeat(State) ->
     State.
-
 
 %% ===================================================================
 %% EUnit tests
