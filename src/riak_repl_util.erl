@@ -22,6 +22,7 @@
          binunpack_bkey/1,
          merkle_filename/3,
          keylist_filename/3,
+         non_loopback_interfaces/1,
          valid_host_ip/1,
          normalize_ip/1,
          format_socketaddrs/2,
@@ -316,6 +317,16 @@ keylist_filename(WorkDir, Partition, Type) ->
             ".theirs.sterm"
     end,
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
+
+%% @doc IFs is in the form returned by inet:getifaddrs()
+%% %%      Returns interfaces with the "up" flag, but without the
+%% %%      "loopback" flag
+non_loopback_interfaces(IFs) ->
+    lists:filter(
+        fun({_Name, Attrs}) ->
+            Flags = proplists:get_value(flags, Attrs),
+            lists:member(up, Flags) andalso not lists:member(loopback, Flags)
+        end, IFs).
 
 %% Returns true if the IP address given is a valid host IP address
 valid_host_ip(IP) ->
@@ -1008,6 +1019,30 @@ do_wire_list_w1_test() ->
     Encoded = to_wire(w1, Objs),
     Decoded = from_wire(w1, Encoded),
     ?assert(Decoded == Objs).
+
+do_non_loopback_interfaces_test() ->
+    Addrs = [{"lo",
+                [{flags,[up,loopback,running]},
+                {hwaddr,[0,0,0,0,0,0]},
+                {addr,{127,0,0,1}},
+                {netmask,{255,0,0,0}},
+                {addr,{0,0,0,0,0,0,0,1}},
+                {netmask,{65535,65535,65535,65535,65535,65535,65535,65535}}]},
+            {"lo0",
+                [{flags,[up,loopback,running]},
+                {hwaddr,[0,0,0,0,0,0]},
+                {addr,{127,0,0,1}},
+                {netmask,{255,0,0,0}},
+                {addr,{0,0,0,0,0,0,0,1}},
+                {netmask,{65535,65535,65535,65535,65535,65535,65535,65535}}]},
+            {"eth0",
+                [{flags,[up,broadcast,running,multicast]},
+                {addr, {10, 0, 0, 99}},
+                {netmask, {255, 0, 0, 0}}]}],
+    Res = non_loopback_interfaces(Addrs),
+    ?assertEqual(false, proplists:is_defined("lo", Res)),
+    ?assertEqual(false, proplists:is_defined("lo0", Res)),
+    ?assertEqual(true, proplists:is_defined("eth0", Res)).
 
 do_wire_list_w1_bucket_type_test() ->
     Type = <<"type">>,
