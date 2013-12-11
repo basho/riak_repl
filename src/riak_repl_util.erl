@@ -319,8 +319,8 @@ keylist_filename(WorkDir, Partition, Type) ->
     filename:join(WorkDir,integer_to_list(Partition)++Ext).
 
 %% @doc IFs is in the form returned by inet:getifaddrs()
-%% %%      Returns interfaces with the "up" flag, but without the
-%% %%      "loopback" flag
+%%      Returns interfaces with the "up" flag, but without the
+%%      "loopback" flag
 non_loopback_interfaces(IFs) ->
     lists:filter(
         fun({_Name, Attrs}) ->
