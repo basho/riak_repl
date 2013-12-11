@@ -826,9 +826,9 @@ new_w1({T, B}, K, BinObj) when is_binary(B), is_binary(T), is_binary(K), is_bina
       BLen:32/integer, B:BLen/binary,
       KLen:32/integer, K:KLen/binary, BinObj/binary>>;
 new_w1(B, K, BinObj) when is_binary(B), is_binary(K), is_binary(BinObj) ->
-    KLen = byte_size(K),
-    BLen = byte_size(B),
-    <<?MAGIC:8/integer, ?W1_VER:8/integer,
+   KLen = byte_size(K),
+   BLen = byte_size(B),
+   <<?MAGIC:8/integer, ?W1_VER:8/integer,
       BLen:32/integer, B:BLen/binary,
       KLen:32/integer, K:KLen/binary, BinObj/binary>>.
 
@@ -870,26 +870,6 @@ from_wire(w1, BinObjList) ->
     lager:info("BinObjs:~p", [BinObjs]),
     [from_wire(BObj) || BObj <- BinObjs].
 
-to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
-    Bin;
-to_wire(w0, _B, _K, RObj) when not is_binary(RObj) ->
-    to_wire(w0, RObj);
-to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
-    %% no need to wrap a full old object. just use w0 format
-    to_wire(w0, B, K, Bin);
-to_wire(w1, B, K, <<_/binary>>=Bin) ->
-    new_w1(B, K, Bin);
-to_wire(w1, {T,B}, K, RObj) ->
-    lager:info("calling riak_boject:to_binary(v1, ~p)", [RObj]),
-    new_w1({T,B}, K, riak_object:to_binary(v1, RObj));
-to_wire(w1, B, K, RObj) ->
-    new_w1(B, K, riak_object:to_binary(v1, RObj));
-to_wire(_W, _B, _K, _RObj) ->
-    {error, unsupported_wire_version}.
-
-to_wire(Obj) ->
-    to_wire(w0, unused, unused, Obj).
-
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
@@ -907,6 +887,27 @@ from_wire(X) when is_binary(X) ->
     {error, unknown_wire_format};
 from_wire(RObj) ->
     RObj.
+
+to_wire(w0, _B, _K, <<131,_/binary>>=Bin) ->
+    Bin;
+to_wire(w0, _B, _K, RObj) when not is_binary(RObj) ->
+    to_wire(w0, RObj);
+to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
+    %% no need to wrap a full old object. just use w0 format
+    to_wire(w0, B, K, Bin);
+to_wire(w1, B, K, <<_/binary>>=Bin) ->
+    new_w1(B, K, Bin);
+to_wire(w1, {T,B}, K, RObj) ->
+    lager:info("calling riak_object:to_binary(v1, ~p)", [RObj]),
+    new_w1({T,B}, K, riak_object:to_binary(v1, RObj));
+to_wire(w1, B, K, RObj) ->
+    new_w1(B, K, riak_object:to_binary(v1, RObj));
+to_wire(_W, _B, _K, _RObj) ->
+    {error, unsupported_wire_version}.
+
+to_wire(Obj) ->
+    to_wire(w0, unused, unused, Obj).
+
 
 %% @doc BinObjs are in new riak binary object format. If the remote sink
 %%      is storing older non-binary objects, then we need to downconvert
@@ -1018,14 +1019,9 @@ do_wire_list_w1_bucket_type_test() ->
     Bucket = <<"0b:foo">>,
     Key = <<"key">>,
     RObj = riak_object:new({Type, Bucket}, Key, <<"val">>),
-    ?debugFmt("RObj:~p", [RObj]),
     Objs = [RObj],
     Encoded = to_wire(w1, Objs),
-    ?debugFmt("encoded:~p", [binary_to_term(Encoded)]),
     Decoded = from_wire(w1, Encoded),
-    ?debugFmt("decoded:~p", [Decoded]),
     ?assert(Decoded == Objs).
 
 -endif.
-
-
