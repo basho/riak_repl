@@ -47,7 +47,7 @@
 -behaviour(gen_server).
 
 -include("riak_core_cluster.hrl").
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -define(TRACE(Stmt),Stmt).
@@ -85,7 +85,6 @@
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
-         register_cluster_locator/0,
          register_member_fun/1,
          register_restore_cluster_targets_fun/1,
          register_save_cluster_members_fun/1,
@@ -121,15 +120,6 @@ start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
     Args = [DefaultLocator, DefaultSave, DefaultRestore],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
-
-%% @doc register a bootstrap cluster locator that just uses the address passed
-%% to it for simple ip addresses and one that looks up clusters by name. This
-%% is needed before the cluster manager is up and running so that the
-%% connection supervisior can kick off some initial connections if some
-%% remotes are already known (in the ring) from previous additions.
--spec register_cluster_locator() -> 'ok'.
-register_cluster_locator() ->
-    register_cluster_addr_locator().
 
 %% @doc Tells us who the leader is. Called by riak_repl_leader whenever a
 %% leadership election takes place.
@@ -438,11 +428,9 @@ schedule_cluster_connections() ->
     erlang:send_after(60000, self(), connect_to_clusters).
 
 register_defaults(Defaults, State) ->
-    %% register a default cluster locator by identity
-    register_cluster_addr_locator(),
     case Defaults of
         [] ->
-            State;            
+            State;
         [MembersFun, SaveFun, RestoreFun] ->
             lager:debug("Registering default cluster manager functions."),
             State#state{member_fun=MembersFun,
@@ -683,13 +671,6 @@ add_ips_to_cluster(Name, RebalancedMembers, Clusters) ->
                            members = RebalancedMembers,
                            last_conn = erlang:now()},
                   Clusters).
-
-%% register a locator that just uses the address passed to it.
-%% This is a way to boot strap a connection to a cluster by IP address.
-register_cluster_addr_locator() ->
-    % Identity locator function just returns a list with single member Addr
-    Locator = fun(Addr, _Policy) -> {ok, [Addr]} end,
-    ok = riak_core_connection_mgr:register_locator(?CLUSTER_ADDR_LOCATOR_TYPE, Locator).
 
 %% Setup a connection to all given cluster targets
 connect_to_targets(Targets) ->

@@ -12,7 +12,7 @@
          cluster_mgr_read_cluster_targets_from_ring/0]).
 
 -include("riak_core_cluster.hrl").
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
