@@ -34,6 +34,7 @@
                 ver,              %% wire format agreed with rt source
                 max_pending,      %% Maximum number of operations
                 active = true,    %% If socket is set active
+                socket_mode = {active, once}, %% Configurable, default is {active, once}
                 deactivated = 0,  %% Count of times deactivated
                 source_drops = 0, %% Count of upstream drops
                 helper,           %% Helper PID
@@ -97,8 +98,10 @@ init([OkProto, Remote]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
+    SocketMode = app_helper:get_env(riak_repl, sink_socket_mode, {active, once}),
+    lager:info("Sink socket mode set to:~p", [SocketMode]),
     {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending,
-                helper = Helper, ver = Ver}}.
+                 socket_mode = SocketMode, helper = Helper, ver = Ver}}.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = _S, helper = Helper,
@@ -138,8 +141,8 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
               {socket, riak_core_tcp_mon:format_socket_stats(SocketStats,[])}
              ],
     {reply, {status, Status}, State};
-handle_call({set_socket, Socket, Transport}, _From, State) ->
-    Transport:setopts(Socket, [{active, once}]), % pick up errors in tcp_error msg
+handle_call({set_socket, Socket, Transport}, _From, State = #state{socket_mode = SocketMode}) ->
+    Transport:setopts(Socket, [SocketMode]), % pick up errors in tcp_error msg
     lager:debug("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport}};
 handle_call(stop, _From, State) ->
@@ -189,7 +192,7 @@ handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
                   [peername(State), Reason, size(Cont)]),
     {stop, normal, State};
 handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, socket = S,
-                                              max_pending = MaxPending}) ->
+                                              max_pending = MaxPending,  socket_mode = SocketMode}) ->
     case pending(State) > MaxPending of
         true ->
             {noreply, schedule_reactivate_socket(State#state{active = false})};
@@ -199,7 +202,7 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
             %% Check the socket is ok
             case T:peername(S) of
                 {ok, _} ->
-                    T:setopts(S, [{active, once}]), % socket could die, pick it up on tcp_error msgs
+                    T:setopts(S, [SocketMode]), % socket could die, pick it up on tcp_error msgs
                     {noreply, State#state{active = true}};
                 {error, Reason} ->
                     riak_repl_stats:rt_sink_errors(),
@@ -220,14 +223,20 @@ send_heartbeat(Transport, Socket) ->
     Transport:send(Socket, riak_repl2_rtframe:encode(heartbeat, undefined)).
 
 %% Receive TCP data - decode framing and dispatch
-recv(TcpBin, State = #state{transport = T, socket = S}) ->
+recv(TcpBin, State = #state{transport = T, socket = S, socket_mode=SocketMode}) ->
     case riak_repl2_rtframe:decode(TcpBin) of
         {ok, undefined, Cont} ->
-            case State#state.active of
-                true ->
-                    T:setopts(S, [{active, once}]);
-                _ ->
-                    ok
+            case SocketMode of
+                {active, once} ->
+                    case State#state.active of
+                        true ->
+                            lager:info("Resetting socket to ~p", [SocketMode]),
+                            T:setopts(S, [SocketMode]);
+                        _ ->
+                            ok
+                    end;
+                 _ ->
+                    ok  
             end,
             {noreply, State#state{cont = Cont}};
         {ok, {objects, {Seq, BinObjs}}, Cont} ->
