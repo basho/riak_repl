@@ -2,3 +2,8 @@ ebin/*.beam
 ebin/*.app
 deps
 .eunit
+.eqc-info
+.qc/
+current_counterexample.eqc
+erl_crash.dump
+repl_leader_eqc_data/

@@ -132,11 +132,11 @@ initial_state() ->
     {ok, _FakeSinkPid} = start_fake_sink(),
     #state{}.
 
-next_state(S, Res, {call, _, connect_to_v1, [Remote, MQ]}) ->
+next_state(S, Res, {call, _, connect_to_v1, [Remote, _MQ]}) ->
     SrcState = #src_state{pids = Res, version = 1},
     next_state_connect(Remote, SrcState, S);
 
-next_state(S, Res, {call, _, connect_to_v2, [Remote, MQ]}) ->
+next_state(S, Res, {call, _, connect_to_v2, [Remote, _MQ]}) ->
     SrcState = #src_state{pids = Res, version = 2},
     next_state_connect(Remote, SrcState, S);
 
@@ -205,11 +205,11 @@ generate_unacked_from_master(State, Remote) ->
 
 generate_unacked_from_master([], _UpRemotes, _Remote, Skips, Offset, Acc) ->
     {Acc, Skips, Offset};
-generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Offset, Acc) ->
+generate_unacked_from_master([{_Seq, tombstone} | Tail], UpRemotes, Remote, undefined, Offset, Acc) ->
     generate_unacked_from_master(Tail, UpRemotes, Remote, undefined, Offset, Acc);
-generate_unacked_from_master([{Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
+generate_unacked_from_master([{_Seq, tombstone} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
     generate_unacked_from_master(Tail, UpRemotes, Remote, Skips + 1, Offset, Acc);
-generate_unacked_from_master([{Seq, Remotes, Binary, Res} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
+generate_unacked_from_master([{Seq, Remotes, _Binary, Res} | Tail], UpRemotes, Remote, Skips, Offset, Acc) ->
     case {lists:member(Remote, Remotes), Skips} of
         {true, undefined} ->
             % on start up, we don't worry about skips until we've sent at least
@@ -474,9 +474,9 @@ connect_to_v1(RemoteName, MasterQueue) ->
 connect_to_v2(RemoteName, MasterQueue) ->
     stateful:set(version, {realtime, {2,0}, {2,0}}),
     stateful:set(remote, RemoteName),
-    Before = now(),
+    now(),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
-    After = now(),
+    now(),
     receive
         {sink_started, SinkPid} ->
             erlang:monitor(process, SinkPid),
@@ -648,7 +648,7 @@ fake_sink(Socket, Version, Bug, History) ->
             fake_sink(Socket, Version, Bug, History);
         {'$gen_call', From, {block_until, HistoryLength}} ->
             fake_sink(Socket, Version, {block_until, From, HistoryLength}, History);
-        {'$gen_call', From, Msg} ->
+        {'$gen_call', From, _Msg} ->
             gen_server:reply(From, {error, badcall}),
             fake_sink(Socket, Version, Bug, History);
         {tcp, Socket, Bin} ->
