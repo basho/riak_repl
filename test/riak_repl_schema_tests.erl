@@ -18,7 +18,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.max_fssource_node", 1),
     cuttlefish_unit:assert_config(Config, "riak_repl.max_fssink_node", 1),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_on_connect", true),
-    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_interval", [{all, 30}]),
+    cuttlefish_unit:assert_not_configured(Config, "riak_repl.fullsync_interval"),
     cuttlefish_unit:assert_config(Config, "riak_repl.rtq_max_bytes", 104857600),
     cuttlefish_unit:assert_config(Config, "riak_repl.proxy_get", disabled),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 15),
@@ -39,8 +39,8 @@ override_schema_test() ->
             {["mdc", "fullsync_interval", "cluster2"], "1h"},
             {["mdc", "rtq_max_bytes"], "50MB"},
             {["mdc", "proxy_get"], on},
-            {["mdc", "heartbeat_interval"], "15m"},
-            {["mdc", "heartbeat_timeout"], "15d"}
+            {["mdc", "realtime", "heartbeat_interval"], "15m"},
+            {["mdc", "realtime", "heartbeat_timeout"], "15d"}
            ],
 
     %% The defaults are defined in ../priv/riak_repl.schema.
@@ -58,8 +58,8 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_interval.cluster2", 60),
     cuttlefish_unit:assert_config(Config, "riak_repl.rtq_max_bytes", 52428800),
     cuttlefish_unit:assert_config(Config, "riak_repl.proxy_get", enabled),
-    cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 15),
-    cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 21600),
+    cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 900),
+    cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 1296000),
     ok.
 
 %% this context() represents the substitution variables that rebar
