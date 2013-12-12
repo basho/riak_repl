@@ -97,14 +97,16 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 %% ------------------------------------------------------------------
 
 %% @hidden
-init({Socket, Transport, Proto, _Props}) ->
+init({Socket, Transport, OkProto, _Props}) ->
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
-    lager:info("Starting fullsync coordinator server (sink) with max_fssink_node=~p", [Max]),
+    {ok, Proto} = OkProto,
+    lager:info("Starting fullsync coordinator server (sink) with
+               max_fssink_node=~p", [Max]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv,
                                        SocketTag}, Transport),
-    {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
+    {ok, #state{socket = Socket, transport = Transport, proto = Proto }}.
 
 
 %% @hidden
@@ -171,7 +173,8 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
     % which node is the partition for
     % is that node available
     % send an appropriate reply
-    #state{transport = Transport, socket = Socket} = State,
+    AnyaCompat = app_helper:get_env(riak_repl, anya_fs_compat, false),
+    #state{transport = Transport, socket = Socket, proto = _Proto } = State,
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Node = get_partition_node(Partition, Ring),
     Map = riak_repl_ring:get_nat_map(Ring),
@@ -196,7 +199,12 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                                     lager:warning("There's no NAT mapping for"
                                         "~p:~b to an external IP on node ~p",
                                         [ListenIP, Port, Node]),
-                                    {location_down, Partition, Node};
+                                    case AnyaCompat of
+                                        true ->
+                                            {location_down, Partition};
+                                        false ->
+                                            {location_down, Partition, Node}
+                                    end;
                                 {ExternalIP, ExternalPort} ->
                                     {location, Partition, {Node, ExternalIP,
                                             ExternalPort}};
@@ -207,13 +215,22 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                     end;
                 {error, _} ->
                     riak_repl2_fs_node_reserver:unreserve(Partition),
-                    {location_down, Partition, Node}
+                    case AnyaCompat of
+                      true -> {location_down, Partition};
+                      false -> {location_down, Partition, Node}
+                    end
             end;
         busy ->
             lager:debug("node_reserver returned location_busy for partition ~p on node ~p", [Partition, Node]),
-            {location_busy, Partition, Node};
+            case AnyaCompat of
+                true -> {location_busy, Partition};
+                false -> {location_busy, Partition, Node}
+            end;
         down ->
-            {location_down, Partition, Node}
+            case AnyaCompat of
+                true -> {location_down, Partition};
+                false -> {location_down, Partition, Node}
+            end
     end,
     Transport:send(Socket, term_to_binary(Reply)),
     State;

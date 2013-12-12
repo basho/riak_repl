@@ -427,6 +427,10 @@ schedule_cluster_connections() ->
     erlang:send_after(30000, self(), connect_to_clusters),
     erlang:send_after(60000, self(), connect_to_clusters).
 
+get_ring() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_repl_ring:ensure_config(Ring).
+
 register_defaults(Defaults, State) ->
     case Defaults of
         [] ->

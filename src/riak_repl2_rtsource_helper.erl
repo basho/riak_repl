@@ -80,8 +80,10 @@ handle_call(status, _From, State =
              {objects, Objects}], State}.
 
 handle_cast(send_heartbeat, State = #state{transport = T, socket = S}) ->
-    HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
-    T:send(S, HBIOL),
+    spawn(fun() ->
+            HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
+            T:send(S, HBIOL)
+          end),
     {noreply, State};
 
 handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
