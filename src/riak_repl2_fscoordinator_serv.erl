@@ -246,12 +246,18 @@ get_partition_node(Partition, Ring) ->
 get_node_ip_port(Node, NormIP) ->
     {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
-    CIDR = riak_repl2_ip:determine_netmask(IfAddrs, NormIP),
-    case get_matching_address(Node, NormIP, CIDR) of
-        {ok, {ListenIP, _}} ->
-            {ok, {ListenIP, Port}};
-        Else ->
-            Else
+    case riak_repl2_ip:determine_netmask(IfAddrs, NormIP) of
+        undefined ->
+            lager:warning("Can't determine netmask for ~p, please ensure you have NAT configured correctly.",
+                          [NormIP]),
+            {error, ip_not_local};
+        CIDR ->
+            case get_matching_address(Node, NormIP, CIDR) of
+                {ok, {ListenIP, _}} ->
+                    {ok, {ListenIP, Port}};
+                Else ->
+                    Else
+            end
     end.
 
 get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
