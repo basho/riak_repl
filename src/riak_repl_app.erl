@@ -80,7 +80,6 @@ start(_Type, _StartArgs) ->
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
-
             riak_repl2_leader:register_notify_fun(
               fun riak_repl2_pg_proxy_sup:set_leader/2),
 
@@ -173,14 +172,17 @@ cluster_mgr_member_fun({IP, Port}) ->
             [{IP, Port}];
         CIDR ->
             ?TRACE(lager:notice("CIDR is ~p", [CIDR])),
-            %AddressMask = mask_address(NormIP, MyMask),
+            %AddressMask = riak_repl2_ip:mask_address(NormIP, MyMask),
             %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
                 get_matching_address, [RealIP, CIDR]),
             % when this code was written, a multicall will list the results
             % in the same order as the nodes where tried.
-            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP, CIDR]),
+            %% Anya specific
+            AddressMask = riak_repl2_ip:mask_address(RealIP, CIDR),
+            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP,
+                                                                     AddressMask]),
             case RealIP == NormIP of
                 true ->
                     %% No nat, just return the results
@@ -213,7 +215,9 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
     Zipped = lists:zip(Results, Nodes2),
     MaybeRetry = fun
         ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
-            rpc:call(Node, riak_repl_app, get_matching_address, Args);
+            RPCResult = rpc:call(Node, riak_repl_app, get_matching_address, Args),
+            lager:debug("rpc to get_matching_address: ~p", [RPCResult]),
+            RPCResult;
         ({Result, _Node}) ->
             Result
     end,
@@ -328,8 +332,25 @@ prep_stop(_State) ->
 
 %% This function is only here for nodes using a version < 1.3. Remove it in
 %% future version
-get_matching_address(IP, CIDR) ->
+get_matching_address(IP, Mask) ->
+    %% Riak 1.2.x incorrectly calculates the netmask before passing it to this
+    %% function. This works with 1.2 nodes, that expect the wrong input, but
+    %% the bug was fixed, so we need to undo that conversion here before
+    %% calling get_matching_address.
+    CIDR = unmask_address(list_to_binary(tuple_to_list(IP)), Mask, 32),
     riak_repl2_ip:get_matching_address(IP, CIDR).
+
+%% this is kind of brute force-y, but I couldn't cook up a better solution
+unmask_address(_, _, 0) ->
+    %% should never happen in normal usage
+    error;
+unmask_address(IP, Mask, Size) ->
+    case IP of
+        <<Mask:Size, _/bitstring>> ->
+            Size;
+        _ ->
+            unmask_address(IP, Mask, Size - 1)
+    end.
 
 %%%%%%%%%%%%%%%%
 %% Unit Tests %%
