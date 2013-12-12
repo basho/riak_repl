@@ -108,7 +108,7 @@ precondition(S, {call, _, push_object, _Args}) ->
     S#state.sources /= [];
 precondition(S, {call, _, Connect, [Remote]}) when Connect == connect_from_v1; Connect == connect_from_v2 ->
     lists:member(Remote, S#state.remotes_available);
-precondition(S, {call, _, Connect, [#src_state{done_fun_queue = []}, _]}) ->
+precondition(_S, {call, _, _Connect, [#src_state{done_fun_queue = []}, _]}) ->
     false;
 precondition(_S, _Call) ->
     true.
@@ -256,7 +256,7 @@ postcondition(_S, {call, _, push_object, [{_Remote, #src_state{version = 1} = Sr
         _QWhat ->
             false
     end;
-postcondition(S, {call, _, push_object, [{Remote, #src_state{version = 2} = SrcState}, RiakObj, AlreadyRouted]}, Res) ->
+postcondition(_S, {call, _, push_object, [{Remote, #src_state{version = 2} = _SrcState}, _RiakObj, _AlreadyRouted]}, Res) ->
     RTQRes = Res#push_result.rtq_res,
     HelperRes = Res#push_result.donefun,
     Routed = lists:member(Remote, Res#push_result.already_routed),
@@ -304,7 +304,7 @@ postcondition(_S, {call, _, call_donefun, [{Remote, SrcState}, NthDoneFun]}, Res
                     case riak_repl2_rtframe:decode(TCPBin) of
                         {ok, {ack, _SomeSeq}, <<>>} ->
                             true;
-                        FrameDecode ->
+                        _FrameDecode ->
                             false
                     end;
                 {1, {{error, timeout}, {error, timeout}}} ->
@@ -483,7 +483,7 @@ start_service_manager() ->
 
 abstract_fake_source() ->
     riak_repl_test_util:reset_meck(fake_source, [no_link, non_strict]),
-    meck:expect(fake_source, connected, fun(Socket, Transport, Endpoint, Proto, Pid, Props) ->
+    meck:expect(fake_source, connected, fun(Socket, Transport, Endpoint, Proto, Pid, _Props) ->
         Transport:controlling_process(Socket, Pid),
         gen_server:call(Pid, {connected, Socket, Endpoint, Proto})
     end).
@@ -508,7 +508,7 @@ fake_rtq(Bug, Queue) ->
             Bug ! Got,
             Queue2 = [{NumItems, Bin, Meta} | Queue],
             fake_rtq(Bug, Queue2);
-        Else ->
+        _Else ->
             ok
     end.
 
@@ -537,7 +537,7 @@ connect_source(Version, Remote) ->
         {active, false}],
     ClientSpec = {{realtime, [Version]}, {TcpOptions, fake_source, Pid}},
     IpPort = {{127,0,0,1}, ?SINK_PORT},
-    ConnRes = riak_core_connection:sync_connect(IpPort, ClientSpec),
+    riak_core_connection:sync_connect(IpPort, ClientSpec),
     {ok, Pid}.
 
 fake_source_push_obj(Source, Binary, AlreadyRouted) ->
@@ -565,7 +565,7 @@ fake_source_loop(#fake_source{socket = undefined} = State) ->
         {'$gen_call', From, Aroo} ->
             gen_server:reply(From, {error, badcall}),
             exit({badcall, Aroo});
-        What ->
+        _ ->
             fake_source_loop(State)
     end;
 fake_source_loop(State) ->
@@ -618,7 +618,7 @@ fake_source_loop(State) ->
             fake_source_loop(State#fake_source{tcp_bug = NewBug});
         {tcp_closed, Socket} when Socket == State#fake_source.socket ->
             ok;
-        What ->
+        _ ->
             fake_source_loop(State)
     end.
 
