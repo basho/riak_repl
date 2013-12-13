@@ -108,62 +108,44 @@ get_partitions(Ring) ->
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
-    Bucket = riak_object:bucket(Object),
-    Key = riak_object:key(Object),
+    B = riak_object:bucket(Object),
+    K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
-            case Bucket of
-               {T,B} ->
-                   case riak_core_bucket_type:status(T) of
-                       undefined ->
-                           lager:error("Bucket type ~p not defined on sink!", [T]);
-                       created ->
-                           lager:error("Bucket type ~p exists on sink, but is not active!", [T]);
-                       ready ->
-                           lager:error("Bucket type ~p exists on sink, but is not active!", [T]);
-                       active ->
-                           lager:debug("Bucket type ~p of object ~p found on sink and is active.", [B, T]),
-                           do_put(B, Object)
-                   end;
-               B -> 
-                   lager:debug("default bucket for object:~p being put on sink.", [B]),
-                   do_put(B, Object)
+            ReqId = erlang:phash2({self(), os:timestamp()}),
+            B = riak_object:bucket(Object),
+            K = riak_object:key(Object),
+            Opts = [asis, disable_hooks, {update_last_modified, false}],
+
+            {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
+                    ?REPL_FSM_TIMEOUT,
+                    self(), Opts),
+
+            MRef = erlang:monitor(process, PutPid),
+
+            %% block waiting for response
+            wait_for_response(ReqId, "put"),
+
+            %% wait for put FSM to exit
+            receive
+                {'DOWN', MRef, _, _, _} ->
+                    ok
+            after 60000 ->
+                    lager:warning("put fsm did not exit on schedule"),
+                    ok
+            end,
+
+            case riak_kv_util:is_x_deleted(Object) of
+                true ->
+                    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
+                    reap(ReqId, B, K),
+                    %% block waiting for response
+                    wait_for_response(ReqId, "reap");
+                false ->
+                    lager:debug("Incoming obj ~p/~p", [B, K])
             end;
-       cancel ->
-           lager:debug("Skipping repl received object ~p/~p", [Bucket, Key])
-    end.
-
-do_put(B, Object) ->
-
-    ReqId = erlang:phash2({self(), os:timestamp()}),
-
-    K = riak_object:key(Object),
-    Opts = [asis, disable_hooks, {update_last_modified, false}],
-
-    {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
-					      ?REPL_FSM_TIMEOUT,
-					      self(), Opts),
-    MRef = erlang:monitor(process, PutPid),
-
-    %% block waiting for response
-    wait_for_response(ReqId, "put"),
-    %% wait for put FSM to exit
-    receive
-	{'DOWN', MRef, _, _, _} ->
-	    ok
-    after 60000 ->
-	    lager:warning("put fsm did not exit on schedule"),
-	    ok
-    end,
-
-    case riak_kv_util:is_x_deleted(Object) of
-	true ->
-	    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
-	    reap(ReqId, B, K),
-	    %% block waiting for response
-	    wait_for_response(ReqId, "reap");
-	false ->
-	    lager:debug("Incoming obj ~p/~p", [B, K])
+        cancel ->
+            lager:debug("Skipping repl received object ~p/~p", [B, K])
     end.
 
 reap(ReqId, B, K) ->

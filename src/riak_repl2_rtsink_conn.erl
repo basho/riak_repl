@@ -256,7 +256,7 @@ make_donefun({Binary, Meta}, Me, Ref, Seq) ->
         gen_server:cast(Me, {ack, Ref, Seq, Skips}),
         maybe_push(Binary, Meta)
     end,
-    {Done, Binary};
+    {Done, Binary, Meta};
 make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
     Done = fun() ->
         gen_server:cast(Me, {ack, Ref, Seq, 0})
@@ -283,8 +283,13 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    {DoneFun, BinObjs} = make_donefun(BinObjsMeta, Me, Ref, Seq),
-    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver),
+    {DoneFun, BinObjs, Meta} = make_donefun(BinObjsMeta, Me, Ref, Seq),
+    case write_object(Meta) of
+        true ->
+            riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
+        false ->
+            lager:info("Bucket is of a type that are not equal on both the source and sink; not writing object.")
+    end,
     State2 = case AckedSeq of
                  undefined ->
                      %% Handle first received sequence number
@@ -394,6 +399,28 @@ schedule_reactivate_socket(State = #state{transport = T,
     end.
 get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
+
+write_object(Meta) ->
+    case orddict:fetch(typed_bucket, Meta) of 
+        false -> true;
+        true ->
+            BucketType = orddict:fetch(type, Meta),
+            case riak_core_bucket_type:get(BucketType) of
+            undefined ->
+                lager:debug("No properties found for bucket type:~p", [BucketType]),    
+	        false; 
+	    {error, _T} ->
+                lager:debug("No properties found for bucket type:~p", [BucketType]),    
+	        false;
+            AllProps ->
+                SinkPropsHash = erlang:phash2(proplists:delete(claimant, AllProps)),
+                SourcePropsHash = orddict:fetch(props_hash, Meta),
+                lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [SourcePropsHash, SinkPropsHash]),
+	        SourcePropsHash =:= SinkPropsHash
+
+	    end
+    end.
+   
 
 %% ===================================================================
 %% EUnit tests

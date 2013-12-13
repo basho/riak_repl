@@ -143,7 +143,7 @@ postcommit(RObj) ->
         %% on what the RT source and sink negotiated as the common version).
         Objects0 when is_list(Objects0) ->
             Objects = Objects0 ++ [RObj],
-            Meta = check_for_typed_bucket(RObj),
+            Meta = set_bucket_meta(RObj),
             BinObjs = riak_repl_util:to_wire(w1, Objects),
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
@@ -217,12 +217,18 @@ do_ring_trans(F, A) ->
             ER
     end.
 
-check_for_typed_bucket(Obj) ->
+set_bucket_meta(Obj) ->
     M = orddict:new(),
     case riak_object:bucket(Obj) of
-        {_T, _B } ->
-            lager:info("found typed bucket, setting meta data"),
-            orddict:store(typed_bucket, true, M);
+        {Type, _B} ->
+            AllProps = riak_core_bucket_type:get(Type),
+            CompareProps = proplists:delete(claimant, AllProps),
+            PropsHash = erlang:phash2(proplists:delete(claimant, AllProps)),
+            lager:debug("typed bucket, setting meta data: Type:~p, HashProps:~p", [Type, PropsHash]),
+            M1 = orddict:store(typed_bucket, true, M),
+            M2 = orddict:store(type, Type, M1),
+            orddict:store(props_hash, PropsHash, M2);
         _B -> 
+            lager:debug("un-typed bucket, setting typed_bucket to false"),
             orddict:store(typed_bucket, false, M)
     end.
