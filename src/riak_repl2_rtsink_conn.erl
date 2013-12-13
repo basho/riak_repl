@@ -55,7 +55,6 @@
 %% Register with service manager
 register_service() ->
     ProtoPrefs = {realtime,[{2,1}, {2,0}, {1,4}, {1,1}, {1,0}]},
-%%    ProtoPrefs = {realtime,[{1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
