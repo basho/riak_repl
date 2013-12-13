@@ -407,23 +407,22 @@ get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 write_object(Meta) ->
-    case orddict:fetch(typed_bucket, Meta) of 
+    case orddict:fetch(typed_bucket, Meta) of
         false -> true;
         true ->
             BucketType = orddict:fetch(type, Meta),
             case riak_core_bucket_type:get(BucketType) of
-            undefined ->
-                lager:debug("No properties found for bucket type:~p", [BucketType]),    
-	        false; 
-	    {error, _T} ->
-                lager:debug("No properties found for bucket type:~p", [BucketType]),    
-	        false;
-            AllProps ->
-                SinkPropsHash = erlang:phash2(proplists:delete(claimant, AllProps)),
-                SourcePropsHash = orddict:fetch(props_hash, Meta),
-                lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [SourcePropsHash, SinkPropsHash]),
-	        SourcePropsHash =:= SinkPropsHash
-
+                undefined ->
+                    lager:debug("No properties found for bucket type:~p", [BucketType]),    
+	            false;
+	        {error, _T} ->
+                    lager:debug("No properties found for bucket type:~p", [BucketType]),
+	            false;
+                AllProps ->
+                    SinkPropsHash = erlang:phash2(proplists:delete(claimant, AllProps)),
+                    SourcePropsHash = orddict:fetch(props_hash, Meta),
+                    lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [SourcePropsHash, SinkPropsHash]),
+	            SourcePropsHash =:= SinkPropsHash
 	    end
     end.
    
