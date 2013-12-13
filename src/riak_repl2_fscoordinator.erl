@@ -688,6 +688,10 @@ start_fssource(Partition2={Partition,_,_} = PartitionVal, Ip, Port, State) ->
                     lager:notice("A fullsync for partition ~p is already in"
                         " progress for ~p", [Partition,
                             riak_repl2_fssource:cluster_name(OtherPid)]);
+                {{max_concurrency, Lock},_ChildSpec} ->
+                    lager:notice("Fullsync for partition ~p postponed"
+                                 " because ~p is at max_concurrency",
+                                 [Partition, Lock]);
                 _ ->
                     lager:error("Failed to start fullsync for partition ~p :"
                         " ~p", [Partition, Reason])
