@@ -222,7 +222,6 @@ set_bucket_meta(Obj) ->
     case riak_object:bucket(Obj) of
         {Type, _B} ->
             AllProps = riak_core_bucket_type:get(Type),
-            CompareProps = proplists:delete(claimant, AllProps),
             PropsHash = erlang:phash2(proplists:delete(claimant, AllProps)),
             lager:debug("typed bucket, setting meta data: Type:~p, HashProps:~p", [Type, PropsHash]),
             M1 = orddict:store(typed_bucket, true, M),
