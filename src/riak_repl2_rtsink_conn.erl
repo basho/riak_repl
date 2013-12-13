@@ -55,6 +55,7 @@
 %% Register with service manager
 register_service() ->
     ProtoPrefs = {realtime,[{2,1}, {2,0}, {1,4}, {1,1}, {1,0}]},
+%%    ProtoPrefs = {realtime,[{1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -283,12 +284,16 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    {DoneFun, BinObjs, Meta} = make_donefun(BinObjsMeta, Me, Ref, Seq),
-    case write_object(Meta) of
-        true ->
-            riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
-        false ->
-            lager:info("Bucket is of a type that are not equal on both the source and sink; not writing object.")
+    case make_donefun(BinObjsMeta, Me, Ref, Seq) of
+        {DoneFun, BinObjs, Meta} ->
+            case write_object(Meta) of
+            true ->
+                riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
+            false ->
+                lager:info("Bucket is of a type that are not equal on both the source and sink; not writing object.")
+            end;
+        {DoneFun, BinObjs} ->
+            riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver)
     end,
     State2 = case AckedSeq of
                  undefined ->
