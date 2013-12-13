@@ -102,3 +102,4 @@
 
 -define(LONG_TIMEOUT, 120*1000).
 
+-define(V2REPLDEP, "WARNING: Version 2 replication has been deprecated and will be unavailable as of Riak Enterprise 2.2. Please upgrade to Version 3 replication as soon as possible. If you need assistance migrating to Version 3 replication, please contact Basho Client Services.").
