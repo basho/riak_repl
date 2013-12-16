@@ -419,13 +419,13 @@ write_object(Meta) ->
                     lager:debug("No properties found for bucket type:~p", [BucketType]),
 	            false;
                 AllProps ->
-                    SinkPropsHash = erlang:phash2(proplists:delete(claimant, AllProps)),
-                    SourcePropsHash = orddict:fetch(props_hash, Meta),
-                    lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [SourcePropsHash, SinkPropsHash]),
-	            SourcePropsHash =:= SinkPropsHash
+                    Sink = riak_repl_util:get_bucket_props_hash(AllProps),
+                    Source = orddict:fetch(props_hash, Meta),
+                    lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [Source, Sink]),
+	            Source =:= Sink
 	    end
     end.
-   
+
 
 %% ===================================================================
 %% EUnit tests

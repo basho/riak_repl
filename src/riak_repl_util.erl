@@ -67,12 +67,14 @@
          from_wire/1,
          from_wire/2,
          maybe_downconvert_binary_objs/2,
-         peer_wire_format/1
+         peer_wire_format/1,
+         get_bucket_props_hash/1
         ]).
 
 %% Defines for Wire format encode/decode
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
+-define(BUCKET_TYPES_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -923,6 +925,12 @@ peer_wire_format(Peer) ->
             %% failed RPC call? Assume lowest format
             w0
     end.
+
+get_bucket_props_hash(Props) ->
+   PB = [{Prop, proplists:get_value(Prop, Props)} || Prop <- ?BUCKET_TYPES_PROPS],
+   lager:info("Bucket types props: ~p", [PB]),
+   erlang:phash2(PB). 
+    
 
 %% Some eunit tests
 -ifdef(TEST).
