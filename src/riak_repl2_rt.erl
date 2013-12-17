@@ -2,6 +2,8 @@
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_rt).
 
+-include("riak_repl.hrl").
+
 %% @doc Realtime replication
 %%
 %% High level responsibility...
@@ -15,6 +17,8 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+
+
 -record(state, {sinks = []}).
 
 %% API - is there any state? who watches ring events?
@@ -223,10 +227,10 @@ set_bucket_meta(Obj) ->
         {Type, _B} ->
             PropsHash = riak_repl_util:get_bucket_props_hash(riak_core_bucket_type:get(Type)),
             lager:debug("typed bucket, setting meta data: Type:~p, HashProps:~p", [Type, PropsHash]),
-            M1 = orddict:store(typed_bucket, true, M),
-            M2 = orddict:store(type, Type, M1),
-            orddict:store(props_hash, PropsHash, M2);
+            M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
+            M2 = orddict:store(?BT_META_TYPE, Type, M1),
+            orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
         _B -> 
             lager:debug("un-typed bucket, setting typed_bucket to false"),
-            orddict:store(typed_bucket, false, M)
+            orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.

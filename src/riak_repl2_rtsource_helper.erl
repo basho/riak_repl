@@ -130,12 +130,13 @@ maybe_send(Transport, Socket, QEntry, State) ->
 		_ ->
                     case is_bucket_typed(Meta) of
                         false ->
-                            encode_and_send(QEntry, Remote, Transport, Socket, State);
+                            State2 = encode_and_send(QEntry, Remote, Transport, Socket, State),
+                            State2;
                         true ->
-   	                    lager:info("Negotiated protocol version:~p does not support typed buckets, not sending")
+   	                    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending"),
+			    State
                     end
-            end,
-	    State
+            end
     end.
 
 encode_and_send(QEntry, Remote, Transport, Socket, State) ->
@@ -162,7 +163,7 @@ get_routed(Meta) ->
     meta_get(routed_clusters, [], Meta).
 
 is_bucket_typed(Meta) ->
-    meta_get(typed_bucket, [], Meta).
+    meta_get(?BT_META_TYPED_BUCKET, [], Meta).
 
 meta_get(Key, Default, Meta) ->
     case orddict:find(Key, Meta) of

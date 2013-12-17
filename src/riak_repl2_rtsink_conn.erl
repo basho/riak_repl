@@ -56,6 +56,7 @@
 
 %% Register with service manager
 sync_register_service() ->
+    %% version {2,1} supports typed bucket replication
     ProtoPrefs = {realtime,[{2,1}, {2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
@@ -291,9 +292,10 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
             true ->
                 riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
             false ->
-                lager:info("Bucket is of a type that are not equal on both the source and sink; not writing object.")
+                lager:info("Bucket is of a type that is not equal on both the source and sink; not writing object.")
             end;
         {DoneFun, BinObjs} ->
+            %% this is for backwards compatibility with Repl version before metadata support (> 1.4)
             riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver)
     end,
     State2 = case AckedSeq of
@@ -407,20 +409,20 @@ get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 write_object(Meta) ->
-    case orddict:fetch(typed_bucket, Meta) of
+    case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
         false -> true;
         true ->
-            BucketType = orddict:fetch(type, Meta),
+            BucketType = orddict:fetch(?BT_META_TYPE, Meta),
             case riak_core_bucket_type:get(BucketType) of
                 undefined ->
                     lager:debug("No properties found for bucket type:~p", [BucketType]),    
 	            false;
-	        {error, _T} ->
+                {error, _T} ->
                     lager:debug("No properties found for bucket type:~p", [BucketType]),
-	            false;
+                    false;
                 AllProps ->
                     Sink = riak_repl_util:get_bucket_props_hash(AllProps),
-                    Source = orddict:fetch(props_hash, Meta),
+                    Source = orddict:fetch(?BT_META_PROPS_HASH, Meta),
                     lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [Source, Sink]),
                     Source == Sink
 	    end

@@ -197,7 +197,7 @@ repl_helper_recv([{App, Mod}|T], Object) ->
 
 repl_helper_send(Object, C) ->
     B = case riak_object:bucket(Object) of
-        {Bucket, _T} -> Bucket;
+        {_T, Bucket} -> Bucket;
         Bucket -> Bucket
     end,
     case proplists:get_value(repl, C:get_bucket(B)) of
@@ -877,7 +877,7 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
             riak_object:from_binary({T, B}, K, BinObj)
     end;
 from_wire(X) when is_binary(X) ->
-    lager:error("unknown wire format: ~p", [X]),
+    lager:error("An unknown replicaion wire format has been detected: ~p", [X]),
     {error, unknown_wire_format};
 from_wire(RObj) ->
     RObj.
@@ -932,6 +932,8 @@ peer_wire_format(Peer) ->
 get_bucket_props_hash(Props) ->
    PB = [{Prop, proplists:get_value(Prop, Props)} || Prop <- ?BUCKET_TYPES_PROPS],
    lager:debug("Bucket types props: ~p", [PB]),
+   %% Returning a hash of the properties to avoid sending the whole term over the wire.
+   %% A hash will be taken on the sink side of the sink's bucket type, and compared
    erlang:phash2(PB). 
     
 
