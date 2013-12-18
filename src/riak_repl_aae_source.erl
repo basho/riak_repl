@@ -187,6 +187,12 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
                        [?RETRY_AAE_LOCKED_INTERVAL]),
             gen_fsm:send_event_after(?RETRY_AAE_LOCKED_INTERVAL, start_exchange),
             {next_state, prepare_exchange, State};
+        not_built ->
+            %% Hashtree has not been computed yet, defer attempt.
+            lager:info("AAE tree for partition ~p is not_built. Trying again in ~p seconds.",
+                       [?RETRY_AAE_LOCKED_INTERVAL]),
+            gen_fsm:send_event_after(?RETRY_AAE_LOCKED_INTERVAL, start_exchange),
+            {next_state, prepare_exchange, State};
         Error ->
             lager:warning("lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
