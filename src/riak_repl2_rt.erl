@@ -148,7 +148,15 @@ postcommit(RObj) ->
         Objects0 when is_list(Objects0) ->
             Objects = Objects0 ++ [RObj],
             Meta = set_bucket_meta(RObj),
-            BinObjs = riak_repl_util:to_wire(w1, Objects),
+            
+            BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
+                false ->
+                     lager:debug("encoding w1 format object"),
+                     riak_repl_util:to_wire(w1, Objects);
+                true ->
+                     lager:debug("encoding w2 format object"),
+                     riak_repl_util:to_wire(w2, Objects)
+            end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of

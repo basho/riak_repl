@@ -57,7 +57,11 @@
 %% Also see analagous binary_version() in riak_object, which is carried
 %% inside the wire format in "BinObj". w0 implies v0. w1 imples v1.
 -type(wire_version() :: w0   %% simple term_to_binary() legacy encoding
-                      | w1). %% <<?MAGIC:8/integer, 1:8/integer,
+                      | w1   %% <<?MAGIC:8/integer, 1:8/integer,
+                             %% BLen:32/integer, B:BLen/binary,
+                             %% KLen:32/integer, K:KLen/binary, BinObj/binary>>.
+                      | w2). %% <<?MAGIC:8/integer, ?W2_VER:8/integer,
+                             %% TLen:32/integer, T:TLen/binary,
                              %% BLen:32/integer, B:BLen/binary,
                              %% KLen:32/integer, K:KLen/binary, BinObj/binary>>.
 

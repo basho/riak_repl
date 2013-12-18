@@ -128,7 +128,7 @@ init([Remote]) ->
     % TODO: expand version list or remove comment when we no
     % longer support 1.3.1
     % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
-    ClientSpec = {{realtime,[{2,1}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
+    ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
 
     %% Todo: check for bad remote name
     lager:debug("connecting to remote ~p", [Remote]),

@@ -74,6 +74,7 @@
 %% Defines for Wire format encode/decode
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
+-define(W2_VER, 2). %% first non-just-term-to-binary wire format
 -define(BUCKET_TYPES_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
 
 make_peer_info() ->
@@ -110,13 +111,14 @@ get_partitions(Ring) ->
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
-    B = riak_object:bucket(Object),
+    B = case riak_object:bucket(Object) of
+        {_Type, Bucket} -> Bucket;
+        Bucket -> Bucket
+    end,
     K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
             ReqId = erlang:phash2({self(), os:timestamp()}),
-            B = riak_object:bucket(Object),
-            K = riak_object:key(Object),
             Opts = [asis, disable_hooks, {update_last_modified, false}],
 
             {ok, PutPid} = riak_kv_put_fsm:start_link(ReqId, Object, all, all,
@@ -785,6 +787,8 @@ make_pg_name(Remote) ->
     list_to_atom("pg_requester_" ++ Remote).
 
 % everything from version 1.5 and up should use the new binary objects
+deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 2 ->
+    w2;
 deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 1 ->
     w1;
 deduce_wire_version_from_proto({_Proto, {_CommonMajor, CMinor}, {_CommonMajor, HMinor}}) when CMinor >= 5 andalso HMinor >= 5 ->
@@ -806,14 +810,15 @@ encode_obj_msg(V, {Cmd, RObj}) ->
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
 %%      possible type, bucket and key for reconstruction on the other end. BinObj should be
 %%      in the new format as obtained from riak_object:to_binary(v1, RObj).
-new_w1({T, B}, K, BinObj) when is_binary(B), is_binary(T), is_binary(K), is_binary(BinObj) ->
+new_w2({T, B}, K, BinObj) when is_binary(B), is_binary(T), is_binary(K), is_binary(BinObj) ->
     KLen = byte_size(K),
     BLen = byte_size(B),
     TLen = byte_size(T),
-    <<?MAGIC:8/integer, ?W1_VER:8/integer,
+    <<?MAGIC:8/integer, ?W2_VER:8/integer,
       TLen:32/integer, T:TLen/binary,
       BLen:32/integer, B:BLen/binary,
-      KLen:32/integer, K:KLen/binary, BinObj/binary>>;
+      KLen:32/integer, K:KLen/binary, BinObj/binary>>.
+
 %% @doc Create a new binary wire formatted replication blob, complete with
 %%      bucket and key for reconstruction on the other end. BinObj should be
 %%      in the new format as obtained from riak_object:to_binary(v1, RObj).
@@ -829,6 +834,8 @@ wire_version(<<131, _Rest/binary>>) ->
     w0;
 wire_version(<<?MAGIC:8/integer, ?W1_VER:8/integer, _Rest/binary>>) ->
     w1;
+wire_version(<<?MAGIC:8/integer, ?W2_VER:8/integer, _Rest/binary>>) ->
+    w2;
 wire_version(<<?MAGIC:8/integer, N:8/integer, _Rest/binary>>) ->
     list_to_atom(lists:flatten(io_lib:format("w~p", [N])));
 wire_version(_Other) ->
@@ -845,13 +852,20 @@ to_wire(w1, Objects) when is_list(Objects) ->
     BObjs = [to_wire(w1,O) || O <- Objects],
     term_to_binary(BObjs);
 to_wire(w1, Object) when not is_binary(Object) ->
+    B = riak_object:bucket(Object),
+    K = riak_object:key(Object),
+    to_wire(w1, B, K, Object);
+to_wire(w2, Objects) when is_list(Objects) ->
+    BObjs = [to_wire(w2,O) || O <- Objects],
+    term_to_binary(BObjs);
+to_wire(w2, Object) when not is_binary(Object) ->
     K = riak_object:key(Object),
     case riak_object:bucket(Object) of
         {T, B} -> 
             lager:debug("encoding typed bucket: t:~p, b:~p, k:~p", [T,B,K]),
-            to_wire(w1, {T, B}, K, Object);
+            to_wire(w2, {T, B}, K, Object);
         B ->
-            to_wire(w1, B, K, Object)
+            to_wire(w2, B, K, Object)
     end.
 
 %% When the wire format is known and objects are packed in a list of binaries
@@ -859,12 +873,16 @@ from_wire(w0, BinObjList) ->
       binary_to_term(BinObjList);
 from_wire(w1, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
+    [from_wire(BObj) || BObj <- BinObjs];
+from_wire(w2, BinObjList) ->
+    BinObjs = binary_to_term(BinObjList),
     [from_wire(BObj) || BObj <- BinObjs].
 
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
-from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
+%% @doc Convert from wire version w2, which has bucket type information
+from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer,
             TLen:32/integer, T:TLen/binary,
             BLen:32/integer, B:BLen/binary,
             KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
@@ -876,6 +894,10 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
             lager:debug("Found non-zero-length type, decoding non-default bucket-type:~p", [T]),
             riak_object:from_binary({T, B}, K, BinObj)
     end;
+from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
+            BLen:32/integer, B:BLen/binary,
+            KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
+    riak_object:from_binary(B, K, BinObj);
 from_wire(X) when is_binary(X) ->
     lager:error("An unknown replicaion wire format has been detected: ~p", [X]),
     {error, unknown_wire_format};
@@ -891,10 +913,16 @@ to_wire(w1, B, K, <<131,_/binary>>=Bin) ->
     to_wire(w0, B, K, Bin);
 to_wire(w1, B, K, <<_/binary>>=Bin) ->
     new_w1(B, K, Bin);
-to_wire(w1, {T,B}, K, RObj) ->
-    new_w1({T,B}, K, riak_object:to_binary(v1, RObj));
 to_wire(w1, B, K, RObj) ->
-    new_w1({<<>>, B}, K, riak_object:to_binary(v1, RObj));
+    new_w1(B, K, riak_object:to_binary(v1, RObj));
+to_wire(w2, {T, B}, K, <<131,_/binary>>=Bin) ->
+    new_w2({T,B}, K, Bin);
+to_wire(w2, B, K, <<131,_/binary>>=Bin) ->
+    to_wire(w2, B, K, Bin);
+to_wire(w2, {T,B}, K, RObj) ->
+    new_w2({T,B}, K, riak_object:to_binary(v1, RObj));
+to_wire(w2, B, K, RObj) ->
+    new_w2({<<>>, B}, K, riak_object:to_binary(v1, RObj));
 to_wire(_W, _B, _K, _RObj) ->
     {error, unsupported_wire_version}.
 

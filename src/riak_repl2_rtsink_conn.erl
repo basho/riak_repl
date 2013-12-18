@@ -56,8 +56,8 @@
 
 %% Register with service manager
 sync_register_service() ->
-    %% version {2,1} supports typed bucket replication
-    ProtoPrefs = {realtime,[{2,1}, {2,0}, {1,4}, {1,1}, {1,0}]},
+    %% version {3,0} supports typed bucket replication
+    ProtoPrefs = {realtime,[{3,0}, {2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -246,6 +246,7 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             send_heartbeat(T, S),
             recv(Cont, State#state{hb_last = os:timestamp()});
         {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
+            lager:info("get objects_and_meta"),
             recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
         {error, Reason} ->
             %% TODO: Log Something bad happened
