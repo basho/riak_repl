@@ -88,18 +88,18 @@ handle_info({'DOWN', _, _, _, _}, State) ->
 
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("AAE sink connection to ~p closed", [State#state.clustername]),
-    {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, State) ->
+    {stop, {tcp_closed, Socket}, State};
+handle_info({tcp_error, Socket, Reason}, State) ->
     lager:error("AAE sink connection to ~p closed unexpectedly: ~p",
                 [State#state.clustername, Reason]),
-    {stop, normal, State};
+    {stop, {tcp_error, Socket, Reason}, State};
 handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("AAE sink ssl connection to ~p closed", [State#state.clustername]),
-    {stop, normal, State};
-handle_info({ssl_error, _Socket, Reason}, State) ->
+    {stop, {ssl_closed, Socket}, State};
+handle_info({ssl_error, Socket, Reason}, State) ->
     lager:error("AAE sink ssl connection to ~p closed unexpectedly with: ~p",
                 [State#state.clustername, Reason]),
-    {stop, normal, State};
+    {stop, {ssl_error, Socket, Reason}, State};
 handle_info({Error, Socket, Reason},
             State=#state{socket=MySocket}) when Socket == MySocket ->
     lager:info("AAE sink connection to ~p closed unexpectedly: ~p",
