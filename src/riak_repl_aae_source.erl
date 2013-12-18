@@ -148,7 +148,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%      remote concurrency lock, and remote tree lock. Exchange will
 %%      timeout if locks cannot be acquired in a timely manner.
 prepare_exchange(cancel_fullsync, State) ->
-    larger:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 prepare_exchange(start_exchange, State=#state{transport=Transport,
@@ -198,7 +198,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
 update_trees(cancel_fullsync, State) ->
-    larger:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
@@ -237,7 +237,7 @@ update_trees({tree_built, _, _}, State) ->
 %% @doc Now that locks have been acquired and both hashtrees have been updated,
 %%      perform a key exchange and trigger replication for any divergent keys.
 key_exchange(cancel_fullsync, State) ->
-    larger:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 key_exchange(start_key_exchange, State=#state{cluster=Cluster,
