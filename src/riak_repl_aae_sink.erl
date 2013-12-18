@@ -88,18 +88,18 @@ handle_info({'DOWN', _, _, _, _}, State) ->
 
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("AAE sink connection to ~p closed", [State#state.clustername]),
-    {stop, normal, State};
-handle_info({tcp_error, _Socket, Reason}, State) ->
+    {stop, {tcp_closed, Socket}, State};
+handle_info({tcp_error, Socket, Reason}, State) ->
     lager:error("AAE sink connection to ~p closed unexpectedly: ~p",
                 [State#state.clustername, Reason]),
-    {stop, normal, State};
+    {stop, {tcp_error, Socket, Reason}, State};
 handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("AAE sink ssl connection to ~p closed", [State#state.clustername]),
-    {stop, normal, State};
-handle_info({ssl_error, _Socket, Reason}, State) ->
+    {stop, {ssl_closed, Socket}, State};
+handle_info({ssl_error, Socket, Reason}, State) ->
     lager:error("AAE sink ssl connection to ~p closed unexpectedly with: ~p",
                 [State#state.clustername, Reason]),
-    {stop, normal, State};
+    {stop, {ssl_error, Socket, Reason}, State};
 handle_info({Error, Socket, Reason},
             State=#state{socket=MySocket}) when Socket == MySocket ->
     lager:info("AAE sink connection to ~p closed unexpectedly: ~p",
@@ -122,12 +122,16 @@ code_change(_OldVsn, State, _Extra) ->
 %% replies: ok
 process_msg(?MSG_INIT, Partition, State) ->
     lager:info("MSG_INIT for partition ~p", [Partition]),
-    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
-    %% monitor the tree and crash if the tree goes away
-    monitor(process, TreePid),
-    %% tell the reservation coordinator that we are taking this partition.
-    riak_repl2_fs_node_reserver:claim_reservation(Partition),
-    send_reply(ok, State#state{partition=Partition, tree_pid=TreePid});
+    case riak_kv_vnode:hashtree_pid(Partition) of
+        {ok, TreePid} ->
+            %% monitor the tree and crash if the tree goes away
+            monitor(process, TreePid),
+            %% tell the reservation coordinator that we are taking this partition.
+            riak_repl2_fs_node_reserver:claim_reservation(Partition),
+            send_reply(ok, State#state{partition=Partition, tree_pid=TreePid});
+        {error, wrong_node} ->
+            {stop, wrong_node, State}
+    end;
 
 process_msg(?MSG_GET_AAE_BUCKET, {Level,BucketNum,IndexN}, State=#state{tree_pid=TreePid}) ->
     ResponseMsg = riak_kv_index_hashtree:exchange_bucket(IndexN, Level, BucketNum, TreePid),
