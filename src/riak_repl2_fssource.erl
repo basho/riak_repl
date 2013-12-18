@@ -186,7 +186,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State) when Reason == normal o
 handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{partition=Partition}) ->
     lager:info("Received: ~p, fullsync source stopping; will rety partition ~p later.",
                [Reason, Partition]),
-    {stop, normal, State};
+    {stop, {error, Reason}, State};
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),

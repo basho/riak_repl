@@ -380,8 +380,8 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             end
     end;
 
-handle_info({'EXIT', Pid, _Cause}, State) ->
-    lager:warning("fssource ~p exited abnormally", [Pid]),
+handle_info({'EXIT', Pid, Cause}, State) ->
+    lager:info("fssource ~p exited abnormally: ~p", [Pid, Cause]),
     PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
     case PartitionEntry of
         false ->
@@ -398,6 +398,7 @@ handle_info({'EXIT', Pid, _Cause}, State) ->
             #state{partition_queue = PQueue} = State,
 
             % reset for retry later
+            lager:info("fssource rescheduling partition: ~p", [Partition]),
             PQueue2 = queue:in(Partition, PQueue),
             State2 = State#state{partition_queue = PQueue2, busy_nodes = NewBusies,
                 running_sources = Running, error_exits = ErrorExits},
