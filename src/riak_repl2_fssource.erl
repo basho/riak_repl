@@ -182,6 +182,10 @@ handle_info({'DOWN', Ref, process, _Pid, not_responsible}, State=#state{partitio
         {ok, State2} -> {noreply, State2};
         Error -> Error
     end;
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+    erlang:demonitor(Ref),
+    lager:info("Received: ~p, stopping process.", [Reason]),
+    {stop, normal, State};
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),

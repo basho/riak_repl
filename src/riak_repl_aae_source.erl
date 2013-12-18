@@ -170,8 +170,6 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
         Error ->
             lager:info("AAE source failed get_lock for partition ~p, got ~p",
                        [Partition, Error]),
-            send_complete(State),
-            throw(Error),
             {stop, Error, State}
     end;
 prepare_exchange(start_exchange, State=#state{index=Partition}) ->
