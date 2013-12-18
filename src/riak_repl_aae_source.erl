@@ -121,7 +121,7 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 handle_info({'DOWN', TreeMref, process, Pid, Why}, _StateName, State=#state{tree_mref=TreeMref}) ->
     %% Local hashtree process went down. Stop exchange.
-    lager:info("Monitored pid ~p, AAE Hashtree process went down", [Pid, Why]),
+    lager:info("Monitored pid ~p, AAE Hashtree process went down because: ~p", [Pid, Why]),
     send_complete(State),
     {stop, {aae_hashtree_went_down, Why}, State};
 handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
@@ -189,7 +189,6 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
             lager:warning("lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
-            throw({remote,Error}),
             {stop, {remote, Error}, State}
     end.
 
@@ -223,7 +222,6 @@ update_trees(start_exchange, State=#state{tree_pid=TreePid,
 update_trees({not_responsible, Partition, IndexN}, State) ->
     lager:info("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
     send_complete(State),
-%%    throw({not_responsible, Partition, IndexN}),
     {stop, not_responsible, State};
 update_trees({tree_built, _, _}, State) ->
     Built = State#state.built + 1,
@@ -576,11 +574,13 @@ send_asynchronous_msg(MsgType, #state{transport=Transport,
 %% states through the fsm. That will allow us to service a status
 %% request without blocking. We could also handle lates messages
 %% without having to die.
-get_reply(#state{transport=Transport, socket=Socket}) ->
+get_reply(State=#state{transport=Transport, socket=Socket}) ->
     %% don't block forever, but if we timeout, then die with reason
     case Transport:recv(Socket, 0, ?AAE_FULLSYNC_REPLY_TIMEOUT) of
         {ok, [?MSG_REPLY|Data]} ->
             binary_to_term(Data);
         {error, Reason} ->
-            throw(Reason)
+            %% This generate a return value that the fssource can
+            %% display and possibly retry the partition from.
+            throw({stop, Reason, State})
     end.

@@ -173,7 +173,6 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'DOWN', Ref, process, _Pid, not_responsible}, State=#state{partition=Partition}) ->
-    erlang:demonitor(Ref),
     lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
     lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
     lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
@@ -182,9 +181,11 @@ handle_info({'DOWN', Ref, process, _Pid, not_responsible}, State=#state{partitio
         {ok, State2} -> {noreply, State2};
         Error -> Error
     end;
-handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
-    erlang:demonitor(Ref),
-    lager:info("Received: ~p, stopping process.", [Reason]),
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State) when Reason == normal orelse Reason == shutdown ->
+    {stop, normal, State};
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{partition=Partition}) ->
+    lager:info("Received: ~p, fullsync source stopping; will rety partition ~p later.",
+               [Reason, Partition]),
     {stop, normal, State};
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
