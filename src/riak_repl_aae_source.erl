@@ -55,7 +55,7 @@
 -spec start_link(term(), term(), term(), term(), index(), pid())
                 -> {ok,pid()} | ignore | {error, term()}.
 start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid) ->
-    gen_fsm:start(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid], []).
+    gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid], []).
 
 start_exchange(AAESource) ->
     lager:debug("Send start_exchange to AAE fullsync sink worker"),
@@ -219,10 +219,10 @@ update_trees(start_exchange, State=#state{tree_pid=TreePid,
             update_trees({not_responsible, Partition, IndexN}, State)
     end;
 
-update_trees({not_responsible, Partition, IndexN}, State) ->
+update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
     lager:info("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
-    send_complete(State),
-    {stop, not_responsible, State};
+    Owner ! not_responsible,
+    {stop, normal, State};
 update_trees({tree_built, _, _}, State) ->
     Built = State#state.built + 1,
     case Built of

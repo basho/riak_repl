@@ -103,8 +103,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                    Transport, Socket,
                                                                    Partition,
                                                                    self()),
-            %% We want a 'DOWN' message when the aae worker stops itself for not_responsible
-            erlang:monitor(process, FullsyncWorker),
             %% Give control of socket to AAE worker. It will consume all TCP messages.
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
@@ -172,18 +170,9 @@ handle_cast({connect_failed, _Pid, Reason},
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', Ref, process, _Pid, not_responsible}, State=#state{partition=Partition}) ->
-    lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
-    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
-    lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
-    Strategy = keylist,
-    case connect(State#state.ip, Strategy, Partition) of
-        {ok, State2} -> {noreply, State2};
-        Error -> Error
-    end;
-handle_info({'DOWN', Ref, process, _Pid, Reason}, State) when Reason == normal orelse Reason == shutdown ->
+handle_info({'DOWN', _Ref, process, _Pid, Reason}, State) when Reason == normal orelse Reason == shutdown ->
     {stop, normal, State};
-handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{partition=Partition}) ->
+handle_info({'DOWN', _Ref, process, _Pid, Reason}, State=#state{partition=Partition}) ->
     lager:info("Received: ~p, fullsync source stopping; will rety partition ~p later.",
                [Reason, Partition]),
     {stop, {error, Reason}, State};
@@ -209,6 +198,15 @@ handle_info({Proto, Socket, Data},
         _ ->
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
+    end;
+handle_info(not_responsible, State=#state{partition=Partition}) ->
+    lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
+    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
+    lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
+    Strategy = keylist,
+    case connect(State#state.ip, Strategy, Partition) of
+        {ok, State2} -> {noreply, State2};
+        Error -> Error
     end;
 handle_info(Msg, State) ->
     lager:info("ignored handle_info ~p", [Msg]),
