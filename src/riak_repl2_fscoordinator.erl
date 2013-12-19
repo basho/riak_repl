@@ -44,6 +44,7 @@
     running_sources = [],
     successful_exits = 0,
     error_exits = 0,
+    retry_exits = 0,
     pending_fullsync = false,
     dirty_nodes = ordsets:new(),          % these nodes should run fullsync
     dirty_nodes_during_fs = ordsets:new(), % these nodes reported realtime errors
@@ -214,6 +215,7 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {starting, length(State#state.whereis_waiting)},
         {successful_exits, State#state.successful_exits},
         {error_exits, State#state.error_exits},
+        {retry_exits, State#state.retry_exits},
         {busy_nodes, sets:size(State#state.busy_nodes)},
         {running_stats, SourceStats},
         {socket, SocketStats},
@@ -303,6 +305,7 @@ handle_cast(start_fullsync,  State) ->
                 retries = dict:new(),
                 successful_exits = 0,
                 error_exits = 0,
+                retry_exits = 0,
                 fullsync_start_time = riak_core_util:moment()
             },
             State3 = start_up_reqs(State2),
@@ -397,7 +400,6 @@ handle_info({'EXIT', Pid, Cause}, State) ->
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
 
             % stats
-            ErrorExits = State#state.error_exits + 1,
             #state{partition_queue = PQueue, retries = Retries0} = State,
 
             RetryLimit = app_helper:get_env(riak_repl, max_fssource_retries,
@@ -408,7 +410,9 @@ handle_info({'EXIT', Pid, Cause}, State) ->
                 N when N > RetryLimit ->
                     lager:warning("fssource dropping partition: ~p, ~p failed"
                                "retries", [Partition, RetryLimit]),
+                    ErrorExits = State#state.error_exits + 1,
                     State2 = State#state{busy_nodes = NewBusies,
+                                         retries = Retries,
                                          running_sources = Running,
                                          error_exits = ErrorExits},
                     State3 = start_up_reqs(State2),
@@ -418,10 +422,12 @@ handle_info({'EXIT', Pid, Cause}, State) ->
                     lager:info("fssource rescheduling partition: ~p",
                                [Partition]),
                     PQueue2 = queue:in(Partition, PQueue),
+                    RetryExits = State#state.retry_exits + 1,
                     State2 = State#state{partition_queue = PQueue2,
+                                         retries = Retries,
                                          busy_nodes = NewBusies,
                                          running_sources = Running,
-                                         error_exits = ErrorExits},
+                                         retry_exits = RetryExits},
                     State3 = start_up_reqs(State2),
                     {noreply, State3}
             end
