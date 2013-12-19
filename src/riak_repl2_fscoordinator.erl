@@ -352,38 +352,11 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
 
             % stats
             Sucesses = State#state.successful_exits + 1,
-            State2 = State#state{successful_exits = Sucesses},
+            State2 = State#state{successful_exits = Sucesses,
+                                 busy_nodes = NewBusies},
 
             % are we done?
-            EmptyRunning =  Running == [],
-            QEmpty = queue:is_empty(State#state.partition_queue),
-            Waiting = State#state.whereis_waiting,
-            case {EmptyRunning, QEmpty, Waiting} of
-                {true, true, []} ->
-                    MyClusterName = riak_core_connection:symbolic_clustername(),
-                    lager:info("Fullsync complete from ~s to ~s",
-                               [MyClusterName, State#state.other_cluster]),
-                    % clear the "rt dirty" stat if it's set,
-                    % otherwise, don't do anything
-                    State3 = notify_rt_dirty_nodes(State2),
-                    %% update legacy stats too! some riak_tests depend on them.
-                    riak_repl_stats:server_fullsyncs(),
-                    TotalFullsyncs = State#state.fullsyncs_completed + 1,
-                    Finish = riak_core_util:moment(),
-                    ElapsedSeconds = Finish - State#state.fullsync_start_time,
-                    riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster),
-                    {noreply, State3#state{running_sources = Running,
-                                           busy_nodes = NewBusies,
-                                           fullsyncs_completed = TotalFullsyncs,
-                                           fullsync_start_time = undefined,
-                                           last_fullsync_duration=ElapsedSeconds
-                                          }};
-                _ ->
-                    % there's something waiting for a response.
-                    State3 = start_up_reqs(State2#state{running_sources = Running,
-                                                        busy_nodes = NewBusies}),
-                    {noreply, State3}
-            end
+            maybe_complete_fullsync(Running, State2)
     end;
 
 handle_info({'EXIT', Pid, Cause}, State) ->
@@ -415,8 +388,7 @@ handle_info({'EXIT', Pid, Cause}, State) ->
                                          retries = Retries,
                                          running_sources = Running,
                                          error_exits = ErrorExits},
-                    State3 = start_up_reqs(State2),
-                    {noreply, State3};
+                    maybe_complete_fullsync(Running, State2);
                 _ -> %% have not run out of retries yet
                     % reset for retry later
                     lager:info("fssource rescheduling partition: ~p",
@@ -778,6 +750,35 @@ is_fullsync_in_progress(State) ->
             false;
         _ ->
             true
+    end.
+
+maybe_complete_fullsync(Running, State) ->
+    EmptyRunning =  Running == [],
+    QEmpty = queue:is_empty(State#state.partition_queue),
+    Waiting = State#state.whereis_waiting,
+    case {EmptyRunning, QEmpty, Waiting} of
+        {true, true, []} ->
+            MyClusterName = riak_core_connection:symbolic_clustername(),
+            lager:info("Fullsync complete from ~s to ~s",
+                       [MyClusterName, State#state.other_cluster]),
+            % clear the "rt dirty" stat if it's set,
+            % otherwise, don't do anything
+            State2 = notify_rt_dirty_nodes(State),
+            %% update legacy stats too! some riak_tests depend on them.
+            riak_repl_stats:server_fullsyncs(),
+            TotalFullsyncs = State#state.fullsyncs_completed + 1,
+            Finish = riak_core_util:moment(),
+            ElapsedSeconds = Finish - State#state.fullsync_start_time,
+            riak_repl_util:schedule_cluster_fullsync(State#state.other_cluster),
+            {noreply, State2#state{running_sources = Running,
+                                   fullsyncs_completed = TotalFullsyncs,
+                                   fullsync_start_time = undefined,
+                                   last_fullsync_duration=ElapsedSeconds
+                                  }};
+        _ ->
+            % there's something waiting for a response.
+            State2 = start_up_reqs(State#state{running_sources = Running}),
+            {noreply, State2}
     end.
 
 % dirty_nodes is the set of nodes that are marked "dirty"
