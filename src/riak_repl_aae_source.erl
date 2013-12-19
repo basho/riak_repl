@@ -73,33 +73,17 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
     %% for all combined IndexNs and iterate over them. When finished, send
     %% COMPLETE msg to signal sink to die and unlock tree.
 
-    lager:info("AAE fullsync source worker started for partition ~p", [Partition]),
-
-    Timeout = app_helper:get_env(riak_kv,
-                                 anti_entropy_timeout,
-                                 ?DEFAULT_ACTION_TIMEOUT),
-
-    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
-
-    TreeMref = monitor(process, TreePid),
-
-    %% List of IndexNs to iterate over.
-    IndexNs = riak_kv_util:responsible_preflists(Partition),
-
-    lager:debug("AAE fullsync source partition ~p has Indexes ~p", [Partition, IndexNs]),
+    lager:info("AAE fullsync source worker started for partition ~p",
+               [Partition]),
 
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
                    socket=Socket,
                    index=Partition,
-                   indexns=IndexNs,
-                   tree_pid=TreePid,
-                   tree_mref=TreeMref,
-                   timeout=Timeout,
                    built=0,
                    owner=OwnerPid,
-                   wire_ver=w1}, %% future version may change wire format, but w1 for now.
+                   wire_ver=w1},
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -151,7 +135,7 @@ prepare_exchange(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
-prepare_exchange(start_exchange, State=#state{transport=Transport,
+prepare_exchange(start_exchange, State0=#state{transport=Transport,
                                               socket=Socket,
                                               index=Partition,
                                               local_lock=Lock}) when Lock == false ->
@@ -163,14 +147,36 @@ prepare_exchange(start_exchange, State=#state{transport=Transport,
     %% try to get local lock of the tree
     lager:debug("Prepare exchange for partition ~p", [Partition]),
     ok = Transport:setopts(Socket, TcpOptions),
-    ok = send_synchronous_msg(?MSG_INIT, Partition, State),
-    case riak_kv_index_hashtree:get_lock(State#state.tree_pid, fullsync_source) of
-        ok ->
-            prepare_exchange(start_exchange, State#state{local_lock=true});
-        Error ->
-            lager:info("AAE source failed get_lock for partition ~p, got ~p",
-                       [Partition, Error]),
-            {stop, Error, State}
+    ok = send_synchronous_msg(?MSG_INIT, Partition, State0),
+
+    %% Timeout for AAE.
+    Timeout = app_helper:get_env(riak_kv,
+                                 anti_entropy_timeout,
+                                 ?DEFAULT_ACTION_TIMEOUT),
+
+    %% List of IndexNs to iterate over.
+    IndexNs = riak_kv_util:responsible_preflists(Partition),
+
+    lager:debug("AAE fullsync source partition ~p has Indexes ~p",
+                [Partition, IndexNs]),
+
+    case riak_kv_vnode:hashtree_pid(Partition) of
+        {ok, TreePid} ->
+            TreeMref = monitor(process, TreePid),
+            State = State0#state{timeout=Timeout,
+                                 indexns=IndexNs,
+                                 tree_pid=TreePid,
+                                 tree_mref=TreeMref},
+            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
+                ok ->
+                    prepare_exchange(start_exchange, State#state{local_lock=true});
+                Error ->
+                    lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                               [Partition, Error]),
+                    {stop, Error, State}
+            end;
+        {error, wrong_node} ->
+            {stop, wrong_node, State0}
     end;
 prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock
