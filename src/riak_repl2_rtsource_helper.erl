@@ -127,12 +127,12 @@ maybe_send(Transport, Socket, QEntry, State) ->
             case State#state.proto of 
                 Ver when Ver =:= {3,0} ->
                     encode_and_send(QEntry, Remote, Transport, Socket, State);
-		_ ->
+                _ ->
                     case is_bucket_typed(Meta) of
                         false ->
                             encode_and_send(QEntry, Remote, Transport, Socket, State);
                         true ->
-   	                    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending"),
+                            lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending"),
                             State
                     end
             end
@@ -141,7 +141,7 @@ maybe_send(Transport, Socket, QEntry, State) ->
 encode_and_send(QEntry, Remote, Transport, Socket, State) ->
     QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
     {Encoded, State2} = encode(QEntry2, State),
-    lager:info("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
+    lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
     Transport:send(Socket, Encoded),
     State2.
 

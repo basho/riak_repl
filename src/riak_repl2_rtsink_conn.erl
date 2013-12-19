@@ -416,7 +416,7 @@ write_object(Meta) ->
             case riak_core_bucket_type:get(BucketType) of
                 undefined ->
                     lager:debug("No properties found for bucket type:~p", [BucketType]),    
-	            false;
+                    false;
                 {error, _T} ->
                     lager:debug("No properties found for bucket type:~p", [BucketType]),
                     false;
@@ -425,7 +425,7 @@ write_object(Meta) ->
                     Source = orddict:fetch(?BT_META_PROPS_HASH, Meta),
                     lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [Source, Sink]),
                     Source == Sink
-	    end
+            end
     end.
 
 
