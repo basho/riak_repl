@@ -62,7 +62,12 @@ init([Partition, IP]) ->
     OurCaps = decide_our_caps(DefaultStrategy),
     SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
 
-    connect(IP, SupportedStrategy, Partition).
+    case connect(IP, SupportedStrategy, Partition) of
+        {error, Reason} ->
+            {stop, Reason};
+        Other ->
+            Other
+    end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
