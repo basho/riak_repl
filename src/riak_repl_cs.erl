@@ -58,10 +58,7 @@ skip_common_bucket(Bucket) ->
 
 -spec skip_block_object(riak_object:riak_object()) -> boolean().
 skip_block_object(Object) ->
-    Bucket = case riak_object:bucket(Object) of
-        {_T, B} -> B;
-        B -> B
-    end,
+    Bucket = riak_object:bucket(Object),
     block_bucket(Bucket).
 
 -spec block_bucket(binary()) -> boolean().

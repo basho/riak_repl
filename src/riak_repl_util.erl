@@ -111,10 +111,7 @@ get_partitions(Ring) ->
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
-    B = case riak_object:bucket(Object) of
-        {_Type, Bucket} -> Bucket;
-        Bucket -> Bucket
-    end,
+    B = riak_object:bucket(Object),
     K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
@@ -198,10 +195,7 @@ repl_helper_recv([{App, Mod}|T], Object) ->
     end.
 
 repl_helper_send(Object, C) ->
-    B = case riak_object:bucket(Object) of
-        {_T, Bucket} -> Bucket;
-        Bucket -> Bucket
-    end,
+    B = riak_object:bucket(Object),
     case proplists:get_value(repl, C:get_bucket(B)) of
         Val when Val==true; Val==fullsync; Val==both ->
             case application:get_env(riak_core, repl_helper) of
@@ -687,10 +681,7 @@ proxy_get_active() ->
 
 log_dropped_realtime_obj(Obj) ->
     DroppedKey = riak_object:key(Obj),
-    DroppedBucket = case riak_object:bucket(Obj) of
-        {_T, B} -> B;
-        B -> B
-    end,
+    DroppedBucket = riak_object:bucket(Obj),
     lager:info("REPL dropped object: ~p ~p",
                [ DroppedBucket, DroppedKey]).
 
