@@ -1,6 +1,6 @@
 -module(riak_repl2_fssource).
 -include("riak_repl.hrl").
--include_lib("riak_core/include/riak_core_locks.hrl").
+-include_lib("riak_kv/include/riak_kv_vnode.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -311,26 +311,14 @@ connect(IP, Strategy, Partition) ->
     end.
 
 %% @private
-%% @doc Return true iff neither of the "skip background manager" configuration
-%%      settings are defined as anything other than false. 'skip_background_manager'
-%%      turns off all use of bg-mgr. 'fullsync_skip_background_manager' only stops
-%%      fullsync from using bg-mgr.
--spec use_bg_mgr() -> boolean().
-use_bg_mgr() ->
-    %% note we're tolerant here of any non-boolean value as well. Iff it's 'false', we don't skip.
-    GlobalSkip = app_helper:get_env(riak_core, skip_background_manager, false) =/= false,
-    FSSkip = app_helper:get_env(riak_repl, fullsync_skip_background_manager, false) =/= false,
-    not (GlobalSkip orelse FSSkip).
-
-%% @private
 %% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
-%%      Sets our task meta-data in the lock as 'aae_rebuild', which is useful for
+%%      Sets our task meta-data in the lock as 'repl_fullsync', which is useful for
 %%      seeing what's holding the lock via @link riak_core_background_mgr:ps/0.
 -spec maybe_get_vnode_lock(SrcPartition::integer()) -> ok | {error, Reason::term()}.
 maybe_get_vnode_lock(SrcPartition) ->
-    Lock = ?VNODE_LOCK(riak_kv_vnode, SrcPartition),
-    case use_bg_mgr() of
+    case riak_core_bg_manager:use_bg_mgr(riak_repl, fullsync_use_background_manager) of
         true  ->
+            Lock = ?VNODE_LOCK(SrcPartition),
             case riak_core_bg_manager:get_lock(Lock, self(), [{task, repl_fullsync}]) of
                 {ok, _Ref} ->
                     ok;
@@ -339,6 +327,5 @@ maybe_get_vnode_lock(SrcPartition) ->
                     {error, Reason}
             end;
         false ->
-            lager:debug("AAE tree rebuild is skipping the background manager vnode lock: ~p", [Lock]),
             ok
     end.
