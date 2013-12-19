@@ -402,7 +402,7 @@ handle_info({'EXIT', Pid, Cause}, State) ->
 
             RetryLimit = app_helper:get_env(riak_repl, max_fssource_retries,
                                             ?DEFAULT_SOURCE_RETRIES),
-            Retries = dict:increment_counter(Partition, 1, Retries0),
+            Retries = dict:update_counter(Partition, 1, Retries0),
 
             case dict:fetch(Partition, Retries) of
                 N when N > RetryLimit ->
