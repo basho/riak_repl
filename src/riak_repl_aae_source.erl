@@ -221,7 +221,7 @@ update_trees(start_exchange, State=#state{tree_pid=TreePid,
 
 update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
     lager:info("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
-    Owner ! not_responsible,
+    gen_server:cast(Owner, not_responsible),
     {stop, normal, State};
 update_trees({tree_built, _, _}, State) ->
     Built = State#state.built + 1,
