@@ -336,7 +336,8 @@ handle_cast(_Msg, State) ->
 
 
 %% @hidden
-handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdown ->
+handle_info({'EXIT', Pid, Cause},
+            #state{socket=Socket, transport=Transport}=State) when Cause =:= normal; Cause =:= shutdown ->
     lager:debug("fssource ~p exited normally", [Pid]),
     PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
     case PartitionEntry of
@@ -350,6 +351,10 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             {_, _, Node} = Partition,
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
 
+            % ensure we unreserve the partition on the remote node
+            % instead of waiting for a timeout.
+            Transport:send(Socket, term_to_binary({unreserve, Partition})),
+
             % stats
             Sucesses = State#state.successful_exits + 1,
             State2 = State#state{successful_exits = Sucesses,
@@ -359,7 +364,8 @@ handle_info({'EXIT', Pid, Cause}, State) when Cause =:= normal; Cause =:= shutdo
             maybe_complete_fullsync(Running, State2)
     end;
 
-handle_info({'EXIT', Pid, Cause}, State) ->
+handle_info({'EXIT', Pid, Cause},
+            #state{socket=Socket, transport=Transport}=State) ->
     lager:info("fssource ~p exited abnormally: ~p", [Pid, Cause]),
     PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
     case PartitionEntry of
@@ -371,6 +377,10 @@ handle_info({'EXIT', Pid, Cause}, State) ->
             % even a bad exit opens a slot on the remote node
             {_, _, Node} = Partition,
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
+
+            % ensure we unreserve the partition on the remote node
+            % instead of waiting for a timeout.
+            Transport:send(Socket, term_to_binary({unreserve, Partition})),
 
             % stats
             #state{partition_queue = PQueue, retries = Retries0} = State,
