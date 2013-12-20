@@ -52,7 +52,7 @@ reserve(Partition) ->
     end.
 
 %% @doc Release a reservation for the given partition on the correct node.
--spec unreserve(Partition :: any()) -> 'ok'.
+-spec unreserve(Partition :: any()) -> 'ok' | 'busy' | 'down'.
 unreserve(Partition) ->
     Node = get_partition_node(Partition),
     try gen_server:call({?SERVER, Node}, {unreserve, Partition}) of

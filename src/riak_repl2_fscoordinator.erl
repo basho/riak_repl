@@ -344,7 +344,7 @@ handle_info({'EXIT', Pid, Cause},
         false ->
             % late exit or otherwise non-existant
             {noreply, State};
-        {value, {Pid, Partition}, Running} ->
+        {value, {Pid, {Index, _, _}=Partition}, Running} ->
 
             % likely a slot on the remote node opened up, so re-enable that
             % remote node for whereis requests.
@@ -353,7 +353,7 @@ handle_info({'EXIT', Pid, Cause},
 
             % ensure we unreserve the partition on the remote node
             % instead of waiting for a timeout.
-            Transport:send(Socket, term_to_binary({unreserve, Partition})),
+            Transport:send(Socket, term_to_binary({unreserve, Index})),
 
             % stats
             Sucesses = State#state.successful_exits + 1,
@@ -372,7 +372,7 @@ handle_info({'EXIT', Pid, Cause},
         false ->
             % late exit
             {noreply, State};
-        {value, {Pid, Partition}, Running} ->
+        {value, {Pid, {Index, _, _}=Partition}, Running} ->
 
             % even a bad exit opens a slot on the remote node
             {_, _, Node} = Partition,
@@ -380,7 +380,7 @@ handle_info({'EXIT', Pid, Cause},
 
             % ensure we unreserve the partition on the remote node
             % instead of waiting for a timeout.
-            Transport:send(Socket, term_to_binary({unreserve, Partition})),
+            Transport:send(Socket, term_to_binary({unreserve, Index})),
 
             % stats
             #state{partition_queue = PQueue, retries = Retries0} = State,
