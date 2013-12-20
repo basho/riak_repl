@@ -850,14 +850,9 @@ to_wire(w2, Objects) when is_list(Objects) ->
     BObjs = [to_wire(w2,O) || O <- Objects],
     term_to_binary(BObjs);
 to_wire(w2, Object) when not is_binary(Object) ->
+    B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    case riak_object:bucket(Object) of
-        {T, B} -> 
-            lager:debug("encoding typed bucket: t:~p, b:~p, k:~p", [T,B,K]),
-            to_wire(w2, {T, B}, K, Object);
-        B ->
-            to_wire(w2, B, K, Object)
-    end.
+    to_wire(w2, B, K, Object).
 
 %% When the wire format is known and objects are packed in a list of binaries
 from_wire(w0, BinObjList) ->
@@ -906,10 +901,6 @@ to_wire(w1, B, K, <<_/binary>>=Bin) ->
     new_w1(B, K, Bin);
 to_wire(w1, B, K, RObj) ->
     new_w1(B, K, riak_object:to_binary(v1, RObj));
-to_wire(w2, {T, B}, K, <<131,_/binary>>=Bin) ->
-    new_w2({T,B}, K, Bin);
-to_wire(w2, B, K, <<131,_/binary>>=Bin) ->
-    to_wire(w2, B, K, Bin);
 to_wire(w2, {T,B}, K, RObj) ->
     new_w2({T,B}, K, riak_object:to_binary(v1, RObj));
 to_wire(w2, B, K, RObj) ->
