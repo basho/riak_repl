@@ -198,14 +198,6 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
         ok ->
             update_trees(start_exchange, State);
-        already_locked ->
-            %% This partition is already locked, probably by a vnode doing a handoff.
-            %% ideally, we would put this back on the queue, but we'll just need to
-            %% wait for a while and try again since we can't unclaim it yet.
-            lager:info("AAE tree for partition ~p is already_locked. Trying again in ~p seconds.",
-                       [?RETRY_AAE_LOCKED_INTERVAL]),
-            gen_fsm:send_event_after(?RETRY_AAE_LOCKED_INTERVAL, start_exchange),
-            {next_state, prepare_exchange, State};
         Error ->
             lager:warning("lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
