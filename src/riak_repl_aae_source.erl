@@ -113,7 +113,22 @@ handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
     lager:info("Something went down ~p", [Error]),
     send_complete(State),
     {stop, something_went_down, State};
+handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
+    lager:info("AAE source connection to ~p closed", [State#state.cluster]),
+    {stop, {tcp_closed, Socket}, State};
+handle_info({tcp_error, Socket, Reason}, _StateName, State) ->
+    lager:error("AAE source connection to ~p closed unexpectedly: ~p",
+                [State#state.cluster, Reason]),
+    {stop, {tcp_error, Socket, Reason}, State};
+handle_info({ssl_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
+    lager:info("AAE source ssl connection to ~p closed", [State#state.cluster]),
+    {stop, {ssl_closed, Socket}, State};
+handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
+    lager:error("AAE source ssl connection to ~p closed unexpectedly with: ~p",
+                [State#state.cluster, Reason]),
+    {stop, {ssl_error, Socket, Reason}, State};
 handle_info(_Info, StateName, State) ->
+    lager:info("ignored handle_info: ~p", [_Info]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, _State) ->
