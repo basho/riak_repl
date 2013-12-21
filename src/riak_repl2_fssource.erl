@@ -65,7 +65,7 @@ init([Partition, IP]) ->
 
     %% Possibly try to obtain the per-vnode lock before connecting.
     %% If we return error, we expect the coordinator to start us again later.
-    case maybe_get_vnode_lock(Partition) of
+    case riak_repl_util:maybe_get_vnode_lock(Partition) of
         ok ->
             %% got the lock, or ignored it.
             connect(IP, SupportedStrategy, Partition);
@@ -308,24 +308,4 @@ connect(IP, Strategy, Partition) ->
         {error, Reason}->
             lager:warning("Error connecting to remote"),
             {stop, Reason}
-    end.
-
-%% @private
-%% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
-%%      Sets our task meta-data in the lock as 'repl_fullsync', which is useful for
-%%      seeing what's holding the lock via @link riak_core_background_mgr:ps/0.
--spec maybe_get_vnode_lock(SrcPartition::integer()) -> ok | {error, Reason::term()}.
-maybe_get_vnode_lock(SrcPartition) ->
-    case riak_core_bg_manager:use_bg_mgr(riak_repl, fullsync_use_background_manager) of
-        true  ->
-            Lock = ?VNODE_LOCK(SrcPartition),
-            case riak_core_bg_manager:get_lock(Lock, self(), [{task, repl_fullsync}]) of
-                {ok, _Ref} ->
-                    ok;
-                max_concurrency ->
-                    Reason = {max_concurrency, Lock},
-                    {error, Reason}
-            end;
-        false ->
-            ok
     end.

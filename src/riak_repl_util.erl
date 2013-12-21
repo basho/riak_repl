@@ -3,6 +3,7 @@
 -module(riak_repl_util).
 -author('Andy Gross <andy@basho.com>').
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
+-include_lib("riak_kv/include/riak_kv_vnode.hrl").
 -include("riak_repl.hrl").
 
 -ifdef(TEST).
@@ -57,7 +58,8 @@
          make_pg_proxy_name/1,
          make_pg_name/1,
          mode_12_enabled/1,
-         mode_13_enabled/1
+         mode_13_enabled/1,
+         maybe_get_vnode_lock/1
      ]).
 
 -export([wire_version/1,
@@ -943,6 +945,25 @@ get_bucket_props_hash(Props) ->
    %% A hash will be taken on the sink side of the sink's bucket type, and compared
    erlang:phash2(PB). 
     
+%% @private
+%% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
+%%      Sets our task meta-data in the lock as 'repl_fullsync', which is useful for
+%%      seeing what's holding the lock via @link riak_core_background_mgr:ps/0.
+-spec maybe_get_vnode_lock(SrcPartition::integer()) -> ok | {error, Reason::term()}.
+maybe_get_vnode_lock(SrcPartition) ->
+    case riak_core_bg_manager:use_bg_mgr(riak_repl, fullsync_use_background_manager) of
+        true  ->
+            Lock = ?KV_VNODE_LOCK(SrcPartition),
+            case riak_core_bg_manager:get_lock(Lock, self(), [{task, repl_fullsync}]) of
+                {ok, _Ref} ->
+                    ok;
+                max_concurrency ->
+                    Reason = {max_concurrency, Lock},
+                    {error, Reason}
+            end;
+        false ->
+            ok
+    end.
 
 %% Some eunit tests
 -ifdef(TEST).
