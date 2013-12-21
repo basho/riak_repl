@@ -288,7 +288,7 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
     Me = self(),
     case make_donefun(BinObjsMeta, Me, Ref, Seq) of
         {DoneFun, BinObjs, Meta} ->
-            case write_object(Meta) of
+            case maybe_write_object(Meta) of
             true ->
                 riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
             false ->
@@ -408,22 +408,19 @@ schedule_reactivate_socket(State = #state{transport = T,
 get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
-write_object(Meta) ->
+maybe_write_object(Meta) ->
     case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
         false -> true;
         true ->
             BucketType = orddict:fetch(?BT_META_TYPE, Meta),
             case riak_core_bucket_type:get(BucketType) of
                 undefined ->
-                    lager:debug("No properties found for bucket type:~p", [BucketType]),    
                     false;
                 {error, _T} ->
-                    lager:debug("No properties found for bucket type:~p", [BucketType]),
                     false;
                 AllProps ->
                     Sink = riak_repl_util:get_bucket_props_hash(AllProps),
                     Source = orddict:fetch(?BT_META_PROPS_HASH, Meta),
-                    lager:debug("SourcePropsHash:~p, SinkPropsHash:~p", [Source, Sink]),
                     Source == Sink
             end
     end.

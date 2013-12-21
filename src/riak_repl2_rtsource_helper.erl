@@ -125,7 +125,7 @@ maybe_send(Transport, Socket, QEntry, State) ->
             State;
         false ->
             case State#state.proto of 
-                Ver when Ver =:= {3,0} ->
+                {Major, _Minor} when Major >= 3 ->
                     encode_and_send(QEntry, Remote, Transport, Socket, State);
                 _ ->
                     case is_bucket_typed(Meta) of

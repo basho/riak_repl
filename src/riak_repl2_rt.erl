@@ -151,10 +151,8 @@ postcommit(RObj) ->
             
             BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
                 false ->
-                    lager:debug("encoding w1 format object"),
                     riak_repl_util:to_wire(w1, Objects);
                 true ->
-                    lager:debug("encoding w2 format object"),
                     riak_repl_util:to_wire(w2, Objects)
             end,
             %% try the proxy first, avoids race conditions with unregister()
@@ -234,11 +232,9 @@ set_bucket_meta(Obj) ->
     case riak_object:bucket(Obj) of
         {Type, _B} ->
             PropsHash = riak_repl_util:get_bucket_props_hash(riak_core_bucket_type:get(Type)),
-            lager:debug("typed bucket, setting meta data: Type:~p, HashProps:~p", [Type, PropsHash]),
             M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
             M2 = orddict:store(?BT_META_TYPE, Type, M1),
             orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
         _B -> 
-            lager:debug("un-typed bucket, setting typed_bucket to false"),
             orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.
