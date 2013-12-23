@@ -183,7 +183,7 @@ wait_for_partition({partition, Partition}, State=#state{work_dir=WorkDir}) ->
                                                     their_kl_fh=undefined}};
         {error, Reason} ->
             %% the vnode is probably busy. Quit all the way back.
-            {stop, Reason, state}
+            {stop, Reason, State}
     end;
 %% Unknown event (ignored)
 wait_for_partition(Event, State) ->
