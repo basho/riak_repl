@@ -2,6 +2,8 @@
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_rt).
 
+-include("riak_repl.hrl").
+
 %% @doc Realtime replication
 %%
 %% High level responsibility...
@@ -15,6 +17,8 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+
+
 -record(state, {sinks = []}).
 
 %% API - is there any state? who watches ring events?
@@ -143,15 +147,22 @@ postcommit(RObj) ->
         %% on what the RT source and sink negotiated as the common version).
         Objects0 when is_list(Objects0) ->
             Objects = Objects0 ++ [RObj],
-            BinObjs = riak_repl_util:to_wire(w1, Objects),
+            Meta = set_bucket_meta(RObj),
+            
+            BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
+                false ->
+                    riak_repl_util:to_wire(w1, Objects);
+                true ->
+                    riak_repl_util:to_wire(w2, Objects)
+            end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of
                 undefined ->
-                    riak_repl2_rtq:push(length(Objects), BinObjs);
+                    riak_repl2_rtq:push(length(Objects), BinObjs, Meta);
                 _ ->
                     %% we're shutting down and repl is stopped or stopping...
-                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs)
+                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs, Meta)
             end;
         cancel -> % repl helper callback requested not to send over realtime
             ok
@@ -208,12 +219,22 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-
-
 do_ring_trans(F, A) ->
     case riak_core_ring_manager:ring_trans(F, A) of
         {ok, _} ->
             ok;
         ER ->
             ER
+    end.
+
+set_bucket_meta(Obj) ->
+    M = orddict:new(),
+    case riak_object:bucket(Obj) of
+        {Type, _B} ->
+            PropsHash = riak_repl_util:get_bucket_props_hash(riak_core_bucket_type:get(Type)),
+            M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
+            M2 = orddict:store(?BT_META_TYPE, Type, M1),
+            orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
+        _B -> 
+            orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.

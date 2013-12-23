@@ -54,9 +54,10 @@
                 cont = <<>>       %% Continuation from previous TCP buffer
                }).
 
-%% @doc Register with service manager
+%% Register with service manager
 sync_register_service() ->
-    ProtoPrefs = {realtime,[{2,0}, {1,4}, {1,1}, {1,0}]},
+    %% version {3,0} supports typed bucket replication
+    ProtoPrefs = {realtime,[{3,0}, {2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -258,7 +259,7 @@ make_donefun({Binary, Meta}, Me, Ref, Seq) ->
         gen_server:cast(Me, {ack, Ref, Seq, Skips}),
         maybe_push(Binary, Meta)
     end,
-    {Done, Binary};
+    {Done, Binary, Meta};
 make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
     Done = fun() ->
         gen_server:cast(Me, {ack, Ref, Seq, 0})
@@ -285,8 +286,18 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                                               acked_seq = AckedSeq,
                                               ver = Ver}) ->
     Me = self(),
-    {DoneFun, BinObjs} = make_donefun(BinObjsMeta, Me, Ref, Seq),
-    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver),
+    case make_donefun(BinObjsMeta, Me, Ref, Seq) of
+        {DoneFun, BinObjs, Meta} ->
+            case maybe_write_object(Meta) of
+                true ->
+                    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
+                false ->
+                    lager:info("Bucket is of a type that is not equal on both the source and sink; not writing object.")
+            end;
+        {DoneFun, BinObjs} ->
+            %% this is for backwards compatibility with Repl version before metadata support (> 1.4)
+            riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver)
+    end,
     State2 = case AckedSeq of
                  undefined ->
                      %% Handle first received sequence number
@@ -396,6 +407,25 @@ schedule_reactivate_socket(State = #state{transport = T,
     end.
 get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
+
+maybe_write_object(Meta) ->
+    case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
+        false -> true;
+        true ->
+            BucketType = orddict:fetch(?BT_META_TYPE, Meta),
+            lager:info("Bucket type on sink:~p", [BucketType]),
+            case riak_core_bucket_type:get(BucketType) of
+                undefined ->
+                    false;
+                {error, _T} ->
+                    false;
+                AllProps ->
+                    Sink = riak_repl_util:get_bucket_props_hash(AllProps),
+                    Source = orddict:fetch(?BT_META_PROPS_HASH, Meta),
+                    Source == Sink
+            end
+    end.
+
 
 %% ===================================================================
 %% EUnit tests

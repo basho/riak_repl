@@ -124,12 +124,27 @@ maybe_send(Transport, Socket, QEntry, State) ->
             lager:debug("Did not forward to ~p; destination already in routed list", [Remote]),
             State;
         false ->
-            QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
-            {Encoded, State2} = encode(QEntry2, State),
-            lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
-            Transport:send(Socket, Encoded),
-            State2
+            case State#state.proto of 
+                {Major, _Minor} when Major >= 3 ->
+                    encode_and_send(QEntry, Remote, Transport, Socket, State);
+                _ ->
+                    case is_bucket_typed(Meta) of
+                        false ->
+                            encode_and_send(QEntry, Remote, Transport, Socket, State);
+                        true ->
+                            lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending"),
+                            State
+                    end
+            end
     end.
+
+encode_and_send(QEntry, Remote, Transport, Socket, State) ->
+    QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
+    {Encoded, State2} = encode(QEntry2, State),
+    lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
+    Transport:send(Socket, Encoded),
+    State2.
+
 
 encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {2,0} ->
     Skips = orddict:fetch(skip_count, Meta),
@@ -140,11 +155,14 @@ encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};
-encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = {2,0}}) ->
+encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver >= {2,0} ->
     {riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}), State}.
 
 get_routed(Meta) ->
     meta_get(routed_clusters, [], Meta).
+
+is_bucket_typed(Meta) ->
+    meta_get(?BT_META_TYPED_BUCKET, [], Meta).
 
 meta_get(Key, Default, Meta) ->
     case orddict:find(Key, Meta) of

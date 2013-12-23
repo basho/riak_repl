@@ -32,6 +32,10 @@
 -define(RETRY_AAE_LOCKED_INTERVAL, 1000).
 -define(DEFAULT_FULLSYNC_STRATEGY, keylist). %% keylist | aae
 -define(LOG_USER_CMD(Msg, Params), lager:notice("[user] " ++ Msg, Params)).
+%% the following are keys for bucket types related meta data
+-define(BT_META_TYPED_BUCKET, typed_bucket).
+-define(BT_META_TYPE, bucket_type).
+-define(BT_META_PROPS_HASH, properties_hash_val).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
@@ -52,8 +56,14 @@
 %% the to_wire() and from_wire() operations, see riak_repl_util.erl.
 %% Also see analagous binary_version() in riak_object, which is carried
 %% inside the wire format in "BinObj". w0 implies v0. w1 imples v1.
+%% w2 still uses v1, but supports encoding the type information
+%% for bucket types.
 -type(wire_version() :: w0   %% simple term_to_binary() legacy encoding
-                      | w1). %% <<?MAGIC:8/integer, 1:8/integer,
+                      | w1   %% <<?MAGIC:8/integer, 1:8/integer,
+                             %% BLen:32/integer, B:BLen/binary,
+                             %% KLen:32/integer, K:KLen/binary, BinObj/binary>>.
+                      | w2). %% <<?MAGIC:8/integer, ?W2_VER:8/integer,
+                             %% TLen:32/integer, T:TLen/binary,
                              %% BLen:32/integer, B:BLen/binary,
                              %% KLen:32/integer, K:KLen/binary, BinObj/binary>>.
 
