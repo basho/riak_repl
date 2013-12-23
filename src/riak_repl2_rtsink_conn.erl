@@ -289,10 +289,10 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
     case make_donefun(BinObjsMeta, Me, Ref, Seq) of
         {DoneFun, BinObjs, Meta} ->
             case maybe_write_object(Meta) of
-            true ->
-                riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
-            false ->
-                lager:info("Bucket is of a type that is not equal on both the source and sink; not writing object.")
+                true ->
+                    riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
+                false ->
+                    lager:info("Bucket is of a type that is not equal on both the source and sink; not writing object.")
             end;
         {DoneFun, BinObjs} ->
             %% this is for backwards compatibility with Repl version before metadata support (> 1.4)
@@ -413,6 +413,7 @@ maybe_write_object(Meta) ->
         false -> true;
         true ->
             BucketType = orddict:fetch(?BT_META_TYPE, Meta),
+            lager:info("Bucket type on sink:~p", [BucketType]),
             case riak_core_bucket_type:get(BucketType) of
                 undefined ->
                     false;
