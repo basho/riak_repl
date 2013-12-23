@@ -390,7 +390,7 @@ handle_info({'EXIT', Pid, Cause},
             Retries = dict:update_counter(Partition, 1, Retries0),
 
             case dict:fetch(Partition, Retries) of
-                N when N > RetryLimit ->
+                N when N > RetryLimit, is_integer(RetryLimit) ->
                     lager:warning("fssource dropping partition: ~p, ~p failed"
                                "retries", [Partition, RetryLimit]),
                     ErrorExits = State#state.error_exits + 1,
