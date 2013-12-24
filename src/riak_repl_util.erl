@@ -958,6 +958,10 @@ maybe_get_vnode_lock(SrcPartition) ->
                 {ok, _Ref} ->
                     ok;
                 max_concurrency ->
+                    lager:debug("max_concurrency for lock ~p: info ~p locks ~p",
+                                [SrcPartition,
+                                 riak_core_bg_manager:lock_info(Lock),
+                                 riak_core_bg_manager:all_locks(Lock)]),
                     Reason = {max_concurrency, Lock},
                     {error, Reason}
             end;

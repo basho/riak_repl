@@ -118,22 +118,33 @@ request_partition(continue, #state{partitions=[], sitename=SiteName} = State) ->
     riak_repl_tcp_client:send(State#state.transport, State#state.socket, fullsync_complete),
     {next_state, wait_for_fullsync, State#state{partition=undefined}};
 request_partition(continue, #state{partitions=[P|T], work_dir=WorkDir, socket=Socket} = State) ->
-    lager:info("Full-sync with site ~p; starting fullsync for ~p",
-        [State#state.sitename, P]),
-    riak_repl2_fs_node_reserver:claim_reservation(P),
-    application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
-    riak_repl_tcp_client:send(State#state.transport, Socket, {partition, P}),
-    KeyListFn = riak_repl_util:keylist_filename(WorkDir, P, ours),
-    lager:info("Full-sync with site ~p; building keylist for ~p, ~p remain",
-        [State#state.sitename, P, length(T)]),
-    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
-    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
-                                                                 P,
-                                                                 KeyListFn),
-    {next_state, request_partition, State#state{kl_fn=KeyListFn,
-            our_kl_ready=false, their_kl_ready=false,
-            partition_start=os:timestamp(), stage_start=os:timestamp(), skipping=false,
-            kl_pid=KeyListPid, kl_ref=KeyListRef, partition=P, partitions=T}};
+    %% Possibly try to obtain the per-vnode lock before connecting.
+    %% If we return error, we expect the coordinator to start us again later.
+    case riak_repl_util:maybe_get_vnode_lock(P) of
+        ok ->
+            lager:info("Full-sync with site ~p; starting fullsync for ~p",
+                       [State#state.sitename, P]),
+            riak_repl2_fs_node_reserver:claim_reservation(P),
+            application:set_env(riak_repl, {progress, State#state.sitename}, [P|T]),
+            riak_repl_tcp_client:send(State#state.transport, Socket, {partition, P}),
+            KeyListFn = riak_repl_util:keylist_filename(WorkDir, P, ours),
+            lager:info("Full-sync with site ~p; building keylist for ~p, ~p remain",
+                       [State#state.sitename, P, length(T)]),
+            {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+            {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
+                                                                      P,
+                                                                      KeyListFn),
+            {next_state, request_partition, State#state{kl_fn=KeyListFn,
+                                                        our_kl_ready=false,
+                                                        their_kl_ready=false,
+                                                        partition_start=os:timestamp(),
+                                                        stage_start=os:timestamp(), skipping=false,
+                                                        kl_pid=KeyListPid, kl_ref=KeyListRef,
+                                                        partition=P, partitions=T}};
+        {error, Reason} ->
+            %% the vnode is probably busy. Quit all the way back.
+            {stop, Reason, State}
+    end;
 %% @plu client <- key-lister
 request_partition({Ref, keylist_built, _Size}, State=#state{kl_ref = Ref}) ->
     lager:info("Full-sync with site ~p; built keylist for ~p, (built in ~p secs)",

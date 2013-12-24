@@ -158,33 +158,24 @@ wait_for_partition(fullsync_complete, State) ->
 %% @plu server <- client: {partition,P}
 wait_for_partition({partition, Partition}, State=#state{work_dir=WorkDir}) ->
     lager:info("Full-sync with site ~p; doing fullsync for ~p",
-        [State#state.sitename, Partition]),
-
-    %% Possibly try to obtain the per-vnode lock before connecting.
-    %% If we return error, we expect the coordinator to start us again later.
-    case riak_repl_util:maybe_get_vnode_lock(Partition) of
-        ok ->
-            lager:info("Full-sync with site ~p; building keylist for ~p",
-                       [State#state.sitename, Partition]),
-            %% client wants keylist for this partition
-            TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
-            KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-            {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
-            {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
-                                                                      Partition,
-                                                                      KeyListFn),
-            {next_state, build_keylist, State#state{kl_pid=KeyListPid,
-                                                    kl_ref=KeyListRef, kl_fn=KeyListFn,
-                                                    partition=Partition,
-                                                    partition_start=os:timestamp(),
-                                                    stage_start=os:timestamp(),
-                                                    pending_acks=0, generator_paused=false,
-                                                    their_kl_fn=TheirKeyListFn,
-                                                    their_kl_fh=undefined}};
-        {error, Reason} ->
-            %% the vnode is probably busy. Quit all the way back.
-            {stop, Reason, State}
-    end;
+               [State#state.sitename, Partition]),
+    lager:info("Full-sync with site ~p; building keylist for ~p",
+               [State#state.sitename, Partition]),
+    %% client wants keylist for this partition
+    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
+    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
+    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
+                                                              Partition,
+                                                              KeyListFn),
+    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
+                                            kl_ref=KeyListRef, kl_fn=KeyListFn,
+                                            partition=Partition,
+                                            partition_start=os:timestamp(),
+                                            stage_start=os:timestamp(),
+                                            pending_acks=0, generator_paused=false,
+                                            their_kl_fn=TheirKeyListFn,
+                                            their_kl_fh=undefined}};
 %% Unknown event (ignored)
 wait_for_partition(Event, State) ->
     lager:debug("Full-sync with site ~p; ignoring event ~p",
