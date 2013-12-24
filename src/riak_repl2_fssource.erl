@@ -1,5 +1,6 @@
 -module(riak_repl2_fssource).
 -include("riak_repl.hrl").
+-include_lib("riak_kv/include/riak_kv_vnode.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -62,7 +63,16 @@ init([Partition, IP]) ->
     OurCaps = decide_our_caps(DefaultStrategy),
     SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
 
-    connect(IP, SupportedStrategy, Partition).
+    %% Possibly try to obtain the per-vnode lock before connecting.
+    %% If we return error, we expect the coordinator to start us again later.
+    case riak_repl_util:maybe_get_vnode_lock(Partition) of
+        ok ->
+            %% got the lock, or ignored it.
+            connect(IP, SupportedStrategy, Partition);
+        {error, Reason} ->
+            %% the vnode is probably busy. Try again later.
+            {stop, Reason}
+    end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->

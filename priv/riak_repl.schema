@@ -123,3 +123,14 @@
     {datatype, {duration, s}},
     {default, "15s"}
 ]}.
+
+%% @doc By default, fullsync replication will try to coordinate with other
+%% riak subsystems that may be contending for the same resources. This will help
+%% to prevent system response degradation under times of heavy load from multiple
+%% background tasks. To disable background coordination, set this parameter to false.
+%% Enterprise 2.0+.
+{mapping, "mdc.fullsync.use_bg_manager", "riak_repl.fullsync_use_background_manager", [
+    {datatype, {enum, [true, false]}},
+    {level, advanced},
+    {default, true}
+]}.
