@@ -51,7 +51,9 @@ reserve(Partition) ->
             down
     end.
 
-%% @doc Release a reservation for the given partition on the correct node.
+%% @doc Release a reservation for the given partition on the correct
+%%      node.  If the node is down or a reservation process is not running,
+%%      `down' is returned.
 -spec unreserve(Partition :: any()) -> 'ok' | 'busy' | 'down'.
 unreserve(Partition) ->
     Node = get_partition_node(Partition),
@@ -98,6 +100,7 @@ handle_call({reserve, Partition}, _From, State) ->
             {reply, busy, State}
     end;
 
+%% @hidden
 handle_call({unreserve, Partition}, _From, State) ->
     Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
     {reply, ok, State#state{reservations = Reserved2}};
