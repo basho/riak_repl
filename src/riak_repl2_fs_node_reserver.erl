@@ -114,7 +114,7 @@ handle_cast({claim_reservation, Partition}, State) ->
     Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
     {noreply, State#state{reservations = Reserved2}};
 
-handle_cast(Msg, State) ->
+handle_cast(_Msg, State) ->
     {noreply, State}.
 
 
