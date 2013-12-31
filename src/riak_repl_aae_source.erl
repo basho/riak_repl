@@ -69,10 +69,6 @@ cancel_fullsync(Pid) ->
 %%%===================================================================
 
 init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
-    %% Get the list of IndexNs for this partition. We'll lock the tree just once
-    %% for all combined IndexNs and iterate over them. When finished, send
-    %% COMPLETE msg to signal sink to die and unlock tree.
-
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
