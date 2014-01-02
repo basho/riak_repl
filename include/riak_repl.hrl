@@ -24,6 +24,8 @@
 -define(DEFAULT_SOURCE_PER_NODE, 1).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
 -define(DEFAULT_MAX_SINKS_NODE, 1).
+%% How many times during a fullsync we should try a partition
+-define(DEFAULT_SOURCE_RETRIES, infinity).
 %% 20 seconds. sources should claim within 5 seconds, but give them a little more time
 -define(RESERVATION_TIMEOUT, (20 * 1000)).
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
