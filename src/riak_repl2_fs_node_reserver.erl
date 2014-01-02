@@ -101,6 +101,8 @@ handle_call({reserve, Partition}, _From, State) ->
     end;
 
 %% @hidden
+%% This message is a call to prevent unreserve/reserve races, as well as
+%% detect failed processes.
 handle_call({unreserve, Partition}, _From, State) ->
     Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
     {reply, ok, State#state{reservations = Reserved2}};
