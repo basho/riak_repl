@@ -68,7 +68,12 @@ init([Partition, IP]) ->
     case riak_repl_util:maybe_get_vnode_lock(Partition) of
         ok ->
             %% got the lock, or ignored it.
-            connect(IP, SupportedStrategy, Partition);
+            case connect(IP, SupportedStrategy, Partition) of
+                {error, Reason} ->
+                    {stop, Reason};
+                Result ->
+                    Result
+            end;
         {error, Reason} ->
             %% the vnode is probably busy. Try again later.
             {stop, Reason}
@@ -113,8 +118,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                                                    Transport, Socket,
                                                                    Partition,
                                                                    self()),
-            %% We want a 'DOWN' message when the aae worker stops itself for not_responsible
-            erlang:monitor(process, FullsyncWorker),
             %% Give control of socket to AAE worker. It will consume all TCP messages.
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
@@ -170,6 +173,17 @@ handle_call(cluster_name, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
+handle_cast(not_responsible, State=#state{partition=Partition}) ->
+    lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
+    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
+    lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
+    Strategy = keylist,
+    case connect(State#state.ip, Strategy, Partition) of
+        {ok, State2} ->
+            {noreply, State2};
+        {error, Reason} ->
+            {stop, Reason, State}
+    end;
 handle_cast(fullsync_complete, State=#state{partition=Partition}) ->
     %% sent from AAE fullsync worker
     lager:info("Fullsync for partition ~p complete.", [Partition]),
@@ -182,16 +196,6 @@ handle_cast({connect_failed, _Pid, Reason},
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'DOWN', Ref, process, _Pid, not_responsible}, State=#state{partition=Partition}) ->
-    erlang:demonitor(Ref),
-    lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
-    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
-    lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
-    Strategy = keylist,
-    case connect(State#state.ip, Strategy, Partition) of
-        {ok, State2} -> {noreply, State2};
-        Error -> Error
-    end;
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
     lager:info("Connection for site ~p closed", [State#state.cluster]),
@@ -307,5 +311,5 @@ connect(IP, Strategy, Partition) ->
                         connection_ref = Ref, partition=Partition}};
         {error, Reason}->
             lager:warning("Error connecting to remote"),
-            {stop, Reason}
+            {error, Reason}
     end.

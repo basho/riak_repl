@@ -51,11 +51,21 @@ reserve(Partition) ->
             down
     end.
 
-%% @doc Release a reservation for the given partition on the correct node.
--spec unreserve(Partition :: any()) -> 'ok'.
+%% @doc Release a reservation for the given partition on the correct
+%%      node.  If the node is down or a reservation process is not running,
+%%      `down' is returned.
+-spec unreserve(Partition :: any()) -> 'ok' | 'busy' | 'down'.
 unreserve(Partition) ->
     Node = get_partition_node(Partition),
-    gen_server:cast({?SERVER, Node}, {unreserve, Partition}).
+    try gen_server:call({?SERVER, Node}, {unreserve, Partition}) of
+        Out ->
+            Out
+    catch
+        exit:{noproc, _} ->
+            down;
+        exit:{{nodedown, _}, _} ->
+            down
+    end.
 
 %% @doc Indicates a reservation has been converted to a running sink. Usually
 %% used by a sink.
@@ -85,20 +95,23 @@ handle_call({reserve, Partition}, _From, State) ->
             Reserved2 = [{Partition, Tref} | State#state.reservations],
             {reply, ok, State#state{reservations = Reserved2}};
         true ->
-            lager:debug("Node busy for partition ~p. running=~p reserved=~p max=~p",
+            lager:info("Node busy for partition ~p. running=~p reserved=~p max=~p",
                         [Partition, Running, Reserved, Max]),
             {reply, busy, State}
     end;
+
+%% @hidden
+%% This message is a call to prevent unreserve/reserve races, as well as
+%% detect failed processes.
+handle_call({unreserve, Partition}, _From, State) ->
+    Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
+    {reply, ok, State#state{reservations = Reserved2}};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
 
 
 %% @hidden
-handle_cast({unreserve, Partition}, State) ->
-    Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
-    {noreply, State#state{reservations = Reserved2}};
-
 handle_cast({claim_reservation, Partition}, State) ->
     Reserved2 = cancel_reservation_timeout(Partition, State#state.reservations),
     {noreply, State#state{reservations = Reserved2}};
