@@ -274,6 +274,9 @@ set_clusterIpAddrs(Ring, {ClusterName, Addrs}) ->
                            _Addrs ->
                                lists:keyreplace(ClusterName, 1, OldClusters, Cluster)
                        end;
+                   _ when Addrs == [] ->
+                       %% New cluster has no members, don't add it to the ring
+                       OldClusters;
                    _ ->
                        [Cluster | OldClusters]
                end,
