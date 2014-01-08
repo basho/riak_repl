@@ -76,18 +76,10 @@ cleanup(_) ->
     ok.
 
 prop_test_() ->
-    {spawn,
-     [
-      {setup,
-       fun setup/0,
-       fun cleanup/1,
-       [%% Run the quickcheck tests
-        {timeout, 120,
-         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
-       ]
-      }
-     ]
-    }.
+    {timeout, 60000, fun() ->
+        ?assert(eqc:quickcheck(eqc:numtests(5, ?MODULE:prop_main()))),
+        riak_repl_test_util:stop_test_ring()
+    end}.
 
 prop_main() ->
     ?FORALL(Cmds, noshrink(commands(?MODULE)),

@@ -43,20 +43,19 @@
     binary,
     already_routed
 }).
-
-%% eqc_test_() ->
-%%     {spawn,
-%%     [
-%%       {setup,
-%%        fun setup/0,
-%%        fun cleanup/1,
-%%        [%% Run the quickcheck tests
-%%         {timeout, 30,
-%%          ?_assertEqual(true, eqc:quickcheck(eqc:numtests(1, ?QC_OUT(?MODULE:prop_main()))))}
-%%        ]
-%%       }
-%%      ]
-%%     }.
+eqc_test_() ->
+    {spawn,
+    [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [%% Run the quickcheck tests
+        {timeout, 6000,
+         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(1, ?QC_OUT(?MODULE:prop_main()))))}
+       ]
+      }
+     ]
+    }.
 
 setup() ->
     %ok = meck:new(riak_repl_stats, [passthrough]),
@@ -563,7 +562,11 @@ connect_source(Version, Remote) ->
         {active, false}],
     ClientSpec = {{realtime, [Version]}, {TcpOptions, fake_source, Pid}},
     IpPort = {{127,0,0,1}, ?SINK_PORT},
+<<<<<<< HEAD
     riak_core_connection:sync_connect(IpPort, ClientSpec),
+=======
+    _ConnRes = riak_core_connection:sync_connect(IpPort, ClientSpec),
+>>>>>>> 3b9c883213b25f78dc078c59e057afbf7088df54
     {ok, Pid}.
 
 fake_source_push_obj(Source, Binary, AlreadyRouted) ->
@@ -645,10 +648,14 @@ fake_source_loop(State) ->
         {tcp_closed, Socket} when Socket == State#fake_source.socket ->
             ok;
 <<<<<<< HEAD
+<<<<<<< HEAD
         _ ->
 =======
         _What ->
 >>>>>>> 78129f3... various fixes
+=======
+        _What ->
+>>>>>>> 3b9c883213b25f78dc078c59e057afbf7088df54
             fake_source_loop(State)
     end.
 

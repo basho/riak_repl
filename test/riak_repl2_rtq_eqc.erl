@@ -45,9 +45,8 @@ rtq_test_() ->
        fun setup/0,
        fun cleanup/1,
        [ % run qc tests
-          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_main()))))},
-          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_parallel()))))}
-
+          {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_main()))))},
+          {timeout, 600, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_parallel()))))}
        ]
       }
      ]
@@ -58,6 +57,7 @@ max_bytes() ->
 
 setup() ->
     error_logger:tty(false),
+    catch(meck:unload(riak_repl_stats)),
     ok = meck:new(riak_repl_stats, [passthrough]),
     ok = meck:expect(riak_repl_stats, rt_source_errors,
         fun() -> ok end),

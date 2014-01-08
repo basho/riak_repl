@@ -54,6 +54,7 @@ kill_proc(Pid) when is_pid(Pid) ->
     catch exit(Pid, kill).
 
 connection_test_() ->
+    error_logger:tty(false),
     {foreach,
      fun setup/0,
      fun cleanup/1,
