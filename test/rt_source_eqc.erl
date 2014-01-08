@@ -79,27 +79,27 @@ cleanup(_) ->
     meck:unload(),
     ok.
 
-%% prop_test_() ->
-%%     {spawn,
-%%      [
-%%       {setup,
-%%        fun setup/0,
-%%        fun cleanup/1,
-%%        [%% Run the quickcheck tests
-%%         {timeout, 120,
-%%          ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
-%%        ]
-%%       }
-%%      ]
-%%     }.
+prop_test_() ->
+    {spawn,
+     [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [%% Run the quickcheck tests
+        {timeout, 120,
+         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
+       ]
+      }
+     ]
+    }.
 
-%% prop_main() ->
-%%     ?FORALL(Cmds, noshrink(commands(?MODULE)),
-%%         aggregate(command_names(Cmds), begin
-%%             {H, S, Res} = run_commands(?MODULE, Cmds),
-%%             process_flag(trap_exit, false),
-%%             pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok)
-%%         end)).
+prop_main() ->
+    ?FORALL(Cmds, noshrink(commands(?MODULE)),
+        aggregate(command_names(Cmds), begin
+             {H, S, Res} = run_commands(?MODULE, Cmds),
+             process_flag(trap_exit, false),
+            pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok)
+        end)).
 
 %% ====================================================================
 %% Generators (including commands)
