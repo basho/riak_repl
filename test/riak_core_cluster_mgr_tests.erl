@@ -4,9 +4,10 @@
 -module(riak_core_cluster_mgr_tests).
 -compile(export_all).
 
+-ifdef(TEST).
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
--define(NODEBUG, true).
+%% -define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TRACE(Stmt),Stmt).
@@ -611,3 +612,5 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
                       [Other]),
             {error, bad_cluster_mgr_message}
     end.
+
+-endif.
