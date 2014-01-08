@@ -61,6 +61,10 @@ setup() ->
     {ok, _RTPid} = start_rt(),
     {ok, _RTQPid} = start_rtq(),
     {ok, _TCPMonPid} = start_tcp_mon(),
+    %% {ok, _Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
+    %% {ok, _Pid2} = riak_core_connection_mgr:start_link(),
+    %% {ok, _Pid3} = riak_core_cluster_conn_sup:start_link(),
+    %% {ok, _Pid4 } = riak_core_cluster_mgr:start_link(),
     {ok, _FakeSinkPid} = start_fake_sink().
 
 cleanup(_) ->
@@ -75,27 +79,27 @@ cleanup(_) ->
     meck:unload(),
     ok.
 
-prop_test_() ->
-    {spawn,
-     [
-      {setup,
-       fun setup/0,
-       fun cleanup/1,
-       [%% Run the quickcheck tests
-        {timeout, 120,
-         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
-       ]
-      }
-     ]
-    }.
+%% prop_test_() ->
+%%     {spawn,
+%%      [
+%%       {setup,
+%%        fun setup/0,
+%%        fun cleanup/1,
+%%        [%% Run the quickcheck tests
+%%         {timeout, 120,
+%%          ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
+%%        ]
+%%       }
+%%      ]
+%%     }.
 
-prop_main() ->
-    ?FORALL(Cmds, noshrink(commands(?MODULE)),
-        aggregate(command_names(Cmds), begin
-            {H, S, Res} = run_commands(?MODULE, Cmds),
-            process_flag(trap_exit, false),
-            pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok)
-        end)).
+%% prop_main() ->
+%%     ?FORALL(Cmds, noshrink(commands(?MODULE)),
+%%         aggregate(command_names(Cmds), begin
+%%             {H, S, Res} = run_commands(?MODULE, Cmds),
+%%             process_flag(trap_exit, false),
+%%             pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok)
+%%         end)).
 
 %% ====================================================================
 %% Generators (including commands)
@@ -149,7 +153,7 @@ precondition(_S, {call, _, push_object, [[], _, _]}) ->
     false;
 precondition(S, {call, _, push_object, [_, _, S]}) ->
     S#state.sources /= [];
-precondition(S, {call, _, push_object, [_, _, NotS]}) ->
+precondition(_S, {call, _, push_object, [_, _, _NotS]}) ->
     %% ?debugFmt("Bad states.~n    State: ~p~nArg: ~p", [S, NotS]),
     false;
 precondition(_S, _Call) ->
@@ -675,7 +679,7 @@ plant_bugs(Remotes, [{Remote, SrcState} | Tail]) ->
 
 abstract_connection_mgr() ->
     riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
-    meck:expect(riak_core_connection_mgr, connect, fun(ServiceAndRemote, ClientSpec) ->
+    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         proc_lib:spawn_link(fun() ->
             %% ?debugFmt("connection_mgr connect for ~p", [ServiceAndRemote]),
             Version = stateful:version(),
@@ -716,7 +720,7 @@ start_fake_sink() ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArgs}} = HostSpec,
         sink_listener(TcpOpts, WhoToTell)
     end),
-    riak_repl2_rtsink_conn:register_service(),
+    riak_repl2_rtsink_conn:sync_register_service(),
     wait_for_sink().
 
 sink_listener(TcpOpts, WhoToTell) ->
