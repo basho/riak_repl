@@ -485,7 +485,7 @@ cache_peername_test_case() ->
 
     catch(meck:unload(riak_core_service_mgr)),
     meck:new(riak_core_service_mgr, [passthrough]),
-    meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
+    meck:expect(riak_core_service_mgr, sync_register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
         TellMe ! sink_listening,
@@ -518,7 +518,7 @@ reactivate_socket_interval_test_case() ->
     ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, get_reactivate_socket_interval()).
 
 listen_sink() ->
-    riak_repl2_rtsink_conn:register_service().
+    riak_repl2_rtsink_conn:sync_register_service().
 
 start_source() ->
     start_source(?VER1).
