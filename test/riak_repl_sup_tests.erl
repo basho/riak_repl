@@ -1,15 +1,18 @@
 -module(riak_repl_sup_tests).
 
+-ifdef(TEST).
+
 -include_lib("eunit/include/eunit.hrl").
 
 % Why? Because it's nice to know that system can start.
 
-can_start_test() ->
+can_start_test_() ->
     {spawn,
      [
       {setup,
       fun() ->
               error_logger:tty(false),
+              error_logger:logfile({open, "riak_repl_sup_tests.log"}),
               %% core features that are needed
               {ok, _Eventer} = riak_core_ring_events:start_link(),
               {ok, _RingMgr} = riak_core_ring_manager:start_link(test),
@@ -24,7 +27,7 @@ can_start_test() ->
               meck:new(riak_core_node_watcher),
               meck:expect(riak_core_node_watcher, nodes, fun(_) -> [node()] end),
 
-                                                % needed by repl itself
+              %% needed by repl itself
               application:start(ranch),
               application:set_env(riak_repl, data_root, ".")
       end,
@@ -42,10 +45,12 @@ can_start_test() ->
               [
                fun() ->
                        {ok, Pid} = riak_repl_sup:start_link(),
-                       timer:sleep(5000),
+                       timer:sleep(500),
                        ?assert(is_process_alive(Pid))
                end
 
               ]
       end
      }]}.
+
+-endif.

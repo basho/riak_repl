@@ -308,7 +308,7 @@ non_loopback_interfaces(IFs) ->
         fun({_Name, Attrs}) ->
             lager:info("Attrs:~p", [Attrs]),
             Flags = proplists:get_value(flags, Attrs),
-%                undefined -> 
+%                undefined ->
 %                    false;
 %                Flags ->
                     lists:member(up, Flags) andalso not lists:member(loopback, Flags)

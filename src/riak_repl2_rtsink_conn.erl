@@ -442,14 +442,16 @@ maybe_write_object(Meta) ->
 -compile(export_all).
 
 riak_repl2_rtsink_conn_test_() ->
-    { setup,
-      fun setup/0,
-      fun cleanup/1,
-      [
-        fun cache_peername_test_case/0,
-        fun reactivate_socket_interval_test_case/0
-      ]
-    }.
+    {spawn,
+     [
+      {setup,
+        fun setup/0,
+        fun cleanup/1,
+        [
+         fun cache_peername_test_case/0,
+         fun reactivate_socket_interval_test_case/0
+        ]
+      }]}.
 
 setup() ->
     riak_repl_test_util:start_test_ring(),
@@ -467,10 +469,6 @@ cleanup(_Ctx) ->
     riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
     riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl_test_util:stop_test_ring(),
-    riak_repl_test_util:maybe_unload_mecks(
-      [riak_core_service_mgr,
-       riak_core_connection_mgr,
-       gen_tcp]),
 %    application:set_env(riak_repl, reactivate_socket_interval_millis,
 %          ?REACTIVATE_SOCK_INT_MILLIS),
     meck:unload(),

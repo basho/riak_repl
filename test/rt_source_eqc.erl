@@ -5,14 +5,11 @@
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
--ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-
 
 -define(SINK_PORT, 5007).
 %% -define(all_remotes, ["a", "b", "c", "d", "e"]).
 -define(all_remotes, ["a"]).
-
 -define(P(EXPR), PPP = (EXPR), case PPP of true -> ok; _ -> io:format(user, "PPP ~p at line ~p\n", [PPP, ?LINE]) end, PPP).
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) ->
@@ -68,7 +65,9 @@ setup() ->
     {ok, _FakeSinkPid} = start_fake_sink().
 
 cleanup(_) ->
+    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     riak_repl2_rtq:stop(),
+    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl_test_util:stop_test_ring(),
     case whereis(fake_sink) of
         undefined ->
@@ -623,6 +622,7 @@ ack_objects(NumToAck, {Remote, SrcState}) ->
             []
     end.
 
+
 %% ====================================================================
 %% helpful utility functions
 %% ====================================================================
@@ -923,4 +923,3 @@ fake_sink_nom_frames(Bin, History) ->
     fake_sink_nom_frames(riak_repl2_rtframe:decode(Bin), History).
 
 -endif.
--endif. % EQC
