@@ -703,12 +703,18 @@ dropped_realtime_hook(Obj) ->
 %% generate a unique ID for a socket to log stats against
 generate_socket_tag(Prefix, Transport, Socket) ->
     {ok, {{O1, O2, O3, O4}, PeerPort}} = Transport:peername(Socket),
-    {ok, {_Address, Portnum}} = Transport:sockname(Socket),
-    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
+    case Transport:sockname(Socket) of
+        {ok, {_Address, Portnum}} ->
+            lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
                 Prefix,
                 Portnum,
                 O1, O2, O3, O4,
-                PeerPort])).
+								   PeerPort]));
+	{error, Err} ->
+            lager:error("~p:sockname returned error:~p", [Transport, Err]),
+	    []
+    end.
+
 remove_unwanted_stats([]) ->
   [];
 remove_unwanted_stats(Stats) ->

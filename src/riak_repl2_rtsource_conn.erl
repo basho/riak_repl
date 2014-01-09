@@ -220,10 +220,14 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
             lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
             {_, ClientVer, _} = Proto,
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
-            SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
-            lager:debug("Keeping stats for " ++ SocketTag),
-            riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
-                                               SocketTag}, Transport),
+            case riak_repl_util:generate_socket_tag("rt_source", Transport, Socket) of
+                [] ->
+                    lager:error("riak_repl_util:generate_socket_tag returned [], cannot keep stats");
+                SocketTag ->
+                    lager:debug("Keeping stats for " ++ SocketTag),
+                    riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
+                                               SocketTag}, Transport)
+            end,
             State2 = State#state{transport = Transport,
                                  socket = Socket,
                                  address = EndPoint,
