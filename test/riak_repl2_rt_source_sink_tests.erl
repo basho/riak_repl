@@ -96,23 +96,12 @@ v2_to_v2_comms(_State) ->
                            fun(_Worker, ObjBins, DoneFun, riak_repl2_rtsink_pool, w1) ->
                                    ?debugMsg("In SyncWorkerFun!"),
                                    ?assertEqual([<<"der object">>], binary_to_term(ObjBins)),
-%%                                   ?assertEqual(DefaultObj, binary_to_term(ObjBins)),
                                    Self ! continue,
                                    Self ! {state, DoneFun},
                                    ok
                            end,
-                       %SyncWorkerFun =
-                       %    fun(_Worker, ObjBins, DoneFun, riak_repl2_rtsink_pool, w2) ->
-                       %            Self ! continue,
-                       %            Self ! {state, DoneFun},
-                       %            ok
-                       %    end,
-
-                       ?debugMsg("after SyncWorkerFun!"),
                        meck:expect(riak_repl_fullsync_worker, do_binputs, SyncWorkerFun),
-                       ?debugMsg("after meck:expect!"),
                        riak_repl2_rtq:push(1, term_to_binary([<<"der object">>]), []),
-%%                       riak_repl2_rtq:push(1, term_to_binary(DefaultObj), []),
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)
