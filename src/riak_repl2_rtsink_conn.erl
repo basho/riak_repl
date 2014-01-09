@@ -409,9 +409,9 @@ get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 maybe_write_object(Meta) ->
-    case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
-        false -> true;
-        true ->
+    case orddict:find(?BT_META_TYPED_BUCKET, Meta) of
+        error -> true;
+        {ok, true} ->
             BucketType = orddict:fetch(?BT_META_TYPE, Meta),
             lager:info("Bucket type on sink:~p", [BucketType]),
             case riak_core_bucket_type:get(BucketType) of

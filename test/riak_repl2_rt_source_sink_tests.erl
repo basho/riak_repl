@@ -12,6 +12,7 @@
 -define(SOURCE_PORT, 4006).
 -define(VER1, {1,0}).
 -define(VER2, {2,0}).
+-define(VER3, {3,0}).
 -define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
 -define(PROTOCOL_V1, ?PROTOCOL(?VER1)).
 -define(PROTO_V1_SOURCE_V1_SINK, ?PROTOCOL(?VER1)).
@@ -21,6 +22,7 @@
 }).
 
 setup() ->
+    lager:start(),
     error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
@@ -75,22 +77,42 @@ v2_to_v2_comms(_State) ->
                fun() ->
                        assert_living_pids([Source, Sink])
                end},
-              {timeout, 60,
+              {timeout, 120,
                {"sending objects",
                fun() ->
-                       meck:new(riak_repl_fullsync_worker, [passthrough]),
+%                       meck:new(riak_repl_fullsync_worker, [passthrough]),
+                       catch(meck:unload(riak_repl_fullsync_worker)),
+                       meck:new(riak_repl_fullsync_worker),
+
+                       Bin = <<"data data data">>,
+                       Key = <<"key">>,
+                       Bucket = <<"kicked">>,
+                       _DefaultObj = riak_object:new(Bucket, Key, Bin),
+
                        Self = self(),
                        %% the w1 below indicates wireformat version 1, used in
                        %% realtime protocol v2.
                        SyncWorkerFun =
                            fun(_Worker, ObjBins, DoneFun, riak_repl2_rtsink_pool, w1) ->
+                                   ?debugMsg("In SyncWorkerFun!"),
                                    ?assertEqual([<<"der object">>], binary_to_term(ObjBins)),
+%%                                   ?assertEqual(DefaultObj, binary_to_term(ObjBins)),
                                    Self ! continue,
                                    Self ! {state, DoneFun},
                                    ok
                            end,
+                       %SyncWorkerFun =
+                       %    fun(_Worker, ObjBins, DoneFun, riak_repl2_rtsink_pool, w2) ->
+                       %            Self ! continue,
+                       %            Self ! {state, DoneFun},
+                       %            ok
+                       %    end,
+
+                       ?debugMsg("after SyncWorkerFun!"),
                        meck:expect(riak_repl_fullsync_worker, do_binputs, SyncWorkerFun),
+                       ?debugMsg("after meck:expect!"),
                        riak_repl2_rtq:push(1, term_to_binary([<<"der object">>]), []),
+%%                       riak_repl2_rtq:push(1, term_to_binary(DefaultObj), []),
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)
@@ -98,7 +120,7 @@ v2_to_v2_comms(_State) ->
 
               {"assert done",
                fun() ->
-                        {ok, DoneFun} = extract_state_msg(),
+                       {ok, DoneFun} = extract_state_msg(),
                        DoneFun(),
                        ?assert(riak_repl2_rtq:all_queues_empty())
                end}
