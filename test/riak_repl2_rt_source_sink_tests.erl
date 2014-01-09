@@ -22,7 +22,6 @@
 }).
 
 setup() ->
-    lager:start(),
     error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
@@ -94,7 +93,6 @@ v2_to_v2_comms(_State) ->
                        %% realtime protocol v2.
                        SyncWorkerFun =
                            fun(_Worker, ObjBins, DoneFun, riak_repl2_rtsink_pool, w1) ->
-                                   ?debugMsg("In SyncWorkerFun!"),
                                    ?assertEqual([<<"der object">>], binary_to_term(ObjBins)),
                                    Self ! continue,
                                    Self ! {state, DoneFun},
