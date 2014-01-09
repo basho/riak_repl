@@ -471,8 +471,8 @@ cleanup(_Ctx) ->
       [riak_core_service_mgr,
        riak_core_connection_mgr,
        gen_tcp]),
-    application:set_env(riak_repl, reactivate_socket_interval_millis,
-          ?REACTIVATE_SOCK_INT_MILLIS),
+%    application:set_env(riak_repl, reactivate_socket_interval_millis,
+%          ?REACTIVATE_SOCK_INT_MILLIS),
     meck:unload(),
     ok.
 
