@@ -46,92 +46,87 @@
                       {active, false}]).
 
 service_test_() ->
-    {timeout, 60000, {setup, fun() ->
-        riak_core_ring_events:start_link(),
-        riak_core_ring_manager:start_link(test),
-        ok = application:start(ranch),
-        {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR)
-    end,
-    fun(_) ->
-        application:stop(ranch),
-        riak_core_ring_manager:stop(),
-        case whereis(riak_core_service_manager) of
-            Pid when is_pid(Pid) ->
-                riak_core_service_mgr:stop(),
-                {ok, _Mon} = erlang:monitor(process, Pid),
-                receive
-                    {'DOWN', _, _, _, _} ->
-                        ok
-                after
-                    1000 ->
-                        ok
-                end;
-            undefined ->
-                ok
-        end
-    end,
-    fun(_) -> [
+    {spawn,
+     [
+      {setup,
+       fun() ->
+               error_logger:tty(false),
+               riak_core_ring_events:start_link(),
+               riak_core_ring_manager:start_link(test),
+               ok = application:start(ranch),
+               {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR)
+       end,
+       fun(_) ->
+               process_flag(trap_exit, true),
+               riak_core_ring_manager:stop(),
+               catch exit(riak_core_ring_events, kill),
+               application:stop(ranch),
+               process_flag(trap_exit, false),
+               ok
+       end,
+       fun(_) -> [
 
-        {"started", ?_assert(is_pid(whereis(riak_core_service_manager)))},
+                  {"started", ?_assert(is_pid(whereis(riak_core_service_manager)))},
 
-        {"get services", ?_assertEqual([], gen_server:call(riak_core_service_manager, get_services))},
+                  {"get services", ?_assertEqual([], gen_server:call(riak_core_service_manager, get_services))},
 
-        {"register service", fun() ->
-            ExpectedRevs = [{1,0}, {1,0}],
-            TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
-            riak_core_service_mgr:register_service(TestProtocol, {round_robin,?MAX_CONS}),
-            ?assert(riak_core_service_mgr:is_registered(testproto))
-        end},
+                  {"register service", fun() ->
+                                               ExpectedRevs = [{1,0}, {1,0}],
+                                               TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, ExpectedRevs}},
+                                               riak_core_service_mgr:register_service(TestProtocol, {round_robin,?MAX_CONS}),
+                                               ?assert(riak_core_service_mgr:is_registered(testproto))
+                                       end},
 
-        {"unregister service", fun() ->
-            TestProtocolId = testproto,
-            riak_core_service_mgr:unregister_service(TestProtocolId),
-            ?assertNot(riak_core_service_mgr:is_registered(testproto))
-        end},
+                  {"unregister service", fun() ->
+                                                 TestProtocolId = testproto,
+                                                 riak_core_service_mgr:unregister_service(TestProtocolId),
+                                                 ?assertNot(riak_core_service_mgr:is_registered(testproto))
+                                         end},
 
-        {"register stats fun", fun() ->
-            Self = self(),
-            Fun = fun(Stats) ->
-                Self ! Stats
-            end,
-            riak_core_service_mgr:register_stats_fun(Fun),
-            GotStats = receive
-                Term ->
-                    Term
-            after 5500 ->
-                timeout
-            end,
-            ?assertEqual([], GotStats)
-        end},
+                  {"register stats fun", fun() ->
+                                                 Self = self(),
+                                                 Fun = fun(Stats) ->
+                                                               Self ! Stats
+                                                       end,
+                                                 riak_core_service_mgr:register_stats_fun(Fun),
+                                                 GotStats = receive
+                                                                Term ->
+                                                                    Term
+                                                            after 5500 ->
+                                                                    timeout
+                                                            end,
+                                                 ?assertEqual([], GotStats)
+                                         end},
 
-        {"start service test", fun() ->
-            %% re-register the test protocol and confirm registered
-            TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, [{1,0}, {1,0}]}},
-            riak_core_service_mgr:register_service(TestProtocol, {round_robin, ?MAX_CONS}),
-            ?assert(riak_core_service_mgr:is_registered(testproto)),
-            %register_service_test_d(),
-            %% try to connect via a client that speaks our test protocol
-            ExpectedRevs = {expectedToPass, [{1,0}, {1,0}]},
-            riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
-                                                      {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
-            %% allow client and server to connect and make assertions of success/failure
-            timer:sleep(1000),
-            Stats = riak_core_service_mgr:get_stats(),
-            ?assertEqual([{testproto,0}], Stats)
-        end},
+                  {"start service test", fun() ->
+                                                 %% re-register the test protocol and confirm registered
+                                                 TestProtocol = {{testproto, [{1,0}]}, {?TCP_OPTIONS, ?MODULE, testService, [{1,0}, {1,0}]}},
+                                                 riak_core_service_mgr:register_service(TestProtocol, {round_robin, ?MAX_CONS}),
+                                                 ?assert(riak_core_service_mgr:is_registered(testproto)),
+                                                %register_service_test_d(),
+                                                 %% try to connect via a client that speaks our test protocol
+                                                 ExpectedRevs = {expectedToPass, [{1,0}, {1,0}]},
+                                                 riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
+                                                                                           {?TCP_OPTIONS, ?MODULE, ExpectedRevs}}),
+                                                 %% allow client and server to connect and make assertions of success/failure
+                                                 timer:sleep(1000),
+                                                 Stats = riak_core_service_mgr:get_stats(),
+                                                 ?assertEqual([{testproto,0}], Stats)
+                                         end},
 
-        {"pause existing services", fun() ->
-            riak_core_service_mgr:stop(),
-            %% there should be no services running now.
-            %% now start a client and confirm failure to connect
-            ExpectedArgs = expectedToFail,
-            riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
-                                                      {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
-            %% allow client and server to connect and make assertions of success/failure
-            timer:sleep(1000)
-        end}
+                  {"pause existing services", fun() ->
+                                                      riak_core_service_mgr:stop(),
+                                                      %% there should be no services running now.
+                                                      %% now start a client and confirm failure to connect
+                                                      ExpectedArgs = expectedToFail,
+                                                      riak_core_connection:connect(?TEST_ADDR, {{testproto, [{1,0}]},
+                                                                                                {?TCP_OPTIONS, ?MODULE, ExpectedArgs}}),
+                                                      %% allow client and server to connect and make assertions of success/failure
+                                                      timer:sleep(1000)
+                                              end}
 
-    ] end} }.
+                 ] end
+     }]}.
 
 %%------------------------
 %% Helper functions

@@ -26,7 +26,8 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--define(TRACE(Stmt),Stmt).
+%% -define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
 -else.
 -define(TRACE(Stmt),ok).
 -endif.

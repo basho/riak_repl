@@ -70,67 +70,79 @@ connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
     ?assert(Proto == test1protoFailed).
 
 conection_test_() ->
-    {timeout, 60000, {setup, fun() ->
-        riak_core_ring_events:start_link(),
-        riak_core_ring_manager:start_link(test),
-        ok = application:start(ranch),
-        {ok, _} = riak_core_service_mgr:start_link(?TEST_ADDR)
-    end,
-    fun(_) ->
-        riak_core_service_mgr:stop(),
-        riak_core_ring_manager:stop(),
-        application:stop(ranch)
-    end,
-    fun(_) -> [
+    {spawn,
+     [
+      {setup,
+       fun() ->
+               riak_core_ring_events:start_link(),
+               riak_core_ring_manager:start_link(test),
+               ok = application:start(ranch),
+               {ok, _} = riak_core_service_mgr:start_link(?TEST_ADDR),
+               ok
+       end,
+       fun(_) ->
+               process_flag(trap_exit, true),
+               riak_core_service_mgr:stop(),
+               riak_core_ring_manager:stop(),
+               catch exit(riak_core_ring_events, kill),
+               application:stop(ranch),
+               process_flag(trap_exit, false),
+               ok
+       end,
+       fun(_) -> [
+                  {"started", ?_assert(is_pid(whereis(riak_core_service_manager)))},
 
-        {"started", ?_assert(is_pid(whereis(riak_core_service_manager)))},
+                  {"set and get name",
+                   fun() ->
+                           riak_core_connection:set_symbolic_clustername("undefined"),
+                           Got = riak_core_connection:symbolic_clustername(),
+                           ?assertEqual("undefined", Got)
+                   end},
 
-        {"set and get name", fun() ->
-            riak_core_connection:set_symbolic_clustername("undefined"),
-            Got = riak_core_connection:symbolic_clustername(),
-            ?assertEqual("undefined", Got)
-        end},
+                  {"register service",
+                   fun() ->
+                           ExpectedRevs = [{1,0}, {1,1}],
+                           ServiceProto = {test1proto, [{2,1}, {1,0}]},
+                           ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
+                           riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
+                           ?assert(riak_core_service_mgr:is_registered(test1proto))
+                   end},
 
-        {"register service", fun() ->
-            ExpectedRevs = [{1,0}, {1,1}],
-            ServiceProto = {test1proto, [{2,1}, {1,0}]},
-            ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
-            riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
-            ?assert(riak_core_service_mgr:is_registered(test1proto))
-        end},
+                  {"unregister service",
+                   fun() ->
+                           TestProtocolId = test1proto,
+                           riak_core_service_mgr:unregister_service(TestProtocolId),
+                           ?assertNot(riak_core_service_mgr:is_registered(TestProtocolId))
+                   end},
 
-        {"unregister service", fun() ->
-            TestProtocolId = test1proto,
-            riak_core_service_mgr:unregister_service(TestProtocolId),
-            ?assertNot(riak_core_service_mgr:is_registered(TestProtocolId))
-        end},
+                  {"protocol match",
+                   fun() ->
+                           ExpectedRevs = [{1,0}, {1,1}],
+                           ServiceProto = {test1proto, [{2,1}, {1,0}]},
+                           ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
+                           riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
 
-        {"protocol match", fun() ->
-            ExpectedRevs = [{1,0}, {1,1}],
-            ServiceProto = {test1proto, [{2,1}, {1,0}]},
-            ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
-            riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
+                                                % test protocol match
+                           ClientProtocol = {test1proto, [{0,1},{1,1}]},
+                           ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, [{1,1},{1,0}]}},
+                           riak_core_connection:connect(?TEST_ADDR, ClientSpec),
+                           timer:sleep(1000)
+                   end},
 
-            % test protocol match
-            ClientProtocol = {test1proto, [{0,1},{1,1}]},
-            ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, [{1,1},{1,0}]}},
-            riak_core_connection:connect(?TEST_ADDR, ClientSpec),
-            timer:sleep(1000)
-        end},
+                  {"failed protocol match",
+                   fun() ->
+                           %% start service
+                           SubProtocol = {{test1protoFailed, [{2,1}, {1,0}]},
+                                          {?TCP_OPTIONS, ?MODULE, test1service, failed_host_args}},
+                           riak_core_service_mgr:register_service(SubProtocol, {round_robin,?MAX_CONS}),
+                           ?assert(riak_core_service_mgr:is_registered(test1protoFailed) == true),
 
-        {"failed protocol match", fun() ->
-            %% start service
-            SubProtocol = {{test1protoFailed, [{2,1}, {1,0}]},
-                           {?TCP_OPTIONS, ?MODULE, test1service, failed_host_args}},
-            riak_core_service_mgr:register_service(SubProtocol, {round_robin,?MAX_CONS}),
-            ?assert(riak_core_service_mgr:is_registered(test1protoFailed) == true),
+                           %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
+                           ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
+                           ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, failed_client_args}},
+                           riak_core_connection:connect(?TEST_ADDR, ClientSpec),
 
-            %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
-            ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
-            ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, failed_client_args}},
-            riak_core_connection:connect(?TEST_ADDR, ClientSpec),
-
-            timer:sleep(2000)
-        end}
-
-    ] end } }.
+                           timer:sleep(2000)
+                   end}
+                 ] end
+      }]} .

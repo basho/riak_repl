@@ -33,25 +33,9 @@
 -define(MULTINODE_REMOTE_ADDR, {"127.0.0.1", 6097}).
 
 single_node_test_() ->
-    error_logger:tty(false),
     {setup,
     fun start_link_setup/0,
-    fun(Pids) ->
-        cleanup(),
-        Mons = [erlang:monitor(process, Pid) || Pid <- Pids],
-        WaitFun = fun
-            ([], _CB) ->
-                ok;
-            (WaitingFor, CB) ->
-                receive
-                    {'DOWN', MonRef, process, _Pid, _Why} ->
-                        WaitingFor2 = lists:delete(MonRef, WaitingFor),
-                        CB(WaitingFor2, CB)
-                end
-        end,
-        WaitFun(Mons, WaitFun)
-    end,
-
+    fun cleanup/1,
     fun(_) -> [
 
         {"is leader", ?_assert(riak_core_cluster_mgr:get_is_leader() == false)},
@@ -299,11 +283,11 @@ multinode_test__() ->
     ] end }.
 
 %% this test runs first and leaves the server running for other tests
-%start_link_test() ->
 start_link_setup() ->
     start_link_setup(?MY_CLUSTER_ADDR).
 
 start_link_setup(ClusterAddr) ->
+    error_logger:tty(false),
     % core features that are needed
     {ok, Eventer} = riak_core_ring_events:start_link(),
     {ok, RingMgr} = riak_core_ring_manager:start_link(test),
@@ -329,9 +313,7 @@ start_link_setup(ClusterAddr) ->
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
     start_fake_remote_cluster_service(),
-    Pids = [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4],
-    [unlink(P) || P <- Pids],
-    Pids.
+    [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4].
 
 watchit(Pid) ->
     proc_lib:spawn(?MODULE, watchit_loop, [Pid]).
@@ -352,30 +334,22 @@ watchit_loop(Pid, Mon) ->
             watchit_loop(Pid, Mon)
     end.
 
-%cleanup_test() ->
-cleanup() ->
+cleanup(Pids) ->
+    process_flag(trap_exit, true),
     stop_fake_remote_cluster_service(),
     riak_core_service_mgr:stop(),
     riak_core_connection_mgr:stop(),
     %% tough to stop a supervisor
-    case whereis(riak_core_cluster_conn_sup) of
-        undefined -> ok;
-        Sup -> exit(Sup, kill)
-    end,
+    catch exit(riak_core_cluster_conn_sup),
+    catch exit(riak_repl2_leader_gs),
     riak_core_cluster_mgr:stop(),
     application:stop(ranch),
-    case whereis(riak_repl2_leader_gs) of
-        undefined -> ok;
-        Leader -> exit(Leader, kill)
-    end,
     riak_core_ring_manager:stop(),
-    case whereis(riak_core_ring_events) of
-        undefined -> ok;
-        RingEvents -> exit(RingEvents, kill)
-    end,
-    meck:unload(riak_core_node_watcher),
-    meck:unload(riak_core_node_watcher_events),
-    meck:unload().
+    catch exit(riak_core_ring_events, kill),
+    [catch exit(Pid, kill) || Pid <- Pids],
+    meck:unload(),
+    process_flag(trap_exit, false),
+    ok.
 
 maybe_start_master() ->
     case node() of

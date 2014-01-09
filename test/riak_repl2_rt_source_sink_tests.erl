@@ -75,7 +75,8 @@ v2_to_v2_comms(_State) ->
                fun() ->
                        assert_living_pids([Source, Sink])
                end},
-              {"sending objects",
+              {timeout, 60,
+               {"sending objects",
                fun() ->
                        meck:new(riak_repl_fullsync_worker, [passthrough]),
                        Self = self(),
@@ -93,7 +94,7 @@ v2_to_v2_comms(_State) ->
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)
-               end},
+               end}},
 
               {"assert done",
                fun() ->
@@ -131,7 +132,8 @@ v1_to_v1_comms(_State) ->
                        assert_living_pids([Source, Sink])
                end},
 
-              {"sending objects",
+              {timeout, 60,
+               {"sending objects",
                fun() ->
                        Self = self(),
                        meck:new(riak_repl_fullsync_worker),
@@ -149,7 +151,7 @@ v1_to_v1_comms(_State) ->
                        MeckOk = wait_for_continue(),
                        ?assertEqual(ok, MeckOk),
                        meck:unload(riak_repl_fullsync_worker)
-               end},
+               end}},
 
               {"assert done",
                fun() ->

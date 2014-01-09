@@ -41,7 +41,8 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--define(TRACE(Stmt),Stmt).
+%% -define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
 %%-define(TRACE(Stmt),ok).
 -else.
 -define(TRACE(Stmt),ok).
@@ -492,7 +493,7 @@ exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
 %% Returns true if the IP address given is a valid host IP address.
 valid_host_ip("0.0.0.0") ->
     true;
-valid_host_ip(IP) ->     
+valid_host_ip(IP) ->
     {ok, IFs} = inet:getifaddrs(),
     {ok, NormIP} = normalize_ip(IP),
     lists:foldl(

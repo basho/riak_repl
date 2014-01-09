@@ -5,7 +5,6 @@
         maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
 
 -ifdef(TEST).
--define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -321,7 +320,6 @@ make_ifaddrs(Interfaces) ->
 
 get_matching_address_test_() ->
         error_logger:tty(false),
-        lager:start(),
         {setup,
          fun() ->
                  application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
@@ -447,7 +445,7 @@ get_matching_address_test_() ->
            {"public IPs in different subnets, prefer closest",
             fun() ->
                     Addrs = make_ifaddrs([{"eth0",
-                                           [{flags,[up,broadcast,running,multicast]}, 
+                                           [{flags,[up,broadcast,running,multicast]},
                                             {addr, {8, 0, 8, 8}},
                                             {netmask, {255, 255, 255, 0}}]},
                                           {"eth1",

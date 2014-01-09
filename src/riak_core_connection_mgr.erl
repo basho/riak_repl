@@ -37,7 +37,8 @@
 
 %% retry delay if locator returned empty list
 -ifdef(TEST).
--define(TRACE(Stmt),Stmt).
+%% -define(TRACE(Stmt),Stmt).
+-define(TRACE(Stmt),ok).
 %%-define(TRACE(Stmt),ok).
 -define(DEFAULT_RETRY_NO_ENDPOINTS, 2 * 1000). %% short for testing to avoid timeout
 -else.
@@ -159,7 +160,7 @@ reset_backoff() ->
     gen_server:cast(?SERVER, reset_backoff).
 
 %% Register a locator - for the given Name and strategy it returns {ok, [{IP,Port}]}
-%% list of endpoints to connect to, in order. The list may be empty.  
+%% list of endpoints to connect to, in order. The list may be empty.
 %% If the query can never be answered
 %% return {error, Reason}.
 %% fun(Name
@@ -319,7 +320,7 @@ handle_info({retry_req, Ref}, State = #state{pending = Pending}) ->
         Req ->
             {noreply, start_request(Req, State)}
     end;
-    
+
 %%% All of the connection helpers end here
 %% cases:
 %% helper succeeded -> update EP stats: BL<-false, backoff_delay<-0
@@ -354,7 +355,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                     riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
                     %% toss out the cancelled request from pending.
                     {noreply, State#state{pending = Pending2}};
-                
+
                 {error, endpoints_exhausted, Ref} ->
                     %% tried all known endpoints. schedule a retry.
                     %% reuse the existing request Reference, Ref.
@@ -480,7 +481,7 @@ increase_backoff(Delay) ->
     2 * Delay.
 
 %% Convert an inet:address to a string if needed.
-string_of_ip(IP) when is_tuple(IP) ->    
+string_of_ip(IP) when is_tuple(IP) ->
     inet_parse:ntoa(IP);
 string_of_ip(IP) ->
     IP.
