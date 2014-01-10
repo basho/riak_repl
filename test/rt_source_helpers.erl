@@ -4,26 +4,11 @@
 
 -ifdef(TEST).
 
+-include("rt_source_eqc.hrl").
+
 -include_lib("eunit/include/eunit.hrl").
 
 -define(SINK_PORT, 5007).
-%% -define(all_remotes, ["a", "b", "c", "d", "e"]).
--define(all_remotes, ["a"]).
-
--record(state, {
-    remotes_available = ?all_remotes,
-    seq = 0,
-    master_queue = [],
-    sources = [] % [#src_state{}]
-    }).
-
--record(src_state, {
-    pids, % {SourcePid, SinkPid}
-    version,
-    skips = 0,
-    offset = 0,
-    unacked_objects = []
-}).
 
 %% ====================================================================
 %% helpful utility functions
