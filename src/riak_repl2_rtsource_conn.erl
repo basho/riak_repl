@@ -432,13 +432,15 @@ schedule_heartbeat(State) ->
 -define(SINK_PORT, 5007).
 
 riak_repl2_rtsource_conn_test_() ->
-    { setup,
-      fun setup/0,
-      fun cleanup/1,
-      [
-       fun cache_peername_test_case/0
-      ]
-    }.
+    {spawn,
+     [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [
+        fun cache_peername_test_case/0
+       ]
+      }]}.
 
 setup() ->
     process_flag(trap_exit, true),
@@ -472,10 +474,10 @@ cleanup(_Ctx) ->
 %% peername will still be around for logging
 cache_peername_test_case() ->
     setup_connection_for_peername(),
-    {ok, _RTPid} = rt_source_eqc:start_rt(),
-    {ok, _RTQPid} = rt_source_eqc:start_rtq(),
-    {ok, _TCPMonPid} = rt_source_eqc:start_tcp_mon(),
-    {ok, _FakeSinkPid} = rt_source_eqc:start_fake_sink(),
+    {ok, _RTPid} = rt_source_helpers:start_rt(),
+    {ok, _RTQPid} = rt_source_helpers:start_rtq(),
+    {ok, _TCPMonPid} = rt_source_helpers:start_tcp_mon(),
+    {ok, _FakeSinkPid} = rt_source_helpers:start_fake_sink(),
 
     connect({127,0,0,1, ?SINK_PORT}).
 
