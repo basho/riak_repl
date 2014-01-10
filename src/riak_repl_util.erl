@@ -306,13 +306,8 @@ keylist_filename(WorkDir, Partition, Type) ->
 non_loopback_interfaces(IFs) ->
     lists:filter(
         fun({_Name, Attrs}) ->
-            lager:info("Attrs:~p", [Attrs]),
             Flags = proplists:get_value(flags, Attrs),
-%                undefined -> 
-%                    false;
-%                Flags ->
-                    lists:member(up, Flags) andalso not lists:member(loopback, Flags)
-%            end
+            lists:member(up, Flags) andalso not lists:member(loopback, Flags)
         end, IFs).
 
 %% Returns true if the IP address given is a valid host IP address

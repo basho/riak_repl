@@ -21,7 +21,6 @@ do_put(Pid, Obj, Pool) ->
 
 do_binputs(Pid, BinObjs, DoneFun, Pool, Ver) ->
     %% safe to cast as the pool size will add backpressure on the sink
-    lager:info("GOT DO_BINPUTS"),
     gen_server:cast(Pid, {puts, BinObjs, DoneFun, Pool, Ver}).
 
 do_get(Pid, Bucket, Key, Transport, Socket, Pool, Ver) ->
