@@ -37,14 +37,14 @@
 
 %% host service functions
 test1service(_Socket, _Transport, {error, Reason}, Args, _Props) ->
-    ?debugFmt("test1service failed with {error, ~p}", [Reason]),
+    lager:debug("test1service failed with {error, ~p}", [Reason]),
     ?assert(Args == failed_host_args),
     ?assert(Reason == protocol_version_not_supported),
     {error, Reason};
 test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, Props) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     RemoteClusterName = proplists:get_value(clustername, Props),
-    ?debugFmt("test1service started with Args ~p Props ~p", [Args, Props]),
+    lager:debug("test1service started with Args ~p Props ~p", [Args, Props]),
     ?assert(RemoteClusterName == "undefined"),
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -56,7 +56,7 @@ test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, Props) 
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, Props) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     RemoteClusterName = proplists:get_value(clustername, Props),
-    ?debugFmt("connected with Args ~p Props ~p", [Args, Props]),
+    lager:debug("connected with Args ~p Props ~p", [Args, Props]),
     ?assert(RemoteClusterName == "undefined"),
     ?assert(Proto == test1proto),
     ?assert(ExpectedMyVer == MyVer),
@@ -64,7 +64,7 @@ connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, Pr
     timer:sleep(2000).
 
 connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
-    ?debugFmt("connect_failed: Reason = ~p Args = ~p", [Reason, Args]),
+    lager:debug("connect_failed: Reason = ~p Args = ~p", [Reason, Args]),
     ?assert(Args == failed_client_args),
     ?assert(Reason == protocol_version_not_supported),
     ?assert(Proto == test1protoFailed).

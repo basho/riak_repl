@@ -41,11 +41,6 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-%% -define(TRACE(Stmt),Stmt).
--define(TRACE(Stmt),ok).
-%%-define(TRACE(Stmt),ok).
--else.
--define(TRACE(Stmt),ok).
 -endif.
 
 -define(SERVER, riak_core_service_manager).
@@ -106,11 +101,11 @@ start_link() ->
 start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
     case valid_host_ip(IP) of
         false ->
-            ?TRACE(?debugFmt("Service Manager won't start with invalid IP: ~p", [IP])),
+            lager:debug("Service Manager won't start with invalid IP: ~p", [IP]),
             lager:warning("Service Manager won't start with invalid IP: ~p", [IP]),
             {error, invalid_ip};
         true ->
-            ?TRACE(?debugFmt("Starting Core Service Manager at ~p", [{IP,Port}])),
+            lager:debug("Starting Core Service Manager at ~p", [{IP,Port}]),
             lager:info("Starting Core Service Manager at ~p", [{IP,Port}]),
             Args = [{IP,Port}],
             Options = [],
@@ -209,7 +204,7 @@ handle_call({unregister_service, ProtocolId}, _From, State) ->
     {reply, ok, State#state{services=NewDict}};
 
 handle_call(_Unhandled, _From, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
     {reply, {error, unhandled}, State}.
 
 handle_cast({register_service, Protocol, Strategy}, State) ->
@@ -233,7 +228,7 @@ handle_cast({register_stats_fun, Fun}, State) ->
 %%     {noreply, State#state{status_notifiers=Notifiers}};
 
 handle_cast({service_up_event, Pid, ProtocolId}, State) ->
-    ?TRACE(?debugFmt("Service up event: ~p", [ProtocolId])),
+    lager:debug("Service up event: ~p", [ProtocolId]),
     erlang:send_after(500, self(), status_update_timer),
     Ref = erlang:monitor(process, Pid), %% arrange for us to receive 'DOWN' when Pid terminates
     ServiceStats = incr_count_for_protocol_id(ProtocolId, 1, State#state.service_stats),
@@ -241,13 +236,13 @@ handle_cast({service_up_event, Pid, ProtocolId}, State) ->
     {noreply, State#state{service_stats=ServiceStats, refs=Refs}};
 
 handle_cast({service_down_event, _Pid, ProtocolId}, State) ->
-    ?TRACE(?debugFmt("Service down event: ~p", [ProtocolId])),
+    lager:debug("Service down event: ~p", [ProtocolId]),
     erlang:send_after(500, self(), status_update_timer),
     ServiceStats = incr_count_for_protocol_id(ProtocolId, -1, State#state.service_stats),
     {noreply, State#state{service_stats = ServiceStats}};
 
 handle_cast(_Unhandled, _State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server cast: ~p", [_Unhandled]),
     {error, unhandled}. %% this will crash the server
 
 handle_info(status_update_timer, State) ->
@@ -271,7 +266,7 @@ handle_info({'DOWN', Ref, process, Pid, _Reason}, State) ->
     {noreply, State#state{refs=Refs2}};
 
 handle_info(_Unhandled, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -298,7 +293,7 @@ incr_count_for_protocol_id(ProtocolId, Incr, ServiceStatus) ->
 %% Host callback function, called by ranch for each accepted connection by way of
 %% of the ranch:start_listener() call above, specifying this module.
 start_link(Listener, Socket, Transport, SubProtocols) ->
-    ?TRACE(?debugMsg("Start_link dispatch_service")),
+    lager:debug("Start_link dispatch_service"),
     {ok, spawn_link(?MODULE, dispatch_service, [Listener, Socket, Transport, SubProtocols])}.
 
 %% Body of the main dispatch loop. This is instantiated once for each connection
@@ -308,7 +303,7 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     %% tell ranch "we've got it. thanks pardner"
     ok = ranch:accept_ack(Listener),
     %% set some starting options for the channel; these should match the client
-    ?TRACE(?debugFmt("setting system options on service side: ~p", [?CONNECT_OPTIONS])),
+    lager:debug("setting system options on service side: ~p", [?CONNECT_OPTIONS]),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
@@ -373,7 +368,7 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
 
 %% start user's module:function and transfer socket to it's process.
 start_negotiated_service(_Socket, _Transport, {error, Reason}, _Props) ->
-    ?TRACE(?debugFmt("service dispatch failed with ~p", [{error, Reason}])),
+    lager:debug("service dispatch failed with ~p", [{error, Reason}]),
     lager:error("service dispatch failed with ~p", [{error, Reason}]),
     {error, Reason};
 %% Note that the callee is responsible for taking ownership of the socket via
@@ -394,8 +389,8 @@ start_negotiated_service(Socket, Transport,
             gen_server:cast(?SERVER, {service_up_event, Pid, ClientProto}),
             {ok, Pid};
         Error ->
-            ?TRACE(?debugFmt("service dispatch of ~p:~p failed with ~p",
-                             [Module, Function, Error])),
+            lager:debug("service dispatch of ~p:~p failed with ~p",
+                             [Module, Function, Error]),
             lager:error("service dispatch of ~p:~p failed with ~p",
                         [Module, Function, Error]),
             Error
@@ -433,26 +428,26 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
     end.
 
 choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
-    ?TRACE(?debugFmt("choose_version: client proto = ~p, HostProtocols = ~p",
-                     [_CProtocol, HostProtocols])),
+    lager:debug("choose_version: client proto = ~p, HostProtocols = ~p",
+                     [_CProtocol, HostProtocols]),
     %% first, see if the host supports the subprotocol
     case [H || {{HostProto,_Versions},_Rest}=H <- HostProtocols, ClientProto == HostProto] of
         [] ->
             %% oops! The host does not support this sub protocol type
             lager:error("Failed to find host support for protocol: ~p", [ClientProto]),
-            ?TRACE(?debugMsg("choose_version: no common protocols")),
+            lager:debug("choose_version: no common protocols"),
             {error,protocol_not_supported};
         [{{_HostProto,HostVersions},Rest}=_Matched | _DuplicatesIgnored] ->
-            ?TRACE(?debugFmt("choose_version: unsorted = ~p clientversions = ~p",
-                             [_Matched, ClientVersions])),
+            lager:debug("choose_version: unsorted = ~p clientversions = ~p",
+                             [_Matched, ClientVersions]),
             CommonVers = [{CM,CN,HN} || {CM,CN} <- ClientVersions, {HM,HN} <- HostVersions, CM == HM],
-            ?TRACE(?debugFmt("common versions = ~p", [CommonVers])),
+            lager:debug("common versions = ~p", [CommonVers]),
             %% sort by major version, highest to lowest, and grab the top one.
             case lists:reverse(lists:keysort(1,CommonVers)) of
                 [] ->
                     %% oops! No common major versions for Proto.
-                    ?TRACE(?debugFmt("Failed to find a common major version for protocol: ~p",
-                                     [ClientProto])),
+                    lager:debug("Failed to find a common major version for protocol: ~p",
+                                     [ClientProto]),
                     lager:error("Failed to find a common major version for protocol: ~p", [ClientProto]),
                     {error,protocol_version_not_supported,Rest};
                 [{Major,CN,HN}] ->
@@ -466,7 +461,7 @@ choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
 %% client -> server : Hello {1,0} [Capabilities]
 %% server -> client : Ack {1,0} [Capabilities]
 exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
-    ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO])),
+    lager:debug("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO]),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, Hello} ->
             %% read their hello

@@ -26,10 +26,6 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-%% -define(TRACE(Stmt),Stmt).
--define(TRACE(Stmt),ok).
--else.
--define(TRACE(Stmt),ok).
 -endif.
 
 
@@ -98,7 +94,7 @@ symbolic_clustername() ->
 
 -spec(connect(ip_addr(), clientspec()) -> pid()).
 connect({IP,Port}, ClientSpec) ->
-    ?TRACE(?debugMsg("spawning async_connect link")),
+    lager:debug("spawning async_connect link"),
     %% start a process to handle the connection request asyncrhonously
     proc_lib:spawn_link(?MODULE, async_connect_proc, [self(), {IP,Port}, ClientSpec]).
 
@@ -114,7 +110,7 @@ exchange_handshakes_with(host, Socket, Transport, MyCaps) ->
     Hello = term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}),
     case Transport:send(Socket, Hello) of
         ok ->
-            ?TRACE(?debugFmt("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK])),
+            lager:debug("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK]),
             case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
                 {ok, Ack} ->
                     case binary_to_term(Ack) of
@@ -141,10 +137,10 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
     Timeout = ?CONNECTION_SETUP_TIMEOUT,
     Transport = ranch_tcp,
     %%   connect to host's {IP,Port}
-    ?TRACE(?debugFmt("sync_connect: connect to ~p", [{IP,Port}])),
+    lager:debug("sync_connect: connect to ~p", [{IP,Port}]),
     case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of
         {ok, Socket} ->
-            ?TRACE(?debugFmt("Setting system options on client side: ~p", [?CONNECT_OPTIONS])),
+            lager:debug("Setting system options on client side: ~p", [?CONNECT_OPTIONS]),
             Transport:setopts(Socket, ?CONNECT_OPTIONS),
             SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
             %% handshake to make sure it's a riak sub-protocol dispatcher
@@ -160,7 +156,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                             case negotiate_proto_with_server(NewSocket, NewTransport, ClientProtocol) of
                                 {ok,HostProtocol} ->
                                     %% set client's requested Tcp options
-                                    ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
+                                    lager:debug("Setting user options on client side; ~p", [Options]),
                                     %% notify requester of connection and negotiated protocol from host
                                     %% pass back returned value in case problem detected on connection
                                     %% by module.  requestor is responsible for transferring control
@@ -170,7 +166,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
                                         {IP, Port}, HostProtocol,
                                         Args, TheirCaps);
                                 {error, Reason} ->
-                                    ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
+                                    lager:debug("negotiate_proto_with_server returned: ~p", [{error,Reason}]),
                                     %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
                                     {error, Reason}
                             end
@@ -228,7 +224,7 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
 %%
 %% returns {ok,{Proto,{Major,ClientMinor},{Major,HostMinor}}} | {error, Reason}
 negotiate_proto_with_server(Socket, Transport, ClientProtocol) ->
-    ?TRACE(?debugFmt("negotiate protocol with host, client proto = ~p", [ClientProtocol])),
+    lager:debug("negotiate protocol with host, client proto = ~p", [ClientProtocol]),
     Transport:send(Socket, erlang:term_to_binary(ClientProtocol)),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, NegotiatedProtocolBin} ->

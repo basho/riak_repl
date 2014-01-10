@@ -10,9 +10,6 @@
 %% -define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
-
 %% internal functions
 %-export([ctrlService/5, ctrlServiceProcess/5]).
 
@@ -71,7 +68,7 @@ single_node_test_() ->
 
         {"get known clusters when empty", fun() ->
             Clusters = riak_core_cluster_mgr:get_known_clusters(),
-            ?debugFmt("get_known_clusters_when_empty_test(): ~p", [Clusters]),
+            lager:debug("get_known_clusters_when_empty_test(): ~p", [Clusters]),
             ?assert({ok,[]} == Clusters)
         end},
 
@@ -537,10 +534,10 @@ fake_remote_cluster_loop(service_loop, Sock, {test_cluster_mgr, [?CTRL_REV]} = S
 %% protocol-id. Of course, it did once or I wouldn't have written this note :-)
 
 ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
-    ?TRACE(?debugFmt("Failed to accept control channel connection: ~p", [Reason]));
+    lager:debug("Failed to accept control channel connection: ~p", [Reason]);
 ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args, Props) ->
     RemoteClusterName = proplists:get_value(clustername, Props),
-    ?TRACE(?debugFmt("ctrlService: received connection from cluster: ~p", [RemoteClusterName])),
+    lager:debug("ctrlService: received connection from cluster: ~p", [RemoteClusterName]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
@@ -551,7 +548,7 @@ read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
-            ?TRACE(?debugFmt("Cluster Manager: remote thinks my addr is ~p", [MyAddr])),
+            lager:debug("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             MyAddr;
         Error ->
@@ -565,20 +562,20 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
     case Transport:recv(Socket, 0, infinity) of
         {ok, ?CTRL_ASK_NAME} ->
             %% remote wants my name
-            ?TRACE(?debugMsg("wants my name")),
+            lager:debug("wants my name"),
             MyName = ?REMOTE_CLUSTER_NAME,
             Transport:send(Socket, term_to_binary(MyName)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
         {ok, ?CTRL_ASK_MEMBERS} ->
-            ?TRACE(?debugMsg("wants my members")),
+            lager:debug("wants my members"),
             %% remote wants list of member machines in my cluster
             MyAddr = read_ip_address(Socket, Transport, ?MY_CLUSTER_ADDR),
-            ?TRACE(?debugFmt("  client thinks my Addr is ~p", [MyAddr])),
+            lager:debug("  client thinks my Addr is ~p", [MyAddr]),
             Members = ?REMOTE_MEMBERS,
             Transport:send(Socket, term_to_binary(Members)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
         {error, Reason} ->
-            ?debugFmt("Failed recv on control channel. Error = ~p", [Reason]),
+            lager:debug("Failed recv on control channel. Error = ~p", [Reason]),
             % nothing to do now but die
             {error, Reason};
         Other ->

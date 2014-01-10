@@ -50,10 +50,6 @@
 -include("riak_core_connection.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
--else.
--define(TRACE(Stmt),ok).
 -endif.
 
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
@@ -380,7 +376,7 @@ handle_cast({cluster_updated, OldName, NewName, Members, Addr, Remote}, State) -
     end;
 
 handle_cast(_Unhandled, _State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server cast: ~p", [_Unhandled]),
     {error, unhandled}. %% this will crash the server
 
 %% it is time to poll all clusters and get updated member lists
@@ -406,7 +402,7 @@ handle_info(connect_to_clusters, State) ->
     {noreply, State};
 
 handle_info(_Unhandled, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
