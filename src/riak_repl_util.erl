@@ -704,10 +704,10 @@ generate_socket_tag(Prefix, Transport, Socket) ->
                 Prefix,
                 Portnum,
                 O1, O2, O3, O4,
-								   PeerPort]));
-	{error, Err} ->
+                PeerPort]));
+        {error, Err} ->
             lager:error("~p:sockname returned error:~p", [Transport, Err]),
-	    []
+            []
     end.
 
 remove_unwanted_stats([]) ->
