@@ -376,7 +376,6 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
             end
     end;
 handle_info(_Unhandled, State) ->
-    lager:debug("Unhandled gen_server info: ~p", [_Unhandled]),
     lager:error("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
