@@ -7,7 +7,6 @@
 -ifdef(TEST).
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
-%% -define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 
 %% internal functions
@@ -306,7 +305,6 @@ start_link_setup(ClusterAddr) ->
     {ok, Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
     {ok, Pid2} = riak_core_connection_mgr:start_link(),
     {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
-    %unlink(Pid3ctrlClientProcess),
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
     start_fake_remote_cluster_service(),
@@ -445,7 +443,6 @@ start_fake_remote_cluster_service() ->
     %% start our cluster_mgr service under a different protocol id,
     %% which the cluster manager will use during testing to connect to us.
     ServiceProto = {test_cluster_mgr, [{1,0}]},
-    %ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
     ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
     riak_core_service_mgr:register_service(ServiceSpec, {round_robin,10}).
 
