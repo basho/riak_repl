@@ -519,7 +519,7 @@ realtime_cascades("never") ->
         riak_repl_ring:rt_cascades_trans/2, never);
 realtime_cascades([]) ->
     Cascades = app_helper:get_env(riak_repl, realtime_cascades, always),
-    io:format("reatime_cascades: ~p~n", [Cascades]);
+    io:format("realtime_cascades: ~p~n", [Cascades]);
 realtime_cascades(_Wut) ->
     io:format("realtime_cascades either \"always\" or \"never\"~n").
 
