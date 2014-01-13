@@ -409,9 +409,7 @@ realtime([Cmd, Remote]) ->
             riak_repl2_rt:start(Remote);
         "stop" ->
             ?LOG_USER_CMD("Stop Realtime Replication to cluster ~p", [Remote]),
-            riak_repl2_rt:stop(Remote);
-        "cascades" ->
-            riak_repl_console:realtime_cascades(Remote)
+            riak_repl2_rt:stop(Remote)
     end,
     ok;
 realtime([Cmd]) ->
@@ -423,10 +421,7 @@ realtime([Cmd]) ->
         "stop" ->
             ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters",
                       []),
-            [riak_repl2_rt:stop(Remote) || Remote <- Remotes];
-        "cascades" ->
-            %% no param, just display current cascades value
-            riak_repl_console:realtime_cascades([])
+            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
     end,
     ok. %% TODO: we could gather the return codes of the list comprehensions
         %% TODO: we could gather the return codes of the list comprehensions
@@ -509,11 +504,11 @@ modes(NewModes) ->
     set_modes(Modes),
     modes([]).
 
-realtime_cascades("always") ->
+realtime_cascades(["always"]) ->
     ?LOG_USER_CMD("Enable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun
         riak_repl_ring:rt_cascades_trans/2, always);
-realtime_cascades("never") ->
+realtime_cascades(["never"]) ->
     ?LOG_USER_CMD("Disable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun
         riak_repl_ring:rt_cascades_trans/2, never);
