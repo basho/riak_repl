@@ -141,7 +141,6 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
         [inet_parse:ntoa(MyIP), MyCIDR]),
 
     %% when guessing, only use non-loopback, "up" interfaces
-    lager:info("MyIPs:~p", [MyIPs]),
     NonLoopbackIPs = riak_repl_util:non_loopback_interfaces(MyIPs),
 
     Res = lists:foldl(fun({_IF, Attrs}, Acc) ->
