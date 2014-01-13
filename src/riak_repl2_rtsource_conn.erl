@@ -320,20 +320,6 @@ handle_info(Msg, State) ->
 
 terminate(_Reason, #state{helper_pid=_HelperPid, remote=Remote}) ->
     riak_core_connection_mgr:disconnect({rt_repl, Remote}),
-    %%TODO: check if this is called, don't think it is on normal supervisor
-    %%      start/shutdown without trap exit set
-    %% case HelperPid of
-    %%     undefined ->
-    %%         ok;
-    %%     _ ->
-    %%         try
-    %%             riak_repl2_rtsource_helper:stop(HelperPid)
-    %%         catch
-    %%             _:Err ->
-    %%                 lager:info("Realtime source did not cleanly stop ~p - ~p\n",
-    %%                            [HelperPid, Err])
-    %%         end
-    %% end.
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
