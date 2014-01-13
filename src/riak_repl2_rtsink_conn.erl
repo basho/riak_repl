@@ -410,7 +410,10 @@ get_reactivate_socket_interval() ->
 
 maybe_write_object(Meta) ->
     case orddict:find(?BT_META_TYPED_BUCKET, Meta) of
-        error -> true;
+        error -> 
+            true;
+        {ok, false} ->
+            true;
         {ok, true} ->
             BucketType = orddict:fetch(?BT_META_TYPE, Meta),
             lager:info("Bucket type on sink:~p", [BucketType]),
