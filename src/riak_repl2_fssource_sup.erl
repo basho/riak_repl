@@ -19,8 +19,8 @@ enable(Node, Partition, IP) ->
 
 disable(Node, Partition) ->
     lager:info("Stopping replication fullsync source for ~p", [Partition]),
-    supervisor:terminate_child({?MODULE, Node}, Partition),
-    supervisor:delete_child({?MODULE, Node}, Partition).
+    ok = supervisor:terminate_child({?MODULE, Node}, Partition),
+    ok = supervisor:delete_child({?MODULE, Node}, Partition).
 
 enabled() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
