@@ -314,7 +314,8 @@ handle_cast(start_fullsync,  State) ->
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
-    [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
+    [_ = erlang:cancel_timer(Tref) ||
+        {_, {_, Tref}} <- State#state.whereis_waiting],
     [begin
         unlink(Pid),
         riak_repl2_fssource:stop_fullsync(Pid),
