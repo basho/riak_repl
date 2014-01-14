@@ -334,7 +334,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 cancel_timer(undefined) -> ok;
-cancel_timer(TRef)      -> erlang:cancel_timer(TRef).
+cancel_timer(TRef)      -> _ = erlang:cancel_timer(TRef), ok.
 
 recv(TcpBin, State = #state{remote = Name,
                             hb_sent_q = HBSentQ,
@@ -364,7 +364,7 @@ recv(TcpBin, State = #state{remote = Name,
                 undefined ->
                     recv(Cont, State);
                 _ ->
-                    erlang:cancel_timer(HBTRef),
+                    cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
         {ok, heartbeat, Cont} ->
