@@ -46,8 +46,8 @@ start_proxy(Remote) ->
 
 stop_proxy(Node, Remote) ->
     lager:debug("Stopping pg_proxy for ~p", [Remote]),
-    supervisor:terminate_child({?MODULE, Node}, Remote),
-    supervisor:delete_child({?MODULE, Node}, Remote).
+    ok = supervisor:terminate_child({?MODULE, Node}, Remote),
+    ok = supervisor:delete_child({?MODULE, Node}, Remote).
 
 started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
