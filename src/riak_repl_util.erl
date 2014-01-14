@@ -624,7 +624,8 @@ start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
     spawn(fun() ->
                 timer:sleep(FullsyncIval),
                 gen_server:cast(Pid, start_fullsync)
-        end).
+        end),
+    ok.
 
 %% send a start_fullsync to the calling process for a given cluster
 %% when it is time for fullsync
