@@ -314,8 +314,9 @@ handle_cast(start_fullsync,  State) ->
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
-    [_ = erlang:cancel_timer(Tref) ||
-        {_, {_, Tref}} <- State#state.whereis_waiting],
+    lists:foreach(fun({_, {_, Tref}}) ->
+                erlang:cancel_timer(Tref)
+        end, State#state.whereis_waiting),
     [begin
         unlink(Pid),
         riak_repl2_fssource:stop_fullsync(Pid),
@@ -817,7 +818,7 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
             NodesToNotify = lists:subtract(AllNodesList,
                                            ordsets:to_list(DirtyNodesDuringFS)),
             lager:debug("Notifying nodes ~p", [ NodesToNotify]),
-            rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
+            _ = rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
             State#state{dirty_nodes=ordsets:new()};
         false ->
             lager:debug("No dirty nodes before fullsync started"),
