@@ -11,7 +11,6 @@
 %% @doc Given the result of inet:getifaddrs() and an IP a client has
 %%      connected to, attempt to determine the appropriate subnet mask.  If
 %%      the IP the client connected to cannot be found, undefined is returned.
--spec determine_netmask(Ifaddrs :: [{atom(), any()}], SeekIP :: string() | {integer(), integer(), integer(), integer()}) -> 'undefined' | binary().
 determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
     {ok, NormIP} = riak_repl_util:normalize_ip(SeekIP),
     determine_netmask(Ifaddrs, NormIP);
