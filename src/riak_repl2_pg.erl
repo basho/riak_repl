@@ -107,7 +107,7 @@ handle_cast(Msg, State) ->
     lager:warning("Proxy-get received an unknown cast: ~p", [Msg]),
     {noreply, State}.
 
-handle_info({'DOWN', _MRef, process, SinkPid, _Reason}, 
+handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
             State = #state{sinks = Sinks}) ->
     Sinks2 = Sinks -- [SinkPid],
     {noreply, State#state{sinks = Sinks2}};
@@ -120,7 +120,6 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
 
 do_ring_trans(F, A) ->
     case riak_core_ring_manager:ring_trans(F, A) of
