@@ -413,8 +413,6 @@ maybe_write_object(Meta) ->
             case riak_core_bucket_type:get(BucketType) of
                 undefined ->
                     false;
-                {error, _T} ->
-                    false;
                 AllProps ->
                     Sink = riak_repl_util:get_bucket_props_hash(AllProps),
                     Source = orddict:fetch(?BT_META_PROPS_HASH, Meta),
