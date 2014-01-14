@@ -43,7 +43,7 @@ dialyzer: compile
 	@echo
 	@sleep 1
 	dialyzer -Wunmatched_returns -Werror_handling -Wrace_conditions \
-		-Wunderspecs --plt $(COMBO_PLT) ebin
+		-Wunderspecs --plt $(COMBO_PLT) ebin | grep -v lager_not_running
 
 cleanplt:
 	@echo
