@@ -151,7 +151,6 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, % dead riak_repl_leader
     end,
     {noreply, State#state{leader_node = undefined, leader_mref = undefined}};
 handle_info({elected_mailbox_size, MboxSize}, State) ->
-    %% io:format("\n~p\n", [MboxSize]),
     {noreply, State#state{elected_mbox_size = MboxSize}};
 handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                                        State#state.leader_node =/= undefined ->

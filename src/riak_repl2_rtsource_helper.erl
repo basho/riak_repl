@@ -54,7 +54,8 @@ send_heartbeat(Pid) ->
     gen_server:cast(Pid, send_heartbeat).
 
 init([Remote, Transport, Socket, Version]) ->
-    riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
+    % re-register to reset stale deliverfun
+    {ok, _} = riak_repl2_rtq:register(Remote),
     Me = self(),
     Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}, infinity) end,
     State = #state{remote = Remote, transport = Transport, proto = Version,

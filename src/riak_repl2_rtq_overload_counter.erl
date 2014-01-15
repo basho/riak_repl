@@ -15,24 +15,29 @@
     timer
 }).
 
--export([start_link/0, start_link/1, stop/0]).
+-export([start_link/0,
+         start_link/1,
+         stop/0]).
+
 -export([drop/0]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-    code_change/3]).
+
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
 
 %% API
 
 %% @doc Start linked and registered as module name with default options.
--spec start_link() -> {'ok', pid()}.
 start_link() ->
-    SendInterval = app_helper:get_env(riak_repl, rtq_drop_report_interval, ?DEFAULT_INTERVAL),
+    SendInterval = app_helper:get_env(riak_repl,
+                                      rtq_drop_report_interval,
+                                      ?DEFAULT_INTERVAL),
     start_link([{report_interval, SendInterval}]).
 
 %% @doc Start linked and registered as the module name with the given options.
--type report_option() :: {'report_interval', pos_integer()}.
--type start_option() :: [report_option()].
--type start_options() :: [start_option()].
--spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
 

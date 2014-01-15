@@ -152,7 +152,7 @@ cancel_reservation_timeout(Partition, Reserved) ->
         undefined ->
             Reserved;
         Tref ->
-            erlang:cancel_timer(Tref),
+            _ = erlang:cancel_timer(Tref),
             proplists:delete(Partition, Reserved)
     end.
 

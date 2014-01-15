@@ -118,7 +118,6 @@ start_test() ->
 %% @doc Register a consumer with the given name. The Name of the consumer is
 %% the name of the remote cluster by convention. Returns the oldest unack'ed
 %% sequence number.
--spec register(Name :: string()) -> {'ok', number()}.
 register(Name) ->
     gen_server:call(?SERVER, {register, Name}, infinity).
 

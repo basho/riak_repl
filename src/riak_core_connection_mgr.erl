@@ -186,13 +186,11 @@ apply_locator(Name, Strategy) ->
 %% Supervision must be done by the calling process if desired. No supervision
 %% is done here.
 %%
--spec connect(Target :: string(), ClientSpec :: clientspec(), Strategy :: client_scheduler_strategy()) -> {'ok', reference()}.
 connect(Target, ClientSpec, Strategy) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
 
 %% @doc same as connect(Target, ClientSpec, default).
 %% @see connect/3
--spec connect(Target :: string(), ClientSpec :: clientspec()) -> {'ok', reference()}.
 connect(Target, ClientSpec) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
 
