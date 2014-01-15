@@ -99,10 +99,10 @@ local_ring_get(InObject, BKey, Partition) ->
     riak_core_vnode_master:command(Preflist, Req, {raw, ReqId, self()}, riak_kv_vnode_master),
     receive
         {ReqId, {r, {ok, RObj}, _, ReqId}} ->
-            lager:debug("successful get!"),
+            %lager:debug("successful get!"),
             RObj;
         {ReqId, {r, {error, notfound}, _, ReqId}} ->
-            lager:debug("not found, falling back to proxy"),
+            lager:debug("~p not found, falling back to proxy", [BKey]),
             proxy_get(InObject);
         {'DOWN', MonRef, prcess, MonitorTarg, Wut} ->
             lager:info("could not get value from target due to exit: ~p", [Wut]),
