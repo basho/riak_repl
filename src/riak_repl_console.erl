@@ -409,12 +409,7 @@ realtime([Cmd, Remote]) ->
             riak_repl2_rt:start(Remote);
         "stop" ->
             ?LOG_USER_CMD("Stop Realtime Replication to cluster ~p", [Remote]),
-            riak_repl2_rt:stop(Remote);
-        % easier to put this clause here and update 1 file
-        % than update riak_core's riak-repl bin script and make yet anothor
-        % place to change/potentially break stuff.
-        "cascades" ->
-            riak_repl_console:realtime_cascades(Remote)
+            riak_repl2_rt:stop(Remote)
     end,
     ok;
 realtime([Cmd]) ->
@@ -519,7 +514,7 @@ realtime_cascades(["never"]) ->
         riak_repl_ring:rt_cascades_trans/2, never);
 realtime_cascades([]) ->
     Cascades = app_helper:get_env(riak_repl, realtime_cascades, always),
-    io:format("reatime_cascades: ~p~n", [Cascades]);
+    io:format("realtime_cascades: ~p~n", [Cascades]);
 realtime_cascades(_Wut) ->
     io:format("realtime_cascades either \"always\" or \"never\"~n").
 
