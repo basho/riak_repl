@@ -78,6 +78,7 @@
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
 -define(W2_VER, 2). %% first non-just-term-to-binary wire format
 -define(BUCKET_TYPES_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
+-define(BAD_SOCKET_NUM, -1).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -700,14 +701,11 @@ generate_socket_tag(Prefix, Transport, Socket) ->
     {ok, {{O1, O2, O3, O4}, PeerPort}} = Transport:peername(Socket),
     case Transport:sockname(Socket) of
         {ok, {_Address, Portnum}} ->
-            lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
-                Prefix,
-                Portnum,
-                O1, O2, O3, O4,
-                PeerPort]));
+            format_socket_tag(Prefix, Portnum, O1, O2, O3, O4, PeerPort);
         {error, Err} ->
-            lager:error("~p:sockname returned error:~p", [Transport, Err]),
-            []
+            lager:error("~p:sockname returned error:~p, returning socket port as ~p", 
+                [Transport, Err, ?BAD_SOCKET_NUM]),
+            format_socket_tag(Prefix, ?BAD_SOCKET_NUM, O1, O2, O3, O4, PeerPort)
     end.
 
 remove_unwanted_stats([]) ->
@@ -974,6 +972,14 @@ maybe_get_vnode_lock(SrcPartition) ->
         false ->
             ok
     end.
+
+%% @doc format the socket tag for later use in tcp monitoring
+format_socket_tag(Prefix, Portnum, O1, O2, O3, O4, PeerPort) ->
+    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
+        Prefix,
+        Portnum,
+        O1, O2, O3, O4,
+        PeerPort])).
 
 %% Some eunit tests
 -ifdef(TEST).

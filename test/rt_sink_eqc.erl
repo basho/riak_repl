@@ -45,30 +45,30 @@
 }).
 
 %% eqc_test_() ->
-%%     {spawn,
-%%     [
-%%       {setup,
-%%        fun setup/0,
-%%        fun cleanup/1,
-%%        [%% Run the quickcheck tests
-%%         {timeout, 30,
-%%          ?_assertEqual(true, eqc:quickcheck(eqc:numtests(1, ?QC_OUT(?MODULE:prop_main()))))}
-%%        ]
-%%       }
-%%      ]
-%%     }.
+%%    {spawn,
+%%    [
+%%      {setup,
+%%       fun setup/0,
+%%       fun cleanup/1,
+%%       [%% Run the quickcheck tests
+%%        {timeout, 30,
+%%         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(?MODULE:prop_main()))))}
+%%       ]
+%%      }
+%%     ]
+%%    }.
 
 setup() ->
-    %ok = meck:new(riak_repl_stats, [passthrough]),
-    %ok = meck:expect(riak_repl_stats, rt_source_errors,
-    %    fun() -> ok end),
-    %ok = meck:expect(riak_repl_stats, rt_sink_errors,
-    %    fun() -> ok end),
+    ok = meck:new(riak_repl_stats, [passthrough]),
+    ok = meck:expect(riak_repl_stats, rt_source_errors,
+        fun() -> ok end),
+    ok = meck:expect(riak_repl_stats, rt_sink_errors,
+        fun() -> ok end),
     ok.
 
 cleanup(_) ->
-    %meck:unload(riak_repl_stats),
-    %unload_mecks(),
+    meck:unload(riak_repl_stats),
+    unload_mecks(),
     ok.
 
 prop_main() ->
