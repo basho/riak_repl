@@ -92,6 +92,13 @@ local_ring_get(InObject, BKey, Partition) ->
     lager:debug("Local ring get for ~p on partition ~p", [BKey, Partition]),
     {Index, _Node} = Partition,
     {ok, MonitorTarg} = riak_core_vnode_manager:get_vnode_pid(Index, riak_kv_vnode),
+    local_ring_get(InObject, BKey, Partition, MonitorTarg).
+
+local_ring_get(InObject, BKey, Partition, MonitorTarg) when MonitorTarg == self() ->
+    lager:warning("Something must have changed between preflist detmination for ~p and now, because ~p points to myself", [BKey, element(1, Partition)]),
+    proxy_get(InObject);
+
+local_ring_get(InObject, BKey, Partition, MonitorTarg) ->
     MonRef = erlang:monitor(process, MonitorTarg),
     Preflist = [Partition],
     ReqId = make_ref(),
