@@ -105,11 +105,7 @@ local_ring_get(InObject, BKey, Partition) ->
             lager:debug("~p not found, falling back to proxy", [BKey]),
             proxy_get(InObject);
         {'DOWN', MonRef, prcess, MonitorTarg, Wut} ->
-            lager:info("could not get value from target due to exit: ~p", [Wut]),
-            proxy_get(InObject)
-    after
-        ?REPL_FSM_TIMEOUT ->
-            lager:info("timeout"),
+            lager:info("could not get value for ~p from target due to exit: ~p", [BKey, Wut]),
             proxy_get(InObject)
     end.
 
