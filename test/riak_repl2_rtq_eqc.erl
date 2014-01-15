@@ -45,8 +45,8 @@ rtq_test_() ->
        fun setup/0,
        fun cleanup/1,
        [ % run qc tests
-          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_main()))))},
-          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(10, ?QC_OUT(prop_parallel()))))}
+          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main()))))},
+          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_parallel()))))}
 
        ]
       }
