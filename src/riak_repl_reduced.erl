@@ -90,7 +90,8 @@ mutate_get(InObject) ->
 
 local_ring_get(InObject, BKey, Partition) ->
     lager:debug("Local ring get for ~p on partition ~p", [BKey, Partition]),
-    {_P, MonitorTarg} = Partition,
+    {Index, _Node} = Partition,
+    {ok, MonitorTarg} = riak_core_vnode_manager:get_vnode_pid(Index, riak_kv_vnode),
     MonRef = erlang:monitor(process, MonitorTarg),
     Preflist = [Partition],
     ReqId = make_ref(),
