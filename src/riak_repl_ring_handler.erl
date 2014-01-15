@@ -202,7 +202,7 @@ rt_update_events(Ring) ->
 pg_update_events(Ring) ->
     riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring)).
 
-update_mutator(Ring) ->
+update_mutator(_Ring) ->
     case riak_core_capability:get({riak_kv, mutators}, false) of
         false ->
             lager:debug("unregister repl reduced"),
