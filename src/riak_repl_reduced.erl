@@ -106,7 +106,6 @@ local_ring_get(InObject, BKey, Partition, MonitorTarg) ->
     riak_core_vnode_master:command(Preflist, Req, {raw, ReqId, self()}, riak_kv_vnode_master),
     receive
         {ReqId, {r, {ok, RObj}, _, ReqId}} ->
-            %lager:debug("successful get!"),
             RObj;
         {ReqId, {r, {error, notfound}, _, ReqId}} ->
             lager:debug("~p not found, falling back to proxy", [BKey]),
@@ -214,7 +213,7 @@ mutate_put(InMeta, InVal, RevealedMeta, RObj, BucketProps, NumberReals) ->
 
 % the symbolic_clustername functions in riak_core_connection always return
 % a string. However, if the cluster is not named, that string is useless
-% for proxy get. So, rather than do a proxy get that can never succeede
+% for proxy get. So, rather than do a proxy get that can never succeed
 % we check if the cluster is actually named, and if not, return
 % 'undefined' rather than lie.
 get_clustername() ->
