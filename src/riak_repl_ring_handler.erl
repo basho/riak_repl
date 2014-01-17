@@ -209,6 +209,6 @@ update_mutator(_Ring) ->
             riak_kv_mutator:unregister(riak_repl_reduced);
         true ->
             lager:debug("registering repl reduced"),
-            riak_kv_mutator:register(riak_repl_reduced, 5)
+            riak_kv_mutator:register(riak_repl_reduced, ?REPL_REDUCED_PRIORITY)
     end.
 
