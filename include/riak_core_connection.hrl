@@ -31,6 +31,7 @@
 
 
 -define(CONNECTION_SETUP_TIMEOUT, 10000).
+-define(INITIAL_CONNECTION_RESPONSE_TIMEOUT, 15000).
 
 
 
@@ -97,4 +98,3 @@
 
 
 -type(cluster_finder_fun() :: fun(() -> {ok,node()} | {error, term()})).
-
