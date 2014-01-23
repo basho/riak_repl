@@ -441,6 +441,7 @@ maybe_write_object(Meta) ->
 -define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
 -define(PROTOCOL_V1, ?PROTOCOL(?VER1)).
 -define(REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, 20).
+-define(PORT_RANGE, 999999).
 
 -compile(export_all).
 
@@ -463,8 +464,6 @@ setup() ->
     {ok, _RT} = riak_repl2_rt:start_link(),
     riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
     {ok, _} = riak_repl2_rtq:start_link(),
-    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
-    {ok, _TCPMon} = riak_core_tcp_mon:start_link(),
     ok.
 
 cleanup(_Ctx) ->
@@ -475,6 +474,8 @@ cleanup(_Ctx) ->
     riak_repl_test_util:maybe_unload_mecks(
       [riak_core_service_mgr,
        riak_core_connection_mgr,
+       riak_repl_util,
+       riak_core_tcp_mon,
        gen_tcp]),
     meck:unload(),
     ok.
@@ -510,6 +511,24 @@ cache_peername_test_case() ->
         TellMe ! {sink_started, Pid}
     end),
 
+    catch(meck:unload(riak_repl_util)),
+    meck:new(riak_repl_util, [passthrough]),
+    meck:expect(riak_repl_util, generate_socket_tag, fun(Prefix, _Transport, _Socket) ->
+         random:seed(now()),
+         Portnum = random:uniform(?PORT_RANGE),
+         lists:flatten(io_lib:format("~s_~p -> ~p:~p",[
+                Prefix,
+                Portnum,
+                ?LOOPBACK_TEST_PEER,
+                ?SINK_PORT]))
+         end),
+
+    catch(meck:unload(riak_core_tcp_mon)),
+    meck:new(riak_core_tcp_mon, [passthrough]),
+    meck:expect(riak_core_tcp_mon, monitor, fun(Socket, _Tag, Transport) ->
+                {reply, ok,  #state{transport=Transport, socket=Socket}}
+                end),
+
     {ok, _SinkPid} = start_sink(),
     {ok, {_Source, _Sink}} = start_source(?VER1).
 
@@ -537,6 +556,9 @@ start_source(NegotiatedVer) ->
               ?PROTOCOL(NegotiatedVer), Pid, [])
         end),
         {ok, make_ref()}
+    end),
+    meck:expect(riak_core_connection_mgr, disconnect, fun(_Remote) ->
+        ok
     end),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
     receive
