@@ -699,14 +699,12 @@ dropped_realtime_hook(Obj) ->
 %% generate a unique ID for a socket to log stats against
 generate_socket_tag(Prefix, Transport, Socket) ->
     {ok, {{O1, O2, O3, O4}, PeerPort}} = Transport:peername(Socket),
-    case Transport:sockname(Socket) of
-        {ok, {_Address, Portnum}} ->
-            format_socket_tag(Prefix, Portnum, O1, O2, O3, O4, PeerPort);
-        {error, Err} ->
-            lager:error("~p:sockname returned error:~p, returning socket port as ~p", 
-                [Transport, Err, ?BAD_SOCKET_NUM]),
-            format_socket_tag(Prefix, ?BAD_SOCKET_NUM, O1, O2, O3, O4, PeerPort)
-    end.
+    {ok, {_Address, Portnum}} = Transport:sockname(Socket),
+    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
+                Prefix,
+                Portnum,
+                O1, O2, O3, O4,
+                PeerPort])).
 
 remove_unwanted_stats([]) ->
   [];
@@ -972,14 +970,6 @@ maybe_get_vnode_lock(SrcPartition) ->
         false ->
             ok
     end.
-
-%% @doc format the socket tag for later use in tcp monitoring
-format_socket_tag(Prefix, Portnum, O1, O2, O3, O4, PeerPort) ->
-    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
-        Prefix,
-        Portnum,
-        O1, O2, O3, O4,
-        PeerPort])).
 
 %% Some eunit tests
 -ifdef(TEST).
