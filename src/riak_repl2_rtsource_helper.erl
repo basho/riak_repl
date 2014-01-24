@@ -162,7 +162,7 @@ get_routed(Meta) ->
     meta_get(routed_clusters, [], Meta).
 
 is_bucket_typed(Meta) ->
-    meta_get(?BT_META_TYPED_BUCKET, [], Meta).
+    meta_get(?BT_META_TYPED_BUCKET, false, Meta).
 
 meta_get(Key, Default, Meta) ->
     case orddict:find(Key, Meta) of

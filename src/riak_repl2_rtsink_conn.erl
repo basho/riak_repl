@@ -409,9 +409,12 @@ get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 maybe_write_object(Meta) ->
-    case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
-        false -> true;
-        true ->
+    case orddict:find(?BT_META_TYPED_BUCKET, Meta) of
+        error -> 
+            true;
+        {ok, false} ->
+            true;
+        {ok, true} ->
             BucketType = orddict:fetch(?BT_META_TYPE, Meta),
             lager:info("Bucket type on sink:~p", [BucketType]),
             case riak_core_bucket_type:get(BucketType) of
@@ -438,18 +441,21 @@ maybe_write_object(Meta) ->
 -define(PROTOCOL(NegotiatedVer), {realtime, NegotiatedVer, NegotiatedVer}).
 -define(PROTOCOL_V1, ?PROTOCOL(?VER1)).
 -define(REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, 20).
+-define(PORT_RANGE, 999999).
 
 -compile(export_all).
 
 riak_repl2_rtsink_conn_test_() ->
-    { setup,
-      fun setup/0,
-      fun cleanup/1,
-      [
-        fun cache_peername_test_case/0,
-        fun reactivate_socket_interval_test_case/0
-      ]
-    }.
+    {spawn,
+     [
+      {setup,
+        fun setup/0,
+        fun cleanup/1,
+        [
+         fun cache_peername_test_case/0,
+         fun reactivate_socket_interval_test_case/0
+        ]
+      }]}.
 
 setup() ->
     riak_repl_test_util:start_test_ring(),
@@ -458,8 +464,6 @@ setup() ->
     {ok, _RT} = riak_repl2_rt:start_link(),
     riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
     {ok, _} = riak_repl2_rtq:start_link(),
-    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
-    {ok, _TCPMon} = riak_core_tcp_mon:start_link(),
     ok.
 
 cleanup(_Ctx) ->
@@ -470,9 +474,10 @@ cleanup(_Ctx) ->
     riak_repl_test_util:maybe_unload_mecks(
       [riak_core_service_mgr,
        riak_core_connection_mgr,
+       riak_repl_util,
+       riak_core_tcp_mon,
        gen_tcp]),
-    application:set_env(riak_repl, reactivate_socket_interval_millis,
-          ?REACTIVATE_SOCK_INT_MILLIS),
+    meck:unload(),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247
@@ -484,7 +489,7 @@ cache_peername_test_case() ->
 
     catch(meck:unload(riak_core_service_mgr)),
     meck:new(riak_core_service_mgr, [passthrough]),
-    meck:expect(riak_core_service_mgr, register_service, fun(HostSpec, _Strategy) ->
+    meck:expect(riak_core_service_mgr, sync_register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
         TellMe ! sink_listening,
@@ -506,6 +511,24 @@ cache_peername_test_case() ->
         TellMe ! {sink_started, Pid}
     end),
 
+    catch(meck:unload(riak_repl_util)),
+    meck:new(riak_repl_util, [passthrough]),
+    meck:expect(riak_repl_util, generate_socket_tag, fun(Prefix, _Transport, _Socket) ->
+         random:seed(now()),
+         Portnum = random:uniform(?PORT_RANGE),
+         lists:flatten(io_lib:format("~s_~p -> ~p:~p",[
+                Prefix,
+                Portnum,
+                ?LOOPBACK_TEST_PEER,
+                ?SINK_PORT]))
+         end),
+
+    catch(meck:unload(riak_core_tcp_mon)),
+    meck:new(riak_core_tcp_mon, [passthrough]),
+    meck:expect(riak_core_tcp_mon, monitor, fun(Socket, _Tag, Transport) ->
+                {reply, ok,  #state{transport=Transport, socket=Socket}}
+                end),
+
     {ok, _SinkPid} = start_sink(),
     {ok, {_Source, _Sink}} = start_source(?VER1).
 
@@ -517,7 +540,7 @@ reactivate_socket_interval_test_case() ->
     ?assertEqual(?REACTIVATE_SOCK_INT_MILLIS_TEST_VAL, get_reactivate_socket_interval()).
 
 listen_sink() ->
-    riak_repl2_rtsink_conn:register_service().
+    riak_repl2_rtsink_conn:sync_register_service().
 
 start_source() ->
     start_source(?VER1).
@@ -533,6 +556,9 @@ start_source(NegotiatedVer) ->
               ?PROTOCOL(NegotiatedVer), Pid, [])
         end),
         {ok, make_ref()}
+    end),
+    meck:expect(riak_core_connection_mgr, disconnect, fun(_Remote) ->
+        ok
     end),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
     receive

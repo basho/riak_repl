@@ -113,6 +113,7 @@ inherit_from_default_bucket() ->
     Props = riak_core_bucket:get_bucket("testbucket"),
     ?assertEqual(undefined,
         proplists:get_value(repl, Props)),
+    riak_kv_hooks:create_table(),
     riak_repl:install_hook(),
     Props2 = riak_core_bucket:get_bucket("testbucket"),
     ?assertEqual(true,

@@ -11,17 +11,15 @@
 -include("riak_core_connection.hrl").
 
 -ifdef(TEST).
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 %% For testing, we need to have two different cluster manager services running
 %% on the same node, which is normally not done. The remote cluster service is
 %% the one we're testing, so use a different protocol for the client connection
 %% during eunit testing, which will emulate a cluster manager from the test.
 -define(REMOTE_CLUSTER_PROTO_ID, test_cluster_mgr).
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
 -else.
 -define(REMOTE_CLUSTER_PROTO_ID, ?CLUSTER_PROTO_ID).
--define(TRACE(Stmt),ok).
 -endif.
 
 -export([start_link/1]).
@@ -37,7 +35,7 @@
 %% supervisior will restart it.
 -spec(start_link(term()) -> {ok,pid()}).
 start_link(Remote) ->
-    ?TRACE(?debugFmt("connecting to ~p", [Remote])),
+    lager:debug("connecting to ~p", [Remote]),
     Members = [],
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlClientProcess,
@@ -69,7 +67,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             From ! {self(), connecting, Remote},
             ctrlClientProcess(Remote, connecting, Members0);
         {_From, {connect_failed, Error}} ->
-            ?TRACE(?debugFmt("ClusterManager Client: connect_failed to ~p because ~p. Will retry.", [Remote, Error])),
+            lager:debug("ClusterManager Client: connect_failed to ~p because ~p. Will retry.", [Remote, Error]),
             lager:warning("ClusterManager Client: connect_failed to ~p because ~p. Will retry.",
                           [Remote, Error]),
             %% This is fatal! We are being supervised by conn_sup and if we
@@ -77,7 +75,7 @@ ctrlClientProcess(Remote, connecting, Members0) ->
             {error, Error};
         {_From, {connected_to_remote, Socket, Transport, Addr, Props}} ->
             RemoteName = proplists:get_value(clustername, Props),
-            ?TRACE(?debugFmt("Cluster Manager control channel client connected to remote ~p at ~p named ~p", [Remote, Addr, RemoteName])),
+            lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p", [Remote, Addr, RemoteName]),
             lager:debug("Cluster Manager control channel client connected to remote ~p at ~p named ~p",
                        [Remote, Addr, RemoteName]),
             %% ask it's name and member list, even if it's a previously

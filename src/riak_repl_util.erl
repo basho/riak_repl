@@ -78,6 +78,7 @@
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
 -define(W2_VER, 2). %% first non-just-term-to-binary wire format
 -define(BUCKET_TYPES_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
+-define(BAD_SOCKET_NUM, -1).
 
 make_peer_info() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -704,6 +705,7 @@ generate_socket_tag(Prefix, Transport, Socket) ->
                 Portnum,
                 O1, O2, O3, O4,
                 PeerPort])).
+
 remove_unwanted_stats([]) ->
   [];
 remove_unwanted_stats(Stats) ->
@@ -875,9 +877,9 @@ from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer,
             BLen:32/integer, B:BLen/binary,
             KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
     case T of
-        <<>> -> 
+        <<>> ->
             riak_object:from_binary(B, K, BinObj);
-        _ -> 
+        _ ->
             riak_object:from_binary({T, B}, K, BinObj)
     end;
 from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
@@ -943,8 +945,8 @@ get_bucket_props_hash(Props) ->
    PB = [{Prop, proplists:get_value(Prop, Props)} || Prop <- ?BUCKET_TYPES_PROPS],
    %% Returning a hash of the properties to avoid sending the whole term over the wire.
    %% A hash will be taken on the sink side of the sink's bucket type, and compared
-   erlang:phash2(PB). 
-    
+   erlang:phash2(PB).
+
 %% @private
 %% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
 %%      Sets our task meta-data in the lock as 'repl_fullsync', which is useful for
@@ -1077,8 +1079,8 @@ do_wire_list_w1_bucket_type_test() ->
     Key = <<"key">>,
     RObj = riak_object:new({Type, Bucket}, Key, <<"val">>),
     Objs = [RObj],
-    Encoded = to_wire(w1, Objs),
-    Decoded = from_wire(w1, Encoded),
+    Encoded = to_wire(w2, Objs),
+    Decoded = from_wire(w2, Encoded),
     ?assert(Decoded == Objs).
 
 -endif.

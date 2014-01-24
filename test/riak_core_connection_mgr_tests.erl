@@ -22,15 +22,15 @@
 
 -module(riak_core_connection_mgr_tests).
 -author("Chris Tilt").
--include_lib("eunit/include/eunit.hrl").
 
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
 
 %% internal functions
 -export([testService/5,
-         connected/6, connect_failed/3
-        ]).
+         connected/6,
+         connect_failed/3]).
 
 %% Locator selector types
 -define(REMOTE_LOCATOR_TYPE, remote).
@@ -76,132 +76,138 @@ register_empty_locator() ->
     ok = riak_core_connection_mgr:register_locator(?REMOTE_LOCATOR_TYPE, Locator).
 
 connections_test_() ->
-    {timeout, 6000, {setup, fun() ->
-        ok = application:start(ranch),
-        riak_core_ring_events:start_link(),
-        riak_core_ring_manager:start_link(test),
-        {ok, _} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
-        {ok, _} = riak_core_connection_mgr:start_link()
-    end,
-    fun(_) ->
-        riak_core_connection_mgr:stop(),
-        riak_core_service_mgr:stop(),
-        riak_core_ring_manager:stop(),
-        application:stop(ranch)
-    end,
-    fun(_) -> [
+    {spawn,
+     [
+      {setup,
+       fun() ->
+               error_logger:tty(false),
+               ok = application:start(ranch),
+               riak_core_ring_events:start_link(),
+               riak_core_ring_manager:start_link(test),
+               {ok, _} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
+               {ok, _} = riak_core_connection_mgr:start_link()
+       end,
+       fun(_) ->
+               process_flag(trap_exit, true),
+               riak_core_connection_mgr:stop(),
+               riak_core_service_mgr:stop(),
+               riak_core_ring_manager:stop(),
+               catch exit(riak_core_ring_events, kill),
+               application:stop(ranch),
+               process_flag(trap_exit, false),
+               ok
+       end,
+       fun(_) -> [
 
-        {"register remote locator", fun() ->
-            register_remote_locator(),
-            Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
-            Strategy = default,
-            Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
-            ?assertEqual({ok, ?REMOTE_ADDRS}, Got)
-        end},
+                  {"register remote locator", fun() ->
+                                                      register_remote_locator(),
+                                                      Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+                                                      Strategy = default,
+                                                      Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
+                                                      ?assertEqual({ok, ?REMOTE_ADDRS}, Got)
+                                              end},
 
-        {"register locator addr", fun() ->
-            register_addr_locator(),
-            Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
-            Strategy = default,
-            Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
-            ?assertEqual({ok, [?REMOTE_CLUSTER_ADDR]}, Got)
-        end},
+                  {"register locator addr", fun() ->
+                                                    register_addr_locator(),
+                                                    Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
+                                                    Strategy = default,
+                                                    Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
+                                                    ?assertEqual({ok, [?REMOTE_CLUSTER_ADDR]}, Got)
+                                            end},
 
-        {"bad locator args", fun() ->
-            register_addr_locator(),
-            %% bad args for 'addr'
-            Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
-            Strategy = default,
-            Expected = {error, {bad_target_name_args, remote, ?REMOTE_CLUSTER_ADDR}},
-            Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
-            ?assertEqual(Expected, Got)
-        end},
+                  {"bad locator args", fun() ->
+                                               register_addr_locator(),
+                                               %% bad args for 'addr'
+                                               Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
+                                               Strategy = default,
+                                               Expected = {error, {bad_target_name_args, remote, ?REMOTE_CLUSTER_ADDR}},
+                                               Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
+                                               ?assertEqual(Expected, Got)
+                                       end},
 
-        {"is paused", ?_assertNot(riak_core_connection_mgr:is_paused())},
+                  {"is paused", ?_assertNot(riak_core_connection_mgr:is_paused())},
 
-        {"pause", fun() ->
-            riak_core_connection_mgr:pause(),
-            ?assert(riak_core_connection_mgr:is_paused())
-        end},
+                  {"pause", fun() ->
+                                    riak_core_connection_mgr:pause(),
+                                    ?assert(riak_core_connection_mgr:is_paused())
+                            end},
 
-        {"resume", fun() ->
-            riak_core_connection_mgr:resume(),
-            ?assertNot(riak_core_connection_mgr:is_paused())
-        end},
+                  {"resume", fun() ->
+                                     riak_core_connection_mgr:resume(),
+                                     ?assertNot(riak_core_connection_mgr:is_paused())
+                             end},
 
-        {"client connection", fun() ->
-            %% start a test service
-            start_service(),
-            %% do async connect via connection_mgr
-            ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-            Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
-            Strategy = default,
-            riak_core_connection_mgr:connect(Target,
-                                             {{testproto, [{1,0}]},
-                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
-                                             Strategy),
-            timer:sleep(1000)
-        end},
+                  {"client connection", fun() ->
+                                                %% start a test service
+                                                start_service(),
+                                                %% do async connect via connection_mgr
+                                                ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
+                                                Target = {?ADDR_LOCATOR_TYPE, ?REMOTE_CLUSTER_ADDR},
+                                                Strategy = default,
+                                                riak_core_connection_mgr:connect(Target,
+                                                                                 {{testproto, [{1,0}]},
+                                                                                  {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                                                                 Strategy),
+                                                timer:sleep(1000)
+                                        end},
 
-        {"client connect via cluster name", fun() ->
-            start_service(),
-            %% do async connect via connection_mgr
-            ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-            Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
-            Strategy = default,
-            riak_core_connection_mgr:connect(Target,
-                                             {{testproto, [{1,0}]},
-                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
-                                             Strategy),
-            timer:sleep(1000)
-        end},
+                  {"client connect via cluster name", fun() ->
+                                                              start_service(),
+                                                              %% do async connect via connection_mgr
+                                                              ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
+                                                              Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+                                                              Strategy = default,
+                                                              riak_core_connection_mgr:connect(Target,
+                                                                                               {{testproto, [{1,0}]},
+                                                                                                {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                                                                               Strategy),
+                                                              timer:sleep(1000)
+                                                      end},
 
-        {"client retries", fun() ->
-            %% do async connect via connection_mgr
-            ExpectedArgs = {retry_test, [{1,0}, {1,0}]},
-            Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
-            Strategy = default,
+                  {"client retries", fun() ->
+                                             %% do async connect via connection_mgr
+                                             ExpectedArgs = {retry_test, [{1,0}, {1,0}]},
+                                             Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+                                             Strategy = default,
 
-            riak_core_connection_mgr:connect(Target,
-                                             {{testproto, [{1,0}]},
-                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
-                                             Strategy),
-            %% delay so the client will keep trying
-            ?TRACE(?debugMsg(" ------ sleeping 3 sec")),
-            timer:sleep(3000),
-            %% resume and confirm not paused, which should cause service to start and connection :-)
-            ?TRACE(?debugMsg(" ------ resuming services")),
-            start_service(),
-            %% allow connection to setup
-            ?TRACE(?debugMsg(" ------ sleeping 2 sec")),
-            timer:sleep(1000)
-        end},
+                                             riak_core_connection_mgr:connect(Target,
+                                                                              {{testproto, [{1,0}]},
+                                                                               {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                                                              Strategy),
+                                             %% delay so the client will keep trying
+                                             timer:sleep(3000),
+                                             %% resume and confirm not paused, which should cause service to start and connection :-)
+                                             start_service(),
+                                             %% allow connection to setup
+                                             timer:sleep(1000)
+                                     end},
 
-        {"empty locator", fun() ->
-            register_empty_locator(), %% replace remote locator with one that returns empty list
-            start_service(),
-            %% do async connect via connection_mgr
-            ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
-            Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
-            Strategy = default,
-            riak_core_connection_mgr:connect(Target,
-                                             {{testproto, [{1,0}]},
-                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
-                                             Strategy),
-            %% allow conn manager to try and schedule a few retries
-            timer:sleep(1000),
+                  {"empty locator", fun() ->
+                                            register_empty_locator(), %% replace remote locator with one that returns empty list
+                                            start_service(),
+                                            %% do async connect via connection_mgr
+                                            ExpectedArgs = {expectedToPass, [{1,0}, {1,0}]},
+                                            Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
+                                            Strategy = default,
+                                            riak_core_connection_mgr:connect(Target,
+                                                                             {{testproto, [{1,0}]},
+                                                                              {?TCP_OPTIONS, ?MODULE, ExpectedArgs}},
+                                                                             Strategy),
+                                            %% allow conn manager to try and schedule a few retries
+                                            timer:sleep(1000),
 
-            %% restore the remote locator that gives a good endpoint
-            register_remote_locator(),
-            Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
-            ?assertEqual({ok, ?REMOTE_ADDRS}, Got),
+                                            %% restore the remote locator that gives a good endpoint
+                                            register_remote_locator(),
+                                            Got = riak_core_connection_mgr:apply_locator(Target, Strategy),
+                                            ?assertEqual({ok, ?REMOTE_ADDRS}, Got),
 
-            %% allow enough time for retry mechanism to kick in
-            timer:sleep(2000)
-            %% we should get a connection
-        end}
+                                            %% allow enough time for retry mechanism to kick in
+                                            timer:sleep(2000)
+                                            %% we should get a connection
+                                    end}
 
-    ] end} }.
+                 ] end
+      }]}.
 
 %%------------------------
 %% Helper functions
@@ -218,7 +224,6 @@ start_service() ->
 testService(_Socket, _Transport, {error, _Reason}, _Args, _Props) ->
     ?assert(false);
 testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) ->
-    ?TRACE(?debugMsg("testService started")),
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -228,7 +233,6 @@ testService(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, _Props) 
 
 %% Client side protocol callbacks
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, _Props) ->
-    ?TRACE(?debugFmt("testClient started, connected to ~p:~p", [_IP,_Port])),
     {_TestType, [ExpectedMyVer, ExpectedRemoteVer]} = Args,
     ?assert(Proto == testproto),
     ?assert(ExpectedMyVer == MyVer),
@@ -238,15 +242,13 @@ connect_failed({_Proto,_Vers}, {error, Reason}, Args) ->
 
     case Args of
         expectedToFail ->
-            ?TRACE(?debugFmt("connect_failed: (EXPECTED) when expected to fail: ~p with ~p",
-                             [Reason, Args])),
             ?assert(Reason == econnrefused);
         {retry_test, _Stuff} ->
-            ?TRACE(?debugFmt("connect_failed: (EXPECTED) during retry test: ~p",
-                             [Reason])),
             ok;
         Other ->
-            ?TRACE(?debugFmt("connect_failed: (UNEXPECTED) ~p with args = ~p",
-                             [Reason, Other])),
+            ?debugFmt("connect_failed: (UNEXPECTED) ~p with args = ~p",
+                      [Reason, Other]),
             ?assert(false == Other)
     end.
+
+-endif.
