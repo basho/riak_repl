@@ -15,6 +15,7 @@
          update_trees/2,
          cancel_fullsync/1,
          key_exchange/2,
+         compute_differences/2,
          send_diffs/2,
          send_diffs/3,
          send_missing/3,
@@ -271,7 +272,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                      %% socket (with correct ownership). We'll send a 'ready'
                      %% back here once the socket ownership is transfered and
                      %% we are ready to proceed with the compare.
-                     SourcePid ! {'$aae_src', worker_pid, self()},
+                     gen_fsm:send_event(SourcePid, {'$aae_src', worker_pid, self()}),
                      receive
                          {'$aae_src', ready, SourcePid} ->
                              ok
@@ -297,31 +298,32 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     NumKeys = 10000000,
     {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
     AccFun = fun(KeyDiffs, Acc0) ->
-                     %% Gather diff keys into a bloom filter
-                     lists:foldl(fun(KeyDiff, AccIn) ->
-                                         accumulate_diff(KeyDiff, Bloom, AccIn, State) end,
-                                 Acc0,
-                                 KeyDiffs)
-             end,
+            %% Gather diff keys into a bloom filter
+            lists:foldl(fun(KeyDiff, AccIn) ->
+                        accumulate_diff(KeyDiff, Bloom, AccIn, State) end,
+                        Acc0,
+                        KeyDiffs)
+    end,
 
     %% TODO: Add stats for AAE
     lager:debug("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
                        StageStart=os:timestamp(),
-                       Acc = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
-                       %% Maybe you wish you could move this send up to the compare function,
-                       %% but we need it to send the Accumulated results back to our SourcePid.
-                       _Count = case Acc of
-                                    [] -> 0;
-                                    [N] -> N
-                                end,
+                       riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
                        lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                                   [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
-                       SourcePid ! {'$aae_src', done, Acc}
+                       gen_fsm:send_event(SourcePid, {'$aae_src', done, Bloom})
                end),
 
-    {_Acc, State2} = compare_loop(State),
+    %% wait for differences from bloom_folder or to be done
+    {next_state, compute_differences, State}.
 
+compute_differences({'$aae_src', worker_pid, WorkerPid},
+                    #state{transport=Transport, socket=Socket} = State) ->
+    ok = Transport:controlling_process(Socket, WorkerPid),
+    WorkerPid ! {'$aae_src', ready, self()},
+    {next_state, compute_differences, State};
+compute_differences({'$aae_src', done, Bloom}, State) ->
     %% send differences
     NDiff = ebloom:elements(Bloom),
     lager:info("Found ~p differences", [NDiff]),
@@ -332,7 +334,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     finish_sending_differences(Bloom, State),
 
     %% wait for differences from bloom_folder or to be done
-    {next_state, send_diffs, State2}.
+    {next_state, send_diffs, State}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
@@ -356,17 +358,6 @@ send_diffs(diff_done, State=#state{indexns=[_IndexN|IndexNs]}) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-compare_loop(State=#state{transport=Transport,
-                          socket=Socket}) ->
-    receive
-        {'$aae_src', worker_pid, WorkerPid} ->
-            ok = Transport:controlling_process(Socket, WorkerPid),
-            WorkerPid ! {'$aae_src', ready, self()},
-            compare_loop(State);
-        {'$aae_src', done, Acc} ->
-            {Acc, State}
-    end.
 
 finish_sending_differences(Bloom, #state{index=Partition}) ->
     case ebloom:elements(Bloom) == 0 of
