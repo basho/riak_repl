@@ -52,7 +52,9 @@
 -spec mutate_get(InObject :: riak_object:riak_object()) ->
     riak_object:riak_object() | 'notfound'.
 mutate_get(InObject) ->
-    lager:debug("mutate_get"),
+    Key = riak_object:key(InObject),
+    Bucket = riak_object:bucket(InObject),
+    lager:debug("mutate_get for ~p in ~p", [Key, Bucket]),
     Contents = riak_object:get_contents(InObject),
     Reals = lists:foldl(fun({Meta, _Value}, N) ->
         case dict:find(?MODULE, Meta) of
@@ -68,6 +70,7 @@ mutate_get(InObject) ->
             proxy_get(InObject);
         always ->
             % not a reduced object
+            lager:debug("Not a reduced object"),
             InObject;
         N ->
             BKey = {riak_object:bucket(InObject), riak_object:key(InObject)},
@@ -80,12 +83,22 @@ mutate_get(InObject) ->
                     lager:debug("odd that we get ourselves as a pref. doing proxy"),
                     proxy_get(InObject);
                 {Single, _PrimaryNess} ->
+                    lager:debug("local ring get"),
                     local_ring_get(InObject, BKey, Single)
             end
     end.
 
 local_ring_get(InObject, BKey, Partition) ->
-    {_P, MonitorTarg} = Partition,
+    lager:debug("Local ring get for ~p on partition ~p", [BKey, Partition]),
+    {Index, _Node} = Partition,
+    {ok, MonitorTarg} = riak_core_vnode_manager:get_vnode_pid(Index, riak_kv_vnode),
+    local_ring_get(InObject, BKey, Partition, MonitorTarg).
+
+local_ring_get(InObject, BKey, Partition, MonitorTarg) when MonitorTarg == self() ->
+    lager:warning("Something must have changed between preflist detmination for ~p and now, because ~p points to myself", [BKey, element(1, Partition)]),
+    proxy_get(InObject);
+
+local_ring_get(InObject, BKey, Partition, MonitorTarg) ->
     MonRef = erlang:monitor(process, MonitorTarg),
     Preflist = [Partition],
     ReqId = make_ref(),
@@ -95,13 +108,10 @@ local_ring_get(InObject, BKey, Partition) ->
         {ReqId, {r, {ok, RObj}, _, ReqId}} ->
             RObj;
         {ReqId, {r, {error, notfound}, _, ReqId}} ->
+            lager:debug("~p not found, falling back to proxy", [BKey]),
             proxy_get(InObject);
         {'DOWN', MonRef, prcess, MonitorTarg, Wut} ->
-            lager:info("could not get value from target due to exit: ~p", [Wut]),
-            proxy_get(InObject)
-    after
-        ?REPL_FSM_TIMEOUT ->
-            lager:info("timeout"),
+            lager:info("could not get value for ~p from target due to exit: ~p", [BKey, Wut]),
             proxy_get(InObject)
     end.
 
@@ -134,6 +144,7 @@ proxy_get(Leader, Cluster, Object) ->
             lager:debug("Couldn't find ~p on cluster ~p", [{Bucket,Key},Cluster]),
             notfound;
         {ok, NewObject} ->
+            lager:debug("successful proxy get!"),
             NewObject;
         Resp ->
             lager:debug("no idea: ~p", [Resp]),
@@ -169,7 +180,7 @@ mutate_put(InMeta, InVal, RevealedMeta, In, Props) ->
 
 mutate_put(InMeta, InVal, RevealedMeta, _In, _Props, local) ->
     lager:debug("local reduction: only tagging cluster of record"),
-    Cluster = riak_core_connection:symbolic_clustername(),
+    Cluster = get_clustername(),
     Meta2 = dict:store(cluster_of_record, Cluster, InMeta),
     RevealedMeta2 = dict:store(cluster_of_record, Cluster, RevealedMeta),
     {Meta2, InVal, RevealedMeta2};
@@ -198,6 +209,26 @@ mutate_put(InMeta, InVal, RevealedMeta, RObj, BucketProps, NumberReals) ->
             lager:debug("only keep ~p real copies from ~p", [NumberReals, length(Preflist)]),
             {RealsList,_Ignored} = lists:split(NumberReals, Preflist),
             maybe_reduce(InMeta, InVal, RevealedMeta, RObj, RealsList, NumberReals)
+    end.
+
+% the symbolic_clustername functions in riak_core_connection always return
+% a string. However, if the cluster is not named, that string is useless
+% for proxy get. So, rather than do a proxy get that can never succeed
+% we check if the cluster is actually named, and if not, return
+% 'undefined' rather than lie.
+get_clustername() ->
+    case riak_core_ring_manager:get_my_ring() of
+        {ok, Ring} ->
+            get_clustername(Ring);
+        {error, Reason} ->
+            lager:error("Can't read symbolic clustername because: ~p", [Reason]),
+            undefined
+    end.
+
+get_clustername(Ring) ->
+    case riak_core_ring:get_meta(symbolic_clustername, Ring) of
+        {ok, Name} -> Name;
+        undefined -> undefined
     end.
 
 maybe_reduce(InMeta, InVal, RevealedMeta, RObj, RealList, NumberReals) ->

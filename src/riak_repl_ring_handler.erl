@@ -27,6 +27,7 @@ init([]) ->
     riak_repl2_leader:set_candidates(AllNodes, []),
     rt_update_events(Ring),
     pg_update_events(Ring),
+    fix_reduced_repl_mutator_registration(Ring),
     {ok, #state{ring=Ring}}.
 
 handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
@@ -38,6 +39,7 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     update_leader(FinalRing),
     rt_update_events(FinalRing),
     pg_update_events(FinalRing),
+    fix_reduced_repl_mutator_registration(FinalRing),
     riak_repl_listener_sup:ensure_listeners(FinalRing),
     case riak_repl_leader:is_leader() of
         true ->
@@ -200,4 +202,17 @@ rt_update_events(Ring) ->
 pg_update_events(Ring) ->
     riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring)).
 
+%% @doc Ensure the repl_reduced mutator registration matches the capabilty
+%% of the cluster. If the cluster is not capable of handling mutators,
+%% then unregistering ensures the mutator subsystem never reduces an
+%% object.
+fix_reduced_repl_mutator_registration(_Ring) ->
+    case riak_core_capability:get({riak_kv, mutators}, false) of
+        false ->
+            lager:debug("unregister repl reduced"),
+            riak_kv_mutator:unregister(riak_repl_reduced);
+        true ->
+            lager:debug("registering repl reduced"),
+            riak_kv_mutator:register(riak_repl_reduced, ?REPL_REDUCED_PRIORITY)
+    end.
 

@@ -38,6 +38,9 @@
 -define(BT_META_TYPED_BUCKET, typed_bucket).
 -define(BT_META_TYPE, bucket_type).
 -define(BT_META_PROPS_HASH, properties_hash_val).
+% 5 is arbitrarily chosen to allow other mutators to be defines before,
+% but not be an absurdly large number.
+-define(REPL_REDUCED_PRIORITY, 5).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
