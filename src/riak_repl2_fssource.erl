@@ -97,6 +97,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     lager:info("Got caps: ~p", [TheirCaps]),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
     lager:info("Common strategy: ~p", [Strategy]),
+    {_, ClientVer, _} = Proto,
 
     case Strategy of
         keylist ->
@@ -106,7 +107,8 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             %% We maintain ownership of the socket. We will consume TCP messages in handle_info/2
             Transport:setopts(Socket, [{active, once}]),
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
-                                                                       Transport, Socket, WorkDir, Client),
+                                                                       Transport, Socket, 
+                                                                       WorkDir, Client, ClientVer),
             riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
                                     fullsync_worker=FullsyncWorker, work_dir=WorkDir,
@@ -114,10 +116,10 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
         aae ->
             %% AAE strategy
             {ok, Client} = riak:local_client(),
-            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Client,
-                                                                   Transport, Socket,
-                                                                   Partition,
-                                                                   self()),
+            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, 
+                                                                   Client, Transport, 
+                                                                   Socket, Partition,
+                                                                   self(), ClientVer),
             %% Give control of socket to AAE worker. It will consume all TCP messages.
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
@@ -298,12 +300,13 @@ connect(IP, Strategy, Partition) ->
 
     %% use 1,1 proto for new binary object
     %% use 2,0 for AAE fullsync + binary objects
-    ProtocolVersion = case Strategy of
-                          keylist -> {1,1};
-                          aae -> {2,0}
-                      end,
+    %ProtocolVersion = case Strategy of
+    %                      keylist -> {1,1};
+    %                      aae -> {2,0}
+    %                  end,
 
-    ClientSpec = {{fullsync,[ProtocolVersion]}, {TcpOptions, ?MODULE, self()}},
+    ClientSpec = {{fullsync,[{3,0}, {2,0}, {1,1}]}, {TcpOptions, ?MODULE, self()}},
+
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
             lager:info("connection ref ~p", [Ref]),
