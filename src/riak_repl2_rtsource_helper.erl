@@ -74,7 +74,7 @@ handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta} = Entry}, From,
     {noreply, State2#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-handle_call(status, _From, State = 
+handle_call(status, _From, State =
                 #state{sent_seq = SentSeq, objects = Objects}) ->
     {reply, [{sent_seq, SentSeq},
              {objects, Objects}], State}.
@@ -124,11 +124,11 @@ maybe_send(Transport, Socket, QEntry, State) ->
             lager:debug("Did not forward to ~p; destination already in routed list", [Remote]),
             State;
         false ->
-            case State#state.proto of 
+            case State#state.proto of
                 {Major, _Minor} when Major >= 3 ->
                     encode_and_send(QEntry, Remote, Transport, Socket, State);
                 _ ->
-                    case is_bucket_typed(Meta) of
+                    case riak_repl_bucket_type_util:is_bucket_typed(Meta) of
                         false ->
                             encode_and_send(QEntry, Remote, Transport, Socket, State);
                         true ->
@@ -160,9 +160,6 @@ encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver >=
 
 get_routed(Meta) ->
     meta_get(routed_clusters, [], Meta).
-
-is_bucket_typed(Meta) ->
-    meta_get(?BT_META_TYPED_BUCKET, false, Meta).
 
 meta_get(Key, Default, Meta) ->
     case orddict:find(Key, Meta) of

@@ -288,7 +288,7 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
     Me = self(),
     case make_donefun(BinObjsMeta, Me, Ref, Seq) of
         {DoneFun, BinObjs, Meta} ->
-            case maybe_write_object(Meta) of
+            case riak_repl_bucket_type_util:bucket_props_match(Meta) of
                 true ->
                     riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
                 false ->
@@ -407,28 +407,6 @@ schedule_reactivate_socket(State = #state{transport = T,
     end.
 get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
-
-maybe_write_object(Meta) ->
-    case orddict:find(?BT_META_TYPED_BUCKET, Meta) of
-        error -> 
-            true;
-        {ok, false} ->
-            true;
-        {ok, true} ->
-            BucketType = orddict:fetch(?BT_META_TYPE, Meta),
-            lager:info("Bucket type on sink:~p", [BucketType]),
-            case riak_core_bucket_type:get(BucketType) of
-                undefined ->
-                    false;
-                {error, _T} ->
-                    false;
-                AllProps ->
-                    Sink = riak_repl_util:get_bucket_props_hash(AllProps),
-                    Source = orddict:fetch(?BT_META_PROPS_HASH, Meta),
-                    Source == Sink
-            end
-    end.
-
 
 %% ===================================================================
 %% EUnit tests

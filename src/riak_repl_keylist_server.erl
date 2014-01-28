@@ -391,6 +391,9 @@ diff_bloom(Command, State)
 
 %% Sent by streaming difference generator when hashed keys are different.
 %% @plu server <- s:helper : merke_diff
+diff_bloom({Ref, {merkle_diff, {{{T, B}, K}, _VClock}}}, #state{diff_ref=Ref, bloom=Bloom} = State) ->
+    ebloom:insert(Bloom, <<T/binary, B/binary, K/binary>>),
+    {next_state, diff_bloom, State};
 diff_bloom({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{diff_ref=Ref, bloom=Bloom} = State) ->
     ebloom:insert(Bloom, <<B/binary, K/binary>>),
     {next_state, diff_bloom, State};
@@ -606,15 +609,32 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
             erlang:demonitor(Monitor, [flush]),
             ?TRACE(lager:info("bloom_fold <- ? : ~p", [_Other]))
     end;
+bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
+    NSent = case ebloom:contains(Bloom, <<T/binary, B/binary, K/binary>>) of
+                true ->
+                    case (catch riak_object:from_binary({T,B},K,V)) of
+                        {'EXIT', _} ->
+                            ok;
+                        RObj ->
+                            gen_fsm:sync_send_event(MPid,
+                                                    {diff_obj, RObj},
+                                                    infinity)
+                    end,
+                    NSent0 - 1;
+                false ->
+                    ok,
+                    NSent0
+            end,
+    {MPid, Bloom, Client, Transport, Socket, NSent, WinSz};
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
                 true ->
-                    case (catch riak_object:from_binary(B,K,V)) of 
-                        {'EXIT', _} -> 
+                    case (catch riak_object:from_binary(B,K,V)) of
+                        {'EXIT', _} ->
                             ok;
-                        RObj -> 
-                            gen_fsm:sync_send_event(MPid, 
-                                                    {diff_obj, RObj}, 
+                        RObj ->
+                            gen_fsm:sync_send_event(MPid,
+                                                    {diff_obj, RObj},
                                                     infinity)
                     end,
                     NSent0 - 1;
