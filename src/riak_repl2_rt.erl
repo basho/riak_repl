@@ -231,7 +231,7 @@ set_bucket_meta(Obj) ->
     M = orddict:new(),
     case riak_object:bucket(Obj) of
         {Type, _B} ->
-            PropsHash = riak_core_bucket_type:property_hash(riak_core_bucket_type:get(Type)),
+            PropsHash = riak_repl_bucket_type_util:property_hash(Type),
             M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
             M2 = orddict:store(?BT_META_TYPE, Type, M1),
             orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
