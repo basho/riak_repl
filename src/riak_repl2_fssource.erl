@@ -298,13 +298,9 @@ connect(IP, Strategy, Partition) ->
                   {packet, 4},
                   {active, false}],
 
-    %% use 1,1 proto for new binary object
-    %% use 2,0 for AAE fullsync + binary objects
-    %ProtocolVersion = case Strategy of
-    %                      keylist -> {1,1};
-    %                      aae -> {2,0}
-    %                  end,
-
+    %% 1,1 support for binary object
+    %% 2,0 support for AAE fullsync + binary objects
+    %% 3,0 support for typed buckets
     ClientSpec = {{fullsync,[{3,0}, {2,0}, {1,1}]}, {TcpOptions, ?MODULE, self()}},
 
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
