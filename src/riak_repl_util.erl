@@ -220,7 +220,8 @@ maybe_send(Object, C, Proto) ->
 maybe_send({_T, _B}, Object, C, {Major, _Minor}) when Major >=3 ->
     repl_helper_send(Object, C);
 maybe_send({_T, _B}, _Object, _C, Proto) ->
-    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending", [Proto]);
+    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending", [Proto]),
+    cancel;
 maybe_send(_B, Object, C, _Proto) ->
     repl_helper_send(Object, C).
 
