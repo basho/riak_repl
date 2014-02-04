@@ -38,7 +38,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/5,
+-export([start_link/6,
         start_fullsync/1,
         start_fullsync/2,
         cancel_fullsync/1,
@@ -88,7 +88,8 @@
         num_diffs,
         generator_paused = false,
         pending_acks = 0,
-        ver = w0
+        ver = w0,
+        proto
     }).
 
 %% -define(TRACE(Stmt),Stmt).
@@ -105,8 +106,8 @@
 %% estimate of them.
 -define(KEY_LIST_THRESHOLD,(1024)).
 
-start_link(SiteName, Transport, Socket, WorkDir, Client) ->
-    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
+start_link(SiteName, Transport, Socket, WorkDir, Client, Proto) ->
+    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto], []).
 
 start_fullsync(Pid) ->
     Pid ! start_fullsync.
@@ -123,7 +124,7 @@ pause_fullsync(Pid) ->
 resume_fullsync(Pid) ->
     gen_fsm:send_event(Pid, resume_fullsync).
 
-init([SiteName, Transport, Socket, WorkDir, Client]) ->
+init([SiteName, Transport, Socket, WorkDir, Client, Proto]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
     MaxPool = app_helper:get_env(riak_repl, max_get_workers, 100),
     VnodeGets = app_helper:get_env(riak_repl, vnode_gets, true),
@@ -133,7 +134,7 @@ init([SiteName, Transport, Socket, WorkDir, Client]) ->
             {size, MinPool}, {max_overflow, MaxPool}]),
     State = #state{sitename=SiteName, socket=Socket, transport=Transport,
         work_dir=WorkDir, client=Client, pool=Pid, vnode_gets=VnodeGets,
-        diff_batch_size=DiffBatchSize},
+        diff_batch_size=DiffBatchSize, proto=Proto},
     riak_repl_util:schedule_fullsync(),
     {ok, wait_for_partition, State}.
 
@@ -502,8 +503,8 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
 
 %% server <- bloom_fold : diff_obj 'recv a diff object from bloom folder
 diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
-                                           socket=Socket} = State) ->
-    case riak_repl_util:repl_helper_send(RObj, Client) of
+                                           socket=Socket, proto=Proto} = State) ->
+    case riak_repl_util:maybe_send(RObj, Client, Proto) of
         cancel ->
             skipped;
         Objects when is_list(Objects) ->

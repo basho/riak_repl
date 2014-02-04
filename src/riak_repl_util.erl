@@ -59,7 +59,8 @@
          make_pg_name/1,
          mode_12_enabled/1,
          mode_13_enabled/1,
-         maybe_get_vnode_lock/1
+         maybe_get_vnode_lock/1,
+         maybe_send/3
      ]).
 
 -export([wire_version/1,
@@ -213,6 +214,17 @@ repl_helper_recv([{App, Mod}|T], Object) ->
                 [Mod, App, What, Why]),
             repl_helper_recv(T, Object)
     end.
+
+maybe_send(Object, C, Proto) ->
+    maybe_send(riak_object:bucket(Object), Object, C, Proto).
+
+maybe_send({_T, _B}, Object, C, {Major, _Minor}) when Major >=3 ->
+    repl_helper_send(Object, C);
+maybe_send({_T, _B}, _Object, _C, Proto) ->
+    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending", [Proto]),
+    cancel;
+maybe_send(_B, Object, C, _Proto) ->
+    repl_helper_send(Object, C).
 
 repl_helper_send(Object, C) ->
     B = riak_object:bucket(Object),

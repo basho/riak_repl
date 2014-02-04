@@ -64,7 +64,8 @@ sync_register_service() ->
     %% 1,0 and up supports keylist strategy
     %% 1,1 and up supports binary object
     %% 2,0 and up supports AAE strategy
-    ProtoPrefs = {fullsync,[{1,1}, {2,0}]},
+    %% 3,0 and up supports Typed Buckets
+    ProtoPrefs = {fullsync,[{1,1}, {2,0}, {3,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, false},
