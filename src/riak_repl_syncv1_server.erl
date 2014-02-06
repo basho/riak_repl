@@ -159,7 +159,7 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
     {ok, FileInfo} = file:read_file_info(MerkleFile),
     FileSize = FileInfo#file_info.size,
     {ok, MerkleFd} = file:open(MerkleFile, [read,raw,binary,read_ahead]),
-    file:delete(MerkleFile), % will not be removed until file handle closed
+    ok = file:delete(MerkleFile), % will not be removed until file handle closed
     lager:info("Full-sync with site ~p; sending partition"
                           " ~p data (built in ~p secs)",
                           [State#state.sitename, State#state.partition,

@@ -58,7 +58,7 @@ merkle_exchange({merkle,Size,Partition},State=#state{work_dir=WorkDir}) ->
     %% Kick off the merkle build in parallel with receiving the remote
     %% file
     OurKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-    file:delete(OurKeyListFn), % make sure we get a clean copy
+    ok = file:delete(OurKeyListFn), % make sure we get a clean copy
     lager:info("Full-sync with site ~p; hashing "
                           "partition ~p data",
                           [State#state.sitename, Partition]),
@@ -108,7 +108,7 @@ merkle_recv({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
                                  our_kl_pid = undefined,
                                  our_kl_ref = undefined});
 merkle_recv({Ref, converted}, State=#state{their_kl_ref = Ref}) ->
-    file:delete(State#state.their_merkle_fn),
+    ok = file:delete(State#state.their_merkle_fn),
     merkle_recv_next(State#state{their_merkle_fn = undefined,
                                  their_kl_ref = undefined,
                                  their_kl_pid = undefined});
@@ -204,25 +204,29 @@ cleanup_partition(State) ->
         undefined ->
             ok;
         Fp ->
-            file:close(Fp)
+            ok = file:close(Fp),
+            ok
     end,
     case State#state.their_merkle_fn of
         undefined ->
             ok;
         TheirMerkleFn ->
-            file:delete(TheirMerkleFn)
+            ok = file:delete(TheirMerkleFn),
+            ok
     end,
     case State#state.their_kl_fn of
         undefined ->
             ok;
         TheirKlFn ->
-            file:delete(TheirKlFn)
+            ok = file:delete(TheirKlFn),
+            ok
     end,
     case State#state.our_kl_fn of
         undefined ->
             ok;
         OurKlFn ->
-            file:delete(OurKlFn)
+            ok = file:delete(OurKlFn),
+            ok
     end,
     State#state{merkle_pt = undefined,
                 merkle_fp = undefined,
