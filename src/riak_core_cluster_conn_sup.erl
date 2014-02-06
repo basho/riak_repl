@@ -13,9 +13,10 @@
 -endif.
 
 -export([start_link/0,
-         add_remote_connection/1, remove_remote_connection/1,
-         connections/0, is_connected/1
-        ]).
+         add_remote_connection/1,
+         remove_remote_connection/1,
+         connections/0,
+         is_connected/1]).
 -export([init/1]).
 
 -define(SHUTDOWN, 5000). % how long to give cluster_conn processes to shutdown
@@ -38,8 +39,8 @@ add_remote_connection(Remote) ->
 remove_remote_connection(Remote) ->
     lager:debug("Disconnecting from remote cluster at: ~p", [Remote]),
     %% remove supervised cluster connection
-    supervisor:terminate_child(?MODULE, Remote),
-    supervisor:delete_child(?MODULE, Remote),
+    ok = supervisor:terminate_child(?MODULE, Remote),
+    ok = supervisor:delete_child(?MODULE, Remote),
     %% This seems hacky, but someone has to tell the connection manager to stop
     %% trying to reach this target if it hasn't connected yet. It's the supervised
     %% cluster connection that requests the connection, but it's going to die, so
@@ -52,15 +53,10 @@ connections() ->
 is_connected(Remote) ->
     Connections = connections(),
     lists:any(fun({R,_Pid}) -> R == Remote end, Connections).
-    %not ([] == lists:filter(fun({R,_Pid}) -> R == Remote end, connections())).
 
 %% @private
 init([]) ->
-    %% %% TODO: remote list of test addresses.
-    %% Remotes = initial clusters or ip addrs from ring
-    %% Children = [make_remote(Remote) || Remote <- Remotes],
-    Children = [],
-    {ok, {{one_for_one, 10, 10}, Children}}.
+    {ok, {{one_for_one, 10, 10}, []}}.
 
 make_remote(Remote) ->
     {Remote, {riak_core_cluster_conn, start_link, [Remote]},

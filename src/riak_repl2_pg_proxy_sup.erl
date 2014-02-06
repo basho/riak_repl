@@ -25,8 +25,8 @@ set_leader(Node, _Pid) ->
         Node -> ok;
         _ ->
           [  begin
-                supervisor:terminate_child(?MODULE, Remote),
-                supervisor:delete_child(?MODULE, Remote)
+                ok = supervisor:terminate_child(?MODULE, Remote),
+                ok = supervisor:delete_child(?MODULE, Remote)
              end
                 || {Remote, Pid, _, _} <-
                       supervisor:which_children(?MODULE), is_pid(Pid)
@@ -39,9 +39,9 @@ start_proxy(Remote) ->
     supervisor:start_child({?MODULE, node()}, Childspec).
 
 stop_proxy(Node, Remote) ->
-    lager:debug("Stopping pg_proxy for ~p", [Remote]),    
-    supervisor:terminate_child({?MODULE, Node}, Remote),
-    supervisor:delete_child({?MODULE, Node}, Remote).
+    lager:debug("Stopping pg_proxy for ~p", [Remote]),
+    ok = supervisor:terminate_child({?MODULE, Node}, Remote),
+    ok = supervisor:delete_child({?MODULE, Node}, Remote).
 
 started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
