@@ -50,7 +50,7 @@ handle_info({sleep, MaxTimeout}, State = #state{elapsed_sleep = ElapsedSleep}) -
             case (ElapsedSleep >= MaxTimeout) of
                 true ->
                     lager:info("Realtime queue has not completely drained"),
-                    ok = queue_handoff(State),
+                    {ok, _} = queue_handoff(State),
                     gen_server:reply(State#state.caller, ok);
                 false ->
                     lager:info("Waiting for realtime repl queue to drain"),
