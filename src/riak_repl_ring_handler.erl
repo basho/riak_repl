@@ -15,7 +15,6 @@
 
 -record(state, { ring :: tuple() }).
 
-
 %% ===================================================================
 %% gen_event Callbacks
 %% ===================================================================
@@ -57,22 +56,17 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
 handle_event(_Event, State) ->
     {ok, State}.
 
-
 handle_call(_Request, State) ->
     {ok, ok, State}.
-
 
 handle_info(_Info, State) ->
     {ok, State}.
 
-
 terminate(_Reason, _State) ->
     ok.
 
-
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
 
 %% ===================================================================
 %% Internal functions
@@ -153,8 +147,8 @@ listener_nodes(ReplConfig) ->
 %% Run whenever the ring is changed or on startup.
 %% Compare desired state of realtime repl to configured
 rt_update_events(Ring) ->
-    riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(Ring),
-                            riak_repl_ring:rt_started(Ring)),
+    _ = riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(Ring),
+                                riak_repl_ring:rt_started(Ring)),
     %% ensure_rt sets this
     RTEnabled = app_helper:get_env(riak_repl, rtenabled, false),
 
@@ -198,6 +192,5 @@ rt_update_events(Ring) ->
     riak_repl:install_hook().
 
 pg_update_events(Ring) ->
-    riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring)).
-
-
+    _ = riak_repl2_pg:ensure_pg(riak_repl_ring:pg_enabled(Ring)),
+    ok.
