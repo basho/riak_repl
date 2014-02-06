@@ -240,8 +240,9 @@ handle_cast(_Unhandled, _State) ->
 handle_info(status_update_timer, State) ->
     %% notify all registered parties of this node's services counts
     Stats = orddict:to_list(State#state.service_stats),
-    PStats = [ {Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
-    [NotifyFun(PStats) || NotifyFun <- State#state.status_notifiers],
+    PStats = [{Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
+    lists:foreach(fun(NotifyFun) -> NotifyFun(PStats) end,
+                  State#state.status_notifiers),
     {noreply, State};
 
 %% Get notified of a service that went down.
