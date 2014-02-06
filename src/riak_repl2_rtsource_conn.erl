@@ -206,8 +206,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
         [{node, node()},
          {site, Remote},
          {strategy, realtime},
-         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}],
-        QStats,
+         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}] ++ QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
