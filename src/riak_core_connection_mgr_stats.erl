@@ -23,7 +23,6 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_connection_mgr_stats).
--author("Chris Tilt").
 
 -behaviour(gen_server).
 

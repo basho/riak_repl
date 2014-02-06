@@ -92,7 +92,6 @@ symbolic_clustername() ->
 %%
 %% connect returns the pid() of the asynchronous process that will attempt the connection.
 
--spec(connect(ip_addr(), clientspec()) -> pid()).
 connect({IP,Port}, ClientSpec) ->
     lager:debug("spawning async_connect link"),
     %% start a process to handle the connection request asyncrhonously
