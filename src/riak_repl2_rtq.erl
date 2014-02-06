@@ -375,13 +375,15 @@ terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    [case DeliverFun of
-         undefined ->
-             ok;
-         _ ->
-            catch(DeliverFun({error, {terminate, Reason}}))
-     end || #c{deliver = DeliverFun} <- Cs],
-    ok.
+    lists:foreach(
+        fun(#c{deliver = DeliverFun}) ->
+                case DeliverFun of
+                    undefined ->
+                        ok;
+                    _ ->
+                       catch(DeliverFun({error, {terminate, Reason}}))
+                end
+        end, Cs).
 
 %% @private
 code_change(_OldVsn, State, _Extra) ->
