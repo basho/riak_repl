@@ -508,9 +508,12 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             %% server -> client : fs_diff_obj
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
-            [riak_repl_tcp_server:send(Transport, Socket,
-                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
-             || O <- Objects],
+            lists:foreach(
+                fun(O) ->
+                        riak_repl_tcp_server:send(Transport,
+                                                  Socket,
+                                                  riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
+                end, Objects),
             riak_repl_tcp_server:send(Transport, Socket,
                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj}))
     end,
