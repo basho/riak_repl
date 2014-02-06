@@ -230,9 +230,9 @@ wait_keylist(Command, #state{their_kl_fh=FH} = State)
             ok;
         _ ->
             %% close and delete the keylist file
-            file:close(FH),
-            file:delete(State#state.their_kl_fn),
-            file:delete(State#state.kl_fn)
+            ok = file:close(FH),
+            ok = file:delete(State#state.their_kl_fn),
+            ok = file:delete(State#state.kl_fn)
     end,
     riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
@@ -251,7 +251,7 @@ wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
         _ ->
             FH0
     end,
-    file:write(FH, Hunk),
+    ok = file:write(FH, Hunk),
     {next_state, wait_keylist, State#state{their_kl_fh=FH}};
 %% the client has finished sending the keylist
 wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
@@ -261,8 +261,8 @@ wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
             file:write_file(State#state.their_kl_fn, <<>>),
             ok;
         _ ->
-            file:sync(FH),
-            file:close(FH),
+            ok = file:sync(FH),
+            ok = file:close(FH),
             ok
     end,
     lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",

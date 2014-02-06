@@ -108,9 +108,9 @@ handle_call(stop, _From, State) ->
             unlink(Pid),
             exit(Pid, kill)
     end,
-    file:close(State#state.kl_fp),
+    ok = file:close(State#state.kl_fp),
     couch_merkle:close(State#state.merkle_pid),
-    file:delete(State#state.filename),
+    ok = file:delete(State#state.filename),
     {stop, normal, ok, State};
 handle_call({make_merkle, Partition, FileName}, From, State) ->
     %% Return to caller immediately - under heavy load exceeded the 5s
@@ -196,7 +196,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
                                            {ok, ok}
                                    end, ok),
     couch_file:close(InFileFd),
-    file:close(OutFile),
+    ok = file:close(OutFile),
 
     %% Verify the file is really sorted
     case file_sorter:check(KeyListFn) of
@@ -251,12 +251,12 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
                     gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
             end
         after
-            file:close(RemoteFile),
-            file:close(LocalFile)
+            ok = file:close(RemoteFile),
+            ok = file:close(LocalFile)
         end
     after
-        file:delete(RemoteFilename),
-        file:delete(LocalFilename)
+        ok = file:delete(RemoteFilename),
+        ok = file:delete(LocalFilename)
     end,
 
     {stop, normal, State}.
