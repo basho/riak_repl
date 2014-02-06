@@ -474,7 +474,7 @@ schedule_gc_timer(0) ->
     ok;
 schedule_gc_timer(Interval) ->
     %% schedule a timer to garbage collect old cluster and endpoint data
-    erlang:send_after(Interval, self(), garbage_collection_timer).
+    erlang:send_after(Interval, self(), garbage_collection_timer), ok.
 
 is_valid_ip(Addr) when is_list(Addr) ->
     %% a string. try and parse it.
