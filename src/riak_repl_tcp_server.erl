@@ -332,7 +332,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
             erlang:send_after(5000, self(), election_wait),
             {noreply, State};
         OurNode ->
-            erlang:cancel_timer(State#state.election_timeout),
+            _ = erlang:cancel_timer(State#state.election_timeout),
             %% are we configured to upgrade to ssl?
             case {riak_repl_util:maybe_use_ssl(), Transport:name()} of
                 {B, T} when B == false; T == ssl ->
