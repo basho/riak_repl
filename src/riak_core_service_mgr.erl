@@ -253,7 +253,7 @@ handle_info({'DOWN', Ref, process, Pid, _Reason}, State) ->
                 {value, {Ref, ProtocolId}, Rest} ->
                     gen_server:cast(?SERVER, {service_down_event, Pid, ProtocolId}),
                     Rest;
-                error ->
+                false ->
                     Refs
             end,
     {noreply, State#state{refs=Refs2}};
