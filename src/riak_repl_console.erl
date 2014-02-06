@@ -92,7 +92,7 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
                     io:format("Invalid NAT IP address: ~p~n", [IPParseError]),
                     error
             end;
-        {error,_} ->
+        error ->
             io:format("Error adding nat address. ~n"),
             error
     end.
