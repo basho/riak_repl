@@ -180,7 +180,7 @@ request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref,
         [State#state.sitename, State#state.partition, Reason]),
     case Skip of
         false ->
-            riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
+            _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
             gen_fsm:send_event(self(), continue);
         _ ->
             %% we've already decided to skip this partition, so do nothing
@@ -235,7 +235,7 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
     end,
     case file:read(FH, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
-            riak_repl_tcp_client:send(Transport, Socket, {kl_hunk, Data}),
+            _ = riak_repl_tcp_client:send(Transport, Socket, {kl_hunk, Data}),
             case Count =< 0 of
                 true ->
                     riak_repl_tcp_client:send(Transport, Socket, kl_wait);
