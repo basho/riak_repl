@@ -292,11 +292,11 @@ handle_cast({kl_finish, Count}, State) ->
     %% call close again. See http://www.erlang.org/doc/man/file.html#open-2
     case file:sync(State#state.kl_fp) of
         ok -> ok;
-        _ -> file:sync(State#state.kl_fp)
+        _ -> file:sync(State#state.kl_fp), ok
     end,
     case file:close(State#state.kl_fp) of
         ok -> ok;
-        _ -> file:close(State#state.kl_fp)
+        _ -> file:close(State#state.kl_fp), ok
     end,
     riak_core_gen_server:cast(self(), kl_sort),
     {noreply, State#state{kl_total=Count}};
@@ -383,7 +383,7 @@ itr_new(File, Tag) ->
         {ok, <<Size:32/unsigned>>} ->
             itr_next(Size, File, Tag);
         _ ->
-            file:close(File),
+            ok = file:close(File),
             eof
     end.
 
@@ -391,13 +391,13 @@ itr_next(Size, File, Tag) ->
     case file:read(File, Size + 4) of
         {ok, <<Data:Size/bytes>>} ->
             erlang:put(Tag, erlang:get(Tag) + 1),
-            file:close(File),
+            ok = file:close(File),
             {binary_to_term(Data), fun() -> eof end};
         {ok, <<Data:Size/bytes, NextSize:32/unsigned>>} ->
             erlang:put(Tag, erlang:get(Tag) + 1),
             {binary_to_term(Data), fun() -> itr_next(NextSize, File, Tag) end};
         eof ->
-            file:close(File),
+            ok = file:close(File),
             eof
     end.
 
