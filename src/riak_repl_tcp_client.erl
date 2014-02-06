@@ -152,7 +152,7 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
         transport=Transport,
         client=proplists:get_value(client, Props),
         my_pi=proplists:get_value(my_pi, Props)},
-    case riak_repl_util:maybe_use_ssl() of
+    _ = case riak_repl_util:maybe_use_ssl() of
         false ->
             _ = send(Transport, Socket, {peerinfo, NewState#state.my_pi,
                     [bounded_queue, keepalive, {fullsync_strategies,
