@@ -57,7 +57,8 @@ register_stats() ->
                 register_stat(Name, Type)
         end, stats()),
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
-    folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
+    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge),
+    ok.
 
 client_bytes_sent(Bytes) ->
     increment_counter(client_bytes_sent, Bytes).
@@ -169,7 +170,7 @@ init([]) ->
     case is_rt_dirty() of
         true ->
             lager:warning("RT marked as dirty upon startup"),
-            folsom_metrics:notify_existing_metric({?APP, rt_dirty}, {inc, 1},
+            ok = folsom_metrics:notify_existing_metric({?APP, rt_dirty}, {inc, 1},
                                                   counter),
             % let the coordinator know about the dirty state when the node
             % comes back up
@@ -181,12 +182,12 @@ init([]) ->
     {ok, ok}.
 
 register_stat(Name, counter) ->
-    folsom_metrics:new_counter({?APP, Name});
+    ok = folsom_metrics:new_counter({?APP, Name});
 register_stat(Name, history) ->
     BwHistoryLen =  get_bw_history_len(),
-    folsom_metrics:new_history({?APP, Name}, BwHistoryLen);
+    ok = folsom_metrics:new_history({?APP, Name}, BwHistoryLen);
 register_stat(Name, gauge) ->
-    folsom_metrics:new_gauge({?APP, Name}).
+    ok = folsom_metrics:new_gauge({?APP, Name}).
 
 stats() ->
     [{server_bytes_sent, counter},
@@ -228,7 +229,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({increment_counter, Name, IncrBy}, State) ->
-    folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
+    ok = folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
     {noreply, State};
 handle_cast(stop, State) ->
     {stop, normal, State};
@@ -267,7 +268,7 @@ handle_info(report_bw, State) ->
          {last_server_bytes_recv, ThisServerBytesRecv}]),
 
     schedule_report_bw(),
-    folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),
+    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),
     {noreply, State};
 handle_info(_Info, State) -> {noreply, State}.
 
