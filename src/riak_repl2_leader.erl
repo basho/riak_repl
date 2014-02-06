@@ -111,7 +111,10 @@ handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
                     {reply, ok, new_leader(LeaderNode, LeaderPid, State1)}
             end,
     %% notify all registered parties of the current leader node.
-    [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- State#state.notify_funs],
+    lists:foreach(
+        fun(NotifyFun) ->
+                NotifyFun(LeaderNode, LeaderPid)
+        end, State#state.notify_funs),
     Reply;
 
 handle_call(helper_pid, _From, State) ->

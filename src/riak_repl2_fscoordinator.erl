@@ -314,12 +314,18 @@ handle_cast(start_fullsync,  State) ->
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
-    [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
-    [begin
-        unlink(Pid),
-        riak_repl2_fssource:stop_fullsync(Pid),
-        riak_repl2_fssource_sup:disable(node(Pid), Part)
-    end || {Pid, {Part, _PartN}} <- State#state.running_sources],
+    lists:foreach(
+        fun({_, {_, Tref}}) ->
+                cancel_timer(Tref)
+        end, State#state.whereis_waiting),
+
+    lists:foreach(
+        fun({Pid, {Part, _PartN}}) ->
+                unlink(Pid),
+                riak_repl2_fssource:stop_fullsync(Pid),
+                riak_repl2_fssource_sup:disable(node(Pid), Part)
+        end, State#state.running_sources),
+
     State2 = State#state{
         largest_n = undefined,
         owners = [],

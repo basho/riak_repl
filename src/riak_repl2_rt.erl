@@ -104,18 +104,31 @@ ensure_rt(WantEnabled0, WantStarted0) ->
 
             %% Create a registration to begin queuing, rtsource_sup:ensure_started
             %% will bring up an rtsource process that will re-register
-            [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
-            [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
+            lists:foreach(
+                fun(Remote) ->
+                        riak_repl2_rtq:register(Remote)
+                end, ToEnable),
+
+            lists:foreach(
+                fun(Remote) ->
+                        riak_repl2_rtsource_conn_sup:enable(Remote)
+                end, ToStart),
 
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
-            [begin
-                 riak_repl2_rtsource_conn_sup:disable(Remote),
-                 riak_repl2_rtq:register(Remote)
-             end || Remote <- ToStop],
+            lists:foreach(
+                fun(Remote) ->
+                        begin
+                             riak_repl2_rtsource_conn_sup:disable(Remote),
+                             riak_repl2_rtq:register(Remote)
+                         end
+                end, ToStop),
 
             %% Unregister disabled sources, freeing up the queue
-            [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
+            lists:foreach(
+                fun(Remote) ->
+                        riak_repl2_rtq:unregister(Remote)
+                end, ToDisable),
 
             [{enabled, ToEnable},
              {started, ToStart},
