@@ -366,11 +366,7 @@ recv(TcpBin, State = #state{remote = Name,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
             lager:debug("got heartbeat, hb_sent_q_len after heartbeat_recv: ~p", [queue:len(HBSentQ2)]),
-            recv(Cont, schedule_heartbeat(State2));
-        {error, Reason} ->
-            %% Something bad happened
-            riak_repl_stats:rt_source_errors(),
-            {stop, {framing_error, Reason}, State}
+            recv(Cont, schedule_heartbeat(State2))
     end.
 
 peername(Transport, Socket) ->
