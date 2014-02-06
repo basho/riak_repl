@@ -177,7 +177,13 @@ handle_call(get_services, _From, State) ->
     {reply, orddict:to_list(State#state.services), State};
 
 handle_call(stop, _From, State) ->
-    ranch:stop_listener(State#state.dispatch_addr),
+    case ranch:stop_listener(State#state.dispatch_addr) of
+        ok ->
+            ok;
+        {error, not_found} ->
+            lager:debug("Attempted to stop listener which wasn't listening."),
+            ok
+    end,
     {stop, normal, ok, State};
 
 handle_call(get_stats, _From, State) ->
