@@ -417,7 +417,12 @@ maybe_send(RObj, ClientVC, Transport, Socket, Client) ->
                 cancel ->
                     skipped;
                 Objects when is_list(Objects) ->
-                    [riak_repl_tcp_server:send(Transport, Socket, {diff_obj, O}) || O <- Objects],
+                    lists:foreach(
+                        fun(O) ->
+                                riak_repl_tcp_server:send(Transport,
+                                                          Socket,
+                                                          {diff_obj, O})
+                        end, Objects),
                     riak_repl_tcp_server:send(Transport, Socket, {diff_obj, RObj})
             end
     end.

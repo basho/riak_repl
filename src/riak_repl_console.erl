@@ -185,26 +185,34 @@ cluster_fs_running(Sink) ->
 
 start_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:start_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+    lists:foreach(
+        fun(Pid) ->
+                riak_repl_tcp_server:start_fullsync(Pid)
+        end, riak_repl_listener_sup:server_pids()),
     ok.
 
 cancel_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:cancel_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+    lists:foreach(
+        fun(Pid) ->
+                riak_repl_tcp_server:cancel_fullsync(Pid)
+        end, riak_repl_listener_sup:server_pids()),
     ok.
 
 pause_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:pause_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+    lists:foreach(
+        fun(Pid) ->
+                riak_repl_tcp_server:pause_fullsync(Pid)
+        end, riak_repl_listener_sup:server_pids()),
     ok.
 
 resume_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:resume_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+    lists:foreach(
+        fun(Pid) ->
+                riak_repl_tcp_server:resume_fullsync(Pid)
+        end, riak_repl_listener_sup:server_pids()),
     ok.
 
 

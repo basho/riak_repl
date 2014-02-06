@@ -128,9 +128,11 @@ handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when
     V = State#state.ver,
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         Objects when is_list(Objects) ->
-            [send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, O}))
-             || O <- Objects],
-            send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, RObj})),
+            lists:foreach(
+                fun(O) ->
+                        send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, O}))
+                end, Objects),
+            _ = send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, RObj})),
             {noreply, State};
         cancel ->
             {noreply, State}

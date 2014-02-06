@@ -51,8 +51,11 @@ stop() ->
     gen_server:cast(?MODULE, stop).
 
 register_stats() ->
-    [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
-    [register_stat(Name, Type) || {Name, Type} <- stats()],
+    lists:foreach(
+        fun({Name, Type}) ->
+                catch folsom_metrics:delete_metric({?APP, Name}),
+                register_stat(Name, Type)
+        end, stats()),
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
     folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
 
@@ -245,17 +248,23 @@ handle_info(report_bw, State) ->
     ServerTx = bytes_to_kbits_per_sec(ThisServerBytesSent, lookup_stat(last_server_bytes_sent), DeltaSecs),
     ServerRx = bytes_to_kbits_per_sec(ThisServerBytesRecv, lookup_stat(last_server_bytes_recv), DeltaSecs),
 
-    [folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, history)
-     || {Metric, Reading} <- [{client_tx_kbps, ClientTx},
-                              {client_rx_kbps, ClientRx},
-                              {server_tx_kbps, ServerTx},
-                              {server_rx_kbps, ServerRx}]],
+    lists:foreach(
+        fun({Metric, Reading}) ->
+                folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, history)
+        end,
+        [{client_tx_kbps, ClientTx},
+         {client_rx_kbps, ClientRx},
+         {server_tx_kbps, ServerTx},
+         {server_rx_kbps, ServerRx}]),
 
-    [folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, gauge)
-     || {Metric, Reading} <- [{last_client_bytes_sent, ThisClientBytesSent},
-                              {last_client_bytes_recv, ThisClientBytesRecv},
-                              {last_server_bytes_sent, ThisServerBytesSent},
-                              {last_server_bytes_recv, ThisServerBytesRecv}]],
+    lists:foreach(
+        fun({Metric, Reading}) ->
+                folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, gauge)
+        end,
+        [{last_client_bytes_sent, ThisClientBytesSent},
+         {last_client_bytes_recv, ThisClientBytesRecv},
+         {last_server_bytes_sent, ThisServerBytesSent},
+         {last_server_bytes_recv, ThisServerBytesRecv}]),
 
     schedule_report_bw(),
     folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),

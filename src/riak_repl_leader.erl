@@ -492,10 +492,14 @@ ensure_sites(Leader) ->
                         Site <- dict:fetch(sites, ReplConfig)],
                     {ToStop, ToStart} = balance_clients(CurrentConfig,
                         ConfiguredSites),
-                    [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
-                        || {Node, Site} <- ToStop],
-                    [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
-                        || {Node, Site} <- ToStart]
+                    lists:foreach(
+                        fun({Node, Site}) ->
+                                rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
+                        end, ToStop),
+                    lists:foreach(
+                        fun({Node, Site}) ->
+                                rpc:call(Node, riak_repl_client_sup, start_site, [Site])
+                        end, ToStart)
             end
     end.
 
