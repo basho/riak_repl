@@ -8,3 +8,4 @@ current_counterexample.eqc
 erl_crash.dump
 repl_leader_eqc_data/
 .local_dialyzer_plt
+tags
