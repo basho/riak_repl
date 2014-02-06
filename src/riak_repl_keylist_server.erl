@@ -109,10 +109,10 @@ start_link(SiteName, Transport, Socket, WorkDir, Client) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client], []).
 
 start_fullsync(Pid) ->
-    Pid ! start_fullsync.
+    gen_fsm:send_event(Pid, start_fullsync).
 
 start_fullsync(Pid, Partitions) ->
-    Pid ! {start_fullsync, Partitions}.
+    gen_fsm:send_event(Pid, {start_fullsync, Partitions}).
 
 cancel_fullsync(Pid) ->
     gen_fsm:send_event(Pid, cancel_fullsync).
