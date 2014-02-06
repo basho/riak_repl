@@ -109,11 +109,17 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                     Req = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
                         true ->
                             riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
-                                                         {Self, 0, 0});
+                                                         {Self, 0, 0},
+                                                         false,
+                                                         [{iterator_refresh,
+                                                                 true}]);
                         false ->
                             %% use old accumulator without the total
                             riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
-                                                         {Self, 0})
+                                                         {Self, 0},
+                                                         false,
+                                                         [{iterator_refresh,
+                                                                 true}])
                     end,
                     try riak_core_vnode_master:command_return_vnode(
                             {Partition, OwnerNode},

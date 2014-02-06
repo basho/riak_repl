@@ -425,7 +425,9 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
                                 {Self,
                                  {serialized, ebloom:serialize(Bloom)},
                                  State#state.client, State#state.transport,
-                                 State#state.socket, DiffSize, DiffSize}),
+                                 State#state.socket, DiffSize, DiffSize},
+                                false,
+                                [{iterator_refresh, true}]),
                             {raw, FoldRef, self()},
                             riak_kv_vnode_master) of
                         {ok, VNodePid} ->
