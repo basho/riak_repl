@@ -165,7 +165,7 @@ merkle_build({Ref, merkle_built}, State=#state{merkle_ref = Ref}) ->
                           [State#state.sitename, State#state.partition,
                            elapsed_secs(State#state.stage_start)]),
     Now = os:timestamp(),
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket,
         {merkle, FileSize, State#state.partition}),
     next_state(merkle_xfer, State#state{helper_pid = undefined,
                                         merkle_ref = undefined,
@@ -187,11 +187,11 @@ merkle_xfer(timeout, State) ->
     MerkleFd = State#state.merkle_fd,
     case file:read(MerkleFd, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
-            riak_repl_tcp_server:send(State#state.transport,
+            _ = riak_repl_tcp_server:send(State#state.transport,
                 State#state.socket, {merk_chunk, Data}),
             next_state(merkle_xfer, State);
         eof ->
-            file:close(MerkleFd),
+            ok = file:close(MerkleFd),
             lager:info("Full-sync with site ~p; awaiting partition"
                                   " ~p diffs (sent in ~p secs)",
                                   [State#state.sitename, State#state.partition,
@@ -215,7 +215,7 @@ merkle_diff(cancel_fullsync, State) ->
     next_state(merkle_diff, do_cancel_fullsync(State));
 merkle_diff(timeout, #state{partitions=cancelled}=State) ->
     %% abandon the diff if the fullsync has been cancelled
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket,
         {partition_complete, State#state.partition}),
     next_state(merkle_send, State#state{partition = undefined,
                                         diff_vclocks = [],
@@ -224,7 +224,7 @@ merkle_diff(timeout, #state{partitions=cancelled}=State) ->
                                         diff_errs = undefined,
                                         stage_start = undefined});
 merkle_diff(timeout, #state{diff_vclocks=[]}=State) ->
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket,
         {partition_complete, State#state.partition}),
     DiffsSent = State#state.diff_sent,
     DiffsRecv = State#state.diff_recv,

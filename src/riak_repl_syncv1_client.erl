@@ -124,7 +124,7 @@ merkle_diff({Ref, {merkle_diff, BkeyVclock}}, State=#state{our_kl_ref = Ref}) ->
     {next_state, merkle_diff,
      State#state{bkey_vclocks = [BkeyVclock | State#state.bkey_vclocks]}};
 merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
-    riak_repl_tcp_client:send(State#state.transport, State#state.socket,
+    _ = riak_repl_tcp_client:send(State#state.transport, State#state.socket,
         {ack, State#state.merkle_pt, []}),
     lager:error("Full-sync with site ~p; vclock lookup for "
                            "partition ~p failed: ~p. Skipping partition.",
@@ -135,7 +135,7 @@ merkle_diff({Ref, {error, Reason}}, State=#state{our_kl_ref = Ref}) ->
                                    diff_pid = undefined,
                                    our_kl_ref = Ref})};
 merkle_diff({Ref, diff_done}, State=#state{our_kl_ref = Ref}) ->
-    riak_repl_tcp_client:send(State#state.transport, State#state.socket,
+    _ = riak_repl_tcp_client:send(State#state.transport, State#state.socket,
          {ack, State#state.merkle_pt, State#state.bkey_vclocks}),
     {next_state, merkle_exchange, 
      cleanup_partition(State#state{bkey_vclocks=[],
@@ -186,7 +186,7 @@ merkle_recv_next(#state{our_kl_ref = undefined,
         true ->
             %% Something has gone wrong, just ack the server
             %% as the protocol currently has no way to report errors
-            riak_repl_tcp_client:send(State#state.transport,
+            _ = riak_repl_tcp_client:send(State#state.transport,
                 State#state.socket, {ack, State#state.merkle_pt, []}),
             {next_state, merkle_exchange, cleanup_partition(State)};
         false ->
