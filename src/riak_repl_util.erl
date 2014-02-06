@@ -614,7 +614,8 @@ schedule_fullsync(Pid) ->
         {ok, Tuple} when is_tuple(Tuple) -> ok;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
-            erlang:send_after(FullsyncIval, Pid, start_fullsync)
+            _ = erlang:send_after(FullsyncIval, Pid, start_fullsync),
+            ok
     end.
 
 
