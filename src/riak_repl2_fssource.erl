@@ -1,6 +1,5 @@
 -module(riak_repl2_fssource).
 -include("riak_repl.hrl").
--include_lib("riak_kv/include/riak_kv_vnode.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -55,17 +54,12 @@ legacy_status(Pid, Timeout) ->
 %% gen server
 
 init([Partition, IP]) ->
-    %% Determine what kind of fullsync worker strategy we want to start with,
-    %% which could change if we talk to the sink and it can't speak AAE. If
-    %% AAE is not enabled in KV, then we can't use aae strategy.
-    SupportedStrategy = riak_repl_util:get_local_strategy(),
-
     %% Possibly try to obtain the per-vnode lock before connecting.
     %% If we return error, we expect the coordinator to start us again later.
     case riak_repl_util:maybe_get_vnode_lock(Partition) of
         ok ->
             %% got the lock, or ignored it.
-            case connect(IP, SupportedStrategy, Partition) of
+            case connect(IP, riak_repl_util:get_local_strategy(), Partition) of
                 {error, Reason} ->
                     {stop, Reason};
                 Result ->
@@ -87,7 +81,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                        SocketTag}, Transport),
 
     %% Strategy still depends on what the sink is capable of.
-    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
+    {_,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
     Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
     lager:info("Common strategy: ~p", [Strategy]),

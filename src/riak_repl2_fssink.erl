@@ -156,7 +156,7 @@ handle_info(init_ack, State=#state{socket=Socket,
                                    transport=Transport,
                                    proto=Proto,
                                    cluster=Cluster}) ->
-    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
+    {_,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
     %% possibly exchange fullsync capabilities with the remote
     Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),

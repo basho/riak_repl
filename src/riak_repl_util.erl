@@ -957,7 +957,7 @@ get_local_strategy() ->
         {true,aae} -> aae;
         {_,InvalidStrategy} ->
             lager:warning("Unsupported riak_repl fullsync_strategy: ~p. Defaulting to: ~p",
-                [UnSupportedStrategy, ?DEFAULT_FULLSYNC_STRATEGY])
+                [InvalidStrategy, ?DEFAULT_FULLSYNC_STRATEGY])
     end.
 
 decide_common_strategy(1, _Socket, _Transport) -> 
@@ -965,6 +965,8 @@ decide_common_strategy(1, _Socket, _Transport) ->
     keylist;
 decide_common_strategy(_, Socket, Transport) ->
     OurStrategy = get_local_strategy(),
+    %% TODO: Do we need the send step?
+    Transport:send(Socket, term_to_binary(OurStrategy)),
     TheirStrategy =
         case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
             {ok, Data} ->
@@ -975,8 +977,6 @@ decide_common_strategy(_, Socket, Transport) ->
                 throw({Error, Reason})
         end,
     lager:debug("Got remote strategy: ~p", [TheirStrategy]),
-    %% TODO: Do we need the send step?
-    Transport:send(Socket, term_to_binary(Caps)),
     case {OurStrategy,TheirStrategy} of
         {aae,aae} -> aae;
         {_,_}     -> keylist
