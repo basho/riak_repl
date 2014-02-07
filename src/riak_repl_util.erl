@@ -965,7 +965,6 @@ decide_common_strategy(1, _Socket, _Transport) ->
     keylist;
 decide_common_strategy(_, Socket, Transport) ->
     OurStrategy = get_local_strategy(),
-    %% TODO: Do we need the send step?
     Transport:send(Socket, term_to_binary(OurStrategy)),
     TheirStrategy =
         case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
