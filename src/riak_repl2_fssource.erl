@@ -55,13 +55,10 @@ legacy_status(Pid, Timeout) ->
 %% gen server
 
 init([Partition, IP]) ->
-    DefaultStrategy = ?DEFAULT_FULLSYNC_STRATEGY,
-
     %% Determine what kind of fullsync worker strategy we want to start with,
     %% which could change if we talk to the sink and it can't speak AAE. If
     %% AAE is not enabled in KV, then we can't use aae strategy.
-    OurCaps = decide_our_caps(DefaultStrategy),
-    SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
+    SupportedStrategy = riak_repl_util:get_local_strategy(),
 
     %% Possibly try to obtain the per-vnode lock before connecting.
     %% If we return error, we expect the coordinator to start us again later.
@@ -92,10 +89,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     %% Strategy still depends on what the sink is capable of.
     {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
-    OurCaps = decide_our_caps(DefaultStrategy),
-    TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    lager:info("Got caps: ~p", [TheirCaps]),
-    Strategy = decide_common_strategy(OurCaps, TheirCaps),
+    Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
     lager:info("Common strategy: ~p", [Strategy]),
 
     case Strategy of
@@ -242,50 +236,6 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-
-%% Based on the agreed common protocol level and the supported
-%% mode of AAE, decide what strategy we are capable of offering.
-decide_our_caps(DefaultStrategy) ->
-    SupportedStrategy =
-        case {riak_kv_entropy_manager:enabled(),
-              app_helper:get_env(riak_repl, fullsync_strategy, DefaultStrategy)} of
-            {false,_} -> keylist;
-            {true,aae} -> aae;
-            {true,keylist} -> keylist;
-            {true,UnSupportedStrategy} ->
-                lager:warning("App config for riak_repl/fullsync_strategy ~p is unsupported. Using ~p",
-                              [UnSupportedStrategy, DefaultStrategy]),
-                DefaultStrategy
-        end,
-    [{strategy, SupportedStrategy}].
-
-%% decide what strategy to use, given our own capabilties and those
-%% of the remote source.
-decide_common_strategy(_OurCaps, []) -> keylist;
-decide_common_strategy(OurCaps, TheirCaps) ->
-    OurStrategy = proplists:get_value(strategy, OurCaps, keylist),
-    TheirStrategy = proplists:get_value(strategy, TheirCaps, keylist),
-    case {OurStrategy,TheirStrategy} of
-        {aae,aae} -> aae;
-        {_,_}     -> keylist
-    end.
-
-%% Depending on the protocol version number, send our capabilities
-%% as a list of properties, in binary.
-maybe_exchange_caps(1, _Caps, _Socket, _Transport) ->
-    [];
-maybe_exchange_caps(_, Caps, Socket, Transport) ->
-    TheirCaps =
-        case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
-            {ok, Data} ->
-                binary_to_term(Data);
-            {Error, Socket} ->
-                throw(Error);
-            {Error, Socket, Reason} ->
-                throw({Error, Reason})
-        end,
-    Transport:send(Socket, term_to_binary(Caps)),
-    TheirCaps.
 
 %% Start a connection to the remote sink node at IP, using the given fullsync strategy,
 %% for the given partition. The protocol version will be determined from the strategy.

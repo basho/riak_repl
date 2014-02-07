@@ -70,7 +70,9 @@
          from_wire/2,
          maybe_downconvert_binary_objs/2,
          peer_wire_format/1,
-         get_bucket_props_hash/1
+         get_bucket_props_hash/1,
+         get_local_strategy/0,
+         decide_common_strategy/3
         ]).
 
 %% Defines for Wire format encode/decode
@@ -946,6 +948,39 @@ get_bucket_props_hash(Props) ->
    %% Returning a hash of the properties to avoid sending the whole term over the wire.
    %% A hash will be taken on the sink side of the sink's bucket type, and compared
    erlang:phash2(PB).
+
+get_local_strategy() ->
+    case {riak_kv_entropy_manager:enabled(),
+          app_helper:get_env(riak_repl, fullsync_strategy, ?DEFAULT_FULLSYNC_STRATEGY)} of
+        {_,keylist} -> keylist;
+        {false,aae} -> keylist;
+        {true,aae} -> aae;
+        {_,InvalidStrategy} ->
+            lager:warning("Unsupported riak_repl fullsync_strategy: ~p. Defaulting to: ~p",
+                [UnSupportedStrategy, ?DEFAULT_FULLSYNC_STRATEGY])
+    end.
+
+decide_common_strategy(1, _Socket, _Transport) -> 
+    %% For backwards compatibility
+    keylist;
+decide_common_strategy(_, Socket, Transport) ->
+    OurStrategy = get_local_strategy(),
+    TheirStrategy =
+        case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+            {ok, Data} ->
+                binary_to_term(Data);
+            {Error, Socket} ->
+                throw(Error);
+            {Error, Socket, Reason} ->
+                throw({Error, Reason})
+        end,
+    lager:debug("Got remote strategy: ~p", [TheirStrategy]),
+    %% TODO: Do we need the send step?
+    Transport:send(Socket, term_to_binary(Caps)),
+    case {OurStrategy,TheirStrategy} of
+        {aae,aae} -> aae;
+        {_,_}     -> keylist
+    end.
 
 %% @private
 %% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
