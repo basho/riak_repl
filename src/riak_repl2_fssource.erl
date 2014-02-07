@@ -71,7 +71,7 @@ init([Partition, IP]) ->
     end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
-            _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
+            _From, State=#state{ip=IP, partition=Partition}) ->
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
