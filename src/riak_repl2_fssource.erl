@@ -73,7 +73,7 @@ init([Partition, IP]) ->
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition}) ->
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
+    lager:debug("fullsync connection to ~p for ~p",[IP, Partition]),
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
@@ -84,13 +84,16 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     {_,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
     Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
-    lager:info("Common strategy: ~p", [Strategy]),
+    lager:debug("Common strategy: ~p with cluster: ~p", [Strategy, Cluster]),
 
+    {ok, Client} = riak:local_client(),
+
+    %% TODO: This should be more generic. We should eliminate the strategy
+    %% specific socket logic and make the start_fullsync functions the same.
     case Strategy of
         keylist ->
             %% Keylist server strategy
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
-            {ok, Client} = riak:local_client(),
             %% We maintain ownership of the socket. We will consume TCP messages in handle_info/2
             Transport:setopts(Socket, [{active, once}]),
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
@@ -101,7 +104,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                     strategy=keylist}};
         aae ->
             %% AAE strategy
-            {ok, Client} = riak:local_client(),
             {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Client,
                                                                    Transport, Socket,
                                                                    Partition,
@@ -116,25 +118,17 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     end;
             
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW,
-                                                strategy=Strategy}) ->
-    case Strategy of
-        keylist ->
-            riak_repl_keylist_server:start_fullsync(FSW);
-        aae ->
-            ok
-    end,
+                                                strategy=keylist}) ->
+    riak_repl_keylist_server:start_fullsync(FSW),
     {reply, ok, State};
 handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
                                                strategy=Strategy}) ->
-    case Strategy of
-        keylist ->
-            riak_repl_keylist_server:cancel_fullsync(FSW);
-        aae ->
-            riak_repl_aae_source:cancel_fullsync(FSW)
-    end,
+    Mod = riak_repl_util:strategy_module(Strategy, ?MODULE),
+    Mod:cancel_fullsync(FSW),
     {reply, ok, State};
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
-                                               socket=Socket}) ->
+                                               socket=Socket,
+                                               strategy=Strategy}) ->
     Res = case is_pid(FSW) andalso is_process_alive(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
@@ -145,7 +139,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         [
             {node, node()},
             {site, State#state.cluster},
-            {strategy, fullsync},
+            {strategy, Strategy},
             {fullsync_worker, riak_repl_util:safe_pid_to_list(FSW)},
             {socket, SocketStats}
         ],
@@ -165,8 +159,7 @@ handle_cast(not_responsible, State=#state{partition=Partition}) ->
     lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
     lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
     lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
-    Strategy = keylist,
-    case connect(State#state.ip, Strategy, Partition) of
+    case connect(State#state.ip, keylist, Partition) of
         {ok, State2} ->
             {noreply, State2};
         {error, Reason} ->
@@ -208,7 +201,7 @@ handle_info({Proto, Socket, Data},
             {noreply, State}
     end;
 handle_info(Msg, State) ->
-    lager:info("ignored handle_info ~p", [Msg]),
+    lager:warning("Unexpected handle_info call ~p. Ignoring.", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
@@ -234,7 +227,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% Start a connection to the remote sink node at IP, using the given fullsync strategy,
 %% for the given partition. The protocol version will be determined from the strategy.
 connect(IP, Strategy, Partition) ->
-    lager:info("connecting to remote ~p", [IP]),
+    lager:debug("connecting to remote ~p", [IP]),
     TcpOptions = [{keepalive, true},
                   {nodelay, true},
                   {packet, 4},
@@ -250,7 +243,7 @@ connect(IP, Strategy, Partition) ->
     ClientSpec = {{fullsync,[ProtocolVersion]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
-            lager:info("connection ref ~p", [Ref]),
+            lager:debug("connection ref ~p", [Ref]),
             {ok, #state{strategy = Strategy, ip = IP,
                         connection_ref = Ref, partition=Partition}};
         {error, Reason}->

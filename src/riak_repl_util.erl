@@ -573,12 +573,15 @@ choose_strategy(ServerStrats, ClientStrats) ->
             element(1, hd(lists:keysort(2, TotalPref)))
     end.
 
-strategy_module(Strategy, server) ->
-    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
-                "_server"]));
-strategy_module(Strategy, client) ->
-    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
-                "_client"])).
+strategy_module(keylist, Module) ->
+    case module_tail(Module) of
+        source ->
+            riak_repl_keylist_server;
+        sink ->
+            riak_repl_keylist_client
+    end;
+strategy_module(Strategy, Module) -> 
+    list_to_atom(lists:flatten(["riak_repl_",atom_to_list(Strategy),module_tail(Module)])).
 
 %% set some common socket options, based on appenv
 configure_socket(Transport, Socket) ->
@@ -1004,6 +1007,9 @@ maybe_get_vnode_lock(SrcPartition) ->
         false ->
             ok
     end.
+
+module_tail(Module) ->
+    lists:last(lists:tokens(atom_to_list(Module),"_")).
 
 %% Some eunit tests
 -ifdef(TEST).

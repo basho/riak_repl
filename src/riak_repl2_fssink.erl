@@ -90,7 +90,7 @@ init([Socket, Transport, OKProto, Props]) ->
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Transport, Socket),
-    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
+    lager:debug("Negotiated ~p with ver ~p", [Proto, Ver]),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
                                        SocketTag}, Transport),
@@ -116,7 +116,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         [
             {node, node()},
             {site, State#state.cluster},
-            {strategy, fullsync},
+            {strategy, Strategy},
             {fullsync_worker, riak_repl_util:safe_pid_to_list(State#state.fullsync_worker)},
             {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}
         ],
@@ -127,6 +127,7 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast(fullsync_complete, State) ->
     %% sent from AAE fullsync worker
+    %% TODO: This should also give the partitionID
     lager:info("Fullsync of partition complete."),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -160,7 +161,7 @@ handle_info(init_ack, State=#state{socket=Socket,
 
     %% possibly exchange fullsync capabilities with the remote
     Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
-    lager:info("Common strategy: ~p", [Strategy]),
+    lager:debug("Common strategy: ~p", [Strategy]),
 
     case Strategy of
         keylist ->
