@@ -41,7 +41,7 @@ init_sync(AAEWorker) ->
 %%%===================================================================
 
 init([ClusterName, Transport, Socket, OwnerPid]) ->
-    lager:info("Starting AAE fullsync sink worker"),
+    lager:debug("Starting AAE fullsync sink worker"),
     {ok, #state{clustername=ClusterName, socket=Socket, transport=Transport, owner=OwnerPid}}.
 
 handle_call(init_sync, _From, State=#state{transport=Transport, socket=Socket}) ->
@@ -86,20 +86,29 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
 handle_info({'DOWN', _, _, _, _}, State) ->
     {stop, tree_down, State};
 
-handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("AAE sink connection to ~p closed", [State#state.clustername]),
+handle_info({tcp_closed, Socket}, State=#state{socket=Socket,
+                                               clustername=Clustername,
+                                               partition=Partition}) ->
+    lager:info("AAE sink connection to ~p closed for partition ~p", 
+                [Clustername, Partition]),
     {stop, {tcp_closed, Socket}, State};
-handle_info({tcp_error, Socket, Reason}, State) ->
-    lager:error("AAE sink connection to ~p closed unexpectedly: ~p",
-                [State#state.clustername, Reason]),
+handle_info({tcp_error, Socket, Reason}, State=#state{clustername=Clustername,
+                                                      partition=Partition}) ->
+    lager:error("AAE sink connection to ~p for partition ~p closed unexpectedly: ~p",
+                [Clustername, Partition, Reason]),
     {stop, {tcp_error, Socket, Reason}, State};
-handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("AAE sink ssl connection to ~p closed", [State#state.clustername]),
+handle_info({ssl_closed, Socket}, State=#state{socket=Socket,
+                                               clustername=Clustername,
+                                               partition=Partition}) ->
+    lager:info("AAE sink ssl connection to ~p closed", 
+                [Clustername, Partition]),
     {stop, {ssl_closed, Socket}, State};
-handle_info({ssl_error, Socket, Reason}, State) ->
-    lager:error("AAE sink ssl connection to ~p closed unexpectedly with: ~p",
-                [State#state.clustername, Reason]),
+handle_info({ssl_error, Socket, Reason}, State=#state{clustername=Clustername,
+                                                      partition=Partition}) ->
+    lager:error("AAE sink ssl connection to ~p for partition ~p closed unexpectedly: ~p",
+                [Clustername, Partition, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
+%% Why do we need this handle_info??
 handle_info({Error, Socket, Reason},
             State=#state{socket=MySocket}) when Socket == MySocket ->
     lager:info("AAE sink connection to ~p closed unexpectedly: ~p",
@@ -109,7 +118,6 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
-    lager:info("Terminating."),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -120,8 +128,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 %% replies: ok
-process_msg(?MSG_INIT, Partition, State) ->
-    lager:info("MSG_INIT for partition ~p", [Partition]),
+process_msg(?MSG_INIT, Partition, State=#state{clustername=Clustername}) ->
+    lager:info("Received start signal from ~p for partition ~p", [Clustername, Partition]),
     case riak_kv_vnode:hashtree_pid(Partition) of
         {ok, TreePid} ->
             %% monitor the tree and crash if the tree goes away
@@ -160,8 +168,11 @@ process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     send_reply(ResponseMsg, State);
 
 %% no reply
-process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
-    lager:info("got complete"),
+process_msg(?MSG_COMPLETE, State=#state{owner=Owner,
+                                        clustername=Clustername,
+                                        partition=Partition}) ->
+    lager:info("Received fullsync complete message from ~p for partition ~p",
+                [Clustername, Partition]),
     riak_repl2_fssink:fullsync_complete(Owner),
     {stop, normal, State}.
 
