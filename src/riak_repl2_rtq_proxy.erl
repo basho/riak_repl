@@ -33,7 +33,7 @@ start() ->
     %% shutdown if we need to do process any outstanding work
     LogSup = {?MODULE, {?MODULE, start_link, []}, permanent,
               5000, worker, [?MODULE]},
-    _ = supervisor:start_child(kernel_safe_sup, LogSup),
+    {ok, _Pid} = supervisor:start_child(kernel_safe_sup, LogSup),
     ok.
 
 start_link() ->
