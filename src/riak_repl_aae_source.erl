@@ -206,12 +206,12 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
             lager:debug("AAE source tree not built for partition ~p",
                       [Partition]),
             send_complete(State),
-            {stop, not_built, State};
+            {stop, {remote, already_locked}, State};
         already_locked ->
             lager:debug("AAE source tree already locked for partition ~p",
                       [Partition]),
             send_complete(State),
-            {stop, already_locked, State};
+            {stop, {remote, already_locked}, State};
         Error ->
             lager:error("Remote lock on AAE tree for partition ~p failed, got ~p",
                           [Partition, Error]),

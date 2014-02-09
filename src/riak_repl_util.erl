@@ -952,6 +952,7 @@ get_bucket_props_hash(Props) ->
    %% A hash will be taken on the sink side of the sink's bucket type, and compared
    erlang:phash2(PB).
 
+%% @doc Get the fullsync strategy for the local cluster.
 get_local_strategy() ->
     case {riak_kv_entropy_manager:enabled(),
           app_helper:get_env(riak_repl, fullsync_strategy, ?DEFAULT_FULLSYNC_STRATEGY)} of
@@ -963,6 +964,7 @@ get_local_strategy() ->
                 [InvalidStrategy, ?DEFAULT_FULLSYNC_STRATEGY])
     end.
 
+%% @doc Get fullsync strategy from remote cluster and return a common strategy.
 decide_common_strategy(1, _Socket, _Transport) -> 
     %% For backwards compatibility
     keylist;
@@ -1006,7 +1008,8 @@ maybe_get_vnode_lock(SrcPartition) ->
         false ->
             ok
     end.
-
+%% @private
+%% @doc Returns the tail of a module name as a string(i.e. riak_repl_util -> "util").
 module_tail(Module) ->
     lists:last(lists:tokens(atom_to_list(Module),"_")).
 
