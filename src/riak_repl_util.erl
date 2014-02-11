@@ -228,16 +228,41 @@ maybe_send(_B, Object, C, _Proto) ->
 
 repl_helper_send(Object, C) ->
     B = riak_object:bucket(Object),
-    case proplists:get_value(repl, C:get_bucket(B)) of
-        Val when Val==true; Val==fullsync; Val==both; Val==undefined ->
+    case fullsync_enabled_for_bucket(B, C) of
+        true ->
             case application:get_env(riak_core, repl_helper) of
                 undefined -> [];
                 {ok, Mods} ->
                     repl_helper_send(Mods, Object, C, [])
             end;
-        _ ->
+        false ->
             lager:debug("Repl disabled for bucket ~p", [B]),
             cancel
+    end.
+
+fullsync_enabled_for_bucket(Bucket, _C) ->
+    case riak_core_bucket:get_bucket(Bucket) of
+        {error, _Reason} ->
+            %% Bucket type does not exist so do not enable fullsync
+            false;
+        Props ->
+            not is_consistent_bucket(Props) andalso is_fullsync_enabled(Props)
+    end.
+
+is_consistent_bucket(Props) ->
+    case lists:keyfind(consistent, 1, Props) of
+        {consistent, true} ->
+            true;
+        _ ->
+            false
+    end.
+
+is_fullsync_enabled(Props) ->
+    case lists:keyfind(repl, 1, Props) of
+        {repl, Val} when Val==true; Val==fullsync; Val==both; Val==undefined ->
+            true;
+        _ ->
+            false
     end.
 
 repl_helper_send([], _O, _C, Acc) ->
@@ -264,9 +289,16 @@ repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
     end.
 
 repl_helper_send_realtime(Object, C) ->
+    IsConsistentBucket =
+        case riak_core_bucket:get_bucket(riak_object:bucket(Object)) of
+            {ok, Props} ->
+                is_consistent_bucket(Props);
+            {error, _Reason} ->
+                false
+        end,
     case application:get_env(riak_core, repl_helper) of
         undefined -> [];
-        {ok, Mods} ->
+        {ok, Mods} when IsConsistentBucket =:= false ->
             repl_helper_send_realtime(Mods, Object, C, [])
     end.
 
