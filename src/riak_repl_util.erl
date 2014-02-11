@@ -231,7 +231,8 @@ repl_helper_send(Object, C) ->
 fullsync_enabled_for_bucket(Bucket, _C) ->
     case riak_core_bucket:get_bucket(Bucket) of
         {error, _Reason} ->
-            ok;
+            %% Bucket type does not exist so do not enable fullsync
+            false;
         Props ->
             not is_consistent_bucket(Props) andalso is_fullsync_enabled(Props)
     end.
