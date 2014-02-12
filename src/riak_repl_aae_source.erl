@@ -102,12 +102,12 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 handle_info({'DOWN', TreeMref, process, Pid, Why}, _StateName, State=#state{tree_mref=TreeMref}) ->
     %% Local hashtree process went down. Stop exchange.
-    lager:info("Monitored pid ~p, AAE Hashtree process went down because: ~p", [Pid, Why]),
+    lager:warning("Monitored pid ~p, AAE Hashtree process went down because: ~p", [Pid, Why]),
     send_complete(State),
     {stop, {aae_hashtree_went_down, Why}, State};
 handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
     %% Something else exited. Stop exchange.
-    lager:info("Something went down ~p", [Error]),
+    lager:error("Something went down ~p", [Error]),
     send_complete(State),
     {stop, something_went_down, State};
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
@@ -124,12 +124,11 @@ handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
     lager:error("AAE source ssl connection to ~p closed unexpectedly with: ~p",
                 [State#state.cluster, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
-handle_info(_Info, StateName, State) ->
-    lager:info("ignored handle_info: ~p", [_Info]),
+handle_info(Info, StateName, State) ->
+    lager:warning("Ignored handle_info: ~p", [Info]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, _State) ->
-    lager:info("Terminating."),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -182,8 +181,16 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
             case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
                 ok ->
                     prepare_exchange(start_exchange, State#state{local_lock=true});
+                not_built ->
+                    lager:debug("AAE source tree not built for partition ~p",
+                               [Partition]),
+                    {stop, not_built, State};
+                already_locked ->
+                    lager:debug("AAE source tree already locked for partition ~p",
+                               [Partition]),
+                    {stop, already_locked, State};
                 Error ->
-                    lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                    lager:error("AAE source failed get_lock for partition ~p, got ~p",
                                [Partition, Error]),
                     {stop, Error, State}
             end;
@@ -195,8 +202,18 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
         ok ->
             update_trees(start_exchange, State);
+        not_built ->
+            lager:debug("AAE source tree not built for partition ~p",
+                      [Partition]),
+            send_complete(State),
+            {stop, {remote, already_locked}, State};
+        already_locked ->
+            lager:debug("AAE source tree already locked for partition ~p",
+                      [Partition]),
+            send_complete(State),
+            {stop, {remote, already_locked}, State};
         Error ->
-            lager:warning("lock tree for partition ~p failed, got ~p",
+            lager:error("Remote lock on AAE tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
             {stop, {remote, Error}, State}
@@ -213,7 +230,7 @@ update_trees(cancel_fullsync, State) ->
     {stop, normal, State};
 update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
     send_complete(State),
-    lager:info("AAE fullsync source completed partition ~p. Stopping.",
+    lager:info("AAE fullsync source completed partition ~p.",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
     {next_state, update_trees, State};

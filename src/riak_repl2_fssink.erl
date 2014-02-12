@@ -90,7 +90,7 @@ init([Socket, Transport, OKProto, Props]) ->
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Transport, Socket),
-    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
+    lager:debug("Negotiated ~p with ver ~p", [Proto, Ver]),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
                                        SocketTag}, Transport),
@@ -116,7 +116,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         [
             {node, node()},
             {site, State#state.cluster},
-            {strategy, fullsync},
+            {strategy, Strategy},
             {fullsync_worker, riak_repl_util:safe_pid_to_list(State#state.fullsync_worker)},
             {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}
         ],
@@ -127,6 +127,7 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast(fullsync_complete, State) ->
     %% sent from AAE fullsync worker
+    %% TODO: This should also give the partitionID
     lager:info("Fullsync of partition complete."),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -156,14 +157,11 @@ handle_info(init_ack, State=#state{socket=Socket,
                                    transport=Transport,
                                    proto=Proto,
                                    cluster=Cluster}) ->
-    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
+    {_,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
     %% possibly exchange fullsync capabilities with the remote
-    OurCaps = decide_our_caps(CommonMajor),
-    TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    lager:info("Got caps: ~p", [TheirCaps]),
-    Strategy = decide_common_strategy(OurCaps, TheirCaps),
-    lager:info("Common strategy: ~p", [Strategy]),
+    Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
+    lager:debug("Common strategy: ~p", [Strategy]),
 
     case Strategy of
         keylist ->
@@ -220,42 +218,5 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strate
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-%% decide what strategy to use, given our own capabilties and those
-%% of the remote source.
-decide_common_strategy(_OurCaps, []) -> keylist;
-decide_common_strategy(OurCaps, TheirCaps) ->
-    OurStrategy = proplists:get_value(strategy, OurCaps, keylist),
-    TheirStrategy = proplists:get_value(strategy, TheirCaps, keylist),
-    case {OurStrategy,TheirStrategy} of
-        {aae,aae} -> aae;
-        {_,_}     -> keylist
-    end.
-
-%% Based on the agreed common protocol level and the supported
-%% mode of AAE, decide what strategy we are capable of offering.
-decide_our_caps(CommonMajor) ->
-    SupportedStrategy =
-        case {riak_kv_entropy_manager:enabled(), CommonMajor} of
-            {_,1} -> keylist;
-            {false,_} -> keylist;
-            {true,_} -> aae
-        end,
-    [{strategy, SupportedStrategy}].
-
-%% Depending on the protocol version number, send our capabilities
-%% as a list of properties, in binary.
-maybe_exchange_caps(1, _Caps, _Socket, _Transport) ->
-    [];
-maybe_exchange_caps(_, Caps, Socket, Transport) ->
-    Transport:send(Socket, term_to_binary(Caps)),
-    case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
-        {ok, Data} ->
-            binary_to_term(Data);
-        {Error, Socket} ->
-            throw(Error);
-        {Error, Socket, Reason} ->
-            throw({Error, Reason})
-    end.
 
 

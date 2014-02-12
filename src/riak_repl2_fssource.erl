@@ -1,6 +1,5 @@
 -module(riak_repl2_fssource).
 -include("riak_repl.hrl").
--include_lib("riak_kv/include/riak_kv_vnode.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -55,20 +54,12 @@ legacy_status(Pid, Timeout) ->
 %% gen server
 
 init([Partition, IP]) ->
-    DefaultStrategy = ?DEFAULT_FULLSYNC_STRATEGY,
-
-    %% Determine what kind of fullsync worker strategy we want to start with,
-    %% which could change if we talk to the sink and it can't speak AAE. If
-    %% AAE is not enabled in KV, then we can't use aae strategy.
-    OurCaps = decide_our_caps(DefaultStrategy),
-    SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
-
     %% Possibly try to obtain the per-vnode lock before connecting.
     %% If we return error, we expect the coordinator to start us again later.
     case riak_repl_util:maybe_get_vnode_lock(Partition) of
         ok ->
             %% got the lock, or ignored it.
-            case connect(IP, SupportedStrategy, Partition) of
+            case connect(IP, riak_repl_util:get_local_strategy(), Partition) of
                 {error, Reason} ->
                     {stop, Reason};
                 Result ->
@@ -80,9 +71,9 @@ init([Partition, IP]) ->
     end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
-            _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
+            _From, State=#state{ip=IP, partition=Partition}) ->
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
+    lager:debug("fullsync connection to ~p for ~p",[IP, Partition]),
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
@@ -90,19 +81,19 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                        SocketTag}, Transport),
 
     %% Strategy still depends on what the sink is capable of.
-    {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
+    {_,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
-    OurCaps = decide_our_caps(DefaultStrategy),
-    TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    lager:info("Got caps: ~p", [TheirCaps]),
-    Strategy = decide_common_strategy(OurCaps, TheirCaps),
-    lager:info("Common strategy: ~p", [Strategy]),
+    Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
+    lager:debug("Common strategy: ~p with cluster: ~p", [Strategy, Cluster]),
 
+    {ok, Client} = riak:local_client(),
+
+    %% TODO: This should be more generic. We should eliminate the strategy
+    %% specific socket logic and make the start_fullsync functions the same.
     case Strategy of
         keylist ->
             %% Keylist server strategy
             {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, Cluster),
-            {ok, Client} = riak:local_client(),
             %% We maintain ownership of the socket. We will consume TCP messages in handle_info/2
             Transport:setopts(Socket, [{active, once}]),
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
@@ -113,7 +104,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                                     strategy=keylist}};
         aae ->
             %% AAE strategy
-            {ok, Client} = riak:local_client(),
             {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, Client,
                                                                    Transport, Socket,
                                                                    Partition,
@@ -128,25 +118,17 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     end;
             
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW,
-                                                strategy=Strategy}) ->
-    case Strategy of
-        keylist ->
-            riak_repl_keylist_server:start_fullsync(FSW);
-        aae ->
-            ok
-    end,
+                                                strategy=keylist}) ->
+    riak_repl_keylist_server:start_fullsync(FSW),
     {reply, ok, State};
 handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
                                                strategy=Strategy}) ->
-    case Strategy of
-        keylist ->
-            riak_repl_keylist_server:cancel_fullsync(FSW);
-        aae ->
-            riak_repl_aae_source:cancel_fullsync(FSW)
-    end,
+    Mod = riak_repl_util:strategy_module(Strategy, ?MODULE),
+    Mod:cancel_fullsync(FSW),
     {reply, ok, State};
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
-                                               socket=Socket}) ->
+                                               socket=Socket,
+                                               strategy=Strategy}) ->
     Res = case is_pid(FSW) andalso is_process_alive(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
@@ -157,7 +139,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         [
             {node, node()},
             {site, State#state.cluster},
-            {strategy, fullsync},
+            {strategy, Strategy},
             {fullsync_worker, riak_repl_util:safe_pid_to_list(FSW)},
             {socket, SocketStats}
         ],
@@ -177,8 +159,7 @@ handle_cast(not_responsible, State=#state{partition=Partition}) ->
     lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
     lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
     lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
-    Strategy = keylist,
-    case connect(State#state.ip, Strategy, Partition) of
+    case connect(State#state.ip, keylist, Partition) of
         {ok, State2} ->
             {noreply, State2};
         {error, Reason} ->
@@ -220,7 +201,7 @@ handle_info({Proto, Socket, Data},
             {noreply, State}
     end;
 handle_info(Msg, State) ->
-    lager:info("ignored handle_info ~p", [Msg]),
+    lager:warning("Unexpected handle_info call ~p. Ignoring.", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
@@ -243,54 +224,10 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-%% Based on the agreed common protocol level and the supported
-%% mode of AAE, decide what strategy we are capable of offering.
-decide_our_caps(DefaultStrategy) ->
-    SupportedStrategy =
-        case {riak_kv_entropy_manager:enabled(),
-              app_helper:get_env(riak_repl, fullsync_strategy, DefaultStrategy)} of
-            {false,_} -> keylist;
-            {true,aae} -> aae;
-            {true,keylist} -> keylist;
-            {true,UnSupportedStrategy} ->
-                lager:warning("App config for riak_repl/fullsync_strategy ~p is unsupported. Using ~p",
-                              [UnSupportedStrategy, DefaultStrategy]),
-                DefaultStrategy
-        end,
-    [{strategy, SupportedStrategy}].
-
-%% decide what strategy to use, given our own capabilties and those
-%% of the remote source.
-decide_common_strategy(_OurCaps, []) -> keylist;
-decide_common_strategy(OurCaps, TheirCaps) ->
-    OurStrategy = proplists:get_value(strategy, OurCaps, keylist),
-    TheirStrategy = proplists:get_value(strategy, TheirCaps, keylist),
-    case {OurStrategy,TheirStrategy} of
-        {aae,aae} -> aae;
-        {_,_}     -> keylist
-    end.
-
-%% Depending on the protocol version number, send our capabilities
-%% as a list of properties, in binary.
-maybe_exchange_caps(1, _Caps, _Socket, _Transport) ->
-    [];
-maybe_exchange_caps(_, Caps, Socket, Transport) ->
-    TheirCaps =
-        case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
-            {ok, Data} ->
-                binary_to_term(Data);
-            {Error, Socket} ->
-                throw(Error);
-            {Error, Socket, Reason} ->
-                throw({Error, Reason})
-        end,
-    Transport:send(Socket, term_to_binary(Caps)),
-    TheirCaps.
-
 %% Start a connection to the remote sink node at IP, using the given fullsync strategy,
 %% for the given partition. The protocol version will be determined from the strategy.
 connect(IP, Strategy, Partition) ->
-    lager:info("connecting to remote ~p", [IP]),
+    lager:debug("connecting to remote ~p", [IP]),
     TcpOptions = [{keepalive, true},
                   {nodelay, true},
                   {packet, 4},
@@ -306,7 +243,7 @@ connect(IP, Strategy, Partition) ->
     ClientSpec = {{fullsync,[ProtocolVersion]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
-            lager:info("connection ref ~p", [Ref]),
+            lager:debug("connection ref ~p", [Ref]),
             {ok, #state{strategy = Strategy, ip = IP,
                         connection_ref = Ref, partition=Partition}};
         {error, Reason}->

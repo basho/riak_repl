@@ -70,7 +70,9 @@
          from_wire/2,
          maybe_downconvert_binary_objs/2,
          peer_wire_format/1,
-         get_bucket_props_hash/1
+         get_bucket_props_hash/1,
+         get_local_strategy/0,
+         decide_common_strategy/3
         ]).
 
 %% Defines for Wire format encode/decode
@@ -571,12 +573,15 @@ choose_strategy(ServerStrats, ClientStrats) ->
             element(1, hd(lists:keysort(2, TotalPref)))
     end.
 
-strategy_module(Strategy, server) ->
-    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
-                "_server"]));
-strategy_module(Strategy, client) ->
-    list_to_atom(lists:flatten(["riak_repl_", atom_to_list(Strategy),
-                "_client"])).
+strategy_module(keylist, Module) ->
+    case module_tail(Module) of
+        source ->
+            riak_repl_keylist_server;
+        sink ->
+            riak_repl_keylist_client
+    end;
+strategy_module(Strategy, Module) -> 
+    list_to_atom(lists:flatten(["riak_repl_",atom_to_list(Strategy),module_tail(Module)])).
 
 %% set some common socket options, based on appenv
 configure_socket(Transport, Socket) ->
@@ -947,6 +952,39 @@ get_bucket_props_hash(Props) ->
    %% A hash will be taken on the sink side of the sink's bucket type, and compared
    erlang:phash2(PB).
 
+%% @doc Get the fullsync strategy for the local cluster.
+get_local_strategy() ->
+    case {riak_kv_entropy_manager:enabled(),
+          app_helper:get_env(riak_repl, fullsync_strategy, ?DEFAULT_FULLSYNC_STRATEGY)} of
+        {_,keylist} -> keylist;
+        {false,aae} -> keylist;
+        {true,aae} -> aae;
+        {_,InvalidStrategy} ->
+            lager:warning("Unsupported riak_repl fullsync_strategy: ~p. Defaulting to: ~p",
+                [InvalidStrategy, ?DEFAULT_FULLSYNC_STRATEGY])
+    end.
+
+%% @doc Get fullsync strategy from remote cluster and return a common strategy.
+decide_common_strategy(1, _Socket, _Transport) -> 
+    %% For backwards compatibility
+    keylist;
+decide_common_strategy(_, Socket, Transport) ->
+    OurStrategy = get_local_strategy(),
+    Transport:send(Socket, term_to_binary(OurStrategy)),
+    TheirStrategy =
+        case Transport:recv(Socket, 0, ?PEERINFO_TIMEOUT) of
+            {ok, Data} ->
+                binary_to_term(Data);
+            {Error, Socket} ->
+                throw(Error);
+            {Error, Socket, Reason} ->
+                throw({Error, Reason})
+        end,
+    case {OurStrategy,TheirStrategy} of
+        {aae,aae} -> aae;
+        {_,_}     -> keylist
+    end.
+
 %% @private
 %% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
 %%      Sets our task meta-data in the lock as 'repl_fullsync', which is useful for
@@ -970,6 +1008,10 @@ maybe_get_vnode_lock(SrcPartition) ->
         false ->
             ok
     end.
+%% @private
+%% @doc Returns the tail of a module name as a string(i.e. riak_repl_util -> "util").
+module_tail(Module) ->
+    lists:last(lists:tokens(atom_to_list(Module),"_")).
 
 %% Some eunit tests
 -ifdef(TEST).

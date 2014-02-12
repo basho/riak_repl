@@ -279,7 +279,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     ServerStrats = app_helper:get_env(riak_repl, fullsync_strategies,
                         [?LEGACY_STRATEGY]),
                     Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
-                    StratMod = riak_repl_util:strategy_module(Strategy, server),
+                    StratMod = riak_repl_util:strategy_module(Strategy, ?MODULE),
                     lager:info("Using fullsync strategy ~p.", [StratMod]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
