@@ -187,27 +187,14 @@ handle_call(status, _From, State =
     Status = [{source, R}, {pid, FormattedPid}] ++ Props ++ HelperProps,
     {reply, Status, State};
 handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
-    RTQStatus = riak_repl2_rtq:status(),
-    QBS = proplists:get_value(bytes, RTQStatus),
-    Consumers = proplists:get_value(consumers, RTQStatus),
-    QStats = case proplists:get_value(Remote, Consumers) of
-                 undefined ->
-                     [];
-                 Consumer ->
-                     QL = proplists:get_value(pending, Consumer, 0) +
-                         proplists:get_value(unacked, Consumer, 0),
-                     DC = proplists:get_value(drops, Consumer),
-                     [{dropped_count, DC},
-                      {queue_length, QL},     % pending + unacknowledged for this conn
-                      {queue_byte_size, QBS}] % approximation, this it total q size
-             end,
     SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
+    Socket = riak_core_tcp_mon:format_socket_stats(SocketStats, []),
+    RTQStats = [{realtime_queue_stats, riak_repl2_rtq:status()}],
     Status =
         [{node, node()},
          {site, Remote},
          {strategy, realtime},
-         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}],
-        QStats,
+         {socket, Socket}] ++ RTQStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
@@ -498,6 +485,16 @@ connect(RemoteName) ->
     stateful:set(remote, RemoteName),
 
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
+
+    {status, Status} = riak_repl2_rtsource_conn:legacy_status(SourcePid),
+    RTQStats = proplists:get_value(realtime_queue_stats, Status),
+
+    ?assertEqual([{percent_bytes_used, 0.0},
+                  {bytes,0},
+                  {max_bytes,104857600},
+                  {consumers,[]},
+                  {overload_drops,0}], RTQStats),
+
     receive
         {sink_started, SinkPid} ->
             {SourcePid, SinkPid}
