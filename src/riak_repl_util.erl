@@ -59,7 +59,8 @@
          make_pg_name/1,
          mode_12_enabled/1,
          mode_13_enabled/1,
-         maybe_get_vnode_lock/1
+         maybe_get_vnode_lock/1,
+         maybe_send/3
      ]).
 
 -export([wire_version/1,
@@ -69,15 +70,13 @@
          from_wire/1,
          from_wire/2,
          maybe_downconvert_binary_objs/2,
-         peer_wire_format/1,
-         get_bucket_props_hash/1
+         peer_wire_format/1
         ]).
 
 %% Defines for Wire format encode/decode
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
 -define(W2_VER, 2). %% first non-just-term-to-binary wire format
--define(BUCKET_TYPES_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
 -define(BAD_SOCKET_NUM, -1).
 
 make_peer_info() ->
@@ -114,7 +113,26 @@ get_partitions(Ring) ->
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
 do_repl_put(Object) ->
-    B = riak_object:bucket(Object),
+    Bucket = riak_object:bucket(Object),
+    Type = riak_object:type(Object),
+    case riak_core_bucket:get_bucket(Bucket) of
+        {error, no_type} ->
+            lager:warning("Type ~p not defined on sink, not doing put", [Type]),
+            ok;
+        _Props ->
+            RemoteTypeHashes = riak_object:bucket_type_hashes(Object),
+            BucketPropsMatch =
+                riak_repl_bucket_type_util:bucket_props_match(Type,
+                                                              RemoteTypeHashes),
+            do_repl_put(Object, Bucket, BucketPropsMatch)
+    end.
+
+do_repl_put(_Object, _B, false) ->
+    %% Remote and local bucket properties differ so ignore this object
+    lager:warning("Remote and local bucket properties differ for type ~p",
+                  [riak_object:type(_Object)]),
+    ok;
+do_repl_put(Object, B, true) ->
     K = riak_object:key(Object),
     case repl_helper_recv(Object) of
         ok ->
@@ -197,10 +215,21 @@ repl_helper_recv([{App, Mod}|T], Object) ->
             repl_helper_recv(T, Object)
     end.
 
+maybe_send(Object, C, Proto) ->
+    maybe_send(riak_object:bucket(Object), Object, C, Proto).
+
+maybe_send({_T, _B}, Object, C, {Major, _Minor}) when Major >=3 ->
+    repl_helper_send(Object, C);
+maybe_send({_T, _B}, _Object, _C, Proto) ->
+    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending", [Proto]),
+    cancel;
+maybe_send(_B, Object, C, _Proto) ->
+    repl_helper_send(Object, C).
+
 repl_helper_send(Object, C) ->
     B = riak_object:bucket(Object),
     case proplists:get_value(repl, C:get_bucket(B)) of
-        Val when Val==true; Val==fullsync; Val==both ->
+        Val when Val==true; Val==fullsync; Val==both; Val==undefined ->
             case application:get_env(riak_core, repl_helper) of
                 undefined -> [];
                 {ok, Mods} ->
@@ -274,14 +303,20 @@ ensure_site_dir(Site) ->
     ok = filelib:ensure_dir(
            filename:join([riak_repl_util:site_root_dir(Site), ".empty"])).
 
+binpack_bkey({{Type, B}, K}) ->
+    ST = size(Type),
+    SB = size(B),
+    SK = size(K),
+    <<ST:32/integer, Type/binary, SB:32/integer, B/binary, SK:32/integer, K/binary>>;
 binpack_bkey({B, K}) ->
     SB = size(B),
     SK = size(K),
     <<SB:32/integer, B/binary, SK:32/integer, K/binary>>.
 
+binunpack_bkey(<<ST:32/integer, Type:ST/binary, SB:32/integer, B:SB/binary, SK:32/integer, K:SK/binary>>) ->
+    {{Type, B}, K};
 binunpack_bkey(<<SB:32/integer,B:SB/binary,SK:32/integer,K:SK/binary>>) ->
     {B,K}.
-
 
 merkle_filename(WorkDir, Partition, Type) ->
     Ext = case Type of
@@ -940,12 +975,6 @@ peer_wire_format(Peer) ->
             %% failed RPC call? Assume lowest format
             w0
     end.
-
-get_bucket_props_hash(Props) ->
-   PB = [{Prop, proplists:get_value(Prop, Props)} || Prop <- ?BUCKET_TYPES_PROPS],
-   %% Returning a hash of the properties to avoid sending the whole term over the wire.
-   %% A hash will be taken on the sink side of the sink's bucket type, and compared
-   erlang:phash2(PB).
 
 %% @private
 %% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
