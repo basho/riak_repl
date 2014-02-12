@@ -122,23 +122,19 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                             {raw, FoldRef, self()},
                             riak_kv_vnode_master) of
                         {ok, VNodePid} ->
-                            lager:info("vnode pid is ~p", [VNodePid]),
                             MonRef = erlang:monitor(process, VNodePid),
                             receive
-                                {FoldRef, {Self, _} = Reply} ->
-                                    lager:info("vnode fold reply ~p",
-                                               [Reply]),
+                                {FoldRef, {Self, _}} ->
                                     %% total is 0, sorry
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, 0});
-                                {FoldRef, {Self, _, Total} = Reply} ->
-                                    lager:info("vnode fold reply ~p",
-                                               [Reply]),
+                                {FoldRef, {Self, _, Total}} ->
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, Total});
-                                {'DOWN', MonRef, process, VNodePid, Reason} ->
-                                    lager:info("vnode fold exited with ~p",
-                                               [Reason]),
+                                {'DOWN', MonRef, process, VNodePid, Reason}
+                                        when Reason /= normal ->
+                                    lager:warning("Keylist fold of ~p exited with ~p",
+                                               [Partition, Reason]),
                                     exit(Reason)
                             end
                     catch exit:{{nodedown, Node}, _GenServerCall} ->
