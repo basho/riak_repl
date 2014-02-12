@@ -21,13 +21,12 @@
          terminate/2, code_change/3]).
 
 %% HOFs
--export([merkle_fold/3, keylist_fold/3]).
+-export([keylist_fold/3]).
 
 -include("riak_repl.hrl").
 
 -record(state, {owner_fsm,
                 ref,
-                merkle_pid,
                 folder_pid,
                 kl_fp,
                 kl_total,
@@ -216,15 +215,6 @@ handle_cast(kl_sort, State) ->
         State#state.kl_total}),
     {stop, normal, State}.
 
-handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.merkle_pid ->
-    case Reason of 
-        normal ->
-            {noreply, State};
-        _ ->
-            gen_fsm:send_event(State#state.owner_fsm, 
-                               {State#state.ref, {error, {merkle_died, Reason}}}),
-            {stop, normal, State}
-    end;
 handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid ->
     case Reason of
         normal ->
@@ -236,16 +226,7 @@ handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid -
     end;
 handle_info({'EXIT', _Pid,  _Reason}, State) ->
     %% The calling repl_tcp_server/client has gone away, so should we
-    {stop, normal, State};
-handle_info({'DOWN', _Mref, process, Pid, Exit}, State=#state{merkle_pid = Pid}) ->
-    case Exit of
-        normal ->
-            Msg = {State#state.ref, merkle_built};
-        _ ->
-            Msg = {State#state.ref, {error, {merkle_failed, Exit}}}
-    end,
-    gen_fsm:send_event(State#state.owner_fsm, Msg),        
-    {stop, normal, State#state{buf = [], size = 0}}.
+    {stop, normal, State}.
 
 terminate(_Reason, State) ->
     %% close file handles, in case they're open
@@ -370,7 +351,7 @@ missing_key(PBKey, DiffState) ->
 
 %% @private
 %%
-%% @doc Visting function for building merkle tree.  This function was
+%% @doc Visting function for building keylist.  This function was
 %% purposefully created because if you use a lambda then things will
 %% go wrong when the MD5 of this module changes. I.e. if the lambda is
 %% shipped to another node with a different version of
@@ -379,17 +360,6 @@ missing_key(PBKey, DiffState) ->
 %% modules are not the same.
 %%
 %% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
-merkle_fold({B,Key}=K, V, Pid) ->
-    try
-        riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)})
-    catch _:_ -> 
-            ok
-    end,
-    Pid.
-
-%% @private
-%%
-%% @doc Visting function for building keylists. Similar to merkle_fold.
 keylist_fold({B,Key}=K, V, {MPid, Count, Total}) ->
     try
         H = hash_object(B,Key,V),
