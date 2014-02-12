@@ -54,8 +54,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--define(DEFAULT_HBINTERVAL, timer:seconds(15)).
--define(DEFAULT_HBTIMEOUT, timer:seconds(15)).
+-define(DEFAULT_HBINTERVAL, 15).
+-define(DEFAULT_HBTIMEOUT, 15).
 
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
@@ -66,9 +66,9 @@
                 proto,     % protocol version negotiated
                 ver,       % wire format negotiated
                 helper_pid,% riak_repl2_rtsource_helper pid
-                hb_interval,% milliseconds to send new heartbeat after last
+                hb_interval,% seconds to send new heartbeat after last
                 hb_interval_tref,
-                hb_timeout,% milliseconds to wait for heartbeat after send
+                hb_timeout,% seconds to wait for heartbeat after send
                 hb_timeout_tref,% heartbeat timeout timer reference
                 hb_sent_q,   % queue of heartbeats now() that were sent
                 hb_rtt,    % RTT in milliseconds for last completed heartbeat
@@ -305,7 +305,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
             {noreply, State};
         _ ->
             lager:warning("Realtime connection ~s to ~p heartbeat timeout "
-                          "after ~p milliseconds\n",
+                          "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
             lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
             {stop, normal, State}
@@ -392,7 +392,7 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
     Now = now(), % using now as need a unique reference for this heartbeat
                  % to spot late heartbeat timeout messages
     riak_repl2_rtsource_helper:send_heartbeat(HelperPid),
-    TRef = erlang:send_after(HBTimeout, self(), {heartbeat_timeout, Now}),
+    TRef = erlang:send_after(timer:seconds(HBTimeout), self(), {heartbeat_timeout, Now}),
     State2 = State#state{hb_interval_tref = undefined, hb_timeout_tref = TRef,
                          hb_sent_q = queue:in(Now, SentQ)},
     lager:debug("hb_sent_q_len after sending heartbeat: ~p", [queue:len(SentQ)+1]),
@@ -400,7 +400,7 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
 
 %% Schedule the next heartbeat
 schedule_heartbeat(State = #state{hb_interval_tref = undefined, hb_interval = HBInterval}) ->
-    TRef = erlang:send_after(HBInterval, self(), send_heartbeat),
+    TRef = erlang:send_after(timer:seconds(HBInterval), self(), send_heartbeat),
     State#state{hb_interval_tref = TRef};
 
 schedule_heartbeat(State) ->
