@@ -21,4 +21,3 @@ init([]) ->
     ChildSpec = {undefined, {riak_repl2_rtsink_conn, start_link, []},
                  temporary, 5000, worker, [riak_repl2_rtsink_conn]},
     {ok, {{simple_one_for_one, 10, 10}, [ChildSpec]}}.
-

@@ -108,9 +108,9 @@ handle_call(stop, _From, State) ->
             unlink(Pid),
             exit(Pid, kill)
     end,
-    file:close(State#state.kl_fp),
+    ok = file:close(State#state.kl_fp),
     couch_merkle:close(State#state.merkle_pid),
-    file:delete(State#state.filename),
+    ok = file:delete(State#state.filename),
     {stop, normal, ok, State};
 handle_call({make_merkle, Partition, FileName}, From, State) ->
     %% Return to caller immediately - under heavy load exceeded the 5s
@@ -196,7 +196,7 @@ handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
                                            {ok, ok}
                                    end, ok),
     couch_file:close(InFileFd),
-    file:close(OutFile),
+    ok = file:close(OutFile),
 
     %% Verify the file is really sorted
     case file_sorter:check(KeyListFn) of
@@ -251,12 +251,12 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
                     gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
             end
         after
-            file:close(RemoteFile),
-            file:close(LocalFile)
+            ok = file:close(RemoteFile),
+            ok = file:close(LocalFile)
         end
     after
-        file:delete(RemoteFilename),
-        file:delete(LocalFilename)
+        ok = file:delete(RemoteFilename),
+        ok = file:delete(LocalFilename)
     end,
 
     {stop, normal, State}.
@@ -292,11 +292,11 @@ handle_cast({kl_finish, Count}, State) ->
     %% call close again. See http://www.erlang.org/doc/man/file.html#open-2
     case file:sync(State#state.kl_fp) of
         ok -> ok;
-        _ -> file:sync(State#state.kl_fp)
+        _ -> file:sync(State#state.kl_fp), ok
     end,
     case file:close(State#state.kl_fp) of
         ok -> ok;
-        _ -> file:close(State#state.kl_fp)
+        _ -> file:close(State#state.kl_fp), ok
     end,
     riak_core_gen_server:cast(self(), kl_sort),
     {noreply, State#state{kl_total=Count}};
@@ -383,7 +383,7 @@ itr_new(File, Tag) ->
         {ok, <<Size:32/unsigned>>} ->
             itr_next(Size, File, Tag);
         _ ->
-            file:close(File),
+            ok = file:close(File),
             eof
     end.
 
@@ -391,13 +391,13 @@ itr_next(Size, File, Tag) ->
     case file:read(File, Size + 4) of
         {ok, <<Data:Size/bytes>>} ->
             erlang:put(Tag, erlang:get(Tag) + 1),
-            file:close(File),
+            ok = file:close(File),
             {binary_to_term(Data), fun() -> eof end};
         {ok, <<Data:Size/bytes, NextSize:32/unsigned>>} ->
             erlang:put(Tag, erlang:get(Tag) + 1),
             {binary_to_term(Data), fun() -> itr_next(NextSize, File, Tag) end};
         eof ->
-            file:close(File),
+            ok = file:close(File),
             eof
     end.
 

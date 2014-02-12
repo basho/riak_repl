@@ -172,23 +172,19 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     lager:debug("AAE fullsync source partition ~p has Indexes ~p",
                 [Partition, IndexNs]),
 
-    case riak_kv_vnode:hashtree_pid(Partition) of
-        {ok, TreePid} ->
-            TreeMref = monitor(process, TreePid),
-            State = State0#state{timeout=Timeout,
-                                 indexns=IndexNs,
-                                 tree_pid=TreePid,
-                                 tree_mref=TreeMref},
-            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
-                ok ->
-                    prepare_exchange(start_exchange, State#state{local_lock=true});
-                Error ->
-                    lager:info("AAE source failed get_lock for partition ~p, got ~p",
-                               [Partition, Error]),
-                    {stop, Error, State}
-            end;
-        {error, wrong_node} ->
-            {stop, wrong_node, State0}
+    {ok, TreePid} = riak_kv_vnode:hashtree_pid(Partition),
+    TreeMref = monitor(process, TreePid),
+    State = State0#state{timeout=Timeout,
+                         indexns=IndexNs,
+                         tree_pid=TreePid,
+                         tree_mref=TreeMref},
+    case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
+        ok ->
+            prepare_exchange(start_exchange, State#state{local_lock=true});
+        Error ->
+            lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                       [Partition, Error]),
+            {stop, Error, State}
     end;
 prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock

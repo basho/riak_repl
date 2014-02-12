@@ -246,11 +246,7 @@ recv(TcpBin, State = #state{transport = T, socket = S}) ->
             send_heartbeat(T, S),
             recv(Cont, State#state{hb_last = os:timestamp()});
         {ok, {objects_and_meta, {Seq, BinObjs, Meta}}, Cont} ->
-            recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State));
-        {error, Reason} ->
-            %% TODO: Log Something bad happened
-            riak_repl_stats:rt_sink_errors(),
-            {stop, {framing, Reason}, State}
+            recv(Cont, do_write_objects(Seq, {BinObjs, Meta}, State))
     end.
 
 make_donefun({Binary, Meta}, Me, Ref, Seq) ->
@@ -419,8 +415,6 @@ maybe_write_object(Meta) ->
             lager:info("Bucket type on sink:~p", [BucketType]),
             case riak_core_bucket_type:get(BucketType) of
                 undefined ->
-                    false;
-                {error, _T} ->
                     false;
                 AllProps ->
                     Sink = riak_repl_util:get_bucket_props_hash(AllProps),

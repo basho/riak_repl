@@ -133,7 +133,7 @@ handle_call(cluster_name, _From, State) ->
     {reply, State#state.cluster_name, State};
 handle_call({proxy_get, Bucket, Key, Options}, From, State) ->
     Ref = make_ref(),
-    send(State#state.transport, State#state.socket, {proxy_get, Ref, Bucket, Key, Options}),
+    _ = send(State#state.transport, State#state.socket, {proxy_get, Ref, Bucket, Key, Options}),
     %% wait to send the reply until we hear back from the server
     {noreply, State#state{proxy_gets=[{Ref, From}|State#state.proxy_gets]}};
 handle_call(_Event, _From, State) ->
@@ -152,9 +152,9 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
         transport=Transport,
         client=proplists:get_value(client, Props),
         my_pi=proplists:get_value(my_pi, Props)},
-    case riak_repl_util:maybe_use_ssl() of
+    _ = case riak_repl_util:maybe_use_ssl() of
         false ->
-            send(Transport, Socket, {peerinfo, NewState#state.my_pi,
+            _ = send(Transport, Socket, {peerinfo, NewState#state.my_pi,
                     [bounded_queue, keepalive, {fullsync_strategies,
                             app_helper:get_env(riak_repl, fullsync_strategies,
                                 [?LEGACY_STRATEGY])},
@@ -164,7 +164,7 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
             %% Send a fake peerinfo that will cause a connection failure if
             %% we don't renegotiate SSL. This avoids leaking the ring and
             %% accidentally connecting to an insecure site
-            send(Transport, Socket, {peerinfo,
+            _ = send(Transport, Socket, {peerinfo,
                     riak_repl_util:make_fake_peer_info(),
                                      [ssl_required,
                                       {connected_ip, IPAddr}]})
@@ -212,7 +212,7 @@ handle_info({Proto, Socket, Data},
                     {noreply, State#state{proxy_gets=ProxyGets}}
             end;
         keepalive ->
-            send(Transport, Socket, keepalive_ack),
+            _ = send(Transport, Socket, keepalive_ack),
             {noreply, State};
         keepalive_ack ->
             %% noop
@@ -241,7 +241,7 @@ handle_info(timeout, State) ->
     case State#state.keepalive_time of
         Time when is_integer(Time) ->
             %% keepalive timeout fired
-            send(State#state.transport, State#state.socket, keepalive),
+            _ = send(State#state.transport, State#state.socket, keepalive),
             {noreply, State, Time};
         _ ->
             {noreply, State}
@@ -378,7 +378,7 @@ do_repl_put(RObj, State=#state{count=C, ack_freq=F, pool_pid=Pool}) when (C < (F
 do_repl_put(RObj, State=#state{transport=T,socket=S, ack_freq=F, pool_pid=Pool}) ->
     Worker = poolboy:checkout(Pool, true, infinity),
     ok = riak_repl_fullsync_worker:do_put(Worker, RObj, Pool),
-    send(T, S, {q_ack, F}),
+    _ = send(T, S, {q_ack, F}),
     State#state{count=0}.
 
 recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = State) ->
@@ -394,7 +394,7 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                             lager:info("Upgraded replication connection to SSL"),
                             Transport = ranch_ssl,
                             %% re-send peer info
-                            send(Transport, SSLSocket, {peerinfo, State#state.my_pi,
+                            _ = send(Transport, SSLSocket, {peerinfo, State#state.my_pi,
                                     [bounded_queue, {fullsync_strategies,
                                             app_helper:get_env(riak_repl, fullsync_strategies,
                                                 [?LEGACY_STRATEGY])},

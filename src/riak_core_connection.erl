@@ -92,7 +92,6 @@ symbolic_clustername() ->
 %%
 %% connect returns the pid() of the asynchronous process that will attempt the connection.
 
--spec(connect(ip_addr(), clientspec()) -> pid()).
 connect({IP,Port}, ClientSpec) ->
     lager:debug("spawning async_connect link"),
     %% start a process to handle the connection request asyncrhonously
@@ -141,7 +140,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
     case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of
         {ok, Socket} ->
             lager:debug("Setting system options on client side: ~p", [?CONNECT_OPTIONS]),
-            Transport:setopts(Socket, ?CONNECT_OPTIONS),
+            ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
             SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
             %% handshake to make sure it's a riak sub-protocol dispatcher
             MyName = symbolic_clustername(),

@@ -206,8 +206,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
         [{node, node()},
          {site, Remote},
          {strategy, realtime},
-         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}],
-        QStats,
+         {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}] ++ QStats,
     {reply, {status, Status}, State};
 %% Receive connection from connection manager
 handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
@@ -322,7 +321,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 cancel_timer(undefined) -> ok;
-cancel_timer(TRef)      -> erlang:cancel_timer(TRef).
+cancel_timer(TRef)      -> _ = erlang:cancel_timer(TRef), ok.
 
 recv(TcpBin, State = #state{remote = Name,
                             hb_sent_q = HBSentQ,
@@ -352,7 +351,7 @@ recv(TcpBin, State = #state{remote = Name,
                 undefined ->
                     recv(Cont, State);
                 _ ->
-                    erlang:cancel_timer(HBTRef),
+                    cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
         {ok, heartbeat, Cont} ->
@@ -366,11 +365,7 @@ recv(TcpBin, State = #state{remote = Name,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
             lager:debug("got heartbeat, hb_sent_q_len after heartbeat_recv: ~p", [queue:len(HBSentQ2)]),
-            recv(Cont, schedule_heartbeat(State2));
-        {error, Reason} ->
-            %% Something bad happened
-            riak_repl_stats:rt_source_errors(),
-            {stop, {framing_error, Reason}, State}
+            recv(Cont, schedule_heartbeat(State2))
     end.
 
 peername(Transport, Socket) ->

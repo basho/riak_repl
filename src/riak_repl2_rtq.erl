@@ -86,7 +86,6 @@
 
 %% API
 %% @doc Start linked, registeres to module name.
--spec start_link() -> {ok, pid()}.
 start_link() ->
     Overload = app_helper:get_env(riak_repl, rtq_overload_threshold, ?DEFAULT_OVERLOAD),
     Recover = app_helper:get_env(riak_repl, rtq_overload_recover, ?DEFAULT_RECOVER),
@@ -95,15 +94,10 @@ start_link() ->
 
 %% @doc Start linked, registers to module name, with given options. This makes
 %% testing some options a bit easier as it removes a dependance on app_helper.
--type overload_threshold_option() :: {'overload_threshold', pos_integer()}.
--type overload_recover_option() :: {'overload_recover', pos_integer()}.
--type start_option() :: overload_threshold_option() | overload_recover_option().
--type start_options() :: [start_option()].
--spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
     case ets:info(?overload_ets) of
         undefined ->
-            ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
+            ?overload_ets = ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
             ets:insert(?overload_ets, {overloaded, false});
         _ ->
             ok
@@ -111,29 +105,24 @@ start_link(Options) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, Options, []).
 
 %% @doc Test helper, starts unregistered and unlinked.
--spec start_test() -> {ok, pid()}.
 start_test() ->
     gen_server:start(?MODULE, [], []).
 
 %% @doc Register a consumer with the given name. The Name of the consumer is
 %% the name of the remote cluster by convention. Returns the oldest unack'ed
 %% sequence number.
--spec register(Name :: string()) -> {'ok', number()}.
 register(Name) ->
     gen_server:call(?SERVER, {register, Name}, infinity).
 
 %% @doc Removes a consumer.
--spec unregister(Name :: string()) -> 'ok' | {'error', 'not_registered'}.
 unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}, infinity).
 
 %% @doc True if the given consumer has no items to consume.
--spec is_empty(Name :: string()) -> boolean().
 is_empty(Name) ->
     gen_server:call(?SERVER, {is_empty, Name}, infinity).
 
 %% @doc True if no consumer has items to consume.
--spec all_queues_empty() -> boolean().
 all_queues_empty() ->
     gen_server:call(?SERVER, all_queues_empty, infinity).
 
@@ -177,26 +166,19 @@ push(NumItems, Bin) ->
 
 %% @doc Using the given DeliverFun, send an item to the consumer Name
 %% asynchonously.
--type queue_entry() :: {pos_integer(), pos_integer(), binary(), orddict:orddict()}.
--type not_reg_error() :: {'error', 'not_registered'}.
--type deliver_fun() :: fun((queue_entry() | not_reg_error()) -> 'ok').
--spec pull(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull(Name, DeliverFun) ->
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
 %% @doc Block the caller while the pull is done.
--spec pull_sync(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull_sync(Name, DeliverFun) ->
     gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}, infinity).
 
 %% @doc Asynchronously acknowldge delivery of all objects with a sequence
 %% equal or lower to Seq for the consumer.
--spec ack(Name :: string(), Seq :: pos_integer()) -> 'ok'.
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
 
 %% @doc Same as ack/2, but blocks the caller.
--spec ack_sync(Name :: string(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
     gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
 
@@ -216,7 +198,6 @@ ack_sync(Name, Seq) ->
 %% <dt>drops</dt><dd>Dropped entries due to max_bytes</dd>
 %% <dt>errs</dt><dd>Number of non-ok returns from deliver fun</dd>
 %% </dl>
--spec status() -> [any()].
 status() ->
     Status = gen_server:call(?SERVER, status, infinity),
     % I'm having the calling process do derived stats because
@@ -394,13 +375,15 @@ terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    [case DeliverFun of
-         undefined ->
-             ok;
-         _ ->
-            catch(DeliverFun({error, {terminate, Reason}}))
-     end || #c{deliver = DeliverFun} <- Cs],
-    ok.
+    lists:foreach(
+        fun(#c{deliver = DeliverFun}) ->
+                case DeliverFun of
+                    undefined ->
+                        ok;
+                    _ ->
+                       catch(DeliverFun({error, {terminate, Reason}}))
+                end
+        end, Cs).
 
 %% @private
 code_change(_OldVsn, State, _Extra) ->

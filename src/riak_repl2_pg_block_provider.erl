@@ -128,7 +128,7 @@ handle_info({Proto, Socket, Data},
             State0=#state{socket=Socket,transport=Transport, keepalive_timer=TRef})
         when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
-    timer:cancel(TRef),    
+    _ = erlang:cancel_timer(TRef),
     Msg = binary_to_term(Data),
     %% restart the timer after each message has been processed
     State = State0#state{keepalive_timer=keepalive_timer()},

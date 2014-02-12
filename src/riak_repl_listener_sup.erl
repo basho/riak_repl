@@ -34,13 +34,16 @@ ensure_listeners(Ring) ->
         Listener#repl_listener.nodename == node()],
     ToStop = sets:to_list(
                sets:subtract(
-                 sets:from_list(CurrentListeners), 
+                 sets:from_list(CurrentListeners),
                  sets:from_list(ConfiguredListeners))),
     ToStart = sets:to_list(
                sets:subtract(
-                 sets:from_list(ConfiguredListeners), 
+                 sets:from_list(ConfiguredListeners),
                  sets:from_list(CurrentListeners))),
-    [start_listener(Listener) || Listener <- ToStart],
+    lists:foreach(
+        fun(Listener) ->
+                start_listener(Listener)
+        end, ToStart),
     lists:foreach(fun(Listener) ->
                 {IP, Port} = Listener#repl_listener.listen_addr,
                 lager:info("Stopping replication listener on ~s:~p",
@@ -50,8 +53,10 @@ ensure_listeners(Ring) ->
     ok.
 
 close_all_connections() ->
-    [exit(P, kill) ||  P <-
-        server_pids()].
+    lists:foreach(
+        fun(P) ->
+                exit(P, kill)
+        end, server_pids()).
 
 server_pids() ->
     %%%%%%%%

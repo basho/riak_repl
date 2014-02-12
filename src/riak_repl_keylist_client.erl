@@ -101,7 +101,7 @@ wait_for_fullsync(_Other, State) ->
 request_partition(Command, #state{kl_pid=Pid, sitename=SiteName} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
     catch(riak_repl_fullsync_helper:stop(Pid)),
-    file:delete(State#state.kl_fn),
+    ok = file:delete(State#state.kl_fn),
     NewState = case Command of
         cancel_fullsync ->
             application:unset_env(riak_repl, {progress, SiteName}),
@@ -180,7 +180,7 @@ request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref,
         [State#state.sitename, State#state.partition, Reason]),
     case Skip of
         false ->
-            riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
+            _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
             gen_fsm:send_event(self(), continue);
         _ ->
             %% we've already decided to skip this partition, so do nothing
@@ -208,8 +208,8 @@ request_partition({skip_partition, Partition}, State) ->
 send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
         when Command == cancel_fullsync; Command == pause_fullsync ->
     % stop sending the keylist and delete the file
-    file:close(FH),
-    file:delete(State#state.kl_fn),
+    ok = file:close(FH),
+    ok = file:delete(State#state.kl_fn),
     NewState = case Command of
         cancel_fullsync ->
             application:unset_env(riak_repl, {progress, SiteName}),
@@ -235,7 +235,7 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
     end,
     case file:read(FH, ?MERKLE_CHUNKSZ) of
         {ok, Data} ->
-            riak_repl_tcp_client:send(Transport, Socket, {kl_hunk, Data}),
+            _ = riak_repl_tcp_client:send(Transport, Socket, {kl_hunk, Data}),
             case Count =< 0 of
                 true ->
                     riak_repl_tcp_client:send(Transport, Socket, kl_wait);
@@ -245,8 +245,8 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
             {next_state, send_keylist, State#state{kl_fh=FH,
                     kl_counter=Count-1}};
         eof ->
-            file:close(FH),
-            file:delete(State#state.kl_fn),
+            ok = file:close(FH),
+            ok = file:delete(State#state.kl_fn),
             riak_repl_tcp_client:send(Transport, Socket, kl_eof),
             lager:info("Full-sync with site ~p; sent keylist for ~p (sent in ~p secs)",
                 [State#state.sitename, State#state.partition,

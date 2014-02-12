@@ -18,8 +18,8 @@ enable(Remote) ->
 
 disable(Remote) ->
     lager:info("Stopping replication realtime source ~p", [Remote]),
-    supervisor:terminate_child(?MODULE, Remote),
-    supervisor:delete_child(?MODULE, Remote).
+    ok = supervisor:terminate_child(?MODULE, Remote),
+    ok = supervisor:delete_child(?MODULE, Remote).
 
 enabled() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <- supervisor:which_children(?MODULE), is_pid(Pid)].

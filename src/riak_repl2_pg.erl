@@ -81,12 +81,15 @@ ensure_pg(WantEnabled0) ->
         _ ->
             lager:debug("proxy_get ToEnable : ~p", [ToEnable]),
             lager:debug("proxy_get ToDisable: ~p", [ToDisable]),
-            [riak_repl2_pg_block_provider_sup:enable(Remote) ||
-                Remote <- ToEnable],
-            [riak_repl2_pg_block_provider_sup:disable(Remote) ||
-                Remote<- ToDisable],
-            [{enabled, ToEnable},
-             {disabled, ToDisable}]
+            lists:foreach(
+                fun(Remote) ->
+                        riak_repl2_pg_block_provider_sup:enable(Remote)
+                end, ToEnable),
+            lists:foreach(
+                fun(Remote) ->
+                        riak_repl2_pg_block_provider_sup:disable(Remote)
+                end, ToDisable),
+            [{enabled, ToEnable}, {disabled, ToDisable}]
     end.
 
 register_remote_locator() ->

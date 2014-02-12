@@ -614,7 +614,8 @@ schedule_fullsync(Pid) ->
         {ok, Tuple} when is_tuple(Tuple) -> ok;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
-            erlang:send_after(FullsyncIval, Pid, start_fullsync)
+            _ = erlang:send_after(FullsyncIval, Pid, start_fullsync),
+            ok
     end.
 
 
@@ -644,10 +645,12 @@ schedule_cluster_fullsync(Cluster, Pid) ->
                     ok
             end;
         {ok, {Cluster, FullsyncIvalMins}} ->
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+            ok;
         {ok, FullsyncIvalMins} when not is_tuple(FullsyncIvalMins) ->
             %% this will affect ALL clusters that have fullsync enabled
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+            ok;
         _ ->
             ok
     end.
@@ -659,7 +662,7 @@ elapsed_secs(Then) ->
 
 shuffle_partitions(Partitions, Seed) ->
     lager:info("Shuffling partition list using seed ~p", [Seed]),
-    random:seed(Seed),
+    _ = random:seed(Seed),
     [Partition || {Partition, _} <-
         lists:keysort(2, [{Key, random:uniform()} || Key <- Partitions])].
 

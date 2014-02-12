@@ -107,8 +107,8 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+
 %% @doc start the Cluster Manager
--spec(start_link() -> ok).
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
@@ -381,8 +381,10 @@ handle_cast(_Unhandled, _State) ->
 
 %% it is time to poll all clusters and get updated member lists
 handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
-    Connections = riak_core_cluster_conn_sup:connections(),
-    [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
+    lists:foreach(
+        fun({_Remote, Pid}) ->
+                Pid ! {self(), poll_cluster}
+        end, riak_core_cluster_conn_sup:connections()),
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     {noreply, State};
 handle_info(poll_clusters_timer, State) ->
@@ -474,7 +476,7 @@ schedule_gc_timer(0) ->
     ok;
 schedule_gc_timer(Interval) ->
     %% schedule a timer to garbage collect old cluster and endpoint data
-    erlang:send_after(Interval, self(), garbage_collection_timer).
+    erlang:send_after(Interval, self(), garbage_collection_timer), ok.
 
 is_valid_ip(Addr) when is_list(Addr) ->
     %% a string. try and parse it.
@@ -696,8 +698,10 @@ become_proxy(State, LeaderNode) when State#state.is_leader == true ->
             ok;
         Connections ->
             lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
-            [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
-             || {Remote, _Pid} <- Connections]
+            lists:foreach(
+                fun({Remote, _Pid}) ->
+                        riak_core_cluster_conn_sup:remove_remote_connection(Remote)
+                end, Connections)
     end,
     State#state{is_leader = false};
 become_proxy(State, LeaderNode) ->

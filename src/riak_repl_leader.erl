@@ -421,19 +421,25 @@ leader_change(A, A) ->
 leader_change(false, true) ->
     %% we've become the leader, stop any local clients
     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-    [riak_repl_client_sup:stop_site(SiteName) ||
-        {SiteName, _Pid} <- RunningSiteProcs];
+    lists:foreach(
+        fun({SiteName, _Pid}) ->
+                riak_repl_client_sup:stop_site(SiteName)
+        end, RunningSiteProcs),
+    ok;
 leader_change(true, false) ->
     %% we've lost the leadership, close any local listeners
     case app_helper:get_env(riak_repl, inverse_connection) of
         true ->
             %% in the inverted case need to stop sites
             RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-            [riak_repl_client_sup:stop_site(SiteName) ||
-                {SiteName, _Pid} <- RunningSiteProcs];
+            lists:foreach(
+                fun({SiteName, _Pid}) ->
+                        riak_repl_client_sup:stop_site(SiteName)
+                end, RunningSiteProcs);
         _ -> ok
     end,
-    riak_repl_listener_sup:close_all_connections().
+    riak_repl_listener_sup:close_all_connections(),
+    ok.
 
 %% Inspect the cluster and determine if we can balance clients between
 %% non-leader nodes
@@ -486,16 +492,22 @@ ensure_sites(Leader) ->
                 _ ->
                     %% stop any local clients on the leader
                     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-                    [riak_repl_client_sup:stop_site(SiteName) ||
-                        {SiteName, _Pid} <- RunningSiteProcs],
+                    lists:foreach(
+                        fun({SiteName, _Pid}) ->
+                                riak_repl_client_sup:stop_site(SiteName)
+                        end, RunningSiteProcs),
                     ConfiguredSites = [Site#repl_site.name ||
                         Site <- dict:fetch(sites, ReplConfig)],
                     {ToStop, ToStart} = balance_clients(CurrentConfig,
                         ConfiguredSites),
-                    [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
-                        || {Node, Site} <- ToStop],
-                    [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
-                        || {Node, Site} <- ToStart]
+                    lists:foreach(
+                        fun({Node, Site}) ->
+                                rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
+                        end, ToStop),
+                    lists:foreach(
+                        fun({Node, Site}) ->
+                                rpc:call(Node, riak_repl_client_sup, start_site, [Site])
+                        end, ToStart)
             end
     end.
 

@@ -32,16 +32,10 @@
 %% Host minor version to the client. After that, the registered
 %% module:function/5 is called and control of the socket passed to it.
 
-
 -module(riak_core_service_mgr).
--author("Chris Tilt").
 -behaviour(gen_server).
 
 -include("riak_core_connection.hrl").
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 -define(SERVER, riak_core_service_manager).
 -define(MAX_LISTENERS, 100).
@@ -124,7 +118,6 @@ register_service(HostProtocol, Strategy) ->
     gen_server:cast(?SERVER, {register_service, HostProtocol, Strategy}).
 
 %% @doc Blocking version of register_service.
--spec sync_register_service(hostspec(), service_scheduler_strategy()) -> ok.
 sync_register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
@@ -138,7 +131,6 @@ unregister_service(ProtocolId) ->
     gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
 
 %% @doc Blocking version of unregister_service.
--spec sync_unregister_service(proto_id()) -> ok.
 sync_unregister_service(ProtocolId) ->
     gen_server:call(?SERVER, {unregister_service, ProtocolId}).
 
@@ -185,7 +177,13 @@ handle_call(get_services, _From, State) ->
     {reply, orddict:to_list(State#state.services), State};
 
 handle_call(stop, _From, State) ->
-    ranch:stop_listener(State#state.dispatch_addr),
+    case ranch:stop_listener(State#state.dispatch_addr) of
+        ok ->
+            ok;
+        {error, not_found} ->
+            lager:debug("Attempted to stop listener which wasn't listening."),
+            ok
+    end,
     {stop, normal, ok, State};
 
 handle_call(get_stats, _From, State) ->
@@ -248,8 +246,9 @@ handle_cast(_Unhandled, _State) ->
 handle_info(status_update_timer, State) ->
     %% notify all registered parties of this node's services counts
     Stats = orddict:to_list(State#state.service_stats),
-    PStats = [ {Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
-    [NotifyFun(PStats) || NotifyFun <- State#state.status_notifiers],
+    PStats = [{Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
+    lists:foreach(fun(NotifyFun) -> NotifyFun(PStats) end,
+                  State#state.status_notifiers),
     {noreply, State};
 
 %% Get notified of a service that went down.
@@ -260,7 +259,7 @@ handle_info({'DOWN', Ref, process, Pid, _Reason}, State) ->
                 {value, {Ref, ProtocolId}, Rest} ->
                     gen_server:cast(?SERVER, {service_down_event, Pid, ProtocolId}),
                     Rest;
-                error ->
+                false ->
                     Refs
             end,
     {noreply, State#state{refs=Refs2}};
@@ -307,7 +306,6 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
-    ssl:start(),
     SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
     MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
     case exchange_handshakes_with(client, Socket, Transport, MyCaps) of
@@ -349,7 +347,6 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             {error, no_ssl};
         {true, true} ->
             lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
-            ssl:start(),
             case riak_core_ssl_util:maybe_use_ssl(riak_core) of
                 false ->
                     {ranch_tcp, Socket};
@@ -368,7 +365,6 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
 
 %% start user's module:function and transfer socket to it's process.
 start_negotiated_service(_Socket, _Transport, {error, Reason}, _Props) ->
-    lager:debug("service dispatch failed with ~p", [{error, Reason}]),
     lager:error("service dispatch failed with ~p", [{error, Reason}]),
     {error, Reason};
 %% Note that the callee is responsible for taking ownership of the socket via
