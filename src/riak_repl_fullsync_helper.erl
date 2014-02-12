@@ -103,22 +103,49 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
         true ->
             {ok, FP} = file:open(Filename, [raw, write, binary]),
             Self = self(),
+            FoldRef = make_ref(),
             Worker = fun() ->
-                             %% Spend as little time on the vnode as possible,
-                             %% accept there could be a potentially huge message queue
-                             case riak_core_capability:get({riak_repl, bloom_fold}, false) of
-                                true ->
-                                    {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
-                                        fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
-                                    riak_core_gen_server:cast(Self, {kl_finish, Total});
-                                false ->
-                                    %% use old accumulator without the total
-                                    {Self, _} = riak_kv_vnode:fold({Partition,OwnerNode},
-                                        fun ?MODULE:keylist_fold/3, {Self, 0}),
-                                    %% total is 0, not much else we can do
-                                    riak_core_gen_server:cast(Self, {kl_finish, 0})
+                    %% Spend as little time on the vnode as possible,
+                    %% accept there could be a potentially huge message queue
+                    Req = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+                        true ->
+                            riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
+                                                         {Self, 0, 0});
+                        false ->
+                            %% use old accumulator without the total
+                            riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
+                                                         {Self, 0})
+                    end,
+                    try riak_core_vnode_master:command_return_vnode(
+                            {Partition, OwnerNode},
+                            Req,
+                            {raw, FoldRef, self()},
+                            riak_kv_vnode_master) of
+                        {ok, VNodePid} ->
+                            lager:info("vnode pid is ~p", [VNodePid]),
+                            MonRef = erlang:monitor(process, VNodePid),
+                            receive
+                                {FoldRef, {Self, _} = Reply} ->
+                                    lager:info("vnode fold reply ~p",
+                                               [Reply]),
+                                    %% total is 0, sorry
+                                    riak_core_gen_server:cast(Self,
+                                                              {kl_finish, 0});
+                                {FoldRef, {Self, _, Total} = Reply} ->
+                                    lager:info("vnode fold reply ~p",
+                                               [Reply]),
+                                    riak_core_gen_server:cast(Self,
+                                                              {kl_finish, Total});
+                                {'DOWN', MonRef, process, VNodePid, Reason} ->
+                                    lager:info("vnode fold exited with ~p",
+                                               [Reason]),
+                                    exit(Reason)
                             end
-                     end,
+                    catch exit:{{nodedown, Node}, _GenServerCall} ->
+                            %% node died between services check and gen_server:call
+                            exit({nodedown, Node})
+                    end
+            end,
             FolderPid = spawn_link(Worker),
             NewState = State#state{ref = Ref, 
                                    folder_pid = FolderPid,
