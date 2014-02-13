@@ -371,13 +371,32 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
             lager:info("Bloom folding over ~p differences for partition ~p", [Count, Partition]),
             Self = self(),
             Worker = fun() ->
-                             riak_kv_vnode:fold({Partition,OwnerNode},
-                                                fun ?MODULE:bloom_fold/3,
-                                                {Self,
-                                                 {serialized, ebloom:serialize(Bloom)}}),
-                             gen_fsm:send_event(Self, diff_done),
-                             ok
-                     end,
+                    FoldRef = make_ref(),
+                    try riak_core_vnode_master:command_return_vnode(
+                            {Partition, OwnerNode},
+                            riak_core_util:make_fold_req(
+                                fun ?MODULE:bloom_fold/3,
+                                {Self,
+                                 {serialized, ebloom:serialize(Bloom)}}),
+                            {raw, FoldRef, self()},
+                            riak_kv_vnode_master) of
+                        {ok, VNodePid} ->
+                            MonRef = erlang:monitor(process, VNodePid),
+                            receive
+                                {FoldRef, _Reply} ->
+                                    %% we don't care about the reply
+                                    gen_fsm:send_event(Self, diff_done);
+                                {'DOWN', MonRef, process, VNodePid, Reason}
+                                        when Reason /= normal ->
+                                    lager:warning("Fold of ~p exited with ~p",
+                                                  [Partition, Reason]),
+                                    exit({bloom_fold, Reason})
+                            end
+                    catch exit:{{nodedown, Node}, _GenServerCall} ->
+                            %% node died between services check and gen_server:call
+                            exit({bloom_fold, {nodedown, Node}})
+                    end
+            end,
             spawn_link(Worker) %% this isn't the Pid we need because it's just the vnode:fold
     end.
 
