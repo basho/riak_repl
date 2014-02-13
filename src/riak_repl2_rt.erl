@@ -148,7 +148,7 @@ postcommit(RObj) ->
         Objects0 when is_list(Objects0) ->
             Objects = Objects0 ++ [RObj],
             Meta = set_bucket_meta(RObj),
-            
+
             BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
                 false ->
                     riak_repl_util:to_wire(w1, Objects);
@@ -231,10 +231,10 @@ set_bucket_meta(Obj) ->
     M = orddict:new(),
     case riak_object:bucket(Obj) of
         {Type, _B} ->
-            PropsHash = riak_repl_util:get_bucket_props_hash(riak_core_bucket_type:get(Type)),
+            PropsHash = riak_repl_bucket_type_util:property_hash(Type),
             M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
             M2 = orddict:store(?BT_META_TYPE, Type, M1),
             orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
-        _B -> 
+        _B ->
             orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.

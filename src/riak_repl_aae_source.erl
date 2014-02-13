@@ -8,7 +8,7 @@
 -include("riak_repl_aae_fullsync.hrl").
 
 %% API
--export([start_link/6, start_exchange/1]).
+-export([start_link/7, start_exchange/1]).
 
 %% FSM states
 -export([prepare_exchange/2,
@@ -43,7 +43,8 @@
                 wire_ver    :: atom(),
                 diff_batch_size = 1000 :: non_neg_integer(),
                 local_lock = false :: boolean(),
-                owner       :: pid()
+                owner       :: pid(),
+                proto       :: term()
                }).
 
 %% Per state transition timeout used by certain transitions
@@ -53,10 +54,10 @@
 %%% API
 %%%===================================================================
 
--spec start_link(term(), term(), term(), term(), index(), pid())
+-spec start_link(term(), term(), term(), term(), index(), pid(), term())
                 -> {ok,pid()} | ignore | {error, term()}.
-start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid) ->
-    gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid], []).
+start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto) ->
+    gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto], []).
 
 start_exchange(AAESource) ->
     lager:debug("Send start_exchange to AAE fullsync sink worker"),
@@ -69,7 +70,7 @@ cancel_fullsync(Pid) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
-init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
+init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
@@ -80,7 +81,8 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid]) ->
                    index=Partition,
                    built=0,
                    owner=OwnerPid,
-                   wire_ver=w1},
+                   wire_ver=w1,
+                   proto=Proto},
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -483,10 +485,10 @@ accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
         end,
     [Count+NumObjects].
 
-send_missing(RObj, State=#state{client=Client, wire_ver=Ver}) ->
+send_missing(RObj, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
     %% we don't actually have the vclock to compare, so just send the
     %% key and let the other side sort things out.
-    case riak_repl_util:repl_helper_send(RObj, Client) of
+    case riak_repl_util:maybe_send(RObj, Client, Proto) of
         cancel ->
             0;
         Objects when is_list(Objects) ->
@@ -502,12 +504,12 @@ send_missing(RObj, State=#state{client=Client, wire_ver=Ver}) ->
             1 + length(Objects)
     end.
 
-send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver}) ->
+send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
     case Client:get(Bucket, Key, 1, ?REPL_FSM_TIMEOUT) of
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
-            case riak_repl_util:repl_helper_send(RObj, Client) of
+            case riak_repl_util:maybe_send(RObj, Client, Proto) of
                 cancel ->
                     0;
                 Objects when is_list(Objects) ->
