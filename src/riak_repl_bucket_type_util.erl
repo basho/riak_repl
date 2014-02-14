@@ -30,8 +30,6 @@ bucket_props_match(Props) ->
 
 -spec bucket_props_match(riak_object:type(), integer()) -> boolean().
 bucket_props_match(Type, RemoteBucketTypeHash) ->
-    lager:info("Local hash: ~p Remoate Hash: ~p", [property_hash(Type),
-                                                   RemoteBucketTypeHash]),
    property_hash(Type) =:= RemoteBucketTypeHash.
 
 -spec is_bucket_typed({error, no_type} | proplists:proplist()) -> boolean().
