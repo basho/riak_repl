@@ -112,7 +112,7 @@ get_partitions(Ring) ->
     lists:sort([P || {P, _} <-
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
-do_repl_put(Object) ->
+do_repl_put({RemoteTypeHash, Object}) ->
     Bucket = riak_object:bucket(Object),
     Type = riak_object:type(Object),
     case riak_core_bucket:get_bucket(Bucket) of
@@ -120,12 +120,14 @@ do_repl_put(Object) ->
             lager:warning("Type ~p not defined on sink, not doing put", [Type]),
             ok;
         _Props ->
-            RemoteTypeHashes = riak_object:bucket_type_hashes(Object),
             BucketPropsMatch =
                 riak_repl_bucket_type_util:bucket_props_match(Type,
-                                                              RemoteTypeHashes),
+                                                              RemoteTypeHash),
             do_repl_put(Object, Bucket, BucketPropsMatch)
-    end.
+    end;
+do_repl_put(Object) ->
+    Bucket = riak_object:bucket(Object),
+    do_repl_put(Object, Bucket, true).
 
 do_repl_put(_Object, _B, false) ->
     %% Remote and local bucket properties differ so ignore this object
@@ -828,13 +830,33 @@ deduce_wire_version_from_proto({_Proto, _Client, _Host}) ->
     w0.
 
 %% Typically, Cmd :: fs_diff_obj | diff_obj
+encode_obj_msg(V, {Cmd, RObj}) when is_tuple(RObj) ->
+    encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj));
 encode_obj_msg(V, {Cmd, RObj}) ->
+    encode_obj_msg(V, {Cmd, RObj}, undefined).
+
+encode_obj_msg(V, {Cmd, RObj}, undefined) ->
     case V of
         w0 ->
             term_to_binary({Cmd, RObj});
         _W ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({Cmd, BObj})
+    end;
+encode_obj_msg(V, {Cmd, RObj}, T) ->
+    BTHash = case riak_repl_bucket_type_util:property_hash(T) of
+                 undefined ->
+                     0;
+                 Hash ->
+                     Hash
+             end,
+    case V of
+        w0 ->
+            term_to_binary({Cmd, {BTHash, RObj}});
+
+        _W ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({Cmd, {BTHash, BObj}})
     end.
 
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
@@ -1110,6 +1132,6 @@ do_wire_list_w1_bucket_type_test() ->
     Objs = [RObj],
     Encoded = to_wire(w2, Objs),
     Decoded = from_wire(w2, Encoded),
-    ?assert(Decoded == Objs).
+    ?assertEqual(Decoded, Objs).
 
 -endif.
