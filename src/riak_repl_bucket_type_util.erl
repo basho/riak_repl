@@ -36,7 +36,6 @@ bucket_props_match(Type, RemoteBucketTypeHash) ->
 is_bucket_typed({error, no_type}) ->
     false;
 is_bucket_typed(Props) ->
-    lager:info("Props: ~p", [Props]),
     prop_get(?BT_META_TYPED_BUCKET, false, Props).
 
 -spec prop_get(binary(), term(), {error, no_type} | proplists:proplist()) -> term().
