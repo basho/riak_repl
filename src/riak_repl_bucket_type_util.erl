@@ -38,7 +38,7 @@ is_bucket_typed({error, no_type}) ->
 is_bucket_typed(Props) ->
     prop_get(?BT_META_TYPED_BUCKET, false, Props).
 
--spec prop_get(binary(), term(), {error, no_type} | proplists:proplist()) -> term().
+-spec prop_get(atom() | binary(), term(), {error, no_type} | proplists:proplist()) -> term().
 prop_get(_Key, Default, {error, no_type}) ->
     Default;
 prop_get(Key, Default, Props) ->
