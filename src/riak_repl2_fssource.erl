@@ -109,7 +109,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
                                                                        Transport, Socket, 
                                                                        WorkDir, Client, ClientVer),
-            riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
+            _ = riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
                                     fullsync_worker=FullsyncWorker, work_dir=WorkDir,
                                     strategy=keylist}};

@@ -495,7 +495,7 @@ send_missing(RObj, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
             %% source -> sink : fs_diff_obj
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
-            [begin
+            _ = [begin
                  Data = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,O}),
                  send_asynchronous_msg(?MSG_PUT_OBJ, Data, State)
              end || O <- Objects],
@@ -516,7 +516,7 @@ send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}
                     %% source -> sink : fs_diff_obj
                     %% binarize here instead of in the send() so that our wire
                     %% format for the riak_object is more compact.
-                    [begin
+                    _ = [begin
                          Data = riak_repl_util:encode_obj_msg(Ver, {fs_diff_obj,O}),
                          send_asynchronous_msg(?MSG_PUT_OBJ, Data, State)
                      end || O <- Objects],
