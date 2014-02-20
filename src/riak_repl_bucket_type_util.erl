@@ -28,26 +28,17 @@ bucket_props_match(Props) ->
             undefined =:= prop_get(?BT_META_PROPS_HASH, undefined, Props)
     end.
 
--spec bucket_props_match(riak_object:type(), [integer()]) -> boolean().
-bucket_props_match(Type, []) ->
-    property_hash(Type) =:= undefined;
-bucket_props_match(Type, [RemoteBucketTypeHash]) ->
-   property_hash(Type) =:= RemoteBucketTypeHash;
-bucket_props_match(_Type, _HashList) ->
-    %% Do not replicate if the hash list from the riak_object contains
-    %% more than 1 value because the local bucket type hash can never
-    %% match more than a single value. Must wait for the object to be
-    %% resolved and updated on the source side before replicating.
-    false.
+-spec bucket_props_match(riak_object:type(), integer()) -> boolean().
+bucket_props_match(Type, RemoteBucketTypeHash) ->
+   property_hash(Type) =:= RemoteBucketTypeHash.
 
 -spec is_bucket_typed({error, no_type} | proplists:proplist()) -> boolean().
 is_bucket_typed({error, no_type}) ->
     false;
 is_bucket_typed(Props) ->
-    lager:info("Props: ~p", [Props]),
     prop_get(?BT_META_TYPED_BUCKET, false, Props).
 
--spec prop_get(binary(), term(), {error, no_type} | proplists:proplist()) -> term().
+-spec prop_get(atom() | binary(), term(), {error, no_type} | proplists:proplist()) -> term().
 prop_get(_Key, Default, {error, no_type}) ->
     Default;
 prop_get(Key, Default, Props) ->
