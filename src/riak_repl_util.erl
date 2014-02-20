@@ -696,7 +696,7 @@ elapsed_secs(Then) ->
 
 shuffle_partitions(Partitions, Seed) ->
     lager:info("Shuffling partition list using seed ~p", [Seed]),
-    random:seed(Seed),
+    _ = random:seed(Seed),
     [Partition || {Partition, _} <-
         lists:keysort(2, [{Key, random:uniform()} || Key <- Partitions])].
 
@@ -830,10 +830,10 @@ deduce_wire_version_from_proto({_Proto, _Client, _Host}) ->
     w0.
 
 %% Typically, Cmd :: fs_diff_obj | diff_obj
-encode_obj_msg(V, {Cmd, RObj}) when is_tuple(RObj) ->
-    encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj));
+encode_obj_msg(V, {Cmd, RObj}) when is_binary(RObj) ->
+    encode_obj_msg(V, {Cmd, RObj}, undefined);
 encode_obj_msg(V, {Cmd, RObj}) ->
-    encode_obj_msg(V, {Cmd, RObj}, undefined).
+    encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj)).
 
 encode_obj_msg(V, {Cmd, RObj}, undefined) ->
     case V of
