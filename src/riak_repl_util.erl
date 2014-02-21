@@ -260,11 +260,13 @@ is_consistent_bucket(Props) ->
     end.
 
 is_fullsync_enabled(Props) ->
+    %% Default to enabling fullsync for all buckets and only disable
+    %% if explicitly indicated.
     case lists:keyfind(repl, 1, Props) of
-        {repl, Val} when Val==true; Val==fullsync; Val==both; Val==undefined ->
-            true;
+        {repl, Val} when Val =:= false; Val =:= realtime ->
+            false;
         _ ->
-            false
+            true
     end.
 
 repl_helper_send([], _O, _C, Acc) ->
