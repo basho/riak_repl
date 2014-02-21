@@ -291,16 +291,9 @@ repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
     end.
 
 repl_helper_send_realtime(Object, C) ->
-    IsConsistentBucket =
-        case riak_core_bucket:get_bucket(riak_object:bucket(Object)) of
-            {ok, Props} ->
-                is_consistent_bucket(Props);
-            {error, _Reason} ->
-                false
-        end,
     case application:get_env(riak_core, repl_helper) of
         undefined -> [];
-        {ok, Mods} when IsConsistentBucket =:= false ->
+        {ok, Mods} ->
             repl_helper_send_realtime(Mods, Object, C, [])
     end.
 
