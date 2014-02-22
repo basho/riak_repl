@@ -30,6 +30,15 @@
 -type index() :: non_neg_integer().
 -type index_n() :: {index(), pos_integer()}.
 
+
+-record(profiling, {overall={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    prepare_exchange={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    update_trees={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    key_exchange={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    compute_differences={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    send_diffs={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()}
+                   }).
+
 -record(state, {cluster,
                 client,     %% riak:local_client()
                 transport,
@@ -44,8 +53,10 @@
                 diff_batch_size = 1000 :: non_neg_integer(),
                 local_lock = false :: boolean(),
                 owner       :: pid(),
-                proto       :: term()
+                proto       :: term(),
+                profiling   :: #profiling{}
                }).
+
 
 %% Per state transition timeout used by certain transitions
 -define(DEFAULT_ACTION_TIMEOUT, 300000). %% 5 minutes
@@ -73,7 +84,7 @@ cancel_fullsync(Pid) ->
 init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
-
+    Profiling = #profiling{overall={os:timestamp(), undefined}},
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
@@ -82,7 +93,9 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    built=0,
                    owner=OwnerPid,
                    wire_ver=w1,
-                   proto=Proto},
+                   proto=Proto,
+                   profiling=Profiling},
+
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -130,13 +143,41 @@ handle_info(_Info, StateName, State) ->
     lager:info("ignored handle_info: ~p", [_Info]),
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, _State) ->
+terminate(_Reason, _StateName, State=#state{profiling=Profiling}) ->
     lager:info("Terminating."),
+    OverallTiming = Profiling#profiling.overall,
+    log_profiling_data(State#state.index, Profiling#profiling{overall=maybe_update_end(OverallTiming)}),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
+log_profiling_data(Index, Profiling) ->
+    lager:info("----- Profiling Data for ~p -----", [Index]),
+    lager:info("Total time: ~p", [now_diff(Profiling#profiling.overall)]),
+    lager:info("prepare_exchange time: ~p", [now_diff(Profiling#profiling.prepare_exchange)]),
+    lager:info("update_trees time: ~p", [now_diff(Profiling#profiling.update_trees)]),
+    lager:info("key_exchange time: ~p", [now_diff(Profiling#profiling.key_exchange)]),
+    lager:info("compute_differences time: ~p", [now_diff(Profiling#profiling.compute_differences)]),
+    lager:info("send_diff time: ~p", [now_diff(Profiling#profiling.send_diffs)]),
+    lager:info("----- Profiling Data -----").
+
+now_diff({undefined, _}) ->
+    undefined;
+now_diff({Start, undefined}) ->
+    timer:now_diff(os:timestamp(), Start);
+now_diff({Start, End}) ->
+    timer:now_diff(End, Start).
+
+maybe_update_start({undefined, End}) ->
+    {os:timestamp(), End};
+maybe_update_start(StartEnd) ->
+    StartEnd.
+
+maybe_update_end({Start, undefined}) ->
+    {Start, os:timestamp()};
+maybe_update_end(StartEnd) ->
+    StartEnd.
 %%%===================================================================
 %%% gen_fsm states
 %%%===================================================================
@@ -147,12 +188,20 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%      timeout if locks cannot be acquired in a timely manner.
 prepare_exchange(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    Profiling = State#state.profiling,
+    Timing1 = maybe_update_start(Profiling#profiling.prepare_exchange),
     send_complete(State),
-    {stop, normal, State};
+    Timing2 = maybe_update_end(Timing1),
+    UpdProfiling=Profiling#profiling{prepare_exchange=Timing2},
+    {stop, normal, State#state{profiling=UpdProfiling}};
 prepare_exchange(start_exchange, State0=#state{transport=Transport,
                                               socket=Socket,
                                               index=Partition,
                                               local_lock=Lock}) when Lock == false ->
+    Profiling = State0#state.profiling,
+    Timing1 = maybe_update_start(Profiling#profiling.prepare_exchange),
+    UpdProfiling = Profiling#profiling{prepare_exchange=Timing1},
+
     TcpOptions = [{keepalive, true},
                   {packet, 4},
                   {active, false},  %% passive mode, messages must be received with recv
@@ -180,7 +229,8 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
             State = State0#state{timeout=Timeout,
                                  indexns=IndexNs,
                                  tree_pid=TreePid,
-                                 tree_mref=TreeMref},
+                                 tree_mref=TreeMref,
+                                 profiling=UpdProfiling},
             case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
                 ok ->
                     prepare_exchange(start_exchange, State#state{local_lock=true});
@@ -190,18 +240,23 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                     {stop, Error, State}
             end;
         {error, wrong_node} ->
-            {stop, wrong_node, State0}
+            {stop, wrong_node, State0#state{profiling=Profiling}}
     end;
 prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock
+    Profiling = State#state.profiling,
+    Timing1 = maybe_update_start(Profiling#profiling.prepare_exchange),
+    UpdProfiling=Profiling#profiling{prepare_exchange=Timing1},
     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
         ok ->
-            update_trees(start_exchange, State);
+            update_trees(start_exchange, State#state{profiling=UpdProfiling});
         Error ->
             lager:warning("lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
-            {stop, {remote, Error}, State}
+            Timing2 = maybe_update_end(Timing1),
+            UpdProfiling=Profiling#profiling{prepare_exchange=Timing2},
+            {stop, {remote, Error}, State#state{profiling=UpdProfiling}}
     end.
 
 %% @doc Now that locks have been acquired, ask both the local and remote
@@ -210,54 +265,94 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
 update_trees(cancel_fullsync, State) ->
+    Profiling = State#state.profiling,
+    PrepareTiming = maybe_update_end(Profiling#profiling.prepare_exchange),
+    Timing1 = maybe_update_start(Profiling#profiling.update_trees),
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
-    {stop, normal, State};
+    Timing2 = maybe_update_end(Timing1),
+    UpdProfiling=Profiling#profiling{prepare_exchange=PrepareTiming,
+                                     update_trees=Timing2},
+    {stop, normal, State#state{profiling=UpdProfiling}};
 update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
+    Profiling = State#state.profiling,
+    PrepareTiming = maybe_update_end(Profiling#profiling.prepare_exchange),
+    Timing1 = maybe_update_start(Profiling#profiling.update_trees),
     send_complete(State),
     lager:info("AAE fullsync source completed partition ~p. Stopping.",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
-    {next_state, update_trees, State};
+    UpdProfiling = Profiling#profiling{prepare_exchange=PrepareTiming,
+                                     update_trees=Timing1},
+    {next_state, update_trees, State#state{profiling=UpdProfiling}};
 update_trees(start_exchange, State=#state{tree_pid=TreePid,
                                           index=Partition,
                                           indexns=[IndexN|_IndexNs]}) ->
+    Profiling = State#state.profiling,
+    PrepareTiming = maybe_update_end(Profiling#profiling.prepare_exchange),
+    Timing1 = maybe_update_start(Profiling#profiling.update_trees),
     lager:debug("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
     update_request(TreePid, {Partition, undefined}, IndexN),
     case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
         ok ->
-            update_trees({tree_built, Partition, IndexN}, State);
+            UpdProfiling = Profiling#profiling{prepare_exchange=PrepareTiming,
+                                               update_trees=Timing1},
+            update_trees({tree_built, Partition, IndexN}, State#state{profiling=UpdProfiling});
         not_responsible ->
-            update_trees({not_responsible, Partition, IndexN}, State)
+            UpdProfiling = Profiling#profiling{prepare_exchange=PrepareTiming,
+                                               update_trees=Timing1},
+            update_trees({not_responsible, Partition, IndexN}, State#state{profiling=UpdProfiling})
     end;
 
 update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
+    Profiling = State#state.profiling,
+    PrepareTiming = maybe_update_end(Profiling#profiling.prepare_exchange),
+    Timing1 = maybe_update_start(Profiling#profiling.update_trees),
     lager:info("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
     gen_server:cast(Owner, not_responsible),
-    {stop, normal, State};
+    Timing2 = maybe_update_end(Timing1),
+    UpdProfiling=Profiling#profiling{prepare_exchange=PrepareTiming,
+                                     update_trees=Timing2},
+    {stop, normal, State#state{profiling=UpdProfiling}};
 update_trees({tree_built, _, _}, State) ->
+    Profiling = State#state.profiling,
+    PrepareTiming = maybe_update_end(Profiling#profiling.prepare_exchange),
+    Timing1 = maybe_update_start(Profiling#profiling.update_trees),
     Built = State#state.built + 1,
     case Built of
         2 ->
             lager:debug("Moving to key exchange state"),
             gen_fsm:send_event(self(), start_key_exchange),
-            {next_state, key_exchange, State};
+            UpdProfiling = Profiling#profiling{prepare_exchange=PrepareTiming,
+                                               update_trees=Timing1},
+            {next_state, key_exchange, State#state{profiling=UpdProfiling}};
         _ ->
-            {next_state, update_trees, State#state{built=Built}}
+            UpdProfiling = Profiling#profiling{prepare_exchange=PrepareTiming,
+                                               update_trees=Timing1},
+            {next_state, update_trees, State#state{built=Built, profiling=UpdProfiling}}
     end.
 
 %% @doc Now that locks have been acquired and both hashtrees have been updated,
 %%      perform a key exchange and trigger replication for any divergent keys.
 key_exchange(cancel_fullsync, State) ->
+    Profiling = State#state.profiling,
+    UpdateTiming = maybe_update_end(Profiling#profiling.update_trees),
+    Timing1 = maybe_update_start(Profiling#profiling.key_exchange),
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
-    {stop, normal, State};
+    Timing2 = maybe_update_end(Timing1),
+    UpdProfiling=Profiling#profiling{update_trees=UpdateTiming,
+                                     key_exchange=Timing2},
+    {stop, normal, State#state{profiling=UpdProfiling}};
 key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                               transport=Transport,
                                               socket=Socket,
                                               index=Partition,
                                               tree_pid=TreePid,
                                               indexns=[IndexN|_IndexNs]}) ->
+    Profiling = State#state.profiling,
+    UpdateTiming = maybe_update_end(Profiling#profiling.update_trees),
+    Timing1 = maybe_update_start(Profiling#profiling.key_exchange),
     lager:debug("Starting fullsync key exchange with ~p for ~p/~p",
                [Cluster, Partition, IndexN]),
 
@@ -318,7 +413,9 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                end),
 
     %% wait for differences from bloom_folder or to be done
-    {next_state, compute_differences, State}.
+    UpdProfiling=Profiling#profiling{update_trees=UpdateTiming,
+                                     key_exchange=Timing1},
+    {next_state, compute_differences, State#state{profiling=UpdProfiling}}.
 
 compute_differences({'$aae_src', worker_pid, WorkerPid},
                     #state{transport=Transport, socket=Socket} = State) ->
@@ -326,6 +423,9 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
 compute_differences({'$aae_src', done, Bloom}, State) ->
+    Profiling = State#state.profiling,
+    KeyTiming = maybe_update_end(Profiling#profiling.key_exchange),
+    Timing1 = maybe_update_start(Profiling#profiling.compute_differences),
     %% send differences
     NDiff = ebloom:elements(Bloom),
     lager:info("Found ~p differences", [NDiff]),
@@ -336,15 +436,22 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
     finish_sending_differences(Bloom, State),
 
     %% wait for differences from bloom_folder or to be done
-    {next_state, send_diffs, State}.
+    UpdProfiling=Profiling#profiling{key_exchange=KeyTiming,
+                                     compute_differences=Timing1},
+    {next_state, send_diffs, State#state{profiling=UpdProfiling}}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
 %% of the diff_done event. Note: recv'd from a sync send event.
 send_diffs({diff_obj, RObj}, _From, State) ->
+    Profiling = State#state.profiling,
+    DiffTiming = maybe_update_end(Profiling#profiling.compute_differences),
+    Timing1 = maybe_update_start(Profiling#profiling.send_diffs),
     %% send missing object to remote sink
-    send_missing(RObj, State),
-    {reply, ok, send_diffs, State}.
+    UpdProfiling=Profiling#profiling{compute_differences=DiffTiming,
+                                     send_diffs=Timing1},
+    send_missing(RObj, State#state{profiling=UpdProfiling}),
+    {reply, ok, send_diffs, State#state{profiling=UpdProfiling}}.
 
 %% All indexes in this Partition are done.
 %% Note: recv'd from an async send event
