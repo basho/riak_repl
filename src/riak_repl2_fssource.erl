@@ -55,13 +55,15 @@ legacy_status(Pid, Timeout) ->
 %% gen server
 
 init([Partition, IP]) ->
-    DefaultStrategy = ?DEFAULT_FULLSYNC_STRATEGY,
+    RequestedStrategy = app_helper:get_env(riak_repl,
+                                           fullsync_strategy,
+                                           ?DEFAULT_FULLSYNC_STRATEGY),
 
     %% Determine what kind of fullsync worker strategy we want to start with,
     %% which could change if we talk to the sink and it can't speak AAE. If
     %% AAE is not enabled in KV, then we can't use aae strategy.
-    OurCaps = decide_our_caps(DefaultStrategy),
-    SupportedStrategy = proplists:get_value(strategy, OurCaps, DefaultStrategy),
+    OurCaps = decide_our_caps(RequestedStrategy),
+    SupportedStrategy = proplists:get_value(strategy, OurCaps),
 
     %% Possibly try to obtain the per-vnode lock before connecting.
     %% If we return error, we expect the coordinator to start us again later.
@@ -80,7 +82,7 @@ init([Partition, IP]) ->
     end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
-            _From, State=#state{ip=IP, partition=Partition, strategy=DefaultStrategy}) ->
+            _From, State=#state{ip=IP, partition=Partition, strategy=RequestedStrategy}) ->
     Cluster = proplists:get_value(clustername, Props),
     lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
 
@@ -92,7 +94,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     %% Strategy still depends on what the sink is capable of.
     {_Proto,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
-    OurCaps = decide_our_caps(DefaultStrategy),
+    OurCaps = decide_our_caps(RequestedStrategy),
     TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
     lager:info("Got caps: ~p", [TheirCaps]),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
@@ -107,7 +109,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             %% We maintain ownership of the socket. We will consume TCP messages in handle_info/2
             Transport:setopts(Socket, [{active, once}]),
             {ok, FullsyncWorker} = riak_repl_keylist_server:start_link(Cluster,
-                                                                       Transport, Socket, 
+                                                                       Transport, Socket,
                                                                        WorkDir, Client, ClientVer),
             _ = riak_repl_keylist_server:start_fullsync(FullsyncWorker, [Partition]),
             {reply, ok, State#state{transport=Transport, socket=Socket, cluster=Cluster,
@@ -116,8 +118,8 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
         aae ->
             %% AAE strategy
             {ok, Client} = riak:local_client(),
-            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster, 
-                                                                   Client, Transport, 
+            {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster,
+                                                                   Client, Transport,
                                                                    Socket, Partition,
                                                                    self(), ClientVer),
             %% Give control of socket to AAE worker. It will consume all TCP messages.
@@ -128,7 +130,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
                          fullsync_worker=FullsyncWorker, work_dir=undefined,
                          strategy=aae}}
     end;
-            
+
 handle_call(start_fullsync, _From, State=#state{fullsync_worker=FSW,
                                                 strategy=Strategy}) ->
     case Strategy of
@@ -247,17 +249,13 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Based on the agreed common protocol level and the supported
 %% mode of AAE, decide what strategy we are capable of offering.
-decide_our_caps(DefaultStrategy) ->
+decide_our_caps(RequestedStrategy) ->
     SupportedStrategy =
-        case {riak_kv_entropy_manager:enabled(),
-              app_helper:get_env(riak_repl, fullsync_strategy, DefaultStrategy)} of
-            {false,_} -> keylist;
-            {true,aae} -> aae;
-            {true,keylist} -> keylist;
-            {true,UnSupportedStrategy} ->
-                lager:warning("App config for riak_repl/fullsync_strategy ~p is unsupported. Using ~p",
-                              [UnSupportedStrategy, DefaultStrategy]),
-                DefaultStrategy
+        case {riak_kv_entropy_manager:enabled(), RequestedStrategy} of
+            {false, _} -> keylist;
+            {true, aae} -> aae;
+            {true, keylist} -> keylist;
+            {true, _UnSupportedStrategy} -> RequestedStrategy
         end,
     [{strategy, SupportedStrategy}].
 
