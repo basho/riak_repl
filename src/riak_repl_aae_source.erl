@@ -379,7 +379,9 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
                             riak_core_util:make_fold_req(
                                 fun ?MODULE:bloom_fold/3,
                                 {Self,
-                                 {serialized, ebloom:serialize(Bloom)}}),
+                                 {serialized, ebloom:serialize(Bloom)}},
+                                false,
+                                [{iterator_refresh, true}]),
                             {raw, FoldRef, self()},
                             riak_kv_vnode_master) of
                         {ok, VNodePid} ->
