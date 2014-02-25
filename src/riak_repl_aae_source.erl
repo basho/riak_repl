@@ -505,8 +505,7 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
                             {Partition, OwnerNode},
                             riak_core_util:make_fold_req(
                                 fun ?MODULE:bloom_fold/3,
-                                {Self,
-                                 {serialized, ebloom:serialize(Bloom)}}),
+                                {Self, Bloom}),
                             {raw, FoldRef, self()},
                             riak_kv_vnode_master) of
                         {ok, VNodePid} ->
@@ -529,9 +528,6 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
             spawn_link(Worker) %% this isn't the Pid we need because it's just the vnode:fold
     end.
 
-bloom_fold(BK, V, {MPid, {serialized, SBloom}}) ->
-    {ok, Bloom} = ebloom:deserialize(SBloom),
-    bloom_fold(BK, V, {MPid, Bloom});
 bloom_fold({B, K}, V, {MPid, Bloom}) ->
     case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
         true ->
