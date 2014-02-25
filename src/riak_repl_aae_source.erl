@@ -36,6 +36,8 @@
                     update_trees={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     key_exchange={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     compute_differences={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    compute_differences_done={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    send_diffs_diff_obj={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     send_diffs={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()}
                    }).
 
@@ -159,7 +161,9 @@ log_profiling_data(Index, Profiling) ->
     lager:info("update_trees time: ~p", [now_diff(Profiling#profiling.update_trees)]),
     lager:info("key_exchange time: ~p", [now_diff(Profiling#profiling.key_exchange)]),
     lager:info("compute_differences time: ~p", [now_diff(Profiling#profiling.compute_differences)]),
-    lager:info("send_diff time: ~p", [now_diff(Profiling#profiling.send_diffs)]),
+    lager:info("compute_differences done time: ~p", [now_diff(Profiling#profiling.compute_differences_done)]),
+    lager:info("send_diffs_diff_obj time: ~p", [now_diff(Profiling#profiling.send_diffs_diff_obj)]),
+    lager:info("send_diffs time: ~p", [now_diff(Profiling#profiling.send_diffs)]),
     lager:info("----- Profiling Data -----").
 
 now_diff({undefined, _}) ->
@@ -421,6 +425,7 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
                     #state{transport=Transport, socket=Socket} = State) ->
     Profiling = State#state.profiling,
     KeyTiming = maybe_update_end(Profiling#profiling.key_exchange),
+    %%%%%%%%% Start of 80% of the time %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     Timing1 = maybe_update_start(Profiling#profiling.compute_differences),
     ok = Transport:controlling_process(Socket, WorkerPid),
     WorkerPid ! {'$aae_src', ready, self()},
@@ -431,6 +436,10 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
 
     {next_state, compute_differences, State#state{profiling=UpdProfiling}};
 compute_differences({'$aae_src', done, Bloom}, State) ->
+    Profiling = State#state.profiling,
+    Timing0 = maybe_update_start(Profiling#profiling.compute_differences_done),
+    UpdProfiling0=Profiling#profiling{compute_differences_done=Timing0},
+
     %% send differences
     NDiff = ebloom:elements(Bloom),
     lager:info("Found ~p differences", [NDiff]),
@@ -440,18 +449,27 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
     %% diffs_done once all differences are sent.
     finish_sending_differences(Bloom, State),
 
-    {next_state, send_diffs, State}.
+    %% wait for worker pid to start
+    Timing1 = maybe_update_end(UpdProfiling0#profiling.compute_differences_done),
+    Timing2 = maybe_update_start(Profiling#profiling.send_diffs_diff_obj),
+    UpdProfiling1=UpdProfiling0#profiling{compute_differences_done=Timing1,
+                                          send_diffs_diff_obj=Timing2},
+
+    {next_state, send_diffs, State#state{profiling=UpdProfiling1}}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
 %% of the diff_done event. Note: recv'd from a sync send event.
 send_diffs({diff_obj, RObj}, _From, State) ->
     Profiling = State#state.profiling,
+    Timing0 = maybe_update_end(Profiling#profiling.send_diffs_diff_obj),
     DiffTiming = maybe_update_end(Profiling#profiling.compute_differences),
+    %%%%%%%%% End of 80% of the time %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     Timing1 = maybe_update_start(Profiling#profiling.send_diffs),
     %% send missing object to remote sink
     UpdProfiling=Profiling#profiling{compute_differences=DiffTiming,
-                                     send_diffs=Timing1},
+                                     send_diffs=Timing1,
+                                     send_diffs_diff_obj=Timing0},
     send_missing(RObj, State#state{profiling=UpdProfiling}),
     {reply, ok, send_diffs, State#state{profiling=UpdProfiling}}.
 
