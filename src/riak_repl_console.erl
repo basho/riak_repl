@@ -690,7 +690,7 @@ extract_rt_fs_send_recv_kbps(Most) ->
     RTRecvKbps = sum_rt_recv_kbps(Most),
     FSSendKbps = sum_fs_send_kbps(Most),
     FSRecvKbps = sum_fs_recv_kbps(Most),
-    [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kgbps, RTRecvKbps},
+    [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kbps, RTRecvKbps},
         {fullsync_send_kbps, FSSendKbps}, {fullsync_recv_kbps, FSRecvKbps}].
 
 print_ip_and_maybe_port({IP, Port}) when is_tuple(IP) ->
