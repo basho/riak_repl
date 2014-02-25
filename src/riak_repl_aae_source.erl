@@ -419,13 +419,18 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
 
 compute_differences({'$aae_src', worker_pid, WorkerPid},
                     #state{transport=Transport, socket=Socket} = State) ->
-    ok = Transport:controlling_process(Socket, WorkerPid),
-    WorkerPid ! {'$aae_src', ready, self()},
-    {next_state, compute_differences, State};
-compute_differences({'$aae_src', done, Bloom}, State) ->
     Profiling = State#state.profiling,
     KeyTiming = maybe_update_end(Profiling#profiling.key_exchange),
     Timing1 = maybe_update_start(Profiling#profiling.compute_differences),
+    ok = Transport:controlling_process(Socket, WorkerPid),
+    WorkerPid ! {'$aae_src', ready, self()},
+
+    %% wait for worker pid to start
+    UpdProfiling=Profiling#profiling{key_exchange=KeyTiming,
+                                     compute_differences=Timing1},
+
+    {next_state, compute_differences, State#state{profiling=UpdProfiling}};
+compute_differences({'$aae_src', done, Bloom}, State) ->
     %% send differences
     NDiff = ebloom:elements(Bloom),
     lager:info("Found ~p differences", [NDiff]),
@@ -435,10 +440,7 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
     %% diffs_done once all differences are sent.
     finish_sending_differences(Bloom, State),
 
-    %% wait for differences from bloom_folder or to be done
-    UpdProfiling=Profiling#profiling{key_exchange=KeyTiming,
-                                     compute_differences=Timing1},
-    {next_state, send_diffs, State#state{profiling=UpdProfiling}}.
+    {next_state, send_diffs, State}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
