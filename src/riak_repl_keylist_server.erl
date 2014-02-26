@@ -416,14 +416,19 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
 
             Self = self(),
             DiffSize = State#state.diff_batch_size,
+            BloomSpec = case OwnerNode == node() of
+                true ->
+                    Bloom;
+                false ->
+                    {serialized, ebloom:serialize(Bloom)}
+            end,
             Worker = fun() ->
                     FoldRef = make_ref(),
                     try riak_core_vnode_master:command_return_vnode(
                             {Partition, OwnerNode},
                             riak_core_util:make_fold_req(
                                 fun ?MODULE:bloom_fold/3,
-                                {Self,
-                                 {serialized, ebloom:serialize(Bloom)},
+                                {Self, BloomSpec,
                                  State#state.client, State#state.transport,
                                  State#state.socket, DiffSize, DiffSize}),
                             {raw, FoldRef, self()},
