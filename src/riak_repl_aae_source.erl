@@ -596,14 +596,9 @@ accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
                             [Partition, Bucket, Key]),
                 ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
                 1;
-            {missing, Bin} ->
-                %% remote has a key we don't have. Ignore it.
-                {Bucket,Key} = binary_to_term(Bin),
-                lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
-                            [Partition, Bucket, Key]),
+            {missing, _} ->
                 0;
-            Other ->
-                lager:info("Keydiff: ~p (ignored)", [Other]),
+            _ ->
                 0
         end,
     [Count+NumObjects].
