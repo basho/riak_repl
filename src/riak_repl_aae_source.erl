@@ -17,7 +17,6 @@
          key_exchange/2,
          compute_differences/2,
          send_diffs/2,
-         send_diffs/3,
          send_missing/3,
          bloom_fold/3]).
 
@@ -401,7 +400,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     AccFun = fun(KeyDiffs, Acc0) ->
             %% Gather diff keys into a bloom filter
             lists:foldl(fun(KeyDiff, AccIn) ->
-                        accumulate_diff(KeyDiff, Bloom, AccIn, State) end,
+                        accumulate_diff(KeyDiff, Bloom, AccIn) end,
                         Acc0,
                         KeyDiffs)
     end,
@@ -470,25 +469,6 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
 
     {next_state, send_diffs, State#state{profiling=UpdProfiling1}}.
 
-%% state send_diffs is where we wait for diff_obj messages from the bloom folder
-%% and send them to the sink for each diff_obj. We eventually finish upon receipt
-%% of the diff_done event. Note: recv'd from a sync send event.
-send_diffs({diff_obj, RObj}, _From, State) ->
-    % lager:info("profile diff_obj start: ~p",
-    %            [os:timestamp()]),
-    Profiling = State#state.profiling,
-    Timing0 = maybe_update_end(Profiling#profiling.send_diffs_diff_obj),
-    % lager:info("profile timing0: ~p", [Timing0]),
-    DiffTiming = maybe_update_end(Profiling#profiling.compute_differences),
-    %%%%%%%%% End of 80% of the time %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    Timing1 = maybe_update_start(Profiling#profiling.send_diffs),
-    %% send missing object to remote sink
-    UpdProfiling=Profiling#profiling{compute_differences=DiffTiming,
-                                     send_diffs=Timing1,
-                                     send_diffs_diff_obj=Timing0},
-    send_missing(RObj, State#state{profiling=UpdProfiling}),
-    {reply, ok, send_diffs, State#state{profiling=UpdProfiling}}.
-
 %% All indexes in this Partition are done.
 %% Note: recv'd from an async send event
 send_diffs(diff_done, State=#state{indexns=[]}) ->
@@ -504,7 +484,7 @@ send_diffs(diff_done, State=#state{indexns=[_IndexN|IndexNs]}) ->
 %%% Internal functions
 %%%===================================================================
 
-finish_sending_differences(Bloom, #state{index=Partition}) ->
+finish_sending_differences(Bloom, #state{index=Partition} = State) ->
     lager:info("profile finish_sending_differences start: ~p",
                [os:timestamp()]),
     case ebloom:elements(Bloom) == 0 of
@@ -523,7 +503,7 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
                             {Partition, OwnerNode},
                             riak_core_util:make_fold_req(
                                 fun ?MODULE:bloom_fold/3,
-                                {Self, Bloom}),
+                                {State, Bloom}),
                             {raw, FoldRef, self()},
                             riak_kv_vnode_master) of
                         {ok, VNodePid} ->
@@ -546,19 +526,19 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
             spawn_link(Worker) %% this isn't the Pid we need because it's just the vnode:fold
     end.
 
-bloom_fold({B, K}, V, {MPid, Bloom}) ->
+bloom_fold({B, K}, V, {State, Bloom}) ->
     case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
         true ->
             RObj = riak_object:from_binary(B,K,V),
-            gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
+            send_missing(RObj, State);
         false ->
             ok
     end,
-    {MPid, Bloom}.
+    {State, Bloom}.
 
-accumulate_diff(KeyDiff, Bloom, [], State) ->
-    accumulate_diff(KeyDiff, Bloom, [0], State);
-accumulate_diff(KeyDiff, Bloom, [Count], State) ->
+accumulate_diff(KeyDiff, Bloom, []) ->
+    accumulate_diff(KeyDiff, Bloom, [0]);
+accumulate_diff(KeyDiff, Bloom, [Count]) ->
     NumObjects =
         case KeyDiff of
             {remote_missing, Bin} ->
