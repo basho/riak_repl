@@ -27,6 +27,22 @@
 % how long to wait for a reply from remote cluster before moving on to
 % next partition.
 -define(WAITING_TIMEOUT, 5000).
+% How often stats should be cached in milliseconds.
+-ifndef(DEFAULT_STAT_REFRESH_INTERVAL).
+-ifdef(TEST).
+-define(DEFAULT_STAT_REFRESH_INTERVAL, 1000).
+-else.
+-define(DEFAULT_STAT_REFRESH_INTERVAL, 60000).
+-endif.
+-endif.
+
+-record(stat_cache, {
+    worker :: {pid(), reference()},
+    refresh_timer :: reference(),
+    refresh_interval = app_helper:get_env(riak_repl, fullsync_stat_refresh_interval, ?DEFAULT_STAT_REFRESH_INTERVAL) :: pos_integer(),
+    last_refresh = riak_core_util:moment() :: 'undefined' | pos_integer(),
+    stats = [] :: [tuple()]
+}).
 
 -record(state, {
     leader_node :: 'undefined' | node(),
@@ -51,7 +67,8 @@
                                           % during an already running fullsync
     fullsyncs_completed = 0,
     fullsync_start_time = undefined,
-    last_fullsync_duration = undefined
+    last_fullsync_duration = undefined,
+    stat_cache = #stat_cache{}
 }).
 
 %% ------------------------------------------------------------------
@@ -74,6 +91,12 @@
 %% ------------------------------------------------------------------
 
 -export([connected/6,connect_failed/3]).
+
+%% ------------------------------------------------------------------
+%% stat caching mechanism export
+%% ------------------------------------------------------------------
+
+-export([refresh_stats_worker/2]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -192,7 +215,7 @@ init(Cluster) ->
     case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
             _ = riak_repl_util:schedule_cluster_fullsync(Cluster),
-            {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
+            {ok, refresh_stats(#state{other_cluster = Cluster, connection_ref = Ref})};
         {error, Error} ->
             lager:warning("Error connection to remote"),
             {stop, Error}
@@ -200,7 +223,8 @@ init(Cluster) ->
 
 %% @hidden
 handle_call(status, _From, State = #state{socket=Socket}) ->
-    SourceStats = gather_source_stats(State#state.running_sources),
+    SourceStats = State#state.stat_cache#stat_cache.stats,
+    StatFreshness = calendar:gregorian_seconds_to_datetime(State#state.stat_cache#stat_cache.last_refresh),
     SocketStats = riak_core_tcp_mon:format_socket_stats(
         riak_core_tcp_mon:socket_status(Socket), []),
     StartTime =
@@ -217,6 +241,7 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {error_exits, State#state.error_exits},
         {retry_exits, State#state.retry_exits},
         {busy_nodes, sets:size(State#state.busy_nodes)},
+        {last_running_refresh, StatFreshness},
         {running_stats, SourceStats},
         {socket, SocketStats},
         {fullsyncs_completed, State#state.fullsyncs_completed},
@@ -460,6 +485,22 @@ handle_info(send_next_whereis_req, State) ->
             State
     end,
     {noreply, State2};
+
+handle_info({stat_update, Worker, Time, Stats}, #state{stat_cache = #stat_cache{worker = {Worker, Mon}} = StatCache} = State) ->
+    erlang:demonitor(Mon, [flush]),
+    StatCache1 = StatCache#stat_cache{worker = undefined, last_refresh = Time, stats = Stats},
+    StatCache2 = schedule_stat_refresh(StatCache1),
+    {noreply, State#state{stat_cache = StatCache2}};
+
+handle_info(refresh_stats, State) ->
+    State2 = refresh_stats(State),
+    {noreply, State2};
+
+handle_info({'DOWN', Mon, process, Pid, Why}, #state{stat_cache = #stat_cache{worker = {Pid, Mon}} = StatCache} = State) ->
+    lager:notice("Stat gathering worker process ~p unexpected exit: ~p", [Pid, Why]),
+    StatCache1 = StatCache#stat_cache{worker = undefined},
+    StatCache2 = refresh_stats(StatCache1, State#state.running_sources),
+    {noreply, State#state{stat_cache = StatCache2}};
 
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
@@ -736,6 +777,52 @@ sort_partitions(In, N, Acc) ->
     {A, [P|B]} = lists:split(Split, In),
     sort_partitions(B++A, N, [P|Acc]).
 
+refresh_stats(#state{stat_cache = Stats} = State) ->
+    StatState = refresh_stats(Stats, State#state.running_sources),
+    State#state{stat_cache = StatState}.
+
+refresh_stats(StatCache, Sources) ->
+    StatCache1 = maybe_exit_stat_worker(StatCache),
+    StatCache2 = maybe_cancel_timer(StatCache1),
+    {Pid, Mon} = erlang:spawn_monitor(?MODULE, refresh_stats_worker, [self(), Sources]),
+    StatCache2#stat_cache{worker = {Pid, Mon}}.
+
+maybe_exit_stat_worker(#stat_cache{worker = undefined} = StatCache) ->
+    StatCache;
+
+maybe_exit_stat_worker(#stat_cache{worker = {Pid, Mon}} = StatCache) ->
+    % we don't want to have to wait for a message to be processed, so we're
+    % just going to kill it. Since this isn't an otp process or anything
+    % special, there should be no warnings about its death.
+    exit(Pid, cancel),
+    erlang:demonitor(Mon, [flush]),
+    StatCache#stat_cache{worker = undefined}.
+
+maybe_cancel_timer(#stat_cache{refresh_timer = undefined} = StatCache) ->
+    StatCache;
+
+maybe_cancel_timer(#stat_cache{refresh_timer = Timer} = StatCache) ->
+    _ = erlang:cancel_timer(Timer),
+    receive
+        refresh_stats -> ok
+    after 0 ->
+        ok
+    end,
+    StatCache#stat_cache{refresh_timer = undefined}.
+
+schedule_stat_refresh(StatCache) ->
+    StatCache1 = maybe_cancel_timer(StatCache),
+    Timer = erlang:send_after(?DEFAULT_STAT_REFRESH_INTERVAL, self(), refresh_stats),
+    StatCache1#stat_cache{refresh_timer = Timer}.
+
+%% @private Exported just to be able to spawn with arguments more nicely.
+refresh_stats_worker(ReportTo, Sources) ->
+    lager:info("Gathering source data for ~p", [Sources]),
+    SourceStats = gather_source_stats(Sources),
+    Time = riak_core_util:moment(),
+    Self = self(),
+    ReportTo ! {stat_update, Self, Time, SourceStats}.
+
 gather_source_stats(PDict) ->
     gather_source_stats(PDict, []).
 
@@ -747,7 +834,8 @@ gather_source_stats([{Pid, _} | Tail], Acc) ->
         Stats ->
             gather_source_stats(Tail, [{riak_repl_util:safe_pid_to_list(Pid), Stats} | Acc])
     catch
-        exit:_ ->
+        exit:Y ->
+            lager:notice("getting source info failed due to exit:~p", [Y]),
             gather_source_stats(Tail, [{riak_repl_util:safe_pid_to_list(Pid), []} | Acc])
     end.
 
