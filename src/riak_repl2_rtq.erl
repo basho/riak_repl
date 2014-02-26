@@ -351,6 +351,8 @@ handle_call({ack_sync, Name, Seq}, _From, State) ->
 handle_cast({push, NumItems, Bin}, State) ->
     handle_cast({push, NumItems, Bin, []}, State);
 
+handle_cast({push, _NumItems, _Bin, _Meta}, State=#state{cs=[]}) ->
+    {noreply, State};
 handle_cast({push, NumItems, Bin, Meta}, State) ->
     State2 = maybe_flip_overload(State),
     {noreply, push(NumItems, Bin, Meta, State2)};
