@@ -538,21 +538,15 @@ bloom_fold({B, K}, V, {MPid, Bloom}) ->
 
 accumulate_diff(KeyDiff, Bloom, [], State) ->
     accumulate_diff(KeyDiff, Bloom, [0], State);
-accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
+accumulate_diff(KeyDiff, Bloom, [Count], State) ->
     NumObjects =
         case KeyDiff of
             {remote_missing, Bin} ->
-                %% send object and related objects to remote
                 {Bucket,Key} = binary_to_term(Bin),
-                lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
-                            [Partition, Bucket, Key]),
                 ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
                 1;
             {different, Bin} ->
-                %% send object and related objects to remote
                 {Bucket,Key} = binary_to_term(Bin),
-                lager:debug("Keydiff: remote partition ~p different: ~p:~p",
-                            [Partition, Bucket, Key]),
                 ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
                 1;
             {missing, _} ->
