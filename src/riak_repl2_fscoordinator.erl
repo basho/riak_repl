@@ -28,12 +28,18 @@
 % next partition.
 -define(WAITING_TIMEOUT, 5000).
 % How often stats should be cached in milliseconds.
-%-define(STAT_REFRESH_INTERVAL, 60000).
--define(STAT_REFRESH_INTERVAL, 5000).
+-ifndef(STAT_REFRESH_INTERVAL).
+-ifdef(TEST).
+-define(DEFAULT_STAT_REFRESH_INTERVAL, 1000).
+-else.
+-define(DEFAULT_STAT_REFRESH_INTERVAL, 60000).
+-endif.
+-endif.
 
 -record(stat_cache, {
     worker,
     refresh_timer,
+    refresh_interval = app_helper:get_env(riak_repl, fullsync_stat_refresh_interval, ?DEFAULT_STAT_REFRESH_INTERVAL),
     last_refresh = riak_core_util:moment(),
     stats = []
 }).
@@ -809,7 +815,7 @@ maybe_cancel_timer(#stat_cache{refresh_timer = Timer} = StatCache) ->
 
 schedule_stat_refresh(StatCache) ->
     StatCache1 = maybe_cancel_timer(StatCache),
-    Timer = erlang:send_after(?STAT_REFRESH_INTERVAL, self(), refresh_stats),
+    Timer = erlang:send_after(?DEFAULT_STAT_REFRESH_INTERVAL, self(), refresh_stats),
     StatCache1#stat_cache{refresh_timer = Timer}.
 
 %% @private Exported just to be able to spawn with arguments more nicely.
