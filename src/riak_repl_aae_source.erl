@@ -34,6 +34,7 @@
                     update_trees={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     key_exchange={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     compute_differences={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
+                    compute_differences_between={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     compute_differences_done={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     send_diffs_diff_obj={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()},
                     send_diffs={undefined, undefined} :: {erlang:timestamp(), erlang:timestamp()}
@@ -159,6 +160,7 @@ log_profiling_data(Index, Profiling) ->
     lager:info("update_trees time: ~p", [now_diff(Profiling#profiling.update_trees)]),
     lager:info("key_exchange time: ~p", [now_diff(Profiling#profiling.key_exchange)]),
     lager:info("compute_differences time: ~p", [now_diff(Profiling#profiling.compute_differences)]),
+    lager:info("compute_differences between time: ~p", [now_diff(Profiling#profiling.compute_differences_between)]),
     lager:info("compute_differences done time: ~p", [now_diff(Profiling#profiling.compute_differences_done)]),
     lager:info("send_diffs_diff_obj time: ~p", [now_diff(Profiling#profiling.send_diffs_diff_obj)]),
     lager:info("send_diffs time: ~p", [now_diff(Profiling#profiling.send_diffs)]),
@@ -421,6 +423,8 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
 
 compute_differences({'$aae_src', worker_pid, WorkerPid},
                     #state{transport=Transport, socket=Socket} = State) ->
+    lager:info("profile compare_differences workerpid start: ~p",
+               [os:timestamp()]),
     Profiling = State#state.profiling,
     KeyTiming = maybe_update_end(Profiling#profiling.key_exchange),
     %%%%%%%%% Start of 80% of the time %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -429,14 +433,22 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     WorkerPid ! {'$aae_src', ready, self()},
 
     %% wait for worker pid to start
+    Timing2 = maybe_update_start(Profiling#profiling.compute_differences_between),
     UpdProfiling=Profiling#profiling{key_exchange=KeyTiming,
-                                     compute_differences=Timing1},
+                                     compute_differences=Timing1,
+                                     compute_differences_between=Timing2},
+    lager:info("profile compare_differences workerpid end: ~p",
+               [os:timestamp()]),
 
     {next_state, compute_differences, State#state{profiling=UpdProfiling}};
 compute_differences({'$aae_src', done, Bloom}, State) ->
+    lager:info("profile compare_differences done start: ~p",
+               [os:timestamp()]),
     Profiling = State#state.profiling,
     Timing0 = maybe_update_start(Profiling#profiling.compute_differences_done),
-    UpdProfiling0=Profiling#profiling{compute_differences_done=Timing0},
+    BetweenEnd = maybe_update_end(Profiling#profiling.compute_differences_between),
+    UpdProfiling0=Profiling#profiling{compute_differences_done=Timing0,
+                                      compute_differences_between=BetweenEnd},
 
     %% send differences
     NDiff = ebloom:elements(Bloom),
@@ -453,14 +465,20 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
     UpdProfiling1=UpdProfiling0#profiling{compute_differences_done=Timing1,
                                           send_diffs_diff_obj=Timing2},
 
+    lager:info("profile compare_differences done end: ~p",
+               [os:timestamp()]),
+
     {next_state, send_diffs, State#state{profiling=UpdProfiling1}}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
 %% of the diff_done event. Note: recv'd from a sync send event.
 send_diffs({diff_obj, RObj}, _From, State) ->
+    % lager:info("profile diff_obj start: ~p",
+    %            [os:timestamp()]),
     Profiling = State#state.profiling,
     Timing0 = maybe_update_end(Profiling#profiling.send_diffs_diff_obj),
+    % lager:info("profile timing0: ~p", [Timing0]),
     DiffTiming = maybe_update_end(Profiling#profiling.compute_differences),
     %%%%%%%%% End of 80% of the time %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     Timing1 = maybe_update_start(Profiling#profiling.send_diffs),
@@ -487,6 +505,8 @@ send_diffs(diff_done, State=#state{indexns=[_IndexN|IndexNs]}) ->
 %%%===================================================================
 
 finish_sending_differences(Bloom, #state{index=Partition}) ->
+    lager:info("profile finish_sending_differences start: ~p",
+               [os:timestamp()]),
     case ebloom:elements(Bloom) == 0 of
         true ->
             lager:info("No differences, skipping bloom fold for partition ~p", [Partition]),
