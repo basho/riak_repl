@@ -28,7 +28,7 @@
 % next partition.
 -define(WAITING_TIMEOUT, 5000).
 % How often stats should be cached in milliseconds.
--ifndef(STAT_REFRESH_INTERVAL).
+-ifndef(DEFAULT_STAT_REFRESH_INTERVAL).
 -ifdef(TEST).
 -define(DEFAULT_STAT_REFRESH_INTERVAL, 1000).
 -else.
