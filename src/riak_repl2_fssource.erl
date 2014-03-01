@@ -83,7 +83,7 @@ init([Partition, IP]) ->
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=RequestedStrategy}) ->
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("fullsync connection to ~p for ~p",[IP, Partition]),
+    lager:info("Fullsync connection to ~p for ~p",[IP, Partition]),
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
@@ -95,9 +95,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
 
     OurCaps = decide_our_caps(RequestedStrategy),
     TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    lager:info("Got caps: ~p", [TheirCaps]),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
-    lager:info("Common strategy: ~p", [Strategy]),
     {_, ClientVer, _} = Proto,
 
     case Strategy of
@@ -194,7 +192,7 @@ handle_cast(fullsync_complete, State=#state{partition=Partition}) ->
     {stop, normal, State};
 handle_cast({connect_failed, _Pid, Reason},
      State = #state{cluster = Cluster}) ->
-     lager:info("fullsync replication connection to cluster ~p failed ~p",
+     lager:warning("Fullsync replication connection to cluster ~p failed ~p",
         [Cluster, Reason]),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -223,8 +221,7 @@ handle_info({Proto, Socket, Data},
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
     end;
-handle_info(Msg, State) ->
-    lager:info("ignored handle_info ~p", [Msg]),
+handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
@@ -290,7 +287,7 @@ maybe_exchange_caps(_, Caps, Socket, Transport) ->
 %% Start a connection to the remote sink node at IP, using the given fullsync strategy,
 %% for the given partition. The protocol version will be determined from the strategy.
 connect(IP, Strategy, Partition) ->
-    lager:info("connecting to remote ~p", [IP]),
+    lager:info("Connecting to remote ~p for partition ~p", [IP, Partition]),
     TcpOptions = [{keepalive, true},
                   {nodelay, true},
                   {packet, 4},
@@ -303,10 +300,9 @@ connect(IP, Strategy, Partition) ->
 
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
-            lager:info("connection ref ~p", [Ref]),
             {ok, #state{strategy = Strategy, ip = IP,
                         connection_ref = Ref, partition=Partition}};
         {error, Reason}->
-            lager:warning("Error connecting to remote"),
+            lager:warning("Error connecting to remote ~p for partition ~p", [IP, Partition]),
             {error, Reason}
     end.
