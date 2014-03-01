@@ -1,6 +1,5 @@
 -module(riak_repl2_fssource).
 -include("riak_repl.hrl").
--include_lib("riak_kv/include/riak_kv_vnode.hrl").
 
 -behaviour(gen_server).
 %% API
@@ -150,7 +149,8 @@ handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
     end,
     {reply, ok, State};
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
-                                               socket=Socket}) ->
+                                               socket=Socket,
+                                               strategy=Strategy}) ->
     Res = case is_pid(FSW) andalso is_process_alive(FSW) of
         true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
@@ -161,7 +161,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         [
             {node, node()},
             {site, State#state.cluster},
-            {strategy, fullsync},
+            {strategy, Strategy},
             {fullsync_worker, riak_repl_util:safe_pid_to_list(FSW)},
             {socket, SocketStats}
         ],
