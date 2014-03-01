@@ -127,11 +127,10 @@ handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
                 [State#state.cluster, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
 handle_info(_Info, StateName, State) ->
-    lager:info("ignored handle_info: ~p", [_Info]),
+    lager:notice("ignored handle_info: ~p", [_Info]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, _State) ->
-    lager:info("Terminating."),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
@@ -198,7 +197,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
         ok ->
             update_trees(start_exchange, State);
         Error ->
-            lager:warning("lock tree for partition ~p failed, got ~p",
+            lager:info("Remote lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
             {stop, {remote, Error}, State}
@@ -215,7 +214,7 @@ update_trees(cancel_fullsync, State) ->
     {stop, normal, State};
 update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
     send_complete(State),
-    lager:info("AAE fullsync source completed partition ~p. Stopping.",
+    lager:info("AAE fullsync source completed partition ~p",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
     {next_state, update_trees, State};
@@ -232,7 +231,7 @@ update_trees(start_exchange, State=#state{tree_pid=TreePid,
     end;
 
 update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
-    lager:info("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
+    lager:debug("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
     gen_server:cast(Owner, not_responsible),
     {stop, normal, State};
 update_trees({tree_built, _, _}, State) ->
@@ -328,7 +327,7 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
 compute_differences({'$aae_src', done, Bloom}, State) ->
     %% send differences
     NDiff = ebloom:elements(Bloom),
-    lager:info("Found ~p differences", [NDiff]),
+    lager:debug("Found ~p differences", [NDiff]),
 
     %% if we have anything in our bloom filter, start sending them now.
     %% this will start a worker process, which will tell us it's done with
@@ -442,7 +441,7 @@ replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
                             [Partition, Bucket, Key]),
                 0;
             Other ->
-                lager:info("Keydiff: ~p (ignored)", [Other]),
+                lager:warning("Unexpected error keydiff: ~p (ignored)", [Other]),
                 0
         end,
 
@@ -482,7 +481,7 @@ accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
                             [Partition, Bucket, Key]),
                 0;
             Other ->
-                lager:info("Keydiff: ~p (ignored)", [Other]),
+                lager:warning("Unexpected error keydiff: ~p (ignored)", [Other]),
                 0
         end,
     [Count+NumObjects].
@@ -528,7 +527,7 @@ send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}
             end;
         {error, notfound} ->
             %% can't find the key!
-            lager:warning("Can't get a key that was know to be a difference: ~p:~p", [Bucket,Key]),
+            lager:warning("not_found returned for fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
             0;
         _ ->
             0

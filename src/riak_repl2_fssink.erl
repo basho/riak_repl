@@ -91,13 +91,13 @@ init([Socket, Transport, OKProto, Props]) ->
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Transport, Socket),
-    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
+    lager:debug("Negotiated ~p with ver ~p", [Proto, Ver]),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
                                        SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
+    lager:debug("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
     {ok, #state{proto=Proto, socket=Socket, transport=Transport, cluster=Cluster, ver=Ver}}.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
@@ -128,6 +128,8 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast(fullsync_complete, State) ->
     %% sent from AAE fullsync worker
+    %% TODO: The sink state should include the partition ID
+    %% or some other useful information
     lager:info("Fullsync of partition complete."),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -162,9 +164,7 @@ handle_info(init_ack, State=#state{socket=Socket,
     %% possibly exchange fullsync capabilities with the remote
     OurCaps = decide_our_caps(CommonMajor),
     TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    lager:info("Got caps: ~p", [TheirCaps]),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
-    lager:info("Common strategy: ~p", [Strategy]),
 
     case Strategy of
         keylist ->

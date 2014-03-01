@@ -126,19 +126,19 @@ handle_call(_Request, _From, State) ->
 
 %% @hidden
 handle_cast(Msg, State) ->
-    lager:info("Unexpected message ~p", [Msg]),
+    lager:warning("Unexpected message ~p", [Msg]),
     {noreply, State}.
 
 
 %% @hidden
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
-    lager:info("Connect closed"),
+    lager:info("Fullsync sink connect closed"),
     {stop, normal, State};
 
 handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
-    lager:error("Connection closed unexpectedly"),
+    lager:error("Fullsync sink connection closed unexpectedly"),
     {stop, normal, State};
 
 handle_info({Proto, Socket, Data}, #state{socket = Socket,
