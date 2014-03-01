@@ -84,7 +84,6 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
     {_,{CommonMajor,_CMinor},{CommonMajor,_HMinor}} = Proto,
 
     Strategy = riak_repl_util:decide_common_strategy(CommonMajor, Socket, Transport),
-    lager:debug("Common strategy: ~p with cluster: ~p", [Strategy, Cluster]),
 
     {ok, Client} = riak:local_client(),
 

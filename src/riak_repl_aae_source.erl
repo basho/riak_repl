@@ -172,6 +172,8 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                 [Partition, IndexNs]),
 
     case riak_kv_vnode:hashtree_pid(Partition) of
+        {ok, undefined} ->
+            {stop, hashtree_undefined, State0};
         {ok, TreePid} ->
             TreeMref = monitor(process, TreePid),
             State = State0#state{timeout=Timeout,
