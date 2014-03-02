@@ -708,10 +708,12 @@ schedule_cluster_fullsync(Cluster, Pid) ->
                     ok
             end;
         {ok, {Cluster, FullsyncIvalMins}} ->
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+            ok;
         {ok, FullsyncIvalMins} when not is_tuple(FullsyncIvalMins) ->
             %% this will affect ALL clusters that have fullsync enabled
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+            ok;
         _ ->
             ok
     end.
