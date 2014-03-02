@@ -84,6 +84,8 @@
             % were skips before it's sent even one item.
            }).
 
+-type name() :: term().
+
 %% API
 %% @doc Start linked, registeres to module name.
 -spec start_link() -> {ok, pid()}.
@@ -118,17 +120,17 @@ start_test() ->
 %% @doc Register a consumer with the given name. The Name of the consumer is
 %% the name of the remote cluster by convention. Returns the oldest unack'ed
 %% sequence number.
--spec register(Name :: string()) -> {'ok', number()}.
+-spec register(Name :: name()) -> {'ok', number()}.
 register(Name) ->
     gen_server:call(?SERVER, {register, Name}, infinity).
 
 %% @doc Removes a consumer.
--spec unregister(Name :: string()) -> 'ok' | {'error', 'not_registered'}.
+-spec unregister(Name :: name()) -> 'ok' | {'error', 'not_registered'}.
 unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}, infinity).
 
 %% @doc True if the given consumer has no items to consume.
--spec is_empty(Name :: string()) -> boolean().
+-spec is_empty(Name :: name()) -> boolean().
 is_empty(Name) ->
     gen_server:call(?SERVER, {is_empty, Name}, infinity).
 
@@ -180,23 +182,23 @@ push(NumItems, Bin) ->
 -type queue_entry() :: {pos_integer(), pos_integer(), binary(), orddict:orddict()}.
 -type not_reg_error() :: {'error', 'not_registered'}.
 -type deliver_fun() :: fun((queue_entry() | not_reg_error()) -> 'ok').
--spec pull(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
+-spec pull(Name :: name(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull(Name, DeliverFun) ->
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
 %% @doc Block the caller while the pull is done.
--spec pull_sync(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
+-spec pull_sync(Name :: name(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull_sync(Name, DeliverFun) ->
     gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}, infinity).
 
 %% @doc Asynchronously acknowldge delivery of all objects with a sequence
 %% equal or lower to Seq for the consumer.
--spec ack(Name :: string(), Seq :: pos_integer()) -> 'ok'.
+-spec ack(Name :: name(), Seq :: pos_integer()) -> 'ok'.
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
 
 %% @doc Same as ack/2, but blocks the caller.
--spec ack_sync(Name :: string(), Seq :: pos_integer()) ->'ok'.
+-spec ack_sync(Name :: name(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
     gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
 
