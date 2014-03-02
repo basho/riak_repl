@@ -406,14 +406,14 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                             lager:error("Unable to comply with request to "
                                 "upgrade connection with site ~p to SSL: ~p",
                                 [State#state.sitename, Reason]),
-                            riak_repl_client_sup:stop_site(State#state.sitename),
+                            _ = riak_repl_client_sup:stop_site(State#state.sitename),
                             {stop, normal, State}
                     end;
                 {peerinfo, _, [ssl_required]} ->
                     %% other side wants SSL, but we aren't configured for it
                     lager:error("Site ~p requires SSL to connect",
                         [State#state.sitename]),
-                    riak_repl_client_sup:stop_site(State#state.sitename),
+                    _ = riak_repl_client_sup:stop_site(State#state.sitename),
                     {stop, normal, State};
                 {peerinfo, TheirPeerInfo} when Proto == ssl; NeedSSL == false ->
                     Capability = riak_repl_util:capability_from_vsn(TheirPeerInfo),
@@ -424,7 +424,7 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                     %% SSL was required, but not provided by the other side
                     lager:error("Server for site ~p does not support SSL, refusing "
                         "to connect", [State#state.sitename]),
-                    riak_repl_client_sup:stop_site(State#state.sitename),
+                    _ = riak_repl_client_sup:stop_site(State#state.sitename),
                     {stop, normal, State};
                 {redirect, IPAddr, Port} ->
                     case lists:member({IPAddr, Port}, State#state.listeners) of
@@ -521,7 +521,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
         false ->
             lager:error("Invalid peer info for site ~p, "
                 "ring sizes do not match.", [SiteName]),
-            riak_repl_client_sup:stop_site(SiteName),
+            _ = riak_repl_client_sup:stop_site(SiteName),
             {stop, normal, State}
     end.
 
