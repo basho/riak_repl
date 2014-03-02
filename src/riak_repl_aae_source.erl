@@ -378,8 +378,10 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                              ok
                      end;
                 (get_bucket, {L, B}) ->
+                     lager:info("get_bucket called"),
                      send_synchronous_msg(?MSG_GET_AAE_BUCKET, {L,B,IndexN}, State);
                 (key_hashes, Segment) ->
+                     lager:info("key_hashes called"),
                      send_synchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
                 (final, _) ->
                      %% give ourself control of the socket again
