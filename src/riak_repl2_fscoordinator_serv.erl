@@ -47,7 +47,6 @@ start_link(Socket, Transport, Proto, Props) ->
 
 %% @doc Get the stats for every serv.
 %% @see status/1
--spec status() -> [tuple()].
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of

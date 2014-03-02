@@ -117,14 +117,12 @@ start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
 %% for taking ownership of the socket via
 %% Transport:controlling_process(Socket, Pid).  Only the strategy of
 %% `round_robin' is supported; it's arg is ignored.
--spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
 register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
     gen_server:cast(?SERVER, {register_service, HostProtocol, Strategy}).
 
 %% @doc Blocking version of register_service.
--spec sync_register_service(hostspec(), service_scheduler_strategy()) -> ok.
 sync_register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
@@ -133,17 +131,14 @@ sync_register_service(HostProtocol, Strategy) ->
 %% @doc Unregister the given protocol-id. Existing connections for this
 %% protocol are not killed. New connections for this protocol will not be
 %% accepted until re-registered.
--spec(unregister_service(proto_id()) -> ok).
 unregister_service(ProtocolId) ->
     gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
 
 %% @doc Blocking version of unregister_service.
--spec sync_unregister_service(proto_id()) -> ok.
 sync_unregister_service(ProtocolId) ->
     gen_server:call(?SERVER, {unregister_service, ProtocolId}).
 
 %% @doc True if the given protocal id is registered.
--spec(is_registered(proto_id()) -> boolean()).
 is_registered(ProtocolId) ->
     gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
 

@@ -108,7 +108,6 @@
 %%% API
 %%%===================================================================
 %% @doc start the Cluster Manager
--spec(start_link() -> ok).
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
@@ -119,22 +118,18 @@ start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
 
 %% @doc Tells us who the leader is. Called by riak_repl_leader whenever a
 %% leadership election takes place.
--spec set_leader(LeaderNode :: node(), _LeaderPid :: pid()) -> 'ok'.
 set_leader(LeaderNode, _LeaderPid) ->
     gen_server:cast(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
--spec get_leader() -> node().
 get_leader() ->
     gen_server:call(?SERVER, leader_node, infinity).
 
 %% Reply with the current leader node.
--spec connect_to_clusters() -> ok.
 connect_to_clusters() ->
     gen_server:call(?SERVER, connect_to_clusters, infinity).
 
 %% @doc True if the local manager is the leader.
--spec get_is_leader() -> boolean().
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader, infinity).
 
