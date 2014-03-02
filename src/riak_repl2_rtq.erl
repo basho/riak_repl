@@ -281,7 +281,7 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
 handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
     %% this will allow the realtime repl hook to determine if it should send
     %% to another host
-    riak_repl2_rtq_proxy:start(),
+    _ = riak_repl2_rtq_proxy:start(),
     {reply, ok, State#state{shutting_down = true}};
 
 handle_call(stop, _From, State) ->

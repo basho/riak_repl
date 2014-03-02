@@ -191,7 +191,7 @@ init(Cluster) ->
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
-            riak_repl_util:schedule_cluster_fullsync(Cluster),
+            _ = riak_repl_util:schedule_cluster_fullsync(Cluster),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Error} ->
             lager:warning("Error connection to remote"),
