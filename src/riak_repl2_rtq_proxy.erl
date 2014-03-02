@@ -52,7 +52,7 @@ init([]) ->
     %% trap exit so we can have terminate() called
     process_flag(trap_exit, true),
     Nodes = riak_repl_util:get_peer_repl_nodes(),
-    [erlang:monitor(process, {riak_repl2_rtq, Node}) || Node <- Nodes],
+    _ = [erlang:monitor(process, {riak_repl2_rtq, Node}) || Node <- Nodes],
     %% cache the supported wire format of peer nodes to avoid rcp calls later.
     Versions = get_peer_wire_versions(Nodes),
     Metas = get_peer_meta_support(Nodes),

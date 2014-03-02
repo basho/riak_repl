@@ -396,7 +396,7 @@ terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    [case DeliverFun of
+    _ = [case DeliverFun of
          undefined ->
              ok;
          _ ->
