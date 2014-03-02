@@ -27,8 +27,8 @@ start_coord(Node, Remote) ->
 
 stop_coord(Node, Remote) ->
     lager:info("Stopping replication coordination ~p", [Remote]),
-    supervisor:terminate_child({?MODULE, Node}, Remote),
-    supervisor:delete_child({?MODULE, Node}, Remote).
+    _ = supervisor:terminate_child({?MODULE, Node}, Remote),
+    _ = supervisor:delete_child({?MODULE, Node}, Remote).
 
 started() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
