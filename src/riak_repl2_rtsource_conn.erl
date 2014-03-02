@@ -309,7 +309,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 cancel_timer(undefined) -> ok;
-cancel_timer(TRef)      -> erlang:cancel_timer(TRef).
+cancel_timer(TRef)      -> _ = erlang:cancel_timer(TRef).
 
 recv(TcpBin, State = #state{remote = Name,
                             hb_sent_q = HBSentQ,
@@ -329,7 +329,7 @@ recv(TcpBin, State = #state{remote = Name,
                 undefined ->
                     recv(Cont, State);
                 _ ->
-                    cancel_timer(HBTRef),
+                    _ = cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
         {ok, {ack, Seq}, Cont} ->
@@ -339,7 +339,7 @@ recv(TcpBin, State = #state{remote = Name,
                 undefined ->
                     recv(Cont, State);
                 _ ->
-                    erlang:cancel_timer(HBTRef),
+                    _ = erlang:cancel_timer(HBTRef),
                     recv(Cont, schedule_heartbeat(State#state{hb_timeout_tref=undefined}))
             end;
         {ok, heartbeat, Cont} ->
@@ -348,7 +348,7 @@ recv(TcpBin, State = #state{remote = Name,
             {{value, HBSent}, HBSentQ2} = queue:out(HBSentQ),
             lager:debug("got heartbeat, hb_sent: ~w", [HBSent]),
             HBRTT = timer:now_diff(now(), HBSent) div 1000,
-            cancel_timer(HBTRef),
+            _ = cancel_timer(HBTRef),
             State2 = State#state{hb_sent_q = HBSentQ2,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
