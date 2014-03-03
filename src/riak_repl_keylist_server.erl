@@ -188,7 +188,7 @@ build_keylist(Command, #state{kl_pid=Pid} = State)
     %% kill the worker
     riak_repl_fullsync_helper:stop(Pid),
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
-    file:delete(State#state.kl_fn),
+    _ = file:delete(State#state.kl_fn),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 %% Helper has sorted and written keylist to a file
@@ -231,9 +231,10 @@ wait_keylist(Command, #state{their_kl_fh=FH} = State)
             ok;
         _ ->
             %% close and delete the keylist file
-            file:close(FH),
-            file:delete(State#state.their_kl_fn),
-            file:delete(State#state.kl_fn)
+            _ = file:close(FH),
+            _ = file:delete(State#state.their_kl_fn),
+            _ = file:delete(State#state.kl_fn),
+            ok
     end,
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
@@ -252,18 +253,18 @@ wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
         _ ->
             FH0
     end,
-    file:write(FH, Hunk),
+    _ = file:write(FH, Hunk),
     {next_state, wait_keylist, State#state{their_kl_fh=FH}};
 %% the client has finished sending the keylist
 wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     case FH of
         undefined ->
             %% client has a blank vnode, write a blank file
-            file:write_file(State#state.their_kl_fn, <<>>),
+            _ = file:write_file(State#state.their_kl_fn, <<>>),
             ok;
         _ ->
-            file:sync(FH),
-            file:close(FH),
+            _ = file:sync(FH),
+            _ = file:close(FH),
             ok
     end,
     lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
