@@ -134,3 +134,12 @@
     {level, advanced},
     {default, true}
 ]}.
+
+%% @doc How frequently the stats for fullsync source processes should be
+%% gathered. Requests for fullsync status always returned the most recently
+%% gathered data, and thus can be at most as old as this value.
+{mapping, "mdc.fullsync.stat_refresh_interval", "riak_repl.fullsync_stat_refresh_interval", [
+    {datatype, {duration, ms}},
+    {commented, "1m"}
+]}.
+
