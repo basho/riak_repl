@@ -1,0 +1,5 @@
+riak_repl_keylist_client.erl:107: The call application:unset_env('riak_repl',{'progress',_}) breaks the contract (Application,Par) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom())
+riak_repl_keylist_client.erl:215: The call application:unset_env('riak_repl',{'progress',_}) breaks the contract (Application,Par) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom())
+riak_repl_keylist_client.erl:264: The call application:unset_env('riak_repl',{'progress',_}) breaks the contract (Application,Par) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom())
+riak_repl_keylist_client.erl:116: The call application:unset_env('riak_repl',{'progress',_}) breaks the contract (Application,Par) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom())
+riak_repl_keylist_client.erl:128: The call application:set_env('riak_repl',{'progress',_},nonempty_maybe_improper_list()) breaks the contract (Application,Par,Val) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom()), is_subtype(Val,term())
