@@ -61,7 +61,7 @@
 %% State of a resolved remote cluster
 -record(cluster, {name :: string(),     % obtained from the remote cluster by ask_name()
                   members :: [ip_addr()], % list of suspected ip addresses for cluster
-                  last_conn :: erlang:now() % last time we connected to the remote cluster
+                  last_conn :: erlang:timestamp() % last time we connected to the remote cluster
                  }).
 
 %% remotes := orddict, key = ip_addr(), value = unresolved | clustername()
