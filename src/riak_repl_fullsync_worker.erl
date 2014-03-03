@@ -157,7 +157,7 @@ do_binputs_internal(BinObjs, DoneFun, Pool, Ver) ->
     %% TODO: add mechanism for detecting put failure so 
     %% we can drop rtsink and have it resent
     Objects = riak_repl_util:from_wire(Ver, BinObjs),
-    [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
+    _ = [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
     poolboy:checkin(Pool, self()),
     %% let the caller know
     DoneFun().
