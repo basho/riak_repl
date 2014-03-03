@@ -467,7 +467,7 @@ fullsync([Cmd, Remote]) ->
 fullsync([Cmd]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
     Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
-    case Cmd of
+    _ = case Cmd of
         "start" ->
             ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
             [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
