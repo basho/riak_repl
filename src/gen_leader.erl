@@ -1124,7 +1124,7 @@ terminate(Reason, Msg, #server{mod = Mod,
                                state = State,
                                debug = Debug} = _Server, _Role,
           #election{name = Name, cand_timer = Timer} = _E) ->
-    timer:cancel(Timer),
+    _ = timer:cancel(Timer),
     case catch Mod:terminate(Reason, State) of
         {'EXIT', R} ->
             error_info(R, Name, Msg, State, Debug),
@@ -1341,7 +1341,7 @@ hasBecomeLeader(E,Server,Msg) ->
 
             %% io:format("==> I am the leader! (acks: ~200p)\n", [E#election.acks]),
             %% Set the internal timeout (corresponds to Periodically)
-            timer:send_after(E#election.cand_timer_int, {heartbeat, node()}),
+            _ = timer:send_after(E#election.cand_timer_int, {heartbeat, node()}),
             {E#election.name, node()} ! {send_checklead},
             %%    (It's meaningful only when I am the leader!)
             loop(Server#server{state = NewState},elected,NewE,Msg);
