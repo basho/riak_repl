@@ -50,11 +50,11 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
                     %% Cindy: Santa, why can we encode our own binary object?
                     %% Santa: Because the send() function will convert our tuple
                     %%        to a binary
-                    [riak_repl_tcp_server:send(Transport, Socket,
+                    _ = [riak_repl_tcp_server:send(Transport, Socket,
                                                riak_repl_util:encode_obj_msg(
                                                  Ver,{fs_diff_obj,O}))
                      || O <- Objects],
-                    riak_repl_tcp_server:send(Transport, Socket,
+                    _ = riak_repl_tcp_server:send(Transport, Socket,
                                               riak_repl_util:encode_obj_msg(
                                                 Ver,{fs_diff_obj,RObj}))
             end,
