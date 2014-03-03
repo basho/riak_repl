@@ -219,7 +219,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
                                     end,
                                     {Mref, Pid, S}
                             end, Receivers),
-                    [P ! {repl, Msg} || {_Mref, P, send} <- R2],
+                    _ = [P ! {repl, Msg} || {_Mref, P, send} <- R2],
                     riak_repl_stats:objects_sent(),
                     {noreply, State#state{receivers=R2,
                                           lastpoll=os:timestamp()}};
