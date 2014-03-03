@@ -134,8 +134,8 @@ get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader, infinity).
 
 %% @doc Register a function that will get called to get out local riak node
-%% member's IP addrs. MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
--spec register_member_fun(MemberFun :: fun((inet:addr()) -> [{string(),pos_integer()}])) -> 'ok'.
+%% member's IP addrs. MemberFun(ip_addr()) -> [{IP,Port}] were IP is a string
+-spec register_member_fun(MemberFun :: fun((ip_addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
