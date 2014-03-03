@@ -15,8 +15,8 @@ start_site(SiteName) ->
 
 stop_site(SiteName) ->
     lager:info("Stopping replication site ~p", [SiteName]),
-    supervisor:terminate_child(?MODULE, SiteName),
-    supervisor:delete_child(?MODULE, SiteName).
+    _ = supervisor:terminate_child(?MODULE, SiteName),
+    _ = supervisor:delete_child(?MODULE, SiteName).
 
 running_site_procs() ->
     [{SiteName, Pid} || {SiteName, Pid, _, _} <- supervisor:which_children(?MODULE)].
