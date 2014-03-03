@@ -614,7 +614,8 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
           case ( pos(Node,E#election.candidate_nodes) >
                  pos(node(),E#election.candidate_nodes) ) of
             true ->
-                {Name, Node} ! {heartbeat, self()};
+                {Name, Node} ! {heartbeat, self()},
+                ok;
             _ ->
                 ok
           end;
