@@ -432,7 +432,7 @@ fullsync([Cmd, Remote]) ->
             ?LOG_USER_CMD("Enable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_enable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
+            _ = riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
             ok;
         "disable" ->
             ?LOG_USER_CMD("Disable Fullsync Replication to cluster ~p", [Remote]),
