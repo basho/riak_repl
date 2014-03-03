@@ -488,15 +488,15 @@ ensure_sites(Leader) ->
                 _ ->
                     %% stop any local clients on the leader
                     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-                    [riak_repl_client_sup:stop_site(SiteName) ||
+                    _ = [riak_repl_client_sup:stop_site(SiteName) ||
                         {SiteName, _Pid} <- RunningSiteProcs],
                     ConfiguredSites = [Site#repl_site.name ||
                         Site <- dict:fetch(sites, ReplConfig)],
                     {ToStop, ToStart} = balance_clients(CurrentConfig,
                         ConfiguredSites),
-                    [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
+                    _ = [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
                         || {Node, Site} <- ToStop],
-                    [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
+                    _ = [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
                         || {Node, Site} <- ToStart]
             end
     end.
