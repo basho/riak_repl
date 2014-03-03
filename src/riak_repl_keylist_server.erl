@@ -369,7 +369,8 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
     %% pending acks count.
     case WorkerPaused of
         true ->
-            State#state.diff_pid ! {Ref, diff_resume};
+            State#state.diff_pid ! {Ref, diff_resume},
+            ok;
         false ->
             ok
     end,
