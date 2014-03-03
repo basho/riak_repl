@@ -421,7 +421,7 @@ leader_change(A, A) ->
 leader_change(false, true) ->
     %% we've become the leader, stop any local clients
     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-    [riak_repl_client_sup:stop_site(SiteName) ||
+    _ = [riak_repl_client_sup:stop_site(SiteName) ||
         {SiteName, _Pid} <- RunningSiteProcs],
     ok;
 leader_change(true, false) ->
@@ -430,9 +430,11 @@ leader_change(true, false) ->
         true ->
             %% in the inverted case need to stop sites
             RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-            [riak_repl_client_sup:stop_site(SiteName) ||
-                {SiteName, _Pid} <- RunningSiteProcs];
-        _ -> ok
+            _ = [riak_repl_client_sup:stop_site(SiteName) ||
+                {SiteName, _Pid} <- RunningSiteProcs],
+            ok;
+        _ ->
+            ok
     end,
     _ = riak_repl_listener_sup:close_all_connections(),
     ok.
