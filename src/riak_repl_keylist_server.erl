@@ -528,7 +528,7 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
 %% server <- bloom_fold : diff_obj 'recv a diff object from bloom folder
 diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
                                            socket=Socket, proto=Proto} = State) ->
-    case riak_repl_util:maybe_send(RObj, Client, Proto) of
+    _ = case riak_repl_util:maybe_send(RObj, Client, Proto) of
         cancel ->
             skipped;
         Objects when is_list(Objects) ->
