@@ -510,7 +510,7 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
     {ldr,Synch,T,Workers, From} = Msg ->
       case ( (E#election.status == wait) and (E#election.elid == T) ) of
         true ->
-          timer:cancel(E#election.cand_timer),
+          _ = timer:cancel(E#election.cand_timer),
           NewE1 = mon_node(E, From),
           NewE = NewE1#election{leader = From,
                                 leadernode = node(From),
