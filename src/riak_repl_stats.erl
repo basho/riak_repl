@@ -53,7 +53,7 @@ stop() ->
 register_stats() ->
     _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
-    folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
+    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
 
 reregister_stat(Name, Type) ->
     catch folsom_metrics:delete_metric({?APP, Name}),
