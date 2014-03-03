@@ -415,15 +415,15 @@ realtime([Cmd]) ->
     Remotes = riak_repl2_rt:enabled(),
     case Cmd of
         "start" ->
-            ?LOG_USER_CMD("Start Realtime Replication to all connected clusters", []),
-            [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+            ?LOG_USER_CMD("Start Realtime Replication to all connected clusters",
+                          []),
+            _ = [riak_repl2_rt:start(Remote) || Remote <- Remotes];
         "stop" ->
             ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters",
                       []),
-            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+            _ = [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
     end,
-    ok. %% TODO: we could gather the return codes of the list comprehensions
-        %% TODO: we could gather the return codes of the list comprehensions
+    ok.
 
 fullsync([Cmd, Remote]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
