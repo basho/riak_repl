@@ -37,11 +37,11 @@
 -endif.
 
 -record(stat_cache, {
-    worker,
-    refresh_timer,
-    refresh_interval = app_helper:get_env(riak_repl, fullsync_stat_refresh_interval, ?DEFAULT_STAT_REFRESH_INTERVAL),
-    last_refresh = riak_core_util:moment(),
-    stats = []
+    worker :: {pid(), reference()},
+    refresh_timer :: reference(),
+    refresh_interval = app_helper:get_env(riak_repl, fullsync_stat_refresh_interval, ?DEFAULT_STAT_REFRESH_INTERVAL) :: pos_integer(),
+    last_refresh = riak_core_util:moment() :: 'undefined' | pos_integer(),
+    stats = [] :: [tuple()]
 }).
 
 -record(state, {
@@ -498,8 +498,9 @@ handle_info(refresh_stats, State) ->
 
 handle_info({'DOWN', Mon, process, Pid, Why}, #state{stat_cache = #stat_cache{worker = {Pid, Mon}} = StatCache} = State) ->
     lager:notice("Stat gathering worker process ~p unexpected exit: ~p", [Pid, Why]),
-    StatCache1 = refresh_stats(StatCache),
-    {noreply, State#state{stat_cache = StatCache1}};
+    StatCache1 = StatCache#stat_cache{worker = undefined},
+    StatCache2 = refresh_stats(StatCache1, State#state.running_sources),
+    {noreply, State#state{stat_cache = StatCache2}};
 
 handle_info(_Info, State) ->
     lager:info("ignoring ~p", [_Info]),
