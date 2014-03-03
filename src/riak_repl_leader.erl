@@ -434,7 +434,7 @@ leader_change(true, false) ->
                 {SiteName, _Pid} <- RunningSiteProcs];
         _ -> ok
     end,
-    riak_repl_listener_sup:close_all_connections(),
+    _ = riak_repl_listener_sup:close_all_connections(),
     ok.
 
 %% Inspect the cluster and determine if we can balance clients between
