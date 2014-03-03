@@ -583,7 +583,7 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
           [] ->
             %% io:format("Canceling candidate timer (timer=~w\n  down=~w\n  role=~w, leader=~w)\n",
             %%    [E#election.cand_timer, E#election.down, Role, E#election.leadernode]),
-            timer:cancel(E#election.cand_timer),
+            _ = timer:cancel(E#election.cand_timer),
             E#election{cand_timer = undefined};
           Down ->
             %% get rid of any queued up candidate_timers, since we just
