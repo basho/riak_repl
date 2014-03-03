@@ -813,7 +813,7 @@ loop(#server{parent = Parent,
                                     end,
                                     _ = [F(N) || N <- Down],
                                     %% schedule another heartbeat
-                                    timer:send_after(E#election.cand_timer_int, {send_checklead}),
+                                    _ = timer:send_after(E#election.cand_timer_int, {send_checklead}),
                                     loop(Server, Role, E, Msg)
                             end;
                         false ->
@@ -844,7 +844,7 @@ loop(#server{parent = Parent,
                 {candidate_timer} = Msg ->
                     NewE =
                         if E#election.down =:= [] orelse (Role =/= elected andalso E#election.leadernode =/= none) ->
-                                timer:cancel(E#election.cand_timer),
+                                _ = timer:cancel(E#election.cand_timer),
                                 %% io:format("Canceling candidate timer (timer=~w\n  down=~w\n  role=~w, leader=~w)\n",
                                 %%    [E#election.cand_timer, E#election.down, Role, E#election.leadernode]),
                                 E#election{cand_timer=undefined};
