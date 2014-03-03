@@ -58,7 +58,7 @@
                 leader_mref=undefined :: undefined | reference(), % monitor
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
-                receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
+                receivers=[] :: [{reference(),pid(), drop | send}],
                 check_tref :: timer:tref(),     % check mailbox timer
                 elected_mbox_size = 0 :: integer(), % elected leader box size
                 lastpoll = {0, 0, 0}
@@ -224,7 +224,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
                     {noreply, State#state{receivers=R2,
                                           lastpoll=os:timestamp()}};
                 _ ->
-                    [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
+                    _ = [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
                     riak_repl_stats:objects_sent(),
                     {noreply, State}
             end
