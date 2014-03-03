@@ -92,7 +92,7 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
                     io:format("Invalid NAT IP address: ~p~n", [IPParseError]),
                     error
             end;
-        {error,_} ->
+        error ->
             io:format("Error adding nat address. ~n"),
             error
     end.
@@ -185,25 +185,25 @@ cluster_fs_running(Sink) ->
 
 start_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:start_fullsync(Pid) ||
+    _ = [riak_repl_tcp_server:start_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 cancel_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:cancel_fullsync(Pid) ||
+    _ = [riak_repl_tcp_server:cancel_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 pause_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:pause_fullsync(Pid) ||
+    _ = [riak_repl_tcp_server:pause_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 resume_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
-    [riak_repl_tcp_server:resume_fullsync(Pid) ||
+    _ = [riak_repl_tcp_server:resume_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
@@ -335,7 +335,7 @@ connections([]) ->
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
     io:format("~-20s ~-20s ~-15s [Members]~n", ["Connection", "Cluster Name", "<Ctrl-Pid>"]),
     io:format("~-20s ~-20s ~-15s ---------~n", ["----------", "------------", "----------"]),
-    [showClusterConn(Conn) || Conn <- Conns],
+    _ = [showClusterConn(Conn) || Conn <- Conns],
     ok.
 
 connect([Address]) ->

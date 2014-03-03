@@ -106,7 +106,7 @@ queue_handoff(State) ->
             riak_repl_stats:rt_source_errors(),
             {reply, error, State};
         [Peer|_Rest] ->
-            riak_repl2_rtq:register(qm),
+            {ok, _} = riak_repl2_rtq:register(qm),
             WireVer = riak_repl_util:peer_wire_format(Peer),
             lager:info("Migrating replication queue data to ~p with wire version ~p",
                        [Peer, WireVer]),

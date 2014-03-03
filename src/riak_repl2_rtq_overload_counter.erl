@@ -23,21 +23,15 @@
 %% API
 
 %% @doc Start linked and registered as module name with default options.
--spec start_link() -> {'ok', pid()}.
 start_link() ->
     SendInterval = app_helper:get_env(riak_repl, rtq_drop_report_interval, ?DEFAULT_INTERVAL),
     start_link([{report_interval, SendInterval}]).
 
 %% @doc Start linked and registered as the module name with the given options.
--type report_option() :: {'report_interval', pos_integer()}.
--type start_option() :: [report_option()].
--type start_options() :: [start_option()].
--spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
 
 %% @doc Stop the counter gracefully.
--spec stop() -> 'ok'.
 stop() ->
     gen_server:cast(?MODULE, stop).
 

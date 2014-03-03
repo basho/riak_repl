@@ -191,7 +191,7 @@ init(Cluster) ->
     ClientSpec = {{fs_coordinate, [{1,0}]}, {TcpOptions, ?MODULE, self()}},
     case riak_core_connection_mgr:connect({rt_repl, Cluster}, ClientSpec) of
         {ok, Ref} ->
-            riak_repl_util:schedule_cluster_fullsync(Cluster),
+            _ = riak_repl_util:schedule_cluster_fullsync(Cluster),
             {ok, #state{other_cluster = Cluster, connection_ref = Ref}};
         {error, Error} ->
             lager:warning("Error connection to remote"),
@@ -314,8 +314,8 @@ handle_cast(start_fullsync,  State) ->
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
-    [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
-    [begin
+    _ = [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
+    _ = [begin
         unlink(Pid),
         riak_repl2_fssource:stop_fullsync(Pid),
         riak_repl2_fssource_sup:disable(node(Pid), Part)
@@ -487,7 +487,7 @@ handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waitin
         undefined ->
             State;
         {N, _OldNode, Tref} ->
-            erlang:cancel_timer(Tref),
+            _ = erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
             % we don't know for sure it's no longer busy until we get a busy reply
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
@@ -504,7 +504,7 @@ handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} 
         {N, OldNode, Tref} ->
             lager:info("anya Partition ~p is too busy on cluster ~p at node ~p",
                        [Partition, State#state.other_cluster, OldNode]),
-            erlang:cancel_timer(Tref),
+            _ = erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
             Partition2 = {Partition, N, OldNode},
@@ -520,7 +520,7 @@ handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Wai
             State;
         {N, _OldNode, Tref} ->
             lager:info("Partition ~p is too busy on cluster ~p at node ~p", [Partition, State#state.other_cluster, Node]),
-            erlang:cancel_timer(Tref),
+            _ = erlang:cancel_timer(Tref),
 
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
@@ -540,7 +540,7 @@ handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = 
         {_N, _OldNode, Tref} ->
             lager:info("Partition ~p is unavailable on cluster ~p",
                 [Partition, State#state.other_cluster]),
-            erlang:cancel_timer(Tref),
+            _ = erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
             start_up_reqs(State2)
@@ -552,7 +552,7 @@ handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Wait
         {_N, _OldNode, Tref} ->
             lager:info("Partition ~p is unavailable on cluster ~p",
                 [Partition, State#state.other_cluster]),
-            erlang:cancel_timer(Tref),
+            _ = erlang:cancel_timer(Tref),
             Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
             start_up_reqs(State2)
@@ -816,7 +816,7 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
             NodesToNotify = lists:subtract(AllNodesList,
                                            ordsets:to_list(DirtyNodesDuringFS)),
             lager:debug("Notifying nodes ~p", [ NodesToNotify]),
-            rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
+            _ = rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
             State#state{dirty_nodes=ordsets:new()};
         false ->
             lager:debug("No dirty nodes before fullsync started"),

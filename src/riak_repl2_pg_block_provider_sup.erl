@@ -15,8 +15,8 @@ enable(Remote) ->
     supervisor:start_child(?MODULE, ChildSpec).
 
 disable(Remote) ->
-    supervisor:terminate_child(?MODULE, Remote),
-    supervisor:delete_child(?MODULE, Remote).
+    _ = supervisor:terminate_child(?MODULE, Remote),
+    _ = supervisor:delete_child(?MODULE, Remote).
 
 enabled() ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-

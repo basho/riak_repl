@@ -61,7 +61,7 @@
 %% State of a resolved remote cluster
 -record(cluster, {name :: string(),     % obtained from the remote cluster by ask_name()
                   members :: [ip_addr()], % list of suspected ip addresses for cluster
-                  last_conn :: erlang:now() % last time we connected to the remote cluster
+                  last_conn :: erlang:timestamp() % last time we connected to the remote cluster
                  }).
 
 %% remotes := orddict, key = ip_addr(), value = unresolved | clustername()
@@ -108,7 +108,6 @@
 %%% API
 %%%===================================================================
 %% @doc start the Cluster Manager
--spec(start_link() -> ok).
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
@@ -119,28 +118,24 @@ start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
 
 %% @doc Tells us who the leader is. Called by riak_repl_leader whenever a
 %% leadership election takes place.
--spec set_leader(LeaderNode :: node(), _LeaderPid :: pid()) -> 'ok'.
 set_leader(LeaderNode, _LeaderPid) ->
     gen_server:cast(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
--spec get_leader() -> node().
 get_leader() ->
     gen_server:call(?SERVER, leader_node, infinity).
 
 %% Reply with the current leader node.
--spec connect_to_clusters() -> ok.
 connect_to_clusters() ->
     gen_server:call(?SERVER, connect_to_clusters, infinity).
 
 %% @doc True if the local manager is the leader.
--spec get_is_leader() -> boolean().
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader, infinity).
 
 %% @doc Register a function that will get called to get out local riak node
-%% member's IP addrs. MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
--spec register_member_fun(MemberFun :: fun((inet:addr()) -> [{string(),pos_integer()}])) -> 'ok'.
+%% member's IP addrs. MemberFun(ip_addr()) -> [{IP,Port}] were IP is a string
+-spec register_member_fun(MemberFun :: fun((ip_addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 

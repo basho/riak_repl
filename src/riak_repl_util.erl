@@ -674,13 +674,15 @@ schedule_fullsync(Pid) ->
     case application:get_env(riak_repl, fullsync_interval) of
         {ok, disabled} ->
             ok;
-        {ok, [{_,_} | _]} -> ok;
-        {ok, Tuple} when is_tuple(Tuple) -> ok;
+        {ok, [{_,_} | _]} ->
+            ok;
+        {ok, Tuple} when is_tuple(Tuple) ->
+            ok;
         {ok, FullsyncIvalMins} ->
             FullsyncIval = timer:minutes(FullsyncIvalMins),
-            erlang:send_after(FullsyncIval, Pid, start_fullsync)
+            erlang:send_after(FullsyncIval, Pid, start_fullsync),
+            ok
     end.
-
 
 start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
     FullsyncIval = timer:minutes(FullsyncIvalMins),
@@ -708,10 +710,12 @@ schedule_cluster_fullsync(Cluster, Pid) ->
                     ok
             end;
         {ok, {Cluster, FullsyncIvalMins}} ->
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+            ok;
         {ok, FullsyncIvalMins} when not is_tuple(FullsyncIvalMins) ->
             %% this will affect ALL clusters that have fullsync enabled
-            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster);
+            start_fullsync_timer(Pid, FullsyncIvalMins, Cluster),
+            ok;
         _ ->
             ok
     end.

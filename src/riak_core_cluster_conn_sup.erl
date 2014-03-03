@@ -38,8 +38,8 @@ add_remote_connection(Remote) ->
 remove_remote_connection(Remote) ->
     lager:debug("Disconnecting from remote cluster at: ~p", [Remote]),
     %% remove supervised cluster connection
-    supervisor:terminate_child(?MODULE, Remote),
-    supervisor:delete_child(?MODULE, Remote),
+    _ = supervisor:terminate_child(?MODULE, Remote),
+    _ = supervisor:delete_child(?MODULE, Remote),
     %% This seems hacky, but someone has to tell the connection manager to stop
     %% trying to reach this target if it hasn't connected yet. It's the supervised
     %% cluster connection that requests the connection, but it's going to die, so

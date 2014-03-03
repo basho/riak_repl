@@ -24,9 +24,9 @@ set_leader(Node, _Pid) ->
     case node() of
         Node -> ok;
         _ ->
-          [  begin
-                supervisor:terminate_child(?MODULE, Remote),
-                supervisor:delete_child(?MODULE, Remote)
+          _ = [ begin
+                _ = supervisor:terminate_child(?MODULE, Remote),
+                _ = supervisor:delete_child(?MODULE, Remote)
              end
                 || {Remote, Pid, _, _} <-
                       supervisor:which_children(?MODULE), is_pid(Pid)
@@ -40,8 +40,8 @@ start_proxy(Remote) ->
 
 stop_proxy(Node, Remote) ->
     lager:debug("Stopping pg_proxy for ~p", [Remote]),    
-    supervisor:terminate_child({?MODULE, Node}, Remote),
-    supervisor:delete_child({?MODULE, Node}, Remote).
+    _ = supervisor:terminate_child({?MODULE, Node}, Remote),
+    _ = supervisor:delete_child({?MODULE, Node}, Remote).
 
 started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-
