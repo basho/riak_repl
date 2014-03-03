@@ -594,7 +594,7 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
                     %% io:format("Sending {heartbeat, ~w} to ~w\n", [N, node()]),
                     {E#election.name, N} ! {heartbeat, node()}
                 end,
-            [F(N) || N <- Down, {ok, up} =/= net_kernel:node_info(N, state)],
+            _ = [F(N) || N <- Down, {ok, up} =/= net_kernel:node_info(N, state)],
             E
         end,
       safe_loop(Server,Role,NewE,Msg);
@@ -811,7 +811,7 @@ loop(#server{parent = Parent,
                                     F = fun(N) ->
                                       {Name, N} ! {checklead, node()}
                                     end,
-                                    [F(N) || N <- Down],
+                                    _ = [F(N) || N <- Down],
                                     %% schedule another heartbeat
                                     timer:send_after(E#election.cand_timer_int, {send_checklead}),
                                     loop(Server, Role, E, Msg)
