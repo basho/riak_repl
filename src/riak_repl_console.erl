@@ -413,7 +413,7 @@ realtime([Cmd, Remote]) ->
     ok;
 realtime([Cmd]) ->
     Remotes = riak_repl2_rt:enabled(),
-    case Cmd of
+    _ = case Cmd of
         "start" ->
             ?LOG_USER_CMD("Start Realtime Replication to all connected clusters",
                           []),
