@@ -588,7 +588,7 @@ terminate(_Reason, _StateName, State) ->
     catch(file:close(State#state.their_kl_fh)),
     %% Clean up the working directory on crash/exit
     Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
-    os:cmd(Cmd),
+    _ = os:cmd(Cmd),
     poolboy:stop(State#state.pool).
 
 code_change(_OldVsn, StateName, State, _Extra) ->
