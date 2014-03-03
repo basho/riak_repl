@@ -433,7 +433,7 @@ init_it(Starter,Parent,Name,Mod,{CandidateNodes,OptArgs,Arg},Options) ->
             end;
         {{ok, State}, false} ->
             proc_lib:init_ack(Starter, {ok, self()}),
-            case lists:member(self(), Workers) of 
+            _ = case lists:member(self(), Workers) of 
               false ->
                 rpc:multicall(CandidateNodes, gen_leader, 
                               worker_announce, [Name, node(self())]);
