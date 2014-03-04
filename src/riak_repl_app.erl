@@ -90,7 +90,7 @@ start(_Type, _StartArgs) ->
                     riak_repl_ring_handler, []),
 
             %% Add routes to webmachine
-            [ webmachine_router:add_route(R)
+            _ = [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
 
             %% Now that we have registered the ring handler, we can
