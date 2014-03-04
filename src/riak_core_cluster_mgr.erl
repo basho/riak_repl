@@ -377,7 +377,7 @@ handle_cast(_Unhandled, _State) ->
 %% it is time to poll all clusters and get updated member lists
 handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
     Connections = riak_core_cluster_conn_sup:connections(),
-    [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
+    _ = [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     {noreply, State};
 handle_info(poll_clusters_timer, State) ->
