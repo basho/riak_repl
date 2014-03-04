@@ -141,7 +141,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
     case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of
         {ok, Socket} ->
             lager:debug("Setting system options on client side: ~p", [?CONNECT_OPTIONS]),
-            Transport:setopts(Socket, ?CONNECT_OPTIONS),
+            ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
             SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
             %% handshake to make sure it's a riak sub-protocol dispatcher
             MyName = symbolic_clustername(),

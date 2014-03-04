@@ -50,11 +50,11 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
                     %% Cindy: Santa, why can we encode our own binary object?
                     %% Santa: Because the send() function will convert our tuple
                     %%        to a binary
-                    [riak_repl_tcp_server:send(Transport, Socket,
+                    _ = [riak_repl_tcp_server:send(Transport, Socket,
                                                riak_repl_util:encode_obj_msg(
                                                  Ver,{fs_diff_obj,O}))
                      || O <- Objects],
-                    riak_repl_tcp_server:send(Transport, Socket,
+                    _ = riak_repl_tcp_server:send(Transport, Socket,
                                               riak_repl_util:encode_obj_msg(
                                                 Ver,{fs_diff_obj,RObj}))
             end,
@@ -157,7 +157,7 @@ do_binputs_internal(BinObjs, DoneFun, Pool, Ver) ->
     %% TODO: add mechanism for detecting put failure so 
     %% we can drop rtsink and have it resent
     Objects = riak_repl_util:from_wire(Ver, BinObjs),
-    [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
+    _ = [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
     poolboy:checkin(Pool, self()),
     %% let the caller know
     DoneFun().

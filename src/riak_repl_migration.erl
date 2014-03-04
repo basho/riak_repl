@@ -50,7 +50,20 @@ handle_info({sleep, MaxTimeout}, State = #state{elapsed_sleep = ElapsedSleep}) -
             case (ElapsedSleep >= MaxTimeout) of
                 true ->
                     lager:info("Realtime queue has not completely drained"),
-                    queue_handoff(State),
+                    _ = case riak_repl_util:get_peer_repl_nodes() of
+                        [] ->
+                            lager:error("No nodes available to migrate replication data"),
+                            riak_repl_stats:rt_source_errors(),
+                            error;
+                        [Peer|_Rest] ->
+                            {ok, _} = riak_repl2_rtq:register(qm),
+                            WireVer = riak_repl_util:peer_wire_format(Peer),
+                            lager:info("Migrating replication queue data to ~p with wire version ~p",
+                                       [Peer, WireVer]),
+                            drain_queue(riak_repl2_rtq:is_empty(qm), Peer, WireVer),
+                            lager:info("Done migrating replication queue"),
+                            ok
+                    end,
                     gen_server:reply(State#state.caller, ok);
                 false ->
                     lager:info("Waiting for realtime repl queue to drain"),
@@ -94,26 +107,6 @@ drain_queue(false, Peer, PeerWireVer) ->
 
 drain_queue(true, _Peer, _Ver) ->
    done.
-
-%% Note: this function assumes that the handoff node supports BNW, which it will, because
-%% "get_peer_repl_nodes()" will only return other BNW nodes.
-queue_handoff(State) ->
-    case riak_repl_util:get_peer_repl_nodes() of
-        [] ->
-            %% TODO: bump up riak_repl_stats dropped_objects stats
-            %% should we have a new stat? riak_repl_stats:objects_dropped_no_leader()
-            lager:error("No nodes available to migrate replication data"),
-            riak_repl_stats:rt_source_errors(),
-            {reply, error, State};
-        [Peer|_Rest] ->
-            {ok, _} = riak_repl2_rtq:register(qm),
-            WireVer = riak_repl_util:peer_wire_format(Peer),
-            lager:info("Migrating replication queue data to ~p with wire version ~p",
-                       [Peer, WireVer]),
-            drain_queue(riak_repl2_rtq:is_empty(qm), Peer, WireVer),
-            lager:info("Done migrating replication queue"),
-            {reply, ok, State}
-        end.
 
 terminate(_Reason, _State) ->
     ok.

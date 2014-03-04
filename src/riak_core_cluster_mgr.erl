@@ -320,7 +320,7 @@ handle_cast({register_restore_cluster_targets_fun, Fun}, State) ->
     {noreply, State#state{restore_targets_fun=Fun}};
 
 handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
-    case State#state.is_leader of
+    _ = case State#state.is_leader of
         false ->
             %% forward request to leader manager
             proxy_cast({add_remote_cluster, Addr}, State);
@@ -377,7 +377,7 @@ handle_cast(_Unhandled, _State) ->
 %% it is time to poll all clusters and get updated member lists
 handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
     Connections = riak_core_cluster_conn_sup:connections(),
-    [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
+    _ = [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     {noreply, State};
 handle_info(poll_clusters_timer, State) ->
@@ -469,7 +469,8 @@ schedule_gc_timer(0) ->
     ok;
 schedule_gc_timer(Interval) ->
     %% schedule a timer to garbage collect old cluster and endpoint data
-    erlang:send_after(Interval, self(), garbage_collection_timer).
+    _ = erlang:send_after(Interval, self(), garbage_collection_timer),
+    ok.
 
 is_valid_ip(Addr) when is_list(Addr) ->
     %% a string. try and parse it.
@@ -609,7 +610,8 @@ ensure_remote_connection({cluster_by_name, "undefined"}) ->
     ok;
 ensure_remote_connection(Remote) ->
     %% add will make sure there is only one connection per remote
-    riak_core_cluster_conn_sup:add_remote_connection(Remote).
+    _ = riak_core_cluster_conn_sup:add_remote_connection(Remote),
+    ok.
 
 %% Drop our connection to the remote cluster.
 remove_remote_connection(Remote) ->
@@ -691,8 +693,9 @@ become_proxy(State, LeaderNode) when State#state.is_leader == true ->
             ok;
         Connections ->
             lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
-            [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
-             || {Remote, _Pid} <- Connections]
+            _ = [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
+             || {Remote, _Pid} <- Connections],
+            ok
     end,
     State#state{is_leader = false};
 become_proxy(State, LeaderNode) ->

@@ -143,10 +143,10 @@ wait_for_partition(Command, State)
         when Command == start_fullsync; Command == resume_fullsync ->
     %% annoyingly the server is the one that triggers the fullsync in the old
     %% protocol, so we'll just send it on to the client.
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     {next_state, wait_for_partition, State};
 wait_for_partition({start_fullsync, _} = Command, State) ->
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket,
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket,
         Command),
     {next_state, wait_for_partition, State};
 %% Full sync has completed
@@ -187,8 +187,8 @@ build_keylist(Command, #state{kl_pid=Pid} = State)
         when Command == cancel_fullsync; Command == pause_fullsync ->
     %% kill the worker
     riak_repl_fullsync_helper:stop(Pid),
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
-    file:delete(State#state.kl_fn),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = file:delete(State#state.kl_fn),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 %% Helper has sorted and written keylist to a file
@@ -199,7 +199,7 @@ build_keylist({Ref, keylist_built, Size},
         [State#state.sitename, Partition,
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %% @plu server -> client: {kl_exchange, P}
-    riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
+    _ = riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
     %% note that num_diffs is being assigned the number of keys, regardless of diffs,
     %% because we don't the number of diffs yet. See TODO: above redarding KEY_LIST_THRESHOLD
     {next_state, wait_keylist, State#state{stage_start=os:timestamp(), num_diffs=Size}};
@@ -208,7 +208,7 @@ build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
         [State#state.sitename, State#state.partition, Reason]),
-    riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
+    _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
     {next_state, wait_for_partition, State};
 build_keylist({_Ref, keylist_built, _Size}, State) ->
     lager:warning("Stale keylist_built message received, ignoring"),
@@ -231,17 +231,18 @@ wait_keylist(Command, #state{their_kl_fh=FH} = State)
             ok;
         _ ->
             %% close and delete the keylist file
-            file:close(FH),
-            file:delete(State#state.their_kl_fn),
-            file:delete(State#state.kl_fn)
+            _ = file:close(FH),
+            _ = file:delete(State#state.their_kl_fn),
+            _ = file:delete(State#state.kl_fn),
+            ok
     end,
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 wait_keylist(kl_wait, State) ->
     %% ack the keylist chunks we've received so far
     %% @plu    server -> client: kl_ack
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, kl_ack),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, kl_ack),
     {next_state, wait_keylist, State};
 %% I have recieved a chunk of the keylist
 wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
@@ -252,18 +253,18 @@ wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
         _ ->
             FH0
     end,
-    file:write(FH, Hunk),
+    _ = file:write(FH, Hunk),
     {next_state, wait_keylist, State#state{their_kl_fh=FH}};
 %% the client has finished sending the keylist
 wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
     case FH of
         undefined ->
             %% client has a blank vnode, write a blank file
-            file:write_file(State#state.their_kl_fn, <<>>),
+            _ = file:write_file(State#state.their_kl_fn, <<>>),
             ok;
         _ ->
-            file:sync(FH),
-            file:close(FH),
+            _ = file:sync(FH),
+            _ = file:close(FH),
             ok
     end,
     lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
@@ -319,7 +320,7 @@ wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) -
 diff_keylist(Command, #state{diff_pid=Pid} = State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
     riak_repl_fullsync_helper:stop(Pid),
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 %% @plu server <-- diff_stream : merkle_diff
@@ -341,7 +342,7 @@ diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
 diff_keylist({Ref, diff_paused}, #state{socket=Socket, transport=Transport,
         partition=Partition, diff_ref=Ref, pending_acks=PendingAcks0} = State) ->
     %% request ack from client
-    riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
+    _ = riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     PendingAcks = PendingAcks0+1,
     %% If we have already received the ack for the previous batch, we immediately
     %% resume the generator, otherwise we wait for the ack from the client. We'll
@@ -368,7 +369,8 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
     %% pending acks count.
     case WorkerPaused of
         true ->
-            State#state.diff_pid ! {Ref, diff_resume};
+            State#state.diff_pid ! {Ref, diff_resume},
+            ok;
         false ->
             ok
     end,
@@ -377,7 +379,7 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         [State#state.sitename, State#state.partition,
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     {next_state, wait_for_partition, State}.
 
 %% ----------------------------------- bloom-fold ---------------------------
@@ -386,7 +388,7 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
 %% Pause or Cancel
 diff_bloom(Command, State)
         when Command == pause_fullsync; Command == cancel_fullsync ->
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 
@@ -408,7 +410,7 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
     case ebloom:elements(Bloom) == 0 of
         true ->
             lager:info("No differences, skipping bloom fold"),
-            riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
+            _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
             {next_state, wait_for_partition, State};
         false ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -467,7 +469,7 @@ diff_bloom({BFPid,bloom_paused}, #state{socket=Socket, transport=Transport,
         partition=Partition, pending_acks=PendingAcks0} = State) ->
     ?TRACE(lager:info("diff_bloom <- bloom_paused")),
     %% request ack from client
-    riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
+    _ = riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     PendingAcks = PendingAcks0+1,
     %% If we have already received the ack for the previous batch, we immediately
     %% resume the generator, otherwise we wait for the ack from the client. We'll
@@ -514,7 +516,7 @@ diff_bloom({diff_ack, Partition}, #state{partition=Partition,
 %% @plu server <- bloom_fold : diff_exchanged 'all done
 diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
     %% Tell client that we're done with differences for this partition.
-    riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.stage_start)]),
@@ -529,17 +531,18 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
                                            socket=Socket, proto=Proto} = State) ->
     case riak_repl_util:maybe_send(RObj, Client, Proto) of
         cancel ->
-            skipped;
+            ok;
         Objects when is_list(Objects) ->
             V = State#state.ver,
             %% server -> client : fs_diff_obj
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
-            [riak_repl_tcp_server:send(Transport, Socket,
+            _ = [riak_repl_tcp_server:send(Transport, Socket,
                                        riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
              || O <- Objects],
-            riak_repl_tcp_server:send(Transport, Socket,
-                                      riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj}))
+            _ = riak_repl_tcp_server:send(Transport, Socket,
+                                      riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj})),
+            ok
     end,
     {reply, ok, diff_bloom, State}.
 

@@ -180,7 +180,7 @@ handle_call(get_services, _From, State) ->
     {reply, orddict:to_list(State#state.services), State};
 
 handle_call(stop, _From, State) ->
-    ranch:stop_listener(State#state.dispatch_addr),
+    _ = ranch:stop_listener(State#state.dispatch_addr),
     {stop, normal, ok, State};
 
 handle_call(get_stats, _From, State) ->
@@ -244,7 +244,7 @@ handle_info(status_update_timer, State) ->
     %% notify all registered parties of this node's services counts
     Stats = orddict:to_list(State#state.service_stats),
     PStats = [ {Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
-    [NotifyFun(PStats) || NotifyFun <- State#state.status_notifiers],
+    _ = [NotifyFun(PStats) || NotifyFun <- State#state.status_notifiers],
     {noreply, State};
 
 %% Get notified of a service that went down.
@@ -255,7 +255,7 @@ handle_info({'DOWN', Ref, process, Pid, _Reason}, State) ->
                 {value, {Ref, ProtocolId}, Rest} ->
                     gen_server:cast(?SERVER, {service_down_event, Pid, ProtocolId}),
                     Rest;
-                error ->
+                false ->
                     Refs
             end,
     {noreply, State#state{refs=Refs2}};
@@ -302,7 +302,6 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
-    ssl:start(),
     SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
     MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
     case exchange_handshakes_with(client, Socket, Transport, MyCaps) of
@@ -344,7 +343,6 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             {error, no_ssl};
         {true, true} ->
             lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
-            ssl:start(),
             case riak_core_ssl_util:maybe_use_ssl(riak_core) of
                 false ->
                     {ranch_tcp, Socket};

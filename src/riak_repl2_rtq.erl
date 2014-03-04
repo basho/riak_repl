@@ -105,7 +105,7 @@ start_link() ->
 start_link(Options) ->
     case ets:info(?overload_ets) of
         undefined ->
-            ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
+            ?overload_ets = ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
             ets:insert(?overload_ets, {overloaded, false});
         _ ->
             ok

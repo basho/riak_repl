@@ -413,17 +413,17 @@ realtime([Cmd, Remote]) ->
     ok;
 realtime([Cmd]) ->
     Remotes = riak_repl2_rt:enabled(),
-    case Cmd of
+    _ = case Cmd of
         "start" ->
-            ?LOG_USER_CMD("Start Realtime Replication to all connected clusters", []),
-            [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+            ?LOG_USER_CMD("Start Realtime Replication to all connected clusters",
+                          []),
+            _ = [riak_repl2_rt:start(Remote) || Remote <- Remotes];
         "stop" ->
             ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters",
                       []),
-            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+            _ = [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
     end,
-    ok. %% TODO: we could gather the return codes of the list comprehensions
-        %% TODO: we could gather the return codes of the list comprehensions
+    ok.
 
 fullsync([Cmd, Remote]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
@@ -432,13 +432,13 @@ fullsync([Cmd, Remote]) ->
             ?LOG_USER_CMD("Enable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_enable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
+            _ = riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
             ok;
         "disable" ->
             ?LOG_USER_CMD("Disable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_disable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
+            _ = riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
             ok;
         "start" ->
             ?LOG_USER_CMD("Start Fullsync Replication to cluster ~p", [Remote]),
@@ -471,11 +471,13 @@ fullsync([Cmd]) ->
         "start" ->
             ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
             [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
-                Fullsyncs];
+                Fullsyncs],
+            ok;
         "stop" ->
             ?LOG_USER_CMD("Stop Fullsync Replication to all connected clusters",[]),
             [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
-                Fullsyncs]
+                Fullsyncs],
+            ok
     end,
     ok.
 

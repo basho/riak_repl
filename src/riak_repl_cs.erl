@@ -124,7 +124,7 @@ buckets_bucket(?BUCKETS_BUCKET) ->
 buckets_bucket(_Bucket) ->
     false.
 
--spec bool_to_ok_or_cancel(boolean) -> ok | cancel.
+-spec bool_to_ok_or_cancel(boolean()) -> ok | cancel.
 bool_to_ok_or_cancel(true) ->
     ok;
 bool_to_ok_or_cancel(false) ->

@@ -90,7 +90,7 @@ start(_Type, _StartArgs) ->
                     riak_repl_ring_handler, []),
 
             %% Add routes to webmachine
-            [ webmachine_router:add_route(R)
+            _ = [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
 
             %% Now that we have registered the ring handler, we can
@@ -132,7 +132,7 @@ ensure_dirs() ->
     end,
     {ok, Incarnation} = application:get_env(riak_repl, incarnation),
     WorkRoot = filename:join([DataRoot, "work"]),
-    prune_old_workdirs(WorkRoot),
+    _ = prune_old_workdirs(WorkRoot),
     WorkDir = filename:join([WorkRoot, integer_to_list(Incarnation)]),
     case filelib:ensure_dir(filename:join([WorkDir, "empty"])) of
         ok ->
@@ -149,7 +149,8 @@ prune_old_workdirs(WorkRoot) ->
         {ok, SubDirs} ->
             DirPaths = [filename:join(WorkRoot, D) || D <- SubDirs],
             Cmds = [lists:flatten(io_lib:format("rm -rf ~s", [D])) || D <- DirPaths],
-            [os:cmd(Cmd) || Cmd <- Cmds];
+            _ = [os:cmd(Cmd) || Cmd <- Cmds],
+            ok;
         _ ->
             ignore
     end.

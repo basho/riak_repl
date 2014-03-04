@@ -57,7 +57,7 @@ in(BQ=#bq{m=Max, q=Q, d=D}, Item) when is_binary(Item) ->
     case ItemSize > Max of
         true ->
             DroppedObjs = queue:to_list(Q),
-            [ riak_repl_util:dropped_realtime_hook(DroppedObj) ||
+            _ = [ riak_repl_util:dropped_realtime_hook(DroppedObj) ||
               DroppedObj <- DroppedObjs ],
             BQ#bq{q=queue:from_list([Item]),s=ItemSize,d=queue:len(Q)+D};
         false ->
@@ -68,7 +68,7 @@ in(BQ=#bq{m=Max, q=Q, d=D}, [H|_T] = Items) when is_binary(H) ->
     case ItemSize > Max of
         true ->
             DroppedObjs = queue:to_list(Q),
-            [ riak_repl_util:dropped_realtime_hook(DroppedObj) 
+            _ = [ riak_repl_util:dropped_realtime_hook(DroppedObj) 
              || DroppedObj <- DroppedObjs ],
             BQ#bq{q=queue:from_list([Items]),s=ItemSize,d=queue:len(Q)+D};
         false ->
