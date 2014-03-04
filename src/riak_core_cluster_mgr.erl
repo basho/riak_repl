@@ -688,12 +688,12 @@ become_proxy(State, LeaderNode) when State#state.is_leader == true ->
     lager:info("ClusterManager: ~p becoming a proxy to ~p", [node(), LeaderNode]),
     %% stop leading
     %% remove any outbound connections
-    case riak_core_cluster_conn_sup:connections() of
+    _ = case riak_core_cluster_conn_sup:connections() of
         [] ->
             ok;
         Connections ->
             lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
-            [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
+            _ = [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
              || {Remote, _Pid} <- Connections]
     end,
     State#state{is_leader = false};
