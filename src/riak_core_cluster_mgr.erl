@@ -320,7 +320,7 @@ handle_cast({register_restore_cluster_targets_fun, Fun}, State) ->
     {noreply, State#state{restore_targets_fun=Fun}};
 
 handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
-    case State#state.is_leader of
+    _ = case State#state.is_leader of
         false ->
             %% forward request to leader manager
             proxy_cast({add_remote_cluster, Addr}, State);
