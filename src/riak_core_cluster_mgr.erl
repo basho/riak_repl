@@ -610,7 +610,8 @@ ensure_remote_connection({cluster_by_name, "undefined"}) ->
     ok;
 ensure_remote_connection(Remote) ->
     %% add will make sure there is only one connection per remote
-    riak_core_cluster_conn_sup:add_remote_connection(Remote).
+    _ = riak_core_cluster_conn_sup:add_remote_connection(Remote),
+    ok.
 
 %% Drop our connection to the remote cluster.
 remove_remote_connection(Remote) ->
