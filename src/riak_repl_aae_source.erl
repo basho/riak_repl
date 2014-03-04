@@ -333,7 +333,7 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
     %% if we have anything in our bloom filter, start sending them now.
     %% this will start a worker process, which will tell us it's done with
     %% diffs_done once all differences are sent.
-    finish_sending_differences(Bloom, State),
+    _ = finish_sending_differences(Bloom, State),
 
     %% wait for differences from bloom_folder or to be done
     {next_state, send_diffs, State}.
