@@ -180,7 +180,7 @@ handle_call(get_services, _From, State) ->
     {reply, orddict:to_list(State#state.services), State};
 
 handle_call(stop, _From, State) ->
-    ranch:stop_listener(State#state.dispatch_addr),
+    _ = ranch:stop_listener(State#state.dispatch_addr),
     {stop, normal, ok, State};
 
 handle_call(get_stats, _From, State) ->
