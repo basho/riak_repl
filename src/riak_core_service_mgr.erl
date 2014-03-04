@@ -302,7 +302,6 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
-    ssl:start(),
     SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
     MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
     case exchange_handshakes_with(client, Socket, Transport, MyCaps) of
@@ -344,7 +343,6 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             {error, no_ssl};
         {true, true} ->
             lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
-            ssl:start(),
             case riak_core_ssl_util:maybe_use_ssl(riak_core) of
                 false ->
                     {ranch_tcp, Socket};
