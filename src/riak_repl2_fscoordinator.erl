@@ -816,7 +816,7 @@ maybe_cancel_timer(#stat_cache{refresh_timer = Timer} = StatCache) ->
 
 schedule_stat_refresh(StatCache) ->
     StatCache1 = maybe_cancel_timer(StatCache),
-    Timer = erlang:send_after(?DEFAULT_STAT_REFRESH_INTERVAL, self(), refresh_stats),
+    Timer = erlang:send_after(StatCache#stat_cache.refresh_interval, self(), refresh_stats),
     StatCache1#stat_cache{refresh_timer = Timer}.
 
 %% @private Exported just to be able to spawn with arguments more nicely.
