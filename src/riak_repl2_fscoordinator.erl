@@ -127,10 +127,16 @@ stop_fullsync(Pid) ->
 -spec status() -> [tuple()].
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
+    Timeout = case node() of
+        LeaderNode ->
+            infinity;
+        _ ->
+            ?LONG_TIMEOUT
+    end,
     case LeaderNode of
         undefined ->
             [];
-        _ -> [{Remote, status(Pid)} || {Remote, Pid} <-
+        _ -> [{Remote, status(Pid, Timeout)} || {Remote, Pid} <-
                 riak_repl2_fscoordinator_sup:started(LeaderNode)]
     end.
 
@@ -145,7 +151,12 @@ status(Pid) ->
 %% the timeout.  The atom `infinity' means never timeout.
 -spec status(Pid :: pid(), Timeout :: timeout()) -> [tuple()].
 status(Pid, Timeout) ->
-    gen_server:call(Pid, status, Timeout).
+    try
+        gen_server:call(Pid, status, Timeout)
+    catch
+        _:{timeout, _} ->
+        []
+    end.
 
 %% @doc Return true if the given fullsync coordiniator is in the middle of
 %% syncing, otherwise false.
