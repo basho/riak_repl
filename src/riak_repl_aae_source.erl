@@ -249,7 +249,8 @@ update_trees({tree_built, _, _}, State) ->
 %% @doc Now that locks have been acquired and both hashtrees have been updated,
 %%      perform a key exchange and trigger replication for any divergent keys.
 key_exchange(cancel_fullsync, State) ->
-    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    lager:info("AAE fullsync source cancelled for partition ~p",
+               [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 key_exchange(start_key_exchange, State=#state{cluster=Cluster,
@@ -262,6 +263,10 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                [Cluster, Partition, IndexN]),
 
     SourcePid = self(),
+
+    %% Attempt to preload the buckets from the sink side before
+    %% performing the hashtree compare.
+    Buckets = send_synchronous_msg(?MSG_GET_AAE_BUCKETS, IndexN, State),
 
     %% A function that receives callbacks from the hashtree:compare engine.
     %% This will send messages to ourself, handled in compare_loop(), that
@@ -280,7 +285,18 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                              ok
                      end;
                 (get_bucket, {L, B}) ->
-                     send_synchronous_msg(?MSG_GET_AAE_BUCKET, {L,B,IndexN}, State);
+                     lager:warning("Bucket request for ~p ~p",
+                                   [L, B]),
+                     case orddict:find({L, B}, Buckets) of
+                         {ok, Value} ->
+                             Value;
+                         error ->
+                             lager:warning("Prefetch miss on ~p ~p",
+                                           [L, B]),
+                             send_synchronous_msg(?MSG_GET_AAE_BUCKET,
+                                                  {L, B, IndexN},
+                                                  State)
+                     end;
                 (key_hashes, Segment) ->
                      send_synchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
                 (final, _) ->
@@ -563,11 +579,8 @@ send_complete(State) ->
 %% send a tagged message with type and binary data. return the reply
 send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
                                                  socket=Socket}) when is_binary(Data) ->
-    lager:debug("sending message type ~p", [MsgType]),
     ok = Transport:send(Socket, <<MsgType:8, Data/binary>>),
-    Response = get_reply(State),
-    lager:debug("got reply ~p", [Response]),
-    Response;
+    get_reply(State);
 %% send a tagged message with type and msg. return the reply
 send_synchronous_msg(MsgType, Msg, State) ->
     Data = term_to_binary(Msg),

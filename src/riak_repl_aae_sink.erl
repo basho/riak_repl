@@ -141,6 +141,10 @@ process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=Tre
     ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid),
     send_reply(ResponseMsg, State);
 
+process_msg(?MSG_GET_AAE_BUCKETS, IndexN, State=#state{tree_pid=TreePid}) ->
+    ResponseMsg = riak_kv_index_hashtree:exchange_buckets(IndexN, TreePid),
+    send_reply(ResponseMsg, State);
+
 %% no reply
 process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
     RObj = riak_repl_util:from_wire(BObj),
