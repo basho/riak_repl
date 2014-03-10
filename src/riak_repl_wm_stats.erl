@@ -150,17 +150,18 @@ jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
     jsonify_stats(T, [{K,NewV}|Acc]);
 
 jsonify_stats([{K,V}|T], Acc) when is_atom(K)
-        andalso (K == server_stats orelse K == client_stats) ->
-    case V of
-        [{Pid, Mq, {status, Stats}}] ->
+        andalso (K == server_stats orelse K == client_stats), is_list(V) ->
+    StackedStats = lists:foldl(fun
+        ({Pid, Mq, {status, Stats}}, FoldAcc) ->
             FormattedPid = format_pid(Pid),
             NewStats = {status, lists:map(fun format_pid_stat/1, Stats)},
             % could be client or server pid
-            ServerPid = [{pid, FormattedPid}],
-            jsonify_stats([NewStats | T], [Mq | [ServerPid | Acc]]);
-        [] ->
-            jsonify_stats(T, Acc)
-    end;
+            ServerPid = {pid, FormattedPid},
+            [ServerPid, Mq, NewStats] ++ FoldAcc;
+        (_, FoldAcc) ->
+            FoldAcc
+    end, [], V),
+    jsonify_stats(StackedStats ++ T, Acc);
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
@@ -344,6 +345,45 @@ jsonify_stats_test_() ->
                         {rt_dirty,1}],
               _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
+
+    {"multiple fs client connections",
+     fun() ->
+             Pid = spawn(fun() -> ok end),
+             Actual = [{client_stats, [
+                {Pid, {message_queue_len,0}, {status, [
+                    {node,'riak@test-riak-1'},
+                    {site,"test3"},
+                    {strategy,riak_repl_keylist_server},
+                    {fullsync_worker,Pid},
+                    {queue_pid,Pid},
+                    {dropped_count,0},
+                    {queue_length,0},
+                    {queue_byte_size,0},
+                    {queue_max_size,104857600},
+                    {queue_percentage,0},
+                    {queue_pending,0},
+                    {queue_max_pending,5},
+                    {state,wait_for_partition}
+                ]}},
+                {Pid, {message_queue_len,0}, {status, [
+                    {node,'riak@test-riak-1'},
+                    {site,"site2"},
+                    {strategy,riak_repl_keylist_server},
+                    {fullsync_worker,Pid},
+                    {queue_pid,Pid},
+                    {dropped_count,0},
+                    {queue_length,0},
+                    {queue_byte_size,0},
+                    {queue_max_size,104857600},
+                    {queue_percentage,0},
+                    {queue_pending,0},
+                    {queue_max_pending,5},
+                    {state,wait_for_partition}
+                ]}}
+            ]}],
+            Jsonified = jsonify_stats(Actual, []),
+            _ = mochijson2:encode({struct, Jsonified})
+       end},
 
      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
      %%% tests during basho bench, bnw fullsync, 1.2 + 1.3 realtime, source side
