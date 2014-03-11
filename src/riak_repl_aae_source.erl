@@ -285,18 +285,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                              ok
                      end;
                 (get_bucket, {L, B}) ->
-                     lager:warning("Bucket request for ~p ~p",
-                                   [L, B]),
-                     case orddict:find({L, B}, Buckets) of
-                         {ok, Value} ->
-                             Value;
-                         error ->
-                             lager:warning("Prefetch miss on ~p ~p",
-                                           [L, B]),
-                             send_synchronous_msg(?MSG_GET_AAE_BUCKET,
-                                                  {L, B, IndexN},
-                                                  State)
-                     end;
+                     orddict:fetch({L, B}, Buckets);
                 (key_hashes, Segment) ->
                      send_synchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
                 (final, _) ->
