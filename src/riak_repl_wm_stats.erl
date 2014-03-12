@@ -1156,7 +1156,6 @@ jsonify_stats_test_() ->
                             {connecting,[{connecting_pid,FormattedPid},
                                          {connecting_ip,<<"127.0.0.1:5666">>}]}]}]}},
                    {sinks,<<>>}],
-              Got = jsonify_stats(Stats, []),
               ?assertEqual(Expected, jsonify_stats(Stats, [])),
               _Result = mochijson2:encode({struct, Expected}) % fail if crash
             end
