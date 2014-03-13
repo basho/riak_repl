@@ -221,8 +221,7 @@ handle_info({Proto, Socket, Data},
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
     end;
-handle_info(Msg, State) ->
-    lager:notice("Ignored handle_info ~p", [Msg]),
+handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
@@ -301,7 +300,6 @@ connect(IP, Strategy, Partition) ->
 
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->
-            lager:debug("connection ref ~p", [Ref]),
             {ok, #state{strategy = Strategy, ip = IP,
                         connection_ref = Ref, partition=Partition}};
         {error, Reason}->

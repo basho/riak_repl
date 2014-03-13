@@ -515,7 +515,7 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
                     Addrs
             end;
         error ->
-            lager:error("Unknown target: ~p ~p", [Name, Strategy]),
+            lager:warning("Unknown target: ~p ~p", [Name, Strategy]),
             {error, {unknown_target_type, Type}}
     end.
 

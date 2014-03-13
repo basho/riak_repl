@@ -127,7 +127,6 @@ handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
                 [State#state.cluster, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
 handle_info(_Info, StateName, State) ->
-    lager:notice("ignored handle_info: ~p", [_Info]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, _State) ->
@@ -158,7 +157,6 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                   {nodelay, true},
                   {header, 1}],
     %% try to get local lock of the tree
-    lager:debug("Prepare exchange for partition ~p", [Partition]),
     ok = Transport:setopts(Socket, TcpOptions),
     ok = send_synchronous_msg(?MSG_INIT, Partition, State0),
 
@@ -169,9 +167,6 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
 
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
-
-    lager:debug("AAE fullsync source partition ~p has Indexes ~p",
-                [Partition, IndexNs]),
 
     case riak_kv_vnode:hashtree_pid(Partition) of
         {ok, TreePid} ->
@@ -325,9 +320,6 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
 compute_differences({'$aae_src', done, Bloom}, State) ->
-    %% send differences
-    NDiff = ebloom:elements(Bloom),
-    lager:debug("Found ~p differences", [NDiff]),
 
     %% if we have anything in our bloom filter, start sending them now.
     %% this will start a worker process, which will tell us it's done with

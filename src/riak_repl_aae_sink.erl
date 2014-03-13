@@ -120,7 +120,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% replies: ok
 process_msg(?MSG_INIT, Partition, State) ->
-    lager:debug("MSG_INIT for partition ~p", [Partition]),
     case riak_kv_vnode:hashtree_pid(Partition) of
         {ok, TreePid} ->
             %% monitor the tree and crash if the tree goes away
@@ -160,7 +159,6 @@ process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
-    lager:debug("got complete"),
     riak_repl2_fssink:fullsync_complete(Owner),
     {stop, normal, State}.
 

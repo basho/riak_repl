@@ -255,7 +255,6 @@ handle_call({node_clean, Node}, _From, State = #state{dirty_nodes=DirtyNodes}) -
     {reply, ok, NewState};
 
 handle_call(_Request, _From, State) ->
-    lager:notice("Ignoring call: ~p", [_Request]),
     {reply, ok, State}.
 
 %% @hidden
@@ -331,7 +330,6 @@ handle_cast(stop_fullsync, State) ->
     {noreply, State2};
 
 handle_cast(_Msg, State) ->
-    lager:notice("Ignoring case: ~p", [_Msg]),
     {noreply, State}.
 
 
@@ -461,8 +459,7 @@ handle_info(send_next_whereis_req, State) ->
     end,
     {noreply, State2};
 
-handle_info(Info, State) ->
-    lager:notice("Ignoring info message: ~p", [Info]),
+handle_info(_Info, State) ->
     {noreply, State}.
 
 

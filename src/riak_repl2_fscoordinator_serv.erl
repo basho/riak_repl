@@ -125,8 +125,7 @@ handle_call(_Request, _From, State) ->
 
 
 %% @hidden
-handle_cast(Msg, State) ->
-    lager:warning("Unexpected message ~p", [Msg]),
+handle_cast(_Msg, State) ->
     {noreply, State}.
 
 
