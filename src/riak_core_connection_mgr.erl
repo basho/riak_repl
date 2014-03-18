@@ -320,9 +320,6 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
     %% Work out which endpoint it was
     case lists:keytake(From, #req.pid, Pending) of
         false ->
-            %% Must have been something we were linked to, or linked to us
-            lager:debug("Connection Manager exiting because linked process ~p exited for reason: ~p",
-                        [From, Reason]),
             lager:error("Connection Manager exiting because linked process ~p exited for reason: ~p",
                         [From, Reason]),
             exit({linked, From, Reason});
@@ -361,8 +358,6 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 Reason -> % something bad happened to the connection, reuse the request
                     lager:debug("handle_info: EP failed on ~p for ~p. removed Ref ~p",
                                      [Cur, Reason, Ref]),
-                    lager:warning("handle_info: endpoint ~p failed: ~p. removed Ref ~p",
-                                  [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
                     %% the connection helper will not retry. It's up the caller.
                     State3 = fail_request(Reason, Req, State2),
@@ -520,7 +515,7 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
                     Addrs
             end;
         error ->
-            lager:info("Unknown target: ~p ~p", [Name, Strategy]),
+            lager:warning("Unknown target: ~p ~p", [Name, Strategy]),
             {error, {unknown_target_type, Type}}
     end.
 
