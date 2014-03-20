@@ -470,12 +470,12 @@ fullsync([Cmd]) ->
     case Cmd of
         "start" ->
             ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
-            [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
+            _ = [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs],
             ok;
         "stop" ->
             ?LOG_USER_CMD("Stop Fullsync Replication to all connected clusters",[]),
-            [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
+            _ = [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs],
             ok
     end,
