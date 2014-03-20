@@ -4,3 +4,7 @@ riak_repl_keylist_client.erl:264: The call application:unset_env('riak_repl',{'p
 riak_repl_keylist_client.erl:116: The call application:unset_env('riak_repl',{'progress',_}) breaks the contract (Application,Par) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom())
 riak_repl_keylist_client.erl:128: The call application:set_env('riak_repl',{'progress',_},nonempty_maybe_improper_list()) breaks the contract (Application,Par,Val) -> 'ok' when is_subtype(Application,atom()), is_subtype(Par,atom()), is_subtype(Val,term())
 riak_repl_leader_helper.erl:24: Callback info about the gen_leader behaviour is not available
+riak_core_connection.erl:108: Function exchange_handshakes_with/4 has no local return
+riak_core_connection.erl:110: The call ranch_tcp:send(Socket::port(),Hello::binary()) breaks the contract (inet:socket(),iolist()) -> 'ok' | {'error',atom()}
+riak_core_connection.erl:189: Function try_ssl/4 will never be called
+riak_core_connection.erl:225: Function negotiate_proto_with_server/3 will never be called
