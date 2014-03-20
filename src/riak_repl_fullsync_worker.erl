@@ -45,7 +45,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
             %% key and let the other side sort things out.
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
-                    skipped;
+                    ok;
                 Objects when is_list(Objects) ->
                     %% Cindy: Santa, why can we encode our own binary object?
                     %% Santa: Because the send() function will convert our tuple
@@ -56,7 +56,8 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
                      || O <- Objects],
                     _ = riak_repl_tcp_server:send(Transport, Socket,
                                               riak_repl_util:encode_obj_msg(
-                                                Ver,{fs_diff_obj,RObj}))
+                                                Ver,{fs_diff_obj,RObj})),
+                    ok
             end,
             ok;
         {error, notfound} ->
@@ -97,7 +98,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
                     {ok, Client} = riak:local_client(),
                     case riak_repl_util:repl_helper_send(RObj, Client) of
                         cancel ->
-                            skipped;
+                            ok;
                         Objects when is_list(Objects) ->
                             %% Cindy: Santa, why can we encode our own binary object?
                             %% Santa: Because, Cindy, the send() function accepts
@@ -108,7 +109,8 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
                              || O <- Objects],
                             riak_repl_tcp_server:send(Transport, Socket,
                                                       riak_repl_util:encode_obj_msg(
-                                                        Ver,{fs_diff_obj,RObj}))
+                                                        Ver,{fs_diff_obj,RObj})),
+                            ok
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->
