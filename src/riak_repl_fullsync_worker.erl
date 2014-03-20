@@ -107,7 +107,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
                                                        riak_repl_util:encode_obj_msg(
                                                          Ver,{fs_diff_obj,O}))
                              || O <- Objects],
-                            riak_repl_tcp_server:send(Transport, Socket,
+                            _ = riak_repl_tcp_server:send(Transport, Socket,
                                                       riak_repl_util:encode_obj_msg(
                                                         Ver,{fs_diff_obj,RObj})),
                             ok
