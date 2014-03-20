@@ -384,7 +384,7 @@ disconnect([Address]) ->
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            disconnect([IP, PortStr]),
+            _ = disconnect([IP, PortStr]),
             ok;
         _ ->
             {error, {badarg, Address}}
