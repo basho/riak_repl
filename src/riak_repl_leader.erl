@@ -297,10 +297,12 @@ handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                       exit(normal)
                   catch
                       _:_ ->
-                          ok
+                          exit(normal)
                   after
                       exit(normal)
-                  end
+                  end,
+
+                  exit(normal)
           end),
     {noreply, State};
 handle_info(check_mailbox, State) ->
