@@ -499,7 +499,8 @@ ensure_sites(Leader) ->
                     _ = [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
                         || {Node, Site} <- ToStop],
                     _ = [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
-                        || {Node, Site} <- ToStart]
+                        || {Node, Site} <- ToStart],
+                    ok
             end
     end.
 
