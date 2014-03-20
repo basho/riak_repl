@@ -78,7 +78,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
 
     Preflist = [{Partition, OwnerNode}],
 
-    ReqID = make_ref(),
+    ReqID = make_req_id(),
 
     Req = ?KV_GET_REQ{bkey={B, K}, req_id=ReqID},
     %% Assuming this function is called from a FSM process
@@ -161,3 +161,6 @@ do_binputs_internal(BinObjs, DoneFun, Pool, Ver) ->
     poolboy:checkin(Pool, self()),
     %% let the caller know
     DoneFun().
+
+make_req_id() ->
+        erlang:phash2({self(), os:timestamp()}). % stolen from riak_client
