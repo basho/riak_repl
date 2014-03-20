@@ -102,7 +102,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
                             %% Cindy: Santa, why can we encode our own binary object?
                             %% Santa: Because, Cindy, the send() function accepts
                             %%        either a binary or a term.
-                            [riak_repl_tcp_server:send(Transport, Socket,
+                            _ = [riak_repl_tcp_server:send(Transport, Socket,
                                                        riak_repl_util:encode_obj_msg(
                                                          Ver,{fs_diff_obj,O}))
                              || O <- Objects],
