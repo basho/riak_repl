@@ -51,7 +51,6 @@ register_stats() ->
     _ = [(catch folsom_metrics:delete_metric(Stat)) ||
             Stat <- folsom_metrics:get_metrics(),
             is_tuple(Stat), element(1, Stat) == ?APP],
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
@@ -280,6 +279,3 @@ produce_stats() ->
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
     folsom_metrics:get_metric_value(Name).
-
-%% Return list of static stat names and types to register
-stats() -> []. %% no static stats to register
