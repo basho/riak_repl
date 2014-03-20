@@ -264,9 +264,9 @@ create_or_update(Name, UpdateVal, Type) ->
     end.
 
 register_stat(Name, spiral) ->
-    folsom_metrics:new_spiral(Name);
+    ok = folsom_metrics:new_spiral(Name);
 register_stat(Name, counter) ->
-    folsom_metrics:new_counter(Name).
+    ok = folsom_metrics:new_counter(Name).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
