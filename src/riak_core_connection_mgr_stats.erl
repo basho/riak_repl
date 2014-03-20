@@ -48,8 +48,9 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch folsom_metrics:delete_metric(Stat)) || Stat <- folsom_metrics:get_metrics(),
-                                                   is_tuple(Stat), element(1, Stat) == ?APP],
+    _ = [(catch folsom_metrics:delete_metric(Stat)) ||
+            Stat <- folsom_metrics:get_metrics(),
+            is_tuple(Stat), element(1, Stat) == ?APP],
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
