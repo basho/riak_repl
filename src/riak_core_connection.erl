@@ -20,14 +20,12 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_connection).
--author("Chris Tilt").
 
 -include("riak_core_connection.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
-
 
 %% public API
 -export([connect/2,
@@ -98,6 +96,7 @@ connect({IP,Port}, ClientSpec) ->
     %% start a process to handle the connection request asyncrhonously
     proc_lib:spawn_link(?MODULE, async_connect_proc, [self(), {IP,Port}, ClientSpec]).
 
+-spec sync_connect(ip_addr(), clientspec()) -> ok | {error, atom()}.
 sync_connect({IP,Port}, ClientSpec) ->
     sync_connect_status(self(), {IP,Port}, ClientSpec).
 

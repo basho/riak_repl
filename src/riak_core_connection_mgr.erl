@@ -534,7 +534,7 @@ fail_endpoint(Addr, Reason, ProtocolId, State) ->
                         nb_failures = EP#ep.nb_failures + 1,
                         backoff_delay = increase_backoff(Backoff),
                         last_fail_time = os:timestamp(),
-                        next_try_secs = Backoff/1000,
+                        next_try_secs = erlang:trunc(Backoff/1000),
                         is_black_listed = true}
           end,
     update_endpoint(Addr, Fun, State).

@@ -48,9 +48,9 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch folsom_metrics:delete_metric(Stat)) || Stat <- folsom_metrics:get_metrics(),
-                                                   is_tuple(Stat), element(1, Stat) == ?APP],
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    _ = [(catch folsom_metrics:delete_metric(Stat)) ||
+            Stat <- folsom_metrics:get_metrics(),
+            is_tuple(Stat), element(1, Stat) == ?APP],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
@@ -264,9 +264,9 @@ create_or_update(Name, UpdateVal, Type) ->
     end.
 
 register_stat(Name, spiral) ->
-    folsom_metrics:new_spiral(Name);
+    ok = folsom_metrics:new_spiral(Name);
 register_stat(Name, counter) ->
-    folsom_metrics:new_counter(Name).
+    ok = folsom_metrics:new_counter(Name).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
@@ -279,6 +279,3 @@ produce_stats() ->
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
     folsom_metrics:get_metric_value(Name).
-
-%% Return list of static stat names and types to register
-stats() -> []. %% no static stats to register

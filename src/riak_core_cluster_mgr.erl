@@ -710,7 +710,7 @@ persist_members_to_ring(State, ClusterName, Members) ->
 %% that were saved in the ring
 cluster_mgr_sites_fun() ->
     %% get cluster names from cluster manager
-    Ring = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Clusters = riak_repl_ring:get_clusters(Ring),
     [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].    
 

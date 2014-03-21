@@ -384,7 +384,7 @@ disconnect([Address]) ->
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            disconnect([IP, PortStr]),
+            _ = disconnect([IP, PortStr]),
             ok;
         _ ->
             {error, {badarg, Address}}
@@ -470,12 +470,12 @@ fullsync([Cmd]) ->
     case Cmd of
         "start" ->
             ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
-            [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
+            _ = [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs],
             ok;
         "stop" ->
             ?LOG_USER_CMD("Stop Fullsync Replication to all connected clusters",[]),
-            [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
+            _ = [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
                 Fullsyncs],
             ok
     end,
