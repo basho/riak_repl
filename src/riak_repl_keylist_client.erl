@@ -207,20 +207,21 @@ request_partition({skip_partition, Partition}, State) ->
         [State#state.sitename, Partition, State#state.partition]),
     {next_state, request_partition, State}.
 
-send_keylist(Command, #state{kl_fh=FH, sitename=SiteName} = State)
-        when Command == cancel_fullsync ->
+send_keylist(cancel_fullsync,
+             #state{kl_fh=FH, sitename=SiteName} = State) ->
     % stop sending the keylist and delete the file
     _ = file:close(FH),
     _ = file:delete(State#state.kl_fn),
-    NewState = case Command of
-        cancel_fullsync ->
-            application:unset_env(riak_repl, {progress, SiteName}),
-            State#state{partitions=[], partition=undefined};
-        _ ->
-            State
-    end,
-    log_stop(Command, State),
+    application:unset_env(riak_repl, {progress, SiteName}),
+    NewState = State#state{partitions=[], partition=undefined},
+    log_stop(cancel_fullsync, State),
     {next_state, wait_for_fullsync, NewState};
+send_keylist(pause_fullsync,
+             #state{kl_fh=FH} = State) ->
+    _ = file:close(FH),
+    _ = file:delete(State#state.kl_fn),
+    log_stop(pause_fullsync, State),
+    {next_state, wait_for_fullsync, State};
 send_keylist(kl_ack, State) ->
     gen_fsm:send_event(self(), continue),
     {next_state, send_keylist,
@@ -259,17 +260,13 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
                     stage_start=os:timestamp()}}
     end.
 
-wait_ack(Command, #state{sitename=SiteName} = State)
-        when Command == cancel_fullsync ->
-    NewState = case Command of
-        cancel_fullsync ->
-            application:unset_env(riak_repl, {progress, SiteName}),
-            State#state{partitions=[], partition=undefined};
-        _ ->
-            State
-    end,
-    log_stop(Command, State),
+wait_ack(cancel_fullsync, #state{sitename=SiteName} = State) ->
+    NewState = application:unset_env(riak_repl, {progress, SiteName}),
+    log_stop(cancel_fullsync, State),
     {next_state, wait_for_fullsync, NewState};
+wait_ack(pause_fullsync, State) ->
+    log_stop(pause_fullsync, State),
+    {next_state, wait_for_fullsync, State};
 wait_ack({diff_ack, Partition}, #state{partition=Partition,
         transport=Transport,socket=Socket} = State) ->
     _ = riak_repl_tcp_client:send(Transport, Socket, {diff_ack, Partition}),
