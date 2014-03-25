@@ -28,7 +28,7 @@ bucket_props_match(Props) ->
             undefined =:= prop_get(?BT_META_PROPS_HASH, undefined, Props)
     end.
 
--spec bucket_props_match(riak_object:type(), integer()) -> boolean().
+-spec bucket_props_match(binary(), integer()) -> boolean().
 bucket_props_match(Type, RemoteBucketTypeHash) ->
    property_hash(Type) =:= RemoteBucketTypeHash.
 
