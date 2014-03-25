@@ -169,7 +169,6 @@ get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity).
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
--spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
 
