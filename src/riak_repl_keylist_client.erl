@@ -102,9 +102,9 @@ request_partition(cancel_fullsync,
                   #state{kl_pid=Pid, sitename=SiteName} = State) ->
     catch(riak_repl_fullsync_helper:stop(Pid)),
     _ = file:delete(State#state.kl_fn),
+    log_stop(cancel_fullsync, State),
     application:unset_env(riak_repl, {progress, SiteName}),
     NewState = State#state{partitions=[], partition=undefined},
-    log_stop(cancel_fullsync, State),
     {next_state, wait_for_fullsync, NewState};
 request_partition(pause_fullsync,
                   #state{kl_pid=Pid} = State) ->
@@ -212,9 +212,9 @@ send_keylist(cancel_fullsync,
     % stop sending the keylist and delete the file
     _ = file:close(FH),
     _ = file:delete(State#state.kl_fn),
+    log_stop(cancel_fullsync, State),
     application:unset_env(riak_repl, {progress, SiteName}),
     NewState = State#state{partitions=[], partition=undefined},
-    log_stop(cancel_fullsync, State),
     {next_state, wait_for_fullsync, NewState};
 send_keylist(pause_fullsync,
              #state{kl_fh=FH} = State) ->
@@ -261,9 +261,9 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
     end.
 
 wait_ack(cancel_fullsync, #state{sitename=SiteName} = State) ->
+    log_stop(cancel_fullsync, State),
     application:unset_env(riak_repl, {progress, SiteName}),
     NewState = State#state{partitions=[], partition=undefined},
-    log_stop(cancel_fullsync, State),
     {next_state, wait_for_fullsync, NewState};
 wait_ack(pause_fullsync, State) ->
     log_stop(pause_fullsync, State),
