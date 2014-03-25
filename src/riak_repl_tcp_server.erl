@@ -282,7 +282,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     lager:info("Using fullsync strategy ~p.", [StratMod]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
-                        Transport, {self(), Socket}, WorkDir, State#state.client),
+                        Transport, {self(), Socket}, WorkDir, State#state.client, {1,0}),
                     %% Set up bounded queue if remote supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
