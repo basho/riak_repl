@@ -261,7 +261,8 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
     end.
 
 wait_ack(cancel_fullsync, #state{sitename=SiteName} = State) ->
-    NewState = application:unset_env(riak_repl, {progress, SiteName}),
+    application:unset_env(riak_repl, {progress, SiteName}),
+    NewState = State#state{partitions=[], partition=undefined},
     log_stop(cancel_fullsync, State),
     {next_state, wait_for_fullsync, NewState};
 wait_ack(pause_fullsync, State) ->
