@@ -43,7 +43,7 @@
 -type(ip_portnum() :: non_neg_integer()).
 -type(repl_addr() :: {ip_addr_str(), ip_portnum()}).
 -type(repl_addrlist() :: [repl_addr()]).
--type(repl_socket() :: port() | ssl:socket()).
+-type(repl_socket() :: port() | ssl:sslsocket()).
 -type(repl_sitename() :: string()).
 -type(repl_sitenames() :: [repl_sitename()]).
 -type(repl_ns_pair() :: {node(), repl_sitename()}).
