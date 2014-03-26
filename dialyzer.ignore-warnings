@@ -19,3 +19,4 @@ riak_repl_keylist_client.erl:130: The call application:set_env('riak_repl',{'pro
 riak_core_connection_mgr.erl:494: The pattern 'ok' can never match the type {'error',atom()}
 cluster_info:format/3
 cluster_info:register_app/1
+Unknown functions
