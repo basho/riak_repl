@@ -99,13 +99,9 @@
          worker_announce/2
         ]).
 
--export([behaviour_info/1]).
-
 %% Internal exports
--export([init_it/6, 
-         print_event/3
-         %%, safe_send/2
-        ]).
+-export([init_it/6,
+         print_event/3]).
 
 -import(error_logger , [format/2]).
 
@@ -149,22 +145,20 @@
 %%% Interface functions.
 %%% ---------------------------------------------------
 
-%% @hidden
-behaviour_info(callbacks) ->
-    [{init,1},
-     {elected,3},
-     {surrendered,3},
-     {handle_leader_call,4},
-     {handle_leader_cast,3},
-     {from_leader,3},
-     {handle_call,4},
-     {handle_cast,3},
-     {handle_DOWN,3},
-     {handle_info,2},
-     {terminate,2},
-     {code_change,4}];
-behaviour_info(_Other) ->
-    undefined.
+-type state() :: term().
+
+-callback init(list()) -> {ok, state()} | {ignore, term()} | {stop, term()}.
+-callback elected(state(), term(), node()) -> {ok, term(), state()}.
+-callback surrendered(state(), term(), term()) -> {ok, state()}.
+-callback handle_leader_call(term(), pid(), state(), term()) -> {reply, term(), state()} | {reply, term(), term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
+-callback handle_leader_cast(term(), state(), term()) -> {noreply, state()} | {stop, term(), state()}.
+-callback from_leader(term(), state(), term()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback handle_call(term(), pid(), state(), term()) -> {reply, term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
+-callback handle_cast(term(), state(), term()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback handle_DOWN(node(), state(), term()) -> {ok, state()}.
+-callback handle_info(term(), state()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback terminate(atom(), state()) -> ok.
+-callback code_change(atom(), state(), term(), term()) -> {ok, state()} | {ok, state(), term()}.
 
 %% @spec (Name::node(), CandidateNodes::[node()],
 %%             OptArgs::leader_options(), Mod::atom(), Arg, Options::list()) ->
