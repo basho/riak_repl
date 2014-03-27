@@ -146,19 +146,23 @@
 %%% ---------------------------------------------------
 
 -type state() :: term().
+-type election() :: term().
+-type msg() :: term().
+-type reason() :: atom().
+-type extra() :: term().
 
 -callback init(list()) -> {ok, state()} | {ignore, term()} | {stop, term()}.
--callback elected(state(), term(), node()) -> {ok, term(), state()}.
--callback surrendered(state(), term(), term()) -> {ok, state()}.
--callback handle_leader_call(term(), pid(), state(), term()) -> {reply, term(), state()} | {reply, term(), term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
--callback handle_leader_cast(term(), state(), term()) -> {noreply, state()} | {stop, term(), state()}.
--callback from_leader(term(), state(), term()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
--callback handle_call(term(), pid(), state(), term()) -> {reply, term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
--callback handle_cast(term(), state(), term()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
--callback handle_DOWN(node(), state(), term()) -> {ok, state()}.
--callback handle_info(term(), state()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
--callback terminate(atom(), state()) -> ok.
--callback code_change(atom(), state(), term(), term()) -> {ok, state()} | {ok, state(), term()}.
+-callback elected(state(), election(), node()) -> {ok, term(), state()}.
+-callback surrendered(state(), msg(), election()) -> {ok, state()}.
+-callback handle_leader_call(msg(), pid(), state(), election()) -> {reply, term(), state()} | {reply, term(), term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
+-callback handle_leader_cast(msg(), state(), election()) -> {noreply, state()} | {stop, term(), state()}.
+-callback from_leader(msg(), state(), election()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback handle_call(msg(), pid(), state(), election()) -> {reply, term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
+-callback handle_cast(msg(), state(), election()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback handle_DOWN(node(), state(), election()) -> {ok, state()}.
+-callback handle_info(msg(), state()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback terminate(reason(), state()) -> ok.
+-callback code_change(atom(), state(), election(), extra()) -> {ok, state()} | {ok, state(), term()}.
 
 %% @spec (Name::node(), CandidateNodes::[node()],
 %%             OptArgs::leader_options(), Mod::atom(), Arg, Options::list()) ->
