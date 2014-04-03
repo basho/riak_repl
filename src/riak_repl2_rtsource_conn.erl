@@ -184,7 +184,7 @@ handle_call(status, _From, State =
                           end
                   end,
     FormattedPid = riak_repl_util:safe_pid_to_list(self()),
-    Status = [{source, R}, {pid, FormattedPid}] ++ Props ++ HelperProps,
+    Status = [{sink, R}, {pid, FormattedPid}] ++ Props ++ HelperProps,
     {reply, Status, State};
 handle_call(legacy_status, _From, State = #state{remote = Remote}) ->
     SocketStats = riak_core_tcp_mon:socket_status(State#state.socket),
