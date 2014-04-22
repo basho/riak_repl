@@ -15,8 +15,14 @@
          write_objects/4]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
+
+-behavior(gen_server).
 
 -record(state, {parent           %% Parent process
                }).
@@ -32,7 +38,6 @@ write_objects(Pid, BinObjs, DoneFun, Ver) ->
 
 %% Callbacks
 init([Parent]) ->
-    %% TODO: Share pool between all rtsinks to bound total RT work
     {ok, #state{parent = Parent}}.
 
 handle_call(stop, _From, State) ->
@@ -40,6 +45,9 @@ handle_call(stop, _From, State) ->
 
 handle_cast({write_objects, BinObjs, DoneFun, Ver}, State) ->
     do_write_objects(BinObjs, DoneFun, Ver),
+    {noreply, State};
+handle_cast({unmonitor, Ref}, State) ->
+    demonitor(Ref),
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, _Pid, Reason}, State)
@@ -60,6 +68,8 @@ code_change(_OldVsn, State, _Extra) ->
 %% Receive TCP data - decode framing and dispatch
 do_write_objects(BinObjs, DoneFun, Ver) ->
     Worker = poolboy:checkout(riak_repl2_rtsink_pool, true, infinity),
-    monitor(process, Worker),
-    ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, DoneFun,
+    MRef = monitor(process, Worker),
+    Me = self(),
+    WrapperFun = fun() -> DoneFun(), gen_server:cast(Me, {unmonitor, MRef}) end,
+    ok = riak_repl_fullsync_worker:do_binputs(Worker, BinObjs, WrapperFun,
                                               riak_repl2_rtsink_pool, Ver).
