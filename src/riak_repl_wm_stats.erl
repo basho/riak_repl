@@ -185,7 +185,7 @@ jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], 
     % the guard clause may be insane, but I just want to be very sure it's a
     % date time tuple that's being converted.
     StrDate = httpd_util:rfc1123_date(DateTime),
-    jsonify_stats(T, [{K, StrDate} | Acc]);
+    jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]);
 jsonify_stats([KV|T], Acc) ->
@@ -254,12 +254,12 @@ jsonify_stats_test_() ->
      {"Coord during fullsync",
       fun() ->
              Date = {{2013, 9, 19}, {20, 51, 7}},
-             StrDate = httpd_util:rfc1123_date(Date),
+             BinDate = list_to_binary(httpd_util:rfc1123_date(Date)),
              Input = [{fullsync_coordinator, [{"bar", [
                           {last_fullsync_started, Date}
                       ]}]}],
              Expected = [{fullsync_coordinator, [{"bar", [
-                          {last_fullsync_started, StrDate}
+                          {last_fullsync_started, BinDate}
                         ]}]}],
              Got = jsonify_stats(Input, []),
              %?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
