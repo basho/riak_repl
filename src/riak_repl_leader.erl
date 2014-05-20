@@ -498,9 +498,9 @@ ensure_sites(Leader) ->
                         Site <- dict:fetch(sites, ReplConfig)],
                     {ToStop, ToStart} = balance_clients(CurrentConfig,
                         ConfiguredSites),
-                    _ = [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
+                    _ = [riak_core_util:safe_rpc(Node, riak_repl_client_sup, stop_site, [Site])
                         || {Node, Site} <- ToStop],
-                    _ = [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
+                    _ = [riak_core_util:safe_rpc(Node, riak_repl_client_sup, start_site, [Site])
                         || {Node, Site} <- ToStart],
                     ok
             end

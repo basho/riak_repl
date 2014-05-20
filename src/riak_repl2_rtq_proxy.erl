@@ -126,7 +126,7 @@ get_peer_wire_versions(Nodes) ->
 
 get_peer_meta_support(Nodes) ->
     GetSupport = fun(Node) ->
-        case rpc:call(Node, riak_core_capability, get, [{riak_repl, rtq_meta}, false]) of
+        case riak_core_util:safe_rpc(Node, riak_core_capability, get, [{riak_repl, rtq_meta}, false]) of
             Bool when is_boolean(Bool) ->
                 {Node, Bool};
             LolWut ->
