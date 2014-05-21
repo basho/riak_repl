@@ -6,6 +6,9 @@
 -export([start/0, stop/0]).
 -export([install_hook/0, uninstall_hook/0]).
 -export([fixup/2]).
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 start() ->
     riak_core_util:start_app_deps(riak_repl),
@@ -53,5 +56,32 @@ strip_postcommit(BucketProps) ->
             CurrentPostcommit=[X]
     end,
     %% Add repl hook - make sure there are not duplicate entries
-    CurrentPostcommit -- riak_repl_util:get_hooks_for_modes().
+    AllHooks = [Hook || {_Mode, Hook} <- ?REPL_MODES],
+    lists:filter(fun(H) -> not lists:member(H, AllHooks) end, CurrentPostcommit).
+
+
+-ifdef(TEST).
+
+-define(MY_HOOK1, {struct,
+                    [{<<"mod">>, <<"mymod1">>},
+                     {<<"fun">>, <<"myhook1">>}]}).
+-define(MY_HOOK2, {struct,
+                    [{<<"mod">>, <<"mymod2">>},
+                     {<<"fun">>, <<"myhook2">>}]}).
+strip_postcommit_test_() ->
+    [?_assertEqual(
+        [], % remember, returns the stipped postcommit from bprops
+        lists:sort(strip_postcommit([{blah, blah}, {postcommit, []}]))),
+     ?_assertEqual(
+        [?MY_HOOK1, ?MY_HOOK2],
+        lists:sort(strip_postcommit([{postcommit, [?REPL_HOOK_BNW,
+                                                   ?MY_HOOK1,
+                                                   ?REPL_HOOK_BNW,
+                                                   ?MY_HOOK2,
+                                                   ?REPL_HOOK12]},
+                                     {blah, blah}])))].
+
+
+
+-endif.
 
