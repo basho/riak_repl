@@ -582,29 +582,59 @@ handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Wai
             State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
             start_up_reqs(State3)
     end;
-handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
-    lager:warning("Location_down, partition = ~p", [Partition]),
-    case proplists:get_value(Partition, Waiting) of
+handle_socket_msg({location_down, Partition},
+                  #state{whereis_waiting=Waiting0} = State) ->
+    case proplists:get_value(Partition, Waiting0) of
         undefined ->
             State;
-        {_N, _OldNode, Tref} ->
-            lager:info("Partition ~p is unavailable on cluster ~p",
-                [Partition, State#state.other_cluster]),
-            _ = erlang:cancel_timer(Tref),
-            Waiting2 = proplists:delete(Partition, Waiting),
-            State2 = State#state{whereis_waiting = Waiting2},
-            start_up_reqs(State2)
+        {N, OldNode, Tref} ->
+            handle_location_down({Partition, N, OldNode, Tref}, State)
     end;
-handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Waiting} = State) ->
-    case proplists:get_value(Partition, Waiting) of
+handle_socket_msg({location_down, Partition, Node},
+                  #state{whereis_waiting=Waiting0} = State) ->
+    case proplists:get_value(Partition, Waiting0) of
         undefined ->
             State;
-        {_N, _OldNode, Tref} ->
-            lager:info("Partition ~p is unavailable on cluster ~p",
-                [Partition, State#state.other_cluster]),
+        {N, _OldNode, Tref} ->
+            handle_location_down({Partition, N, Node, Tref}, State)
+    end.
+
+handle_location_down({Partition, N, Node, Tref},
+                     #state{retries=Retries0,
+                            partition_queue=PQueue0,
+                            whereis_waiting=Waiting0} = State) ->
+    lager:info("Partition ~p is unavailable on cluster ~p",
+               [Partition, State#state.other_cluster]),
+
+    RetryLimit = app_helper:get_env(riak_repl,
+                                    max_fssource_retries,
+                                    ?DEFAULT_SOURCE_RETRIES),
+
+    Retries = dict:update_counter(Partition, 1, Retries0),
+
+    case dict:fetch(Partition, Retries) of
+        X when X > RetryLimit, is_integer(RetryLimit) ->
+            lager:warning("Fullsync dropping partition: ~p, ~p location_down failed retries",
+                          [Partition, RetryLimit]),
             _ = erlang:cancel_timer(Tref),
-            Waiting2 = proplists:delete(Partition, Waiting),
-            State2 = State#state{whereis_waiting = Waiting2},
+            Waiting = proplists:delete(Partition, Waiting0),
+            ErrorExits = State#state.error_exits + 1,
+            State2 = State#state{whereis_waiting = Waiting,
+                                 error_exits = ErrorExits,
+                                 retries = Retries},
+            start_up_reqs(State2);
+        _ ->
+            lager:warning("Fssource rescheduling partition after location_down: ~p ~p < ~p",
+                          [Partition, N, RetryLimit]),
+            _ = erlang:cancel_timer(Tref),
+            Waiting = proplists:delete(Partition, Waiting0),
+            Partition2 = {Partition, N, Node},
+            PQueue = queue:in(Partition2, PQueue0),
+            RetryExits = State#state.retry_exits + 1,
+            State2 = State#state{whereis_waiting=Waiting,
+                                 partition_queue = PQueue,
+                                 retries = Retries,
+                                 retry_exits = RetryExits},
             start_up_reqs(State2)
     end.
 
