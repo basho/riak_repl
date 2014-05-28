@@ -615,11 +615,12 @@ handle_location_down({Partition, N, Node, Tref},
 
     Retries = dict:update_counter(Partition, 1, Retries0),
 
+    _ = erlang:cancel_timer(Tref),
+
     case dict:fetch(Partition, Retries) of
         X when X > RetryLimit, is_integer(RetryLimit) ->
             lager:warning("Fullsync dropping partition: ~p, ~p location_down failed retries",
                           [Partition, RetryLimit]),
-            _ = erlang:cancel_timer(Tref),
             Waiting = proplists:delete(Partition, Waiting0),
             ErrorExits = State#state.error_exits + 1,
             State2 = State#state{whereis_waiting = Waiting,
@@ -629,7 +630,6 @@ handle_location_down({Partition, N, Node, Tref},
         _ ->
             lager:warning("Fssource rescheduling partition after location_down: ~p ~p < ~p",
                           [Partition, N, RetryLimit]),
-            _ = erlang:cancel_timer(Tref),
             Waiting = proplists:delete(Partition, Waiting0),
             Partition2 = {Partition, N, Node},
             PQueue = queue:in(Partition2, PQueue0),
