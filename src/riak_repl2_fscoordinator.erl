@@ -55,6 +55,7 @@
     connection_ref,
     partition_queue = queue:new(),
     retries = dict:new(),
+    reserve_retries = dict:new(),
     whereis_waiting = [],
     busy_nodes = sets:new(),
     running_sources = [],
@@ -338,6 +339,7 @@ handle_cast(start_fullsync,  State) ->
                 owners = riak_core_ring:all_owners(Ring),
                 partition_queue = queue:from_list(Partitions),
                 retries = dict:new(),
+                reserve_retries = dict:new(),
                 successful_exits = 0,
                 error_exits = 0,
                 retry_exits = 0,
@@ -360,6 +362,7 @@ handle_cast(stop_fullsync, State) ->
         owners = [],
         partition_queue = queue:new(),
         retries = dict:new(),
+        reserve_retries = dict:new(),
         whereis_waiting = [],
         running_sources = []
     },
@@ -600,15 +603,15 @@ handle_socket_msg({location_down, Partition, Node},
     end.
 
 handle_location_down({Partition, N, Node, Tref},
-                     #state{retries=Retries0,
+                     #state{reserve_retries=Retries0,
                             partition_queue=PQueue0,
                             whereis_waiting=Waiting0} = State) ->
     lager:info("Partition ~p is unavailable on cluster ~p",
                [Partition, State#state.other_cluster]),
 
     RetryLimit = app_helper:get_env(riak_repl,
-                                    max_fssource_retries,
-                                    ?DEFAULT_SOURCE_RETRIES),
+                                    max_reserve_retries,
+                                    ?DEFAULT_RESERVE_RETRIES),
 
     Retries = dict:update_counter(Partition, 1, Retries0),
 
@@ -621,7 +624,7 @@ handle_location_down({Partition, N, Node, Tref},
             ErrorExits = State#state.error_exits + 1,
             State2 = State#state{whereis_waiting = Waiting,
                                  error_exits = ErrorExits,
-                                 retries = Retries},
+                                 reserve_retries = Retries},
             start_up_reqs(State2);
         _ ->
             lager:warning("Fssource rescheduling partition after location_down: ~p ~p < ~p",
@@ -633,7 +636,7 @@ handle_location_down({Partition, N, Node, Tref},
             RetryExits = State#state.retry_exits + 1,
             State2 = State#state{whereis_waiting=Waiting,
                                  partition_queue = PQueue,
-                                 retries = Retries,
+                                 reserve_retries = Retries,
                                  retry_exits = RetryExits},
             start_up_reqs(State2)
     end.
