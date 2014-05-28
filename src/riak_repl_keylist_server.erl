@@ -54,14 +54,15 @@
          terminate/3,
          code_change/4]).
 
+%% folder
+-export([bloom_fold/3]).
+
 %% states
 -export([wait_for_partition/2,
-        build_keylist/2,
-        wait_keylist/2,
-        diff_keylist/2,
-        diff_bloom/2,
-        diff_bloom/3,
-        bloom_fold/3]).
+         build_keylist/2,
+         wait_keylist/2,
+         diff_keylist/2,
+         diff_bloom/2]).
 
 -record(state, {
         sitename,
@@ -110,10 +111,10 @@ start_link(SiteName, Transport, Socket, WorkDir, Client, Proto) ->
     gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto], []).
 
 start_fullsync(Pid) ->
-    Pid ! start_fullsync.
+    gen_fsm:send_event(Pid, start_fullsync).
 
 start_fullsync(Pid, Partitions) ->
-    Pid ! {start_fullsync, Partitions}.
+    gen_fsm:send_event(Pid, {start_fullsync, Partitions}).
 
 cancel_fullsync(Pid) ->
     gen_fsm:send_event(Pid, cancel_fullsync).
@@ -139,6 +140,10 @@ init([SiteName, Transport, Socket, WorkDir, Client, Proto]) ->
     {ok, wait_for_partition, State}.
 
 %% Request to start or resume Full Sync
+wait_for_partition(Command, State)
+        when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, State};
 wait_for_partition(Command, State)
         when Command == start_fullsync; Command == resume_fullsync ->
     %% annoyingly the server is the one that triggers the fullsync in the old
@@ -183,11 +188,17 @@ wait_for_partition(Event, State) ->
         [State#state.sitename, Event]),
     {next_state, wait_for_partition, State}.
 
+build_keylist(Command, State)
+        when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, State};
 build_keylist(Command, #state{kl_pid=Pid} = State)
-        when Command == cancel_fullsync; Command == pause_fullsync ->
+        when Command == pause_fullsync ->
     %% kill the worker
-    riak_repl_fullsync_helper:stop(Pid),
-    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    ok = riak_repl_fullsync_helper:stop(Pid),
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  Command),
     _ = file:delete(State#state.kl_fn),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
@@ -224,8 +235,12 @@ build_keylist({skip_partition, Partition}, #state{partition=Partition,
     catch(riak_repl_fullsync_helper:stop(Pid)),
     {next_state, wait_for_partition, State}.
 
+wait_keylist(Command, State)
+        when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, State};
 wait_keylist(Command, #state{their_kl_fh=FH} = State)
-        when Command == pause_fullsync; Command == cancel_fullsync ->
+        when Command == pause_fullsync ->
     case FH of
         undefined ->
             ok;
@@ -236,7 +251,9 @@ wait_keylist(Command, #state{their_kl_fh=FH} = State)
             _ = file:delete(State#state.kl_fn),
             ok
     end,
-    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 wait_keylist(kl_wait, State) ->
@@ -317,10 +334,16 @@ wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) -
 %% ----------------------------------- non bloom-fold -----------------------
 %% diff_keylist states
 
+diff_keylist(Command, State)
+        when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, State};
 diff_keylist(Command, #state{diff_pid=Pid} = State)
-        when Command == pause_fullsync; Command == cancel_fullsync ->
+        when Command == pause_fullsync ->
     riak_repl_fullsync_helper:stop(Pid),
-    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 %% @plu server <-- diff_stream : merkle_diff
@@ -385,10 +408,15 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
 %% ----------------------------------- bloom-fold ---------------------------
 %% diff_bloom states
 
-%% Pause or Cancel
 diff_bloom(Command, State)
-        when Command == pause_fullsync; Command == cancel_fullsync ->
-    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+        when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, State};
+diff_bloom(Command, State)
+        when Command == pause_fullsync ->
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  Command),
     log_stop(Command, State),
     {next_state, wait_for_partition, State};
 
@@ -526,14 +554,11 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %% Wait for another partition.
-    {next_state, wait_for_partition, State}.
-
-%% end of bloom states
-%% --------------------------------------------------------------------------
+    {next_state, wait_for_partition, State};
 
 %% server <- bloom_fold : diff_obj 'recv a diff object from bloom folder
-diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
-                                           socket=Socket, proto=Proto} = State) ->
+diff_bloom({diff_obj, RObj}, #state{client=Client, transport=Transport,
+                                    socket=Socket, proto=Proto} = State) ->
     case riak_repl_util:maybe_send(RObj, Client, Proto) of
         cancel ->
             ok;
@@ -549,7 +574,11 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj})),
             ok
     end,
-    {reply, ok, diff_bloom, State}.
+    {next_state, diff_bloom, State}.
+
+
+%% end of bloom states
+%% --------------------------------------------------------------------------
 
 %% gen_fsm callbacks
 
@@ -581,23 +610,19 @@ handle_sync_event(_Event,_F,StateName,State) ->
     lager:debug("Fullsync with site ~p; ignoring ~p", [State#state.sitename,_Event]),
     {reply, ok, StateName, State}.
 
-handle_info(start_fullsync, wait_for_partition, State) ->
-    gen_fsm:send_event(self(), start_fullsync),
-    {next_state, wait_for_partition, State};
-handle_info({start_fullsync, Partitions}, wait_for_partition, State) ->
-    gen_fsm:send_event(self(), {start_fullsync, Partitions}),
-    {next_state, wait_for_partition, State};
 handle_info(_I, StateName, State) ->
     lager:info("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _I]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, State) ->
-    catch(riak_repl_fullsync_helper:stop(State#state.kl_pid)),
-    catch(file:close(State#state.their_kl_fh)),
+    catch(ok = riak_repl_fullsync_helper:stop(State#state.kl_pid)),
+    catch(_ = file:close(State#state.their_kl_fh)),
     %% Clean up the working directory on crash/exit
-    Cmd = lists:flatten(io_lib:format("rm -rf ~s", [State#state.work_dir])),
+    Cmd = lists:flatten(io_lib:format("rm -rf ~s",
+                                      [State#state.work_dir])),
     _ = os:cmd(Cmd),
-    poolboy:stop(State#state.pool).
+    poolboy:stop(State#state.pool),
+    ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
@@ -648,9 +673,7 @@ bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinS
                         {'EXIT', _} ->
                             ok;
                         RObj ->
-                            gen_fsm:sync_send_event(MPid,
-                                                    {diff_obj, RObj},
-                                                    infinity)
+                            gen_fsm:send_event(MPid, {diff_obj, RObj})
                     end,
                     NSent0 - 1;
                 false ->
@@ -665,9 +688,7 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
                         {'EXIT', _} ->
                             ok;
                         RObj ->
-                            gen_fsm:sync_send_event(MPid,
-                                                    {diff_obj, RObj},
-                                                    infinity)
+                            gen_fsm:send_event(MPid, {diff_obj, RObj})
                     end,
                     NSent0 - 1;
                 false ->
