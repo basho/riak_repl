@@ -242,7 +242,6 @@ get_partition_node(Partition, Ring) ->
     proplists:get_value(Partition, Owners).
 
 get_node_ip_port(Node, NormIP) ->
-    {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
     case riak_repl2_ip:determine_netmask(IfAddrs, NormIP) of
         undefined ->
@@ -252,8 +251,15 @@ get_node_ip_port(Node, NormIP) ->
         CIDR ->
             case get_matching_address(Node, NormIP, CIDR) of
                 {ok, {ListenIP, _}} ->
-                    {ok, {ListenIP, Port}};
+                    case riak_core_util:safe_rpc(Node, application, get_env, [riak_core, cluster_mgr]) of
+                        {ok, {_RemoteIP, Port}} ->
+                            {ok, {ListenIP, Port}};
+                        RpcElse ->
+                            lager:error("Unable to query node ~p for it's cluster manager port due to ~p", [Node, RpcElse]),
+                            {error, remote_node_not_reachable}
+                    end;
                 Else ->
+                    lager:error("Unable to get matching address for ~p/~p from ~p due to ~p", [NormIP, CIDR, Node, Else]),
                     Else
             end
     end.
@@ -263,11 +269,11 @@ get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
     {ok, Res};
 
 get_matching_address(Node, NormIP, Masked) ->
-    case rpc:call(Node, riak_repl2_ip, get_matching_address, [NormIP, Masked]) of
+    case riak_core_util:safe_rpc(Node, riak_repl2_ip, get_matching_address, [NormIP, Masked]) of
         % this is a clause that will be removed/useless once all nodes on a 
         % cluster are >= 1.3
         {badrpc, {'EXIT', {undef, _StackTrace}}} ->
-            case rpc:call(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
+            case riak_core_util:safe_rpc(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
                 {badrpc, Err} ->
                     {error, Err};
                 OkRes ->

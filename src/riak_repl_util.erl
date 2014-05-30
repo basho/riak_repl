@@ -1019,7 +1019,7 @@ maybe_downconvert_binary_objs(BinObjs, SinkVer) ->
 
 %% return the wire format supported by the peer node: w0 | w1
 peer_wire_format(Peer) ->
-    case rpc:call(Peer, riak_core_capability, get, [{riak_kv, object_format}]) of
+    case riak_core_util:safe_rpc(Peer, riak_core_capability, get, [{riak_kv, object_format}]) of
         {unknown_capability,{riak_kv,object_format}} ->
             w0;
         v1 ->
