@@ -110,7 +110,7 @@
          register_locator/2,
          apply_locator/2,
          reset_backoff/0,
-         get_cancelled_connections/0,
+         get_request_states/0,
          stop/0
          ]).
 
