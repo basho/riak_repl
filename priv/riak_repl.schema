@@ -132,7 +132,7 @@
 {mapping, "mdc.fullsync.use_bg_manager", "riak_repl.fullsync_use_background_manager", [
     {datatype, {enum, [true, false]}},
     {level, advanced},
-    {default, true}
+    {default, false}
 ]}.
 
 %% @doc How frequently the stats for fullsync source processes should be
