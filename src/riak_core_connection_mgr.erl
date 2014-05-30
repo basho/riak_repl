@@ -110,6 +110,7 @@
          register_locator/2,
          apply_locator/2,
          reset_backoff/0,
+         get_cancelled_connections/0,
          stop/0
          ]).
 
@@ -193,6 +194,9 @@ connect(Target, ClientSpec) ->
 disconnect(Target) ->
     gen_server:cast(?SERVER, {disconnect, Target}).
 
+get_request_states() ->
+    gen_server:call(?SERVER, get_request_states).
+
 %% doc Stop the server and sever all connections.
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -260,6 +264,10 @@ handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pend
                                                                  Req#req{cur = Addr,
                                                                          state = ReqState})}}
     end;
+
+handle_call(get_request_states, _From, State = #state{pending=Pending}) ->
+    Answer = [{P#req.target, P#req.state} || P <- Pending],
+    {reply, Answer, State};
 
 handle_call(_Unhandled, _From, State) ->
     lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
