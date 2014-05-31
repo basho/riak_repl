@@ -371,7 +371,7 @@ send_heartbeat(State = #state{hb_interval = undefined}) ->
 %% well as connection issues - either way we want to re-establish.
 send_heartbeat(State = #state{hb_timeout = HBTimeout,
                               hb_sent_q = SentQ,
-                              helper_pid = HelperPid}) ->
+                              helper_pid = HelperPid}) when is_integer(HBTimeout) ->
     Now = now(), % using now as need a unique reference for this heartbeat
                  % to spot late heartbeat timeout messages
     riak_repl2_rtsource_helper:send_heartbeat(HelperPid),
@@ -379,14 +379,19 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
     State2 = State#state{hb_interval_tref = undefined, hb_timeout_tref = TRef,
                          hb_sent_q = queue:in(Now, SentQ)},
     lager:debug("hb_sent_q_len after sending heartbeat: ~p", [queue:len(SentQ)+1]),
-    State2.
+    State2;
+send_heartbeat(State) ->
+    lager:warning("Heartbeat is misconfigured and is not a valid integer."),
+    State.
 
 %% Schedule the next heartbeat
-schedule_heartbeat(State = #state{hb_interval_tref = undefined, hb_interval = HBInterval}) ->
+schedule_heartbeat(State = #state{hb_interval_tref = undefined,
+        hb_interval = HBInterval}) when is_integer(HBInterval) ->
     TRef = erlang:send_after(timer:seconds(HBInterval), self(), send_heartbeat),
     State#state{hb_interval_tref = TRef};
 
 schedule_heartbeat(State) ->
+    lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
 
 %% ===================================================================
