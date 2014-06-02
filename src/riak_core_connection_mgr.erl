@@ -111,6 +111,7 @@
          apply_locator/2,
          reset_backoff/0,
          get_request_states/0,
+         get_connection_errors/1,
          stop/0
          ]).
 
@@ -194,9 +195,16 @@ connect(Target, ClientSpec) ->
 disconnect(Target) ->
     gen_server:cast(?SERVER, {disconnect, Target}).
 
+%% @doc Get the #req.target and #req.state for all connections
 get_request_states() ->
     gen_server:call(?SERVER, get_request_states).
 
+%% @doc Return the #ep.addr and #ep.failures for all connections
+get_connection_errors(Addr) ->
+    gen_server:call(?SERVER, {get_connection_errors, Addr}).
+
+% remove_cancelled_connections() ->
+%     gen_server:call(?SERVER, remove_cancelled_connections).
 %% doc Stop the server and sever all connections.
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -269,6 +277,15 @@ handle_call(get_request_states, _From, State = #state{pending=Pending}) ->
     Answer = [{P#req.target, P#req.state} || P <- Pending],
     {reply, Answer, State};
 
+handle_call({get_connection_errors, Addr}, _From, State = #state{endpoints=Endpoints}) ->
+    case orddict:fetch(Addr, Endpoints) of
+        {ok, E} ->
+            {reply, E#ep.failures, State};
+        error ->
+            lager:error("Endpoint ~p does not exist in the endpoints list.",[Addr]),
+            {reply, [], State}
+    end;
+
 handle_call(_Unhandled, _From, State) ->
     lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
     {reply, {error, unhandled}, State}.
@@ -281,12 +298,15 @@ handle_cast(resume, State) ->
 
 handle_cast({disconnect, Target}, State) ->
     {noreply, disconnect_from_target(Target, State)};
-
 %% reset all backoff delays to zero.
 %% TODO: restart stalled connections.
 handle_cast(reset_backoff, State) ->
     NewEps = reset_backoff(State#state.endpoints),
     {noreply, State#state{endpoints = NewEps}};
+
+% handle_cast(remove_cancelled_connections, State#state{pending=Pending,endpoints=Endpoints}) ->
+%     ,
+%     {noreply, State#state{pending = NewPending, endpoints = NewEndpoints}};
 
 %% helper process says no endpoints were returned by the locators.
 %% helper process will schedule a retry.
@@ -510,7 +530,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             %% connection request has been cancelled
             lager:debug("Ignoring connection to: ~p at ~p because it was cancelled",
                        [ProtocolId, string_of_ipport(Addr)]),
-            {ok, cancelled}
+            {error, cancelled}
     end.
 
 locate_endpoints({Type, Name}, Strategy, Locators) ->
