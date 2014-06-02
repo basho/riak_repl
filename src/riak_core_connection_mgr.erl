@@ -45,6 +45,7 @@
 
 -define(SERVER, riak_core_connection_manager).
 -define(MAX_LISTENERS, 100).
+-define(CM_CANCELLATION_INTERVAL, 5 * 60 * 1000). %% 5 minutes
 
 -type(counter() :: non_neg_integer()).
 
@@ -203,8 +204,6 @@ get_request_states() ->
 get_connection_errors(Addr) ->
     gen_server:call(?SERVER, {get_connection_errors, Addr}).
 
-% remove_cancelled_connections() ->
-%     gen_server:call(?SERVER, remove_cancelled_connections).
 %% doc Stop the server and sever all connections.
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -263,7 +262,6 @@ handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pend
             {Answer, ReqState} =
                 case Req#req.state of
                     cancelled ->
-                        %% helper process hasn't cancelled itself yet.
                         {false, cancelled};
                     _ ->
                         {true, connecting}
@@ -278,11 +276,11 @@ handle_call(get_request_states, _From, State = #state{pending=Pending}) ->
     {reply, Answer, State};
 
 handle_call({get_connection_errors, Addr}, _From, State = #state{endpoints=Endpoints}) ->
-    case orddict:fetch(Addr, Endpoints) of
+    case orddict:find(Addr, Endpoints) of
         {ok, E} ->
             {reply, E#ep.failures, State};
         error ->
-            lager:error("Endpoint ~p does not exist in the endpoints list.",[Addr]),
+            lager:notice("Endpoint ~p is not stored in the endpoint list.", [Addr]),
             {reply, [], State}
     end;
 
@@ -298,15 +296,12 @@ handle_cast(resume, State) ->
 
 handle_cast({disconnect, Target}, State) ->
     {noreply, disconnect_from_target(Target, State)};
+
 %% reset all backoff delays to zero.
 %% TODO: restart stalled connections.
 handle_cast(reset_backoff, State) ->
     NewEps = reset_backoff(State#state.endpoints),
     {noreply, State#state{endpoints = NewEps}};
-
-% handle_cast(remove_cancelled_connections, State#state{pending=Pending,endpoints=Endpoints}) ->
-%     ,
-%     {noreply, State#state{pending = NewPending, endpoints = NewEndpoints}};
 
 %% helper process says no endpoints were returned by the locators.
 %% helper process will schedule a retry.
@@ -338,6 +333,9 @@ handle_info({retry_req, Ref}, State = #state{pending = Pending}) ->
         Req ->
             {noreply, start_request(Req, State)}
     end;
+
+handle_info({remove_cancelled_connection, Ref}, State) ->
+    {noreply, remove_cancelled_connection(Ref, State)};
 
 %%% All of the connection helpers end here
 %% cases:
@@ -419,10 +417,31 @@ disconnect_from_target(Target, State = #state{pending = Pending}) ->
             %% already gone!
             State;
         Req ->
+            case get_cancellation_interval() of
+                never ->
+                    lager:warning("Cancelled connection ~p will not be removed because
+                        cm_cancellation_interval is set to never", [Req#req.target]);
+                Interval when is_integer(Interval) ->
+                    erlang:send_after(Interval,self(),{remove_cancelled_connection,Req#req.ref});
+                Error ->
+                    lager:error("Unsupported cm_cancellation_interval: ~p", [Error])
+            end,
             %% The helper process will discover the cancellation when it asks if it
             %% should connect to an endpoint.
             State#state{pending = lists:keystore(Req#req.ref, #req.ref, Pending,
                                                  Req#req{state = cancelled})}
+    end.
+
+%% remove pending connection from state for supplied Ref.
+remove_cancelled_connection(Ref, State = #state{pending = Pending}) ->
+    case lists:keytake(Ref, #req.ref, Pending) of
+        false ->
+            State;
+        {value, Req, Pending2} ->
+            if Req#req.state == cancelled ->
+                      State#state{pending=Pending2};
+               true -> State
+            end
     end.
 
 %% schedule a retry to occur after Interval milliseconds.
@@ -530,7 +549,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             %% connection request has been cancelled
             lager:debug("Ignoring connection to: ~p at ~p because it was cancelled",
                        [ProtocolId, string_of_ipport(Addr)]),
-            {error, cancelled}
+            {ok, cancelled}
     end.
 
 locate_endpoints({Type, Name}, Strategy, Locators) ->
@@ -646,6 +665,10 @@ cluster_by_name_locator(ClusterName, _Policy) ->
 %% @doc Locator to identify a cluster by ip address.
 cluster_by_addr_locator(Addr, _Policy) ->
     {ok, [Addr]}.
+
+%% @doc Return the value for cm_cancellation_interval
+get_cancellation_interval() ->
+    app_helper:get_env(riak_repl, cm_cancellation_interval, ?CM_CANCELLATION_INTERVAL).
 
 %% @doc Initialize the default set of locator functions.
 initialize_locators() ->
