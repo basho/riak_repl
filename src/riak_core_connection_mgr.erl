@@ -418,9 +418,9 @@ disconnect_from_target(Target, State = #state{pending = Pending}) ->
             State;
         Req ->
             case get_cancellation_interval() of
-                never ->
+                undefined ->
                     lager:warning("Cancelled connection ~p will not be removed because
-                        cm_cancellation_interval is set to never", [Req#req.target]);
+                        cm_cancellation_interval is set to undefined", [Req#req.target]);
                 Interval when is_integer(Interval) ->
                     erlang:send_after(Interval,self(),{remove_cancelled_connection,Req#req.ref});
                 Error ->
@@ -432,15 +432,17 @@ disconnect_from_target(Target, State = #state{pending = Pending}) ->
                                                  Req#req{state = cancelled})}
     end.
 
-%% remove pending connection from state for supplied Ref.
+%% @doc remove pending connection from state for supplied Ref.
 remove_cancelled_connection(Ref, State = #state{pending = Pending}) ->
     case lists:keytake(Ref, #req.ref, Pending) of
         false ->
             State;
         {value, Req, Pending2} ->
-            if Req#req.state == cancelled ->
-                      State#state{pending=Pending2};
-               true -> State
+            case Req#req.state of
+                cancelled ->
+                    State#state{pending=Pending2};
+                _ ->
+                    State
             end
     end.
 
