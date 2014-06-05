@@ -234,6 +234,9 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
                                                   State#state.pending,
                                                   Request)},
     lager:debug("Starting connect request to ~p, ref is ~p", [Target, Reference]),
+    %% reset backoff for all endpoints to expedite connection against
+    %% existing endpoint
+    ok = reset_backoff(),
     {reply, {ok, Reference}, start_request(Request, State2)};
 
 handle_call({get_endpoint_backoff, Addr}, _From, State) ->
