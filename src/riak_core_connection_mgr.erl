@@ -45,6 +45,7 @@
 
 -define(SERVER, riak_core_connection_manager).
 -define(MAX_LISTENERS, 100).
+-define(CM_CANCELLATION_INTERVAL, 5 * 60 * 1000). %% 5 minutes
 
 -type(counter() :: non_neg_integer()).
 
@@ -110,6 +111,8 @@
          register_locator/2,
          apply_locator/2,
          reset_backoff/0,
+         get_request_states/0,
+         get_connection_errors/1,
          stop/0
          ]).
 
@@ -193,6 +196,14 @@ connect(Target, ClientSpec) ->
 disconnect(Target) ->
     gen_server:cast(?SERVER, {disconnect, Target}).
 
+%% @doc Get the #req.target and #req.state for all connections
+get_request_states() ->
+    gen_server:call(?SERVER, get_request_states).
+
+%% @doc Return the #ep.addr and #ep.failures for all connections
+get_connection_errors(Addr) ->
+    gen_server:call(?SERVER, {get_connection_errors, Addr}).
+
 %% doc Stop the server and sever all connections.
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -223,6 +234,9 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
                                                   State#state.pending,
                                                   Request)},
     lager:debug("Starting connect request to ~p, ref is ~p", [Target, Reference]),
+    %% reset backoff for all endpoints to expedite connection against
+    %% existing endpoint
+    ok = reset_backoff(),
     {reply, {ok, Reference}, start_request(Request, State2)};
 
 handle_call({get_endpoint_backoff, Addr}, _From, State) ->
@@ -251,7 +265,6 @@ handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pend
             {Answer, ReqState} =
                 case Req#req.state of
                     cancelled ->
-                        %% helper process hasn't cancelled itself yet.
                         {false, cancelled};
                     _ ->
                         {true, connecting}
@@ -259,6 +272,19 @@ handle_call({should_try_endpoint, Ref, Addr}, _From, State = #state{pending=Pend
             {reply, Answer, State#state{pending = lists:keystore(Ref, #req.ref, Pending,
                                                                  Req#req{cur = Addr,
                                                                          state = ReqState})}}
+    end;
+
+handle_call(get_request_states, _From, State = #state{pending=Pending}) ->
+    Answer = [{P#req.target, P#req.state} || P <- Pending],
+    {reply, Answer, State};
+
+handle_call({get_connection_errors, Addr}, _From, State = #state{endpoints=Endpoints}) ->
+    case orddict:find(Addr, Endpoints) of
+        {ok, E} ->
+            {reply, E#ep.failures, State};
+        error ->
+            lager:notice("Endpoint ~p is not stored in the endpoint list.", [Addr]),
+            {reply, [], State}
     end;
 
 handle_call(_Unhandled, _From, State) ->
@@ -310,6 +336,9 @@ handle_info({retry_req, Ref}, State = #state{pending = Pending}) ->
         Req ->
             {noreply, start_request(Req, State)}
     end;
+
+handle_info({remove_cancelled_connection, Ref}, State) ->
+    {noreply, remove_cancelled_connection(Ref, State)};
 
 %%% All of the connection helpers end here
 %% cases:
@@ -391,10 +420,33 @@ disconnect_from_target(Target, State = #state{pending = Pending}) ->
             %% already gone!
             State;
         Req ->
+            case get_cancellation_interval() of
+                undefined ->
+                    lager:warning("Cancelled connection ~p will not be removed because
+                        cm_cancellation_interval is set to undefined", [Req#req.target]);
+                Interval when is_integer(Interval) ->
+                    erlang:send_after(Interval,self(),{remove_cancelled_connection,Req#req.ref});
+                Error ->
+                    lager:error("Unsupported cm_cancellation_interval: ~p", [Error])
+            end,
             %% The helper process will discover the cancellation when it asks if it
             %% should connect to an endpoint.
             State#state{pending = lists:keystore(Req#req.ref, #req.ref, Pending,
                                                  Req#req{state = cancelled})}
+    end.
+
+%% @doc remove pending connection from state for supplied Ref.
+remove_cancelled_connection(Ref, State = #state{pending = Pending}) ->
+    case lists:keytake(Ref, #req.ref, Pending) of
+        false ->
+            State;
+        {value, Req, Pending2} ->
+            case Req#req.state of
+                cancelled ->
+                    State#state{pending=Pending2};
+                _ ->
+                    State
+            end
     end.
 
 %% schedule a retry to occur after Interval milliseconds.
@@ -618,6 +670,10 @@ cluster_by_name_locator(ClusterName, _Policy) ->
 %% @doc Locator to identify a cluster by ip address.
 cluster_by_addr_locator(Addr, _Policy) ->
     {ok, [Addr]}.
+
+%% @doc Return the value for cm_cancellation_interval
+get_cancellation_interval() ->
+    app_helper:get_env(riak_repl, cm_cancellation_interval, ?CM_CANCELLATION_INTERVAL).
 
 %% @doc Initialize the default set of locator functions.
 initialize_locators() ->
