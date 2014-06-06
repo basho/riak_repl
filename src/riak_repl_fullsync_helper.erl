@@ -136,11 +136,10 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                 {FoldRef, {Self, _, Total}} ->
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, Total});
-                                {'DOWN', MonRef, process, VNodePid, Reason}
-                                        when Reason /= normal ->
+                                {'DOWN', MonRef, process, VNodePid, Reason} ->
                                     lager:warning("Keylist fold of ~p exited with ~p",
                                                [Partition, Reason]),
-                                    exit(Reason)
+                                    exit({vnode_terminated, Reason})
                             end
                     catch exit:{{nodedown, Node}, _GenServerCall} ->
                             %% node died between services check and gen_server:call
