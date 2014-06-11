@@ -62,7 +62,8 @@
          build_keylist/2,
          wait_keylist/2,
          diff_keylist/2,
-         diff_bloom/2]).
+         diff_bloom/2,
+         diff_bloom/3]).
 
 -record(state, {
         sitename,
@@ -554,11 +555,14 @@ diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %% Wait for another partition.
-    {next_state, wait_for_partition, State};
+    {next_state, wait_for_partition, State}.
+
+%% end of bloom states
+%% --------------------------------------------------------------------------
 
 %% server <- bloom_fold : diff_obj 'recv a diff object from bloom folder
-diff_bloom({diff_obj, RObj}, #state{client=Client, transport=Transport,
-                                    socket=Socket, proto=Proto} = State) ->
+diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
+                                           socket=Socket, proto=Proto} = State) ->
     case riak_repl_util:maybe_send(RObj, Client, Proto) of
         cancel ->
             ok;
@@ -574,11 +578,7 @@ diff_bloom({diff_obj, RObj}, #state{client=Client, transport=Transport,
                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj})),
             ok
     end,
-    {next_state, diff_bloom, State}.
-
-
-%% end of bloom states
-%% --------------------------------------------------------------------------
+    {reply, ok, diff_bloom, State}.
 
 %% gen_fsm callbacks
 
@@ -673,7 +673,9 @@ bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinS
                         {'EXIT', _} ->
                             ok;
                         RObj ->
-                            gen_fsm:send_event(MPid, {diff_obj, RObj})
+                            gen_fsm:sync_send_event(MPid,
+                                                    {diff_obj, RObj},
+                                                    infinity)
                     end,
                     NSent0 - 1;
                 false ->
@@ -688,7 +690,9 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
                         {'EXIT', _} ->
                             ok;
                         RObj ->
-                            gen_fsm:send_event(MPid, {diff_obj, RObj})
+                            gen_fsm:sync_send_event(MPid,
+                                                    {diff_obj, RObj},
+                                                    infinity)
                     end,
                     NSent0 - 1;
                 false ->
