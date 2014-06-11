@@ -59,9 +59,13 @@
 
 %% states
 -export([wait_for_partition/2,
+         wait_for_partition/3,
          build_keylist/2,
+         build_keylist/3,
          wait_keylist/2,
+         wait_keylist/3,
          diff_keylist/2,
+         diff_keylist/3,
          diff_bloom/2,
          diff_bloom/3]).
 
@@ -157,64 +161,26 @@ wait_for_partition({start_fullsync, _} = Command, State) ->
     {next_state, wait_for_partition, State};
 %% Full sync has completed
 wait_for_partition(fullsync_complete, State) ->
-    lager:info("Full-sync with site ~p completed", [State#state.sitename]),
-    riak_repl_stats:server_fullsyncs(),
-    riak_repl_util:schedule_fullsync(),
-    {next_state, wait_for_partition, State};
+    fullsync_completed_while_waiting(State);
 %% Start full-sync of a partition
-%% @plu server <- client: {partition,P}
-wait_for_partition({partition, Partition}, State=#state{work_dir=WorkDir}) ->
-    lager:info("Full-sync with site ~p; doing fullsync for ~p",
-               [State#state.sitename, Partition]),
-    lager:info("Full-sync with site ~p; building keylist for ~p",
-               [State#state.sitename, Partition]),
-    %% client wants keylist for this partition
-    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
-    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
-    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
-    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
-                                                              Partition,
-                                                              KeyListFn),
-    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
-                                            kl_ref=KeyListRef, kl_fn=KeyListFn,
-                                            partition=Partition,
-                                            partition_start=os:timestamp(),
-                                            stage_start=os:timestamp(),
-                                            pending_acks=0, generator_paused=false,
-                                            their_kl_fn=TheirKeyListFn,
-                                            their_kl_fh=undefined}};
+wait_for_partition({partition, Partition}, State) ->
+    wait_for_individual_partition(Partition, State);
 %% Unknown event (ignored)
 wait_for_partition(Event, State) ->
     lager:debug("Full-sync with site ~p; ignoring event ~p",
         [State#state.sitename, Event]),
     {next_state, wait_for_partition, State}.
 
-build_keylist(Command, State)
-        when Command == cancel_fullsync ->
+build_keylist(Command, State) when Command == cancel_fullsync ->
     log_stop(Command, State),
     {stop, normal, State};
-build_keylist(Command, #state{kl_pid=Pid} = State)
-        when Command == pause_fullsync ->
-    %% kill the worker
-    ok = riak_repl_fullsync_helper:stop(Pid),
-    _ = riak_repl_tcp_server:send(State#state.transport,
-                                  State#state.socket,
-                                  Command),
-    _ = file:delete(State#state.kl_fn),
-    log_stop(Command, State),
+build_keylist(Command, State) when Command == pause_fullsync ->
+    perform_pause_fullsync(State),
     {next_state, wait_for_partition, State};
 %% Helper has sorted and written keylist to a file
 %% @plu server <- s:key-lister: keylist_built
-build_keylist({Ref, keylist_built, Size},
-              State=#state{kl_ref=Ref, socket=Socket, transport=Transport, partition=Partition}) ->
-    lager:info("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
-        [State#state.sitename, Partition,
-         riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    %% @plu server -> client: {kl_exchange, P}
-    _ = riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
-    %% note that num_diffs is being assigned the number of keys, regardless of diffs,
-    %% because we don't the number of diffs yet. See TODO: above redarding KEY_LIST_THRESHOLD
-    {next_state, wait_keylist, State#state{stage_start=os:timestamp(), num_diffs=Size}};
+build_keylist({Ref, keylist_built, Size}, State=#state{kl_ref=Ref}) ->
+    keylist_built(Ref, Size, State);
 %% Error
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
@@ -236,26 +202,67 @@ build_keylist({skip_partition, Partition}, #state{partition=Partition,
     catch(riak_repl_fullsync_helper:stop(Pid)),
     {next_state, wait_for_partition, State}.
 
-wait_keylist(Command, State)
-        when Command == cancel_fullsync ->
+build_keylist(Command, _From, State) when Command == cancel_fullsync ->
     log_stop(Command, State),
-    {stop, normal, State};
-wait_keylist(Command, #state{their_kl_fh=FH} = State)
-        when Command == pause_fullsync ->
-    case FH of
-        undefined ->
-            ok;
-        _ ->
-            %% close and delete the keylist file
-            _ = file:close(FH),
-            _ = file:delete(State#state.their_kl_fn),
-            _ = file:delete(State#state.kl_fn),
-            ok
-    end,
+    {stop, normal, ok, State};
+build_keylist(Command, _From, State) when Command == pause_fullsync ->
+    perform_pause_fullsync(State),
+    {next_state, wait_for_partition, State};
+%% Helper has sorted and written keylist to a file
+%% @plu server <- s:key-lister: keylist_built
+build_keylist({Ref, keylist_built, Size}, _From, State=#state{kl_ref=Ref}) ->
+    keylist_built(Ref, Size, State);
+%% Error
+build_keylist({Ref, {error, Reason}}, _From, #state{transport=Transport,
+        socket=Socket, kl_ref=Ref} = State) ->
+    lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
+        [State#state.sitename, State#state.partition, Reason]),
+    _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
+    {next_state, wait_for_partition, State};
+build_keylist({_Ref, keylist_built, _Size}, _From, State) ->
+    lager:warning("Stale keylist_built message received, ignoring"),
+    {next_state, build_keylist, State};
+build_keylist({_Ref, {error, Reason}}, _From, State) ->
+    lager:warning("Stale {error, ~p} message received, ignoring", [Reason]),
+    {next_state, build_keylist, State};
+%% Request to skip specified partition
+build_keylist({skip_partition, Partition}, _From,
+              #state{partition=Partition, kl_pid=Pid} = State) ->
+    lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
+        [State#state.sitename, Partition]),
+    catch(riak_repl_fullsync_helper:stop(Pid)),
+    {next_state, wait_for_partition, State}.
+
+wait_for_partition(Command, _From, State) when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, ok, State};
+wait_for_partition(Command, _From, State)
+        when Command == start_fullsync; Command == resume_fullsync ->
+    %% annoyingly the server is the one that triggers the fullsync in the old
+    %% protocol, so we'll just send it on to the client.
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, Command),
+    {next_state, wait_for_partition, State};
+wait_for_partition({start_fullsync, _} = Command, _From, State) ->
     _ = riak_repl_tcp_server:send(State#state.transport,
                                   State#state.socket,
                                   Command),
+    {next_state, wait_for_partition, State};
+%% Full sync has completed
+wait_for_partition(fullsync_complete, _From, State) ->
+    fullsync_completed_while_waiting(State);
+wait_for_partition({partition, Partition}, _From, State) ->
+    wait_for_individual_partition(Partition, State);
+%% Unknown event (ignored)
+wait_for_partition(Event, _From, State) ->
+    lager:debug("Full-sync with site ~p; ignoring event ~p",
+        [State#state.sitename, Event]),
+    {next_state, wait_for_partition, State}.
+
+wait_keylist(Command, State) when Command == cancel_fullsync ->
     log_stop(Command, State),
+    {stop, normal, State};
+wait_keylist(Command, State) when Command == pause_fullsync ->
+    perform_pause_fullsync(State),
     {next_state, wait_for_partition, State};
 wait_keylist(kl_wait, State) ->
     %% ack the keylist chunks we've received so far
@@ -263,71 +270,30 @@ wait_keylist(kl_wait, State) ->
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, kl_ack),
     {next_state, wait_keylist, State};
 %% I have recieved a chunk of the keylist
-wait_keylist({kl_hunk, Hunk}, #state{their_kl_fh=FH0} = State) ->
-    FH = case FH0 of
-        undefined ->
-            {ok, F} = file:open(State#state.their_kl_fn, [write, raw, binary]),
-            F;
-        _ ->
-            FH0
-    end,
-    _ = file:write(FH, Hunk),
-    {next_state, wait_keylist, State#state{their_kl_fh=FH}};
+wait_keylist({kl_hunk, Hunk}, State) ->
+    kl_hunk(Hunk, State);
 %% the client has finished sending the keylist
-wait_keylist(kl_eof, #state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
-    case FH of
-        undefined ->
-            %% client has a blank vnode, write a blank file
-            _ = file:write_file(State#state.their_kl_fn, <<>>),
-            ok;
-        _ ->
-            _ = file:sync(FH),
-            _ = file:close(FH),
-            ok
-    end,
-    lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
-        [State#state.sitename, State#state.partition,
-            riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
-                      [State#state.sitename, NumDKeys, State#state.partition])),
-    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+wait_keylist(kl_eof, State) ->
+    kl_eof(State).
 
-    %% check capability of all nodes for bloom fold ability.
-    %% Since we are the leader, the fact that we have this
-    %% new code means we can only choose to use it if
-    %% all nodes have been upgraded to use bloom.
-    %%
-    %% If you do NOT want to use the bloom fold, you can disable it via the
-    %% {bloom_fold, false} app env for riak_repl.
-    NextState = case riak_core_capability:get({riak_repl, bloom_fold}, false) andalso
-                     app_helper:get_env(riak_repl, bloom_fold, true) of
-        true ->
-            %% all nodes support bloom, yay
-
-            %% Note: ACKS_IN_FLIGHT not relevant here, this is only the
-            %% backpressure for the bloom filter updating
-            %%
-            %% Setting DiffSize to 0 can cause large message queues, so now we
-            %% default it to non-zero. Users can set it back to 0 if they are
-            %% brave.
-            DiffSize = State#state.diff_batch_size,
-            {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
-            diff_bloom;
-        false ->
-            DiffSize = State#state.diff_batch_size div ?ACKS_IN_FLIGHT,
-            Bloom = undefined,
-            diff_keylist
-    end,
-
-    {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
-                                                      State#state.kl_fn,
-                                                      State#state.their_kl_fn,
-                                                      DiffSize),
-
-    lager:info("Full-sync with site ~p; using ~p for ~p",
-               [State#state.sitename, NextState, State#state.partition]),
-    {next_state, NextState, State#state{diff_ref=Ref, bloom=Bloom, diff_pid=Pid, stage_start=os:timestamp()}};
-wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
+wait_keylist(Command, _From, State) when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, ok, State};
+wait_keylist(Command, _From, State) when Command == pause_fullsync ->
+    perform_pause_fullsync(State),
+    {next_state, wait_for_partition, State};
+wait_keylist(kl_wait, _From, State) ->
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  kl_ack),
+    {next_state, wait_keylist, State};
+%% I have recieved a chunk of the keylist
+wait_keylist({kl_hunk, Hunk}, _From, State) ->
+    kl_hunk(Hunk, State);
+%% the client has finished sending the keylist
+wait_keylist(kl_eof, _From, State) ->
+    kl_eof(State);
+wait_keylist({skip_partition, Partition}, _From, #state{partition=Partition} = State) ->
     lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
         [State#state.sitename, Partition]),
     {next_state, wait_for_partition, State}.
@@ -335,17 +301,11 @@ wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) -
 %% ----------------------------------- non bloom-fold -----------------------
 %% diff_keylist states
 
-diff_keylist(Command, State)
-        when Command == cancel_fullsync ->
+diff_keylist(Command, State) when Command == cancel_fullsync ->
     log_stop(Command, State),
     {stop, normal, State};
-diff_keylist(Command, #state{diff_pid=Pid} = State)
-        when Command == pause_fullsync ->
-    riak_repl_fullsync_helper:stop(Pid),
-    _ = riak_repl_tcp_server:send(State#state.transport,
-                                  State#state.socket,
-                                  Command),
-    log_stop(Command, State),
+diff_keylist(Command, State) when Command == pause_fullsync ->
+    perform_pause_fullsync(State),
     {next_state, wait_for_partition, State};
 %% @plu server <-- diff_stream : merkle_diff
 diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{
@@ -405,6 +365,74 @@ diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
     {next_state, wait_for_partition, State}.
+
+diff_keylist(Command, _From, State) when Command == cancel_fullsync ->
+    log_stop(Command, State),
+    {stop, normal, ok, State};
+diff_keylist(Command, _From, #state{diff_pid=Pid} = State) when Command == pause_fullsync ->
+    riak_repl_fullsync_helper:stop(Pid),
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  Command),
+    log_stop(Command, State),
+    {next_state, wait_for_partition, State};
+%% @plu server <-- diff_stream : merkle_diff
+diff_keylist({Ref, {merkle_diff, {{B, K}, _VClock}}}, _From,
+             #state{transport=Transport, socket=Socket, diff_ref=Ref,
+                    pool=Pool, ver=Ver} = State) ->
+    Worker = poolboy:checkout(Pool, true, infinity),
+    case State#state.vnode_gets of
+        true ->
+            %% do a direct get against the vnode, not a regular riak client
+            %% get().
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
+                                                  State#state.partition, Ver);
+        _ ->
+            ok = riak_repl_fullsync_worker:do_get(Worker, B, K, Transport, Socket, Pool,
+                                                  Ver)
+    end,
+    {next_state, diff_keylist, State};
+%% @plu server <-- key-lister: diff_paused
+diff_keylist({Ref, diff_paused}, _From, #state{socket=Socket, transport=Transport, partition=Partition, diff_ref=Ref, pending_acks=PendingAcks0} = State) ->
+    %% request ack from client
+    _ = riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
+    PendingAcks = PendingAcks0+1,
+    %% If we have already received the ack for the previous batch, we immediately
+    %% resume the generator, otherwise we wait for the ack from the client. We'll
+    %% have at most ACKS_IN_FLIGHT windows of differences in flight.
+    WorkerPaused = case PendingAcks < ?ACKS_IN_FLIGHT of
+                       true ->
+                           %% another batch can be sent immediately
+                           State#state.diff_pid ! {Ref, diff_resume},
+                           false;
+                       false ->
+                           %% already ACKS_IN_FLIGHT batches out. Don't resume yet.
+                           true
+                   end,
+    {next_state, diff_keylist, State#state{pending_acks=PendingAcks,
+                                           generator_paused=WorkerPaused}};
+%% @plu server <-- client: diff_ack
+diff_keylist({diff_ack, Partition}, _From, #state{partition=Partition, diff_ref=Ref, generator_paused=WorkerPaused, pending_acks=PendingAcks0} = State) ->
+    %% That's one less "pending" ack from the client. Tell client to keep going.
+    PendingAcks = PendingAcks0-1,
+    %% If the generator was paused, resume it. That would happen if there are already
+    %% ACKS_IN_FLIGHT batches in flight. Better to check "paused" state than guess by
+    %% pending acks count.
+    case WorkerPaused of
+        true ->
+            State#state.diff_pid ! {Ref, diff_resume},
+            ok;
+        false ->
+            ok
+    end,
+    {next_state, diff_keylist, State#state{pending_acks=PendingAcks,generator_paused=false}};
+diff_keylist({Ref, diff_done}, _From, #state{diff_ref=Ref} = State) ->
+    lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
+        [State#state.sitename, State#state.partition,
+         riak_repl_util:elapsed_secs(State#state.stage_start)]),
+    _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
+    {next_state, wait_for_partition, State}.
+
 
 %% ----------------------------------- bloom-fold ---------------------------
 %% diff_bloom states
@@ -700,3 +728,124 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
                     NSent0
             end,
     {MPid, Bloom, Client, Transport, Socket, NSent, WinSz}.
+
+wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
+    lager:info("Full-sync with site ~p; doing fullsync for ~p",
+               [State#state.sitename, Partition]),
+    lager:info("Full-sync with site ~p; building keylist for ~p",
+               [State#state.sitename, Partition]),
+    %% client wants keylist for this partition
+    TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
+    KeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, ours),
+    {ok, KeyListPid} = riak_repl_fullsync_helper:start_link(self()),
+    {ok, KeyListRef} = riak_repl_fullsync_helper:make_keylist(KeyListPid,
+                                                              Partition,
+                                                              KeyListFn),
+    {next_state, build_keylist, State#state{kl_pid=KeyListPid,
+                                            kl_ref=KeyListRef, kl_fn=KeyListFn,
+                                            partition=Partition,
+                                            partition_start=os:timestamp(),
+                                            stage_start=os:timestamp(),
+                                            pending_acks=0, generator_paused=false,
+                                            their_kl_fn=TheirKeyListFn,
+                                            their_kl_fh=undefined}}.
+
+fullsync_completed_while_waiting(State) ->
+    lager:info("Full-sync with site ~p completed", [State#state.sitename]),
+    riak_repl_stats:server_fullsyncs(),
+    riak_repl_util:schedule_fullsync(),
+    {next_state, wait_for_partition, State}.
+
+perform_pause_fullsync(#state{their_kl_fh=FH, kl_pid=KlPid, diff_pid=DiffPid} = State) ->
+    %% kill the worker
+    case FH of
+        undefined ->
+            ok;
+        _ ->
+            %% close and delete the keylist file
+            _ = file:close(FH),
+            _ = file:delete(State#state.their_kl_fn),
+            _ = file:delete(State#state.kl_fn),
+            ok
+    end,
+    _ = riak_repl_tcp_server:send(State#state.transport,
+                                  State#state.socket,
+                                  pause_fullsync),
+    catch(ok = riak_repl_fullsync_helper:stop(KlPid)),
+    catch(ok = riak_repl_fullsync_helper:stop(DiffPid)),
+    log_stop(pause_fullsync, State).
+
+keylist_built(Ref, Size, State=#state{kl_ref=Ref, socket=Socket, transport=Transport, partition=Partition}) ->
+    lager:info("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
+        [State#state.sitename, Partition,
+         riak_repl_util:elapsed_secs(State#state.stage_start)]),
+    %% @plu server -> client: {kl_exchange, P}
+    _ = riak_repl_tcp_server:send(Transport, Socket, {kl_exchange, Partition}),
+    %% note that num_diffs is being assigned the number of keys, regardless of diffs,
+    %% because we don't the number of diffs yet. See TODO: above redarding KEY_LIST_THRESHOLD
+    {next_state, wait_keylist, State#state{stage_start=os:timestamp(), num_diffs=Size}}.
+
+kl_hunk(Hunk, #state{their_kl_fh=FH0} = State) ->
+    FH = case FH0 of
+        undefined ->
+            {ok, F} = file:open(State#state.their_kl_fn, [write, raw, binary]),
+            F;
+        _ ->
+            FH0
+    end,
+    _ = file:write(FH, Hunk),
+    {next_state, wait_keylist, State#state{their_kl_fh=FH}}.
+
+kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
+    case FH of
+        undefined ->
+            %% client has a blank vnode, write a blank file
+            _ = file:write_file(State#state.their_kl_fn, <<>>),
+            ok;
+        _ ->
+            _ = file:sync(FH),
+            _ = file:close(FH),
+            ok
+    end,
+    lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
+        [State#state.sitename, State#state.partition,
+            riak_repl_util:elapsed_secs(State#state.stage_start)]),
+    ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
+                      [State#state.sitename, NumDKeys, State#state.partition])),
+    {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
+
+    %% check capability of all nodes for bloom fold ability.
+    %% Since we are the leader, the fact that we have this
+    %% new code means we can only choose to use it if
+    %% all nodes have been upgraded to use bloom.
+    %%
+    %% If you do NOT want to use the bloom fold, you can disable it via the
+    %% {bloom_fold, false} app env for riak_repl.
+    NextState = case riak_core_capability:get({riak_repl, bloom_fold}, false) andalso
+                     app_helper:get_env(riak_repl, bloom_fold, true) of
+        true ->
+            %% all nodes support bloom, yay
+
+            %% Note: ACKS_IN_FLIGHT not relevant here, this is only the
+            %% backpressure for the bloom filter updating
+            %%
+            %% Setting DiffSize to 0 can cause large message queues, so now we
+            %% default it to non-zero. Users can set it back to 0 if they are
+            %% brave.
+            DiffSize = State#state.diff_batch_size,
+            {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+            diff_bloom;
+        false ->
+            DiffSize = State#state.diff_batch_size div ?ACKS_IN_FLIGHT,
+            Bloom = undefined,
+            diff_keylist
+    end,
+
+    {ok, Ref} = riak_repl_fullsync_helper:diff_stream(Pid, State#state.partition,
+                                                      State#state.kl_fn,
+                                                      State#state.their_kl_fn,
+                                                      DiffSize),
+
+    lager:info("Full-sync with site ~p; using ~p for ~p",
+               [State#state.sitename, NextState, State#state.partition]),
+    {next_state, NextState, State#state{diff_ref=Ref, bloom=Bloom, diff_pid=Pid, stage_start=os:timestamp()}}.
