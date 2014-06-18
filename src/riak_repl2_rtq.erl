@@ -648,7 +648,7 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
     {Cs2, State2, Entries, Objects} = trim_q_entries(QTab, MaxBytes, Cs, State, 0, 0),
     if
         Entries + Objects > 0 ->
-            lager:notice("Dropped ~p objects in ~p entries due to reaching maximum queue size of ~p bytes", [Objects, Entries, MaxBytes]);
+            lager:debug("Dropped ~p objects in ~p entries due to reaching maximum queue size of ~p bytes", [Objects, Entries, MaxBytes]);
         true ->
             ok
     end,
