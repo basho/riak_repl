@@ -1,6 +1,5 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl2_rtq).
 
 %% @doc Queue module for realtime replication.
 %%
@@ -16,6 +15,7 @@
 %%
 %% The queue is currently stored in a private ETS table.  Once
 %% all consumers are done with an item it is removed from the table.
+-module(riak_repl2_rtq).
 
 -behaviour(gen_server).
 %% API
@@ -87,7 +87,7 @@
 -type name() :: term().
 
 %% API
-%% @doc Start linked, registeres to module name.
+%% @doc Start linked, registered to module name.
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     Overload = app_helper:get_env(riak_repl, rtq_overload_threshold, ?DEFAULT_OVERLOAD),
@@ -95,12 +95,12 @@ start_link() ->
     Opts = [{overload_threshold, Overload}, {overload_recover, Recover}],
     start_link(Opts).
 
-%% @doc Start linked, registers to module name, with given options. This makes
-%% testing some options a bit easier as it removes a dependance on app_helper.
 -type overload_threshold_option() :: {'overload_threshold', pos_integer()}.
 -type overload_recover_option() :: {'overload_recover', pos_integer()}.
 -type start_option() :: overload_threshold_option() | overload_recover_option().
 -type start_options() :: [start_option()].
+%% @doc Start linked, registers to module name, with given options. This makes
+%% testing some options a bit easier as it removes a dependance on app_helper.
 -spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
     case ets:info(?overload_ets) of
