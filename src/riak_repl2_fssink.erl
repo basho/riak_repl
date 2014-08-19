@@ -7,7 +7,7 @@
 %% of a single partition. The partition to synchronize is transmitted from the
 %% connected fssource on the source cluster. The strategy for fullsync is determined
 %% dynamically as well:
-%%   keylist - used if the protocol version is < 2.0
+%%   keylist - used if the protocol version is &lt; 2.0
 %%   aae     - used if the protocol version is >= 2.0 and AAE is enabled and repl_strategy=aae
 %%
 %% Protocol Support Summary:

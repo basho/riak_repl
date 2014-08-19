@@ -393,7 +393,7 @@ missing_key(PBKey, DiffState) ->
 %% the same, then a badfun error will occur since the MD5s of the
 %% modules are not the same.
 %%
-%% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
+%% See http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
 keylist_fold({B,Key}=K, V, {MPid, Count, Total}) ->
     try
         H = hash_object(B,Key,V),
