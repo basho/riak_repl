@@ -145,7 +145,7 @@ register_restore_cluster_targets_fun(ReadClusterFun) ->
 register_save_cluster_members_fun(WriteClusterFun) ->
     gen_server:cast(?SERVER, {register_save_cluster_members_fun, WriteClusterFun}).
 
-%% @doc Specify how to reach a remote cluster, it's name is
+%% @doc Specify how to reach a remote cluster, its name is
 %% retrieved by asking it via the control channel.
 -spec(add_remote_cluster(ip_addr()) -> ok).
 add_remote_cluster({IP,Port}) ->

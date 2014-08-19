@@ -1,8 +1,6 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 
--module(riak_repl_tcp_server).
-
 %% @doc This module is responsible for the server-side TCP communication
 %% during replication. A seperate instance of this module is started for every
 %% replication connection that is established. A handshake with the client is
@@ -18,6 +16,7 @@
 %% the cluster are sent to the replication leader, which will then forward
 %% the update out to any connected replication sites. An optional protocol
 %% extension is to use a bounded queue to throttle the stream of updates.
+-module(riak_repl_tcp_server).
 
 -include("riak_repl.hrl").
 
