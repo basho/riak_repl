@@ -1,17 +1,18 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl_keylist_server).
 
 %% @doc This is the server-side component of the new fullsync strategy
 %% introduced in riak 1.1. It is an improvement over the previous strategy in
 %% several ways:
 %%
-%% * Client and server build keylist in parallel
-%% * No useless merkle tree is built
-%% * Differences are calculated and transmitted in batches, not all in one
-%%   message
-%% * Backpressure is introduced in the exchange of differences
-%% * Pausing/cancelling the diff is immediate
+%% <ul>
+%%   <li>Client and server build keylist in parallel</li>
+%%   <li>No useless merkle tree is built</li>
+%%   <li>Differences are calculated and transmitted in batches, not all in one
+%%   message</li>
+%%   <li>Backpressure is introduced in the exchange of differences</li>
+%%   <li>Pausing/cancelling the diff is immediate</li>
+%% </ul>
 %%
 %% In addition, the client does the requesting of partition data, which makes
 %% this more of a pull model as compared to the legacy strategy, which was more
@@ -34,6 +35,7 @@
 %%
 %% Note that the new key list algorithm uses a bloom fold filter to keep the
 %% keys in disk-order to speed up the key-list creation process.
+-module(riak_repl_keylist_server).
 
 -behaviour(gen_fsm).
 

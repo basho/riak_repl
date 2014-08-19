@@ -1,6 +1,5 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl2_rtsink_helper).
 
 %% @doc Realtime replication sink module
 %%
@@ -8,6 +7,7 @@
 %%  consider moving out socket responsibilities to another process
 %%  to keep this one responsive (but it would pretty much just do status)
 %%
+-module(riak_repl2_rtsink_helper).
 
 %% API
 -export([start_link/1,

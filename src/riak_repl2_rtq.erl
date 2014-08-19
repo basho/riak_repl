@@ -100,7 +100,7 @@ start_link() ->
 -type start_option() :: overload_threshold_option() | overload_recover_option().
 -type start_options() :: [start_option()].
 %% @doc Start linked, registers to module name, with given options. This makes
-%% testing some options a bit easier as it removes a dependance on app_helper.
+%% testing some options a bit easier as it removes a dependence on `app_helper'.
 -spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
     case ets:info(?overload_ets) of
@@ -152,7 +152,7 @@ set_max_bytes(MaxBytes) ->
 
 %% @doc Push an item onto the queue. Bin should be the list of objects to push
 %% run through term_to_binary, while NumItems is the length of that list
-%% before being turned to a binary. Meta is an orddict() of data about the
+%% before being turned to a binary. Meta is an orddict of data about the
 %% queued item. The key `routed_clusters' is a list of the clusters the item
 %% has received and ack for. The key `local_forwards' is added automatically.
 %% It is a list of the remotes this cluster forwards to. It is intended to be
@@ -172,7 +172,7 @@ should_drop() ->
     [{overloaded, Val}] = ets:lookup(?overload_ets, overloaded),
     Val.
 
-%% @doc Like push/3, only Meta is orddict:new/0.
+%% @doc Like `push/3', only Meta is `orddict:new/0'.
 -spec push(NumItems :: pos_integer(), Bin :: binary()) -> 'ok'.
 push(NumItems, Bin) ->
     push(NumItems, Bin, []).
@@ -197,26 +197,26 @@ pull_sync(Name, DeliverFun) ->
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
 
-%% @doc Same as ack/2, but blocks the caller.
+%% @doc Same as `ack/2', but blocks the caller.
 -spec ack_sync(Name :: name(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
     gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
 
 %% @doc The status of the queue.
 %% <dl>
-%% <dt>percent_bytes_used</dt><dd>How full the queue is in percentage to 3 significant digits</dd>
-%% <dt>bytes</dt><dd>Size of the data store backend</dd>
-%% <dt>max_bytes</dt><dd>Maximum size of the data store backend</dd>
-%% <dt>consumers</dt><dd>Key - Value pair of the consumer stats, key is the
+%% <dt>`percent_bytes_used'</dt><dd>How full the queue is in percentage to 3 significant digits</dd>
+%% <dt>`bytes'</dt><dd>Size of the data store backend</dd>
+%% <dt>`max_bytes'</dt><dd>Maximum size of the data store backend</dd>
+%% <dt>`consumers'</dt><dd>Key - Value pair of the consumer stats, key is the
 %% consumer name.</dd>
 %% </dl>
 %%
 %% The consumers have the following data:
 %% <dl>
-%% <dt>pending</dt><dd>Number of queue items left to send.</dd>
-%% <dt>unacked</dt><dd>Number of queue items that are sent, but not yet acked</dd>
-%% <dt>drops</dt><dd>Dropped entries due to max_bytes</dd>
-%% <dt>errs</dt><dd>Number of non-ok returns from deliver fun</dd>
+%% <dt>`pending'</dt><dd>Number of queue items left to send.</dd>
+%% <dt>`unacked'</dt><dd>Number of queue items that are sent, but not yet acked</dd>
+%% <dt>`drops'</dt><dd>Dropped entries due to `max_bytes'</dd>
+%% <dt>`errs'</dt><dd>Number of non-ok returns from deliver fun</dd>
 %% </dl>
 -spec status() -> [any()].
 status() ->

@@ -1,22 +1,27 @@
-%% @doc Coordinates full sync replication parallelism.  Uses 3 riak_repl
-%% application env's:  fullsync_on_connect, max_fssource_cluster, and
-%% max_fssource_node.
+%% @doc Coordinates full sync replication parallelism.  Uses 3
+%% `riak_repl' application environment values: `fullsync_on_connect',
+%% `max_fssource_cluster', and `max_fssource_node'.
 %%
-%% ## `{fullsync_on_connect, boolean()}'
-%%
-%% If true, as soon as a connection to the remote cluster is established,
-%% fullsync starts.  If false, then an explicit start must be sent.
+%% <dl>
+%%  <dt>`{fullsync_on_connect, boolean()}'</dt>
+%%  <dd>
+%% If `true', as soon as a connection to the remote cluster is established,
+%% fullsync starts.  If `false', then an explicit start must be sent.
 %% Defaults to true.
+%%  </dd>
 %%
-%% ## `{max_fssource_cluster, pos_integer()}'
-%%
+%%  <dt>`{max_fssource_cluster, pos_integer()}'</dt>
+%%  <dd>
 %% How many sources can be started across all nodes in the local cluster.
 %% Defaults to 5.
+%%  </dd>
 %%
-%% ## `{max_fssource_node, pos_integer()}'
-%%
+%%  <dt>`{max_fssource_node, pos_integer()}'</dt>
+%%  <dd>
 %% How many sources can be started on a single node, provided starting one
-%% wouldn't exceede the max_fssource_cluster setting. Defaults to 1.
+%% wouldn't exceed the `max_fssource_cluster' setting. Defaults to 1.
+%%  </dd>
+%% </dl>
 
 -module(riak_repl2_fscoordinator).
 -include("riak_repl.hrl").
@@ -107,7 +112,7 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-%% @doc Start a fullsync coordinator for managing a sycn to the remote `Cluster'.
+%% @doc Start a fullsync coordinator for managing a sync to the remote Cluster.
 -spec start_link(Cluster :: string()) -> {'ok', pid()}.
 start_link(Cluster) ->
     gen_server:start_link(?MODULE, Cluster, []).
@@ -142,7 +147,7 @@ status() ->
     end.
 
 %% @doc Get the status proplist for the given fullsync process. Same as
-%% `status(Pid, infinity'.
+%% `status(Pid, infinity)'.
 %% @see status/2
 -spec status(Pid :: pid()) -> [tuple()].
 status(Pid) ->
@@ -159,7 +164,7 @@ status(Pid, Timeout) ->
         []
     end.
 
-%% @doc Return true if the given fullsync coordiniator is in the middle of
+%% @doc Return true if the given fullsync coordinator is in the middle of
 %% syncing, otherwise false.
 -spec is_running(Pid :: pid()) -> boolean().
 is_running(Pid) when is_pid(Pid) ->

@@ -8,7 +8,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% @doc Given the result of inet:getifaddrs() and an IP a client has
+%% @doc Given the result of `inet:getifaddrs()' and an IP a client has
 %%      connected to, attempt to determine the appropriate subnet mask.  If
 %%      the IP the client connected to cannot be found, undefined is returned.
 determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
