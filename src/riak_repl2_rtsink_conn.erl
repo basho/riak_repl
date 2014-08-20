@@ -432,10 +432,7 @@ get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 bt_dropped(BucketType, #state{bt_drops = BucketDict} = State) ->
-    Dict = dict:update_counter(BucketType, 1, BucketDict),
-    lager:info("running update_counter for bucket type:~p, value:~p", [BucketType, dict:fetch(BucketType, Dict)]),
-%    State#state{bt_drops = dict:update_counter(BucketType, 1, BucketDict)}.
-    State#state{bt_drops = Dict}.
+    State#state{bt_drops = dict:update_counter(BucketType, 1, BucketDict)}.
 
 %% ===================================================================
 %% EUnit tests
