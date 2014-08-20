@@ -34,6 +34,8 @@
 
 % how long to wait to reschedule socket reactivate.
 -define(REACTIVATE_SOCK_INT_MILLIS, 10).
+-define(DEFAULT_INTERVAL_MILLIS, 10000).
+-define(DEFAULT_BUCKET_TYPE, <<"default">>).
 
 -record(state, {remote,           %% Remote site name
                 transport,        %% Module for sending
@@ -51,7 +53,10 @@
                 expect_seq = undefined,%% Next expected sequence number
                 acked_seq = undefined, %% Last sequence number acknowledged
                 completed = [],   %% Completed sequence numbers that need to be sent
-                cont = <<>>       %% Continuation from previous TCP buffer
+                cont = <<>>,      %% Continuation from previous TCP buffer
+                bt_drops,         %% drops due to bucket type mis-matches
+                bt_interval,      %% how often (in ms) to report bt_drops
+                bt_timer          %% timer reference for interval   
                }).
 
 %% Register with service manager
@@ -107,8 +112,10 @@ init([OkProto, Remote]) ->
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
+    Report = app_helper:get_env(riak_repl, bucket_type_drop_report_interval, ?DEFAULT_INTERVAL_MILLIS),
+
     {ok, #state{remote = Remote, proto = Proto, max_pending = MaxPending,
-                helper = Helper, ver = Ver}}.
+                helper = Helper, ver = Ver, bt_drops = dict:new(), bt_interval = Report}}.
 
 handle_call(status, _From, State = #state{remote = Remote,
                                           transport = T, socket = _S, helper = Helper,
@@ -174,7 +181,12 @@ handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
 handle_cast({ack, Ref, Seq, _Skips}, State) ->
     %% Nothing to send, it's old news.
     lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
-    {noreply, State}.
+    {noreply, State};
+handle_cast({drop, BucketType}, #state{bt_timer = undefined, bt_interval = Interval} = State) ->
+    {ok, Timer} = timer:send_after(Interval, report_bt_drops),
+    {noreply, bt_dropped(BucketType, State#state{bt_timer = Timer})};
+handle_cast({drop, BucketType}, State) ->
+    {noreply, bt_dropped(BucketType, State)}.
 
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
         when Proto == tcp; Proto == ssl ->
@@ -217,7 +229,18 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
                                 [Remote, Reason]),
                     {stop, normal, State}
             end
-    end.
+    end;
+handle_info(report_bt_drops, State=#state{bt_drops = DropDict}) ->
+    Total = dict:fold(fun(BucketType, Counter, TotalCount) ->
+                          lager:error("drops due to missing or mismatched type ~p: ~p", 
+                          [BucketType, Counter]),
+                          TotalCount + Counter
+                      end,
+                      0,
+                      DropDict),
+    lager:error("total bucket type drop count: ~p", [Total]),
+    Report = app_helper:get_env(riak_repl, bucket_type_drop_report_interval, ?DEFAULT_INTERVAL_MILLIS),
+    {noreply, State#state{bt_drops = dict:new(), bt_timer = undefined, bt_interval = Report}}.
 
 terminate(_Reason, _State) ->
     %% TODO: Consider trying to do something graceful with poolboy?
@@ -288,7 +311,11 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                 true ->
                     riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
                 false ->
-                    lager:info("Bucket is of a type that is not equal on both the source and sink; not writing object.")
+                    BucketType = riak_repl_bucket_type_util:prop_get(?BT_META_TYPE, ?DEFAULT_BUCKET_TYPE, Meta),
+                    lager:debug("Bucket type:~p is not equal on both the source and sink; not writing object.",
+                                [BucketType]),
+                    gen_server:cast(Me, {drop, BucketType}),
+                    DoneFun()
             end;
         {DoneFun, BinObjs} ->
             %% this is for backwards compatibility with Repl version before metadata support (> 1.4)
@@ -403,6 +430,9 @@ schedule_reactivate_socket(State = #state{transport = T,
     end.
 get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
+
+bt_dropped(BucketType, #state{bt_drops = BucketDict} = State) ->
+    State#state{bt_drops = dict:update_counter(BucketType, 1, BucketDict)}.
 
 %% ===================================================================
 %% EUnit tests
