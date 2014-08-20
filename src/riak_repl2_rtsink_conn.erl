@@ -34,7 +34,7 @@
 
 % how long to wait to reschedule socket reactivate.
 -define(REACTIVATE_SOCK_INT_MILLIS, 10).
--define(DEFAULT_INTERVAL_MILLIS, 2000).
+-define(DEFAULT_INTERVAL_MILLIS, 10000).
 -define(DEFAULT_BUCKET_TYPE, <<"default">>).
 
 -record(state, {remote,           %% Remote site name
