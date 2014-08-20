@@ -34,7 +34,7 @@
 
 % how long to wait to reschedule socket reactivate.
 -define(REACTIVATE_SOCK_INT_MILLIS, 10).
--define(DEFAULT_INTERVAL_MILLIS, 10000).
+-define(DEFAULT_INTERVAL_MILLIS, 2000).
 -define(DEFAULT_BUCKET_TYPE, <<"default">>).
 
 -record(state, {remote,           %% Remote site name
@@ -231,10 +231,16 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
             end
     end;
 handle_info(report_bt_drops, State=#state{bt_drops = DropDict}) ->
-    _ = [ lager:debug("drops due to missing or mismatched type ~p:~p", 
-                  [BucketType, dict:fetch(BucketType, DropDict)]) ||
-        BucketType <- dict:fetch_keys(DropDict) ],
-    {noreply, State#state{bt_drops = dict:new(), bt_timer = undefined}}.
+    Total = dict:fold(fun(BucketType, Counter, TotalCount) ->
+                          lager:error("drops due to missing or mismatched type ~p: ~p", 
+                          [BucketType, Counter]),
+                          TotalCount + Counter
+                      end,
+                      0,
+                      DropDict),
+    lager:error("total bucket type drop count: ~p", [Total]),
+    Report = app_helper:get_env(riak_repl, bucket_type_drop_report_interval, ?DEFAULT_INTERVAL_MILLIS),
+    {noreply, State#state{bt_drops = dict:new(), bt_timer = undefined, bt_interval = Report}}.
 
 terminate(_Reason, _State) ->
     %% TODO: Consider trying to do something graceful with poolboy?
@@ -426,7 +432,10 @@ get_reactivate_socket_interval() ->
     app_helper:get_env(riak_repl, reactivate_socket_interval_millis, ?REACTIVATE_SOCK_INT_MILLIS).
 
 bt_dropped(BucketType, #state{bt_drops = BucketDict} = State) ->
-    State#state{bt_drops = dict:update_counter(BucketType, 1, BucketDict)}.
+    Dict = dict:update_counter(BucketType, 1, BucketDict),
+    lager:info("running update_counter for bucket type:~p, value:~p", [BucketType, dict:fetch(BucketType, Dict)]),
+%    State#state{bt_drops = dict:update_counter(BucketType, 1, BucketDict)}.
+    State#state{bt_drops = Dict}.
 
 %% ===================================================================
 %% EUnit tests
