@@ -231,7 +231,7 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
             end
     end;
 handle_info(report_bt_drops, State=#state{bt_drops = DropDict}) ->
-    [ lager:debug("drops due to missing or mismatched type ~p:~p", 
+    _ = [ lager:debug("drops due to missing or mismatched type ~p:~p", 
                   [BucketType, dict:fetch(BucketType, DropDict)]) ||
         BucketType <- dict:fetch_keys(DropDict) ],
     {noreply, State#state{bt_drops = dict:new(), bt_timer = undefined}}.
