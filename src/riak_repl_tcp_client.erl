@@ -1,6 +1,5 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl_tcp_client).
 
 %% @doc This module is responsible for the client-side TCP communication
 %% during replication. A seperate instance of this module is started for every
@@ -10,6 +9,7 @@
 %% the main difference being that this module also manages a pool of put
 %% workers to avoid running the VM out of processes during very heavy
 %% replication load.
+-module(riak_repl_tcp_client).
 
 -include("riak_repl.hrl").
 

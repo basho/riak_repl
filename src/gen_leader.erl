@@ -63,11 +63,10 @@
 %%%                   {bcast_type,Type::bcast_type()}   |
 %%%                   {heartbeat, Seconds::integer()}
 %%% @type bcast_type() = all | sender.
-%%%         Notification control of candidate membership changes. `all' 
-%%%         means that returns from the handle_DOWN/3 and elected/3 leader's events 
-%%%         will be broadcast to all candidates. 
+%%%         Notification control of candidate membership changes. `all'
+%%%         means that returns from the handle_DOWN/3 and elected/3 leader's events
+%%%         will be broadcast to all candidates.
 %%% @type election() = tuple(). Opaque state of the gen_leader behaviour.
-%%% @type node() = atom(). A node name.
 %%% @type name() = atom(). A locally registered name.
 %%% @type serverRef() = Name | {name(),node()} | {global,Name} | pid().
 %%%   See gen_server.

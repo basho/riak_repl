@@ -264,6 +264,3 @@ maybe_start_helper(State) ->
                                                            State#state.workers)
     end,
     State#state{helper_pid = Pid}.
-
-%% @private
-%%

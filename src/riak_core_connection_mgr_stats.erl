@@ -57,7 +57,7 @@ register_stats() ->
 %% @doc Return all stats from the cached value. This will refresh
 %% the cache if it's been over 5 seconds since the last query.
 %% When the cache needs to get the latest values, it will call our
-%% produce_stats() function.
+%% `produce_stats()' function.
 get_stats() ->
     case riak_core_stat_cache:get_stats(?APP) of
         {ok, Stats, _TS} ->

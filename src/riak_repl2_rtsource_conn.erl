@@ -1,6 +1,5 @@
 %% Riak EnterpriseDS
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
--module(riak_repl2_rtsource_conn).
 
 %% @doc Realtime replication source connection module
 %%
@@ -9,15 +8,15 @@
 %% process accepts the remote Acks and clears the RTQ.
 %%
 %% If both sides support heartbeat message, it is sent from the RT source
-%% every {riak_repl, rt_heartbeat_interval} which default to 15s.  If
+%% every `{riak_repl, rt_heartbeat_interval}' which default to 15s.  If
 %% a response is not received in {riak_repl, rt_heartbeat_timeout}, also
 %% default to 15s then the source connection exits and will be re-established
 %% by the supervisor.
 %%
-%% 1. On startup/interval timer - rtsource_conn casts to rtsource_helper
-%%    to send over the socket.  If TCP buffer is full or rtsource_helper
-%%    is otherwise hung the rtsource_conn process will still continue.
-%%    rtsource_conn sets up a heartbeat timeout.
+%% 1. On startup/interval timer - `rtsource_conn' casts to `rtsource_helper'
+%%    to send over the socket.  If TCP buffer is full or `rtsource_helper'
+%%    is otherwise hung the `rtsource_conn' process will still continue.
+%%    `rtsource_conn' sets up a heartbeat timeout.
 %%
 %% 2. At rtsink, on receipt of a heartbeat message it sends back
 %%    a heartbeat message and stores the timestamp it last received one.
@@ -25,13 +24,14 @@
 %%    as new ones can be established harmlessly.  Keep it simple.
 %%
 %% 3. If rtsource receives the heartbeat back, it cancels the timer
-%%    and updates the hearbeat round trip time (hb_rtt) then sets
+%%    and updates the hearbeat round trip time (`hb_rtt') then sets
 %%    a new heartbeat_interval timer.
 %%
 %%    If the heartbeat_timeout fires, the rtsource connection terminates.
-%%    The rtsource_helper:stop call is now wrapped in a timeout in
-%%    case it is hung so we don't get nasty messages about rtsource_conn
+%%    The `rtsource_helper:stop' call is now wrapped in a timeout in
+%%    case it is hung so we don't get nasty messages about `rtsource_conn'
 %%    crashing when it's the helper that is causing the problems.
+-module(riak_repl2_rtsource_conn).
 
 -behaviour(gen_server).
 -include("riak_repl.hrl").

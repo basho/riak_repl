@@ -136,7 +136,7 @@ start_link() ->
 
 %% @doc Begins or resumes accepting and establishing new connections, in
 %% order to maintain the protocols that have been (or continue to be) registered
-%% and unregistered. pause() will not kill any existing connections, but will
+%% and unregistered. `pause()' will not kill any existing connections, but will
 %% cease accepting new requests or retrying lost connections.
 -spec(resume() -> ok).
 resume() ->
@@ -169,19 +169,19 @@ register_locator(Type, Fun) ->
 apply_locator(Name, Strategy) ->
     gen_server:call(?SERVER, {apply_locator, Name, Strategy}, infinity).
 
-%% @doc Establish a connection to the remote destination. be persistent about it,
+%% @doc Establish a connection to the remote destination. Be persistent about it,
 %% but not too annoying to the remote end. Connect by name of cluster or
 %% IP address. Use default strategy to find "best" peer for connection.
 %%
 %% Targets are found by applying a registered locator for it.
 %% The identity locator is pre-installed, so if you want to connect to a list
-%% of IP and Port addresses, supply a Target like this: {identity, [{IP, Port},...]},
-%% where IP::string() and Port::integer(). You can also pass {identity, {IP, Port}}
+%% of IP and Port addresses, supply a Target like this: `{identity, [{IP, Port},...]}',
+%% where `IP::string()' and `Port::integer()'. You can also pass `{identity, {IP, Port}}'
 %% and the locator will use just that one IP. With a list, it will rotate
 %% trying them all until a connection is established.
 %%
 %% Other locator types must be registered with this connection manager
-%% before calling connect().
+%% before calling `connect()'.
 %%
 %% Supervision must be done by the calling process if desired. No supervision
 %% is done here.
@@ -196,11 +196,11 @@ connect(Target, ClientSpec) ->
 disconnect(Target) ->
     gen_server:cast(?SERVER, {disconnect, Target}).
 
-%% @doc Get the #req.target and #req.state for all connections
+%% @doc Get the `#req.target' and `#req.state' for all connections
 get_request_states() ->
     gen_server:call(?SERVER, get_request_states).
 
-%% @doc Return the #ep.addr and #ep.failures for all connections
+%% @doc Return the `#ep.addr' and `#ep.failures' for all connections
 get_connection_errors(Addr) ->
     gen_server:call(?SERVER, {get_connection_errors, Addr}).
 

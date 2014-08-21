@@ -389,11 +389,11 @@ missing_key(PBKey, DiffState) ->
 %% purposefully created because if you use a lambda then things will
 %% go wrong when the MD5 of this module changes. I.e. if the lambda is
 %% shipped to another node with a different version of
-%% riak_repl_fullsync_helper, even if the code inside the lambda is
+%% `riak_repl_fullsync_helper', even if the code inside the lambda is
 %% the same, then a badfun error will occur since the MD5s of the
 %% modules are not the same.
 %%
-%% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
+%% See [http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html]
 keylist_fold({B,Key}=K, V, {MPid, Count, Total}) ->
     try
         H = hash_object(B,Key,V),
