@@ -375,7 +375,7 @@ start_negotiated_service(Socket, Transport,
     Transport:setopts(Socket, Options),
 
     %% call service body function for matching protocol. The callee should start
-    %% a process or gen_server or such, and return `{ok, pid()}`.
+    %% a process or gen_server or such, and return `{ok, pid()}'.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args, Props) of
         {ok, Pid} ->
             {ok,{ClientProto,_Client,_Host}} = NegotiatedProtocols,
@@ -504,7 +504,7 @@ normalize_ip(IP) when is_tuple(IP) ->
 %% listener connections and supported sub-protocols. When a connection
 %% request arrives, it is mapped via the associated Protocol atom to an
 %% acceptor function called as `Module:Function(Listener, Socket, Transport, Args)',
-%% which must create its own process and return `{ok, pid()}`.
+%% which must create its own process and return `{ok, pid()}'.
 
 -spec(start_dispatcher(ip_addr(), non_neg_integer(), [hostspec()]) -> {ok, pid()}).
 start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
