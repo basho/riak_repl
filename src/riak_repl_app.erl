@@ -30,6 +30,8 @@ start(_Type, _StartArgs) ->
 
     %% Ensure that the KV service has fully loaded.
     riak_core:wait_for_service(riak_kv),
+    sidejob_config:load_config(riak_repl_test_config, [{pipeline, false},
+                                                       {delay, 0}]),
 
     IncarnationId = erlang:phash2({make_ref(), now()}),
     application:set_env(riak_repl, incarnation, IncarnationId),
