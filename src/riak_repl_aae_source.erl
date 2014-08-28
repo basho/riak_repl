@@ -262,7 +262,9 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% allow us to pass control of the TCP socket around. This is needed so
     %% that the process needing to send/receive on that socket has ownership
     %% of it.
-    Remote = fun(init, _) ->
+    %%
+    %% Old, non-pipelined verison
+    TestR1 = fun(init, _) ->
                      %% cause control of the socket to be given to AAE so that
                      %% the get_bucket and key_hashes can send messages via the
                      %% socket (with correct ownership). We'll send a 'ready'
@@ -274,12 +276,52 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                              ok
                      end;
                 (get_bucket, {L, B}) ->
-                     send_synchronous_msg(?MSG_GET_AAE_BUCKET, {L,B,IndexN}, State);
+                     async_get_bucket(L, B, IndexN, State),
+                     wait_get_bucket(L, B, IndexN, State);
                 (key_hashes, Segment) ->
-                     send_synchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
+                     async_get_segment(Segment, IndexN, State),
+                     wait_get_segment(Segment, IndexN, State);
+                (start_exchange_level, {_Level, _Buckets}) ->
+                     ok;
+                (start_exchange_segments, _Segments) ->
+                     ok;
                 (final, _) ->
                      %% give ourself control of the socket again
                      ok = Transport:controlling_process(Socket, SourcePid)
+             end,
+
+    %% Pipelined verison
+    TestR2 = fun(init, _) ->
+                     %% cause control of the socket to be given to AAE so that
+                     %% the get_bucket and key_hashes can send messages via the
+                     %% socket (with correct ownership). We'll send a 'ready'
+                     %% back here once the socket ownership is transfered and
+                     %% we are ready to proceed with the compare.
+                     gen_fsm:send_event(SourcePid, {'$aae_src', worker_pid, self()}),
+                     receive
+                         {'$aae_src', ready, SourcePid} ->
+                             ok
+                     end;
+                (get_bucket, {L, B}) ->
+                     wait_get_bucket(L, B, IndexN, State);
+                (key_hashes, Segment) ->
+                     wait_get_segment(Segment, IndexN, State);
+                (start_exchange_level, {Level, Buckets}) ->
+                     _ = [async_get_bucket(Level, B, IndexN, State) || B <- Buckets],
+                     ok;
+                (start_exchange_segments, Segments) ->
+                     _ = [async_get_segment(Segment, IndexN, State) || Segment <- Segments],
+                     ok;
+                (final, _) ->
+                     %% give ourself control of the socket again
+                     ok = Transport:controlling_process(Socket, SourcePid)
+             end,
+
+    Remote = case app_helper:get_env(riak_repl, fullsync_pipeline, false) of
+                 false ->
+                     TestR1;
+                 true ->
+                     TestR2
              end,
 
     %% Unclear if we should allow exchange to run indefinitely or enforce
@@ -313,6 +355,24 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
 
     %% wait for differences from bloom_folder or to be done
     {next_state, compute_differences, State}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+async_get_bucket(Level, Bucket, IndexN, State) ->
+    send_asynchronous_msg(?MSG_GET_AAE_BUCKET, {Level,Bucket,IndexN}, State).
+
+wait_get_bucket(_Level, _Bucket, _IndexN, State) ->
+    Reply = get_reply(State),
+    Reply.
+
+async_get_segment(Segment, IndexN, State) ->
+    send_asynchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State).
+
+wait_get_segment(_Segment, _IndexN, State) ->
+    Reply = get_reply(State),
+    Reply.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 compute_differences({'$aae_src', worker_pid, WorkerPid},
                     #state{transport=Transport, socket=Socket} = State) ->
@@ -569,7 +629,10 @@ send_synchronous_msg(MsgType, State=#state{transport=Transport,
 %% Async message send with tag and (binary or term data).
 send_asynchronous_msg(MsgType, Data, #state{transport=Transport,
                                             socket=Socket}) when is_binary(Data) ->
-    ok = Transport:send(Socket, <<MsgType:8, Data/binary>>).
+    ok = Transport:send(Socket, <<MsgType:8, Data/binary>>);
+send_asynchronous_msg(MsgType, Msg, State) ->
+    Data = term_to_binary(Msg),
+    send_asynchronous_msg(MsgType, Data, State).
 
 %% send a message with type tag only, no data
 send_asynchronous_msg(MsgType, #state{transport=Transport,
