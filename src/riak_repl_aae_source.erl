@@ -40,6 +40,7 @@
                 tree_mref   :: reference(),
                 built       :: non_neg_integer(),
                 bloom       :: term(),
+                buffer      :: ets:tid(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
                 diff_batch_size = 1000 :: non_neg_integer(),
@@ -354,10 +355,14 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% keys that differed. We can't prime the accumulator. It
     %% always starts as the empty list. KeyDiffs is a list of hashtree::keydiff()
     Bloom = State#state.bloom,
+    Threshold = app_helper:get_env(riak_repl, fullsync_direct, 1000),
+    Buffer = ets:new(?MODULE, [public, set]),
+    true = ets:insert(Buffer, {remaining, Threshold + 1}),
     AccFun = fun(KeyDiffs, Acc0) ->
             %% Gather diff keys into a bloom filter
             lists:foldl(fun(KeyDiff, AccIn) ->
-                        accumulate_diff(KeyDiff, Bloom, AccIn, State) end,
+                                accumulate_diff(KeyDiff, Buffer, Bloom, AccIn, State)
+                        end,
                         Acc0,
                         KeyDiffs)
     end,
@@ -373,7 +378,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                end),
 
     %% wait for differences from bloom_folder or to be done
-    {next_state, compute_differences, State}.
+    {next_state, compute_differences, State#state{buffer=Buffer}}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -399,9 +404,19 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
 compute_differences({'$aae_src', done}, State) ->
+    send_direct(State),
     %% Just move on to the next tree exchange since we now roll all
     %% differences into a single bloom filter.
     update_trees(continue, State).
+
+send_direct(State=#state{buffer=Buffer, index=Partition}) ->
+    Keys = [{Bucket, Key} || {_, {Bucket, Key}} <- ets:tab2list(Buffer)],
+    true = ets:delete(Buffer),
+    Sorted = lists:sort(Keys),
+    Count = length(Sorted),
+    lager:info("Directly sending ~p differences for partition ~p", [Count, Partition]),
+    _ = [send_missing(Bucket, Key, State) || {Bucket, Key} <- Sorted],
+    ok.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
@@ -520,9 +535,9 @@ replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
             Acc
     end.
 
-accumulate_diff(KeyDiff, Bloom, [], State) ->
-    accumulate_diff(KeyDiff, Bloom, [0], State);
-accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
+accumulate_diff(KeyDiff, Buffer, Bloom, [], State) ->
+    accumulate_diff(KeyDiff, Buffer, Bloom, [0], State);
+accumulate_diff(KeyDiff, Buffer, Bloom, [Count], #state{index=Partition}) ->
     NumObjects =
         case KeyDiff of
             {remote_missing, Bin} ->
@@ -530,14 +545,14 @@ accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
                 {Bucket,Key} = binary_to_term(Bin),
                 lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
                             [Partition, Bucket, Key]),
-                ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
+                accumulate_key(Bucket, Key, Buffer, Bloom),
                 1;
             {different, Bin} ->
                 %% send object and related objects to remote
                 {Bucket,Key} = binary_to_term(Bin),
                 lager:debug("Keydiff: remote partition ~p different: ~p:~p",
                             [Partition, Bucket, Key]),
-                ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
+                accumulate_key(Bucket, Key, Buffer, Bloom),
                 1;
             {missing, Bin} ->
                 %% remote has a key we don't have. Ignore it.
@@ -550,6 +565,17 @@ accumulate_diff(KeyDiff, Bloom, [Count], #state{index=Partition}) ->
                 0
         end,
     [Count+NumObjects].
+
+accumulate_key(Bucket, Key, Buffer, Bloom) ->
+    case ets:update_counter(Buffer, remaining, {2, -1, 0, 0}) of
+        0 ->
+            %% Past threshold, add to bloom filter for future bloom fold
+            ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>);
+        N ->
+            %% Buffer space remaining, add to "direct send" buffer
+            ets:insert(Buffer, {N, {Bucket, Key}})
+    end,
+    ok.
 
 send_missing(RObj, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
     %% we don't actually have the vclock to compare, so just send the
