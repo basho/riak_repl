@@ -80,9 +80,6 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
-    NumKeys = 1000000,
-    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
-
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
@@ -91,8 +88,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    built=0,
                    owner=OwnerPid,
                    wire_ver=w1,
-                   proto=Proto,
-                   bloom=Bloom },
+                   proto=Proto},
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -200,7 +196,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock
     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
         ok ->
-            update_trees(start_exchange, State);
+            update_trees(init, State);
         Error ->
             lager:info("Remote lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
@@ -213,20 +209,35 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      a timely manner, the exchange will timeout. Since the trees will
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
+update_trees(init, State) ->
+    NumKeys = 10000000,
+    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+    State2 = State#state{bloom=Bloom},
+    update_trees(start_exchange, State2);
 update_trees(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
-update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
+update_trees(finish_fullsync, State=#state{owner=Owner}) ->
     send_complete(State),
     lager:info("AAE fullsync source completed partition ~p",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
+    %% TODO: Why stay in update_trees? Should we stop instead?
     {next_state, update_trees, State};
+update_trees(continue, State=#state{indexns=IndexNs}) ->
+    case IndexNs of
+        [_] ->
+            send_diffs(init, State);
+        [_|RestNs] ->
+            State2 = State#state{built=0, indexns=RestNs},
+            gen_fsm:send_event(self(), start_exchange),
+            {next_state, update_trees, State2}
+    end;
 update_trees(start_exchange, State=#state{tree_pid=TreePid,
                                           index=Partition,
                                           indexns=[IndexN|_IndexNs]}) ->
-    lager:info("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
+    lager:debug("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
     update_request(TreePid, {Partition, undefined}, IndexN),
     case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
         ok ->
@@ -374,7 +385,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                        end,
                        lager:info("Full-sync with site ~p; fullsync difference generator for ~p/~p complete (~p differences, completed in ~p secs)",
                                   [State#state.cluster, Partition, IndexN, Count, riak_repl_util:elapsed_secs(StageStart)]),
-                       gen_fsm:send_event(SourcePid, {'$aae_src', done, Bloom, Count})
+                       gen_fsm:send_event(SourcePid, {'$aae_src', done, Count})
                end),
 
     %% wait for differences from bloom_folder or to be done
@@ -404,25 +415,11 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
 
-compute_differences({'$aae_src', done, Bloom, Count}, State=#state{ indexns=IndexNs, bloom=Bloom, diff_cnt=Count0 })
-  when length(IndexNs) =< 1 ->
-    %% we just finished diffing the *last* IndexN, so we go to the vnode fold / bloom state
-
+compute_differences({'$aae_src', done, Count}, State=#state{diff_cnt=Count0}) ->
+    %% Just move on to the next tree exchange since we now roll all
+    %% differences into a single bloom filter.
     State2 = State#state{ diff_cnt=Count0+Count },
-
-    %% if we have anything in our bloom filter, start sending them now.
-    %% this will start a worker process, which will tell us it's done with
-    %% diffs_done once all differences are sent.
-    _ = finish_sending_differences(Bloom, State2),
-
-    %% wait for differences from bloom_folder or to be done
-    {next_state, send_diffs, State2};
-
-compute_differences({'$aae_src', done, _, Count}, State=#state{ indexns=[_|IndexNs], diff_cnt=Count0 }) ->
-    %% re-start for next indexN
-
-    gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State#state{built=0, indexns=IndexNs, diff_cnt=Count0+Count }}.
+    update_trees(continue, State2).
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
@@ -432,11 +429,19 @@ send_diffs({diff_obj, RObj}, _From, State) ->
     send_missing(RObj, State),
     {reply, ok, send_diffs, State}.
 
+send_diffs(init, State=#state{bloom=Bloom}) ->
+    %% if we have anything in our bloom filter, start sending them now.
+    %% this will start a worker process, which will tell us it's done with
+    %% diffs_done once all differences are sent.
+    _ = finish_sending_differences(Bloom, State),
+
+    %% wait for differences from bloom_folder or to be done
+    {next_state, send_diffs, State};
+
 %% All indexes in this Partition are done.
 %% Note: recv'd from an async send event
 send_diffs(diff_done, State) ->
-    gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State#state{built=0, indexns=[]}}.
+    update_trees(finish_fullsync, State).
 
 %%%===================================================================
 %%% Internal functions
