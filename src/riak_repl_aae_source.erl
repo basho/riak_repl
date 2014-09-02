@@ -321,7 +321,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                      ok = Transport:controlling_process(Socket, SourcePid)
              end,
 
-    Remote = case riak_repl_test_config:pipeline() of
+    Remote = case app_helper:get_env(riak_repl, fullsync_pipeline, false) of
                  false ->
                      TestR1;
                  true ->
@@ -363,39 +363,17 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 async_get_bucket(Level, Bucket, IndexN, State) ->
-    put({sent, Level, Bucket}, os:timestamp()),
     send_asynchronous_msg(?MSG_GET_AAE_BUCKET, {Level,Bucket,IndexN}, State).
 
-wait_get_bucket(Level, Bucket, _IndexN, State) ->
+wait_get_bucket(_Level, _Bucket, _IndexN, State) ->
     Reply = get_reply(State),
-    T0 = get({sent, Level, Bucket}),
-    Diff = timer:now_diff(os:timestamp(), T0) div 1000,
-    Delay = riak_repl_test_config:delay(),
-    if Diff >= Delay ->
-            %% io:format("No stall~n"),
-            ok;
-       true ->
-            %% io:format("Stalling for ~p~n", [Delay - Diff]),
-            timer:sleep(Delay - Diff)
-    end,
     Reply.
 
 async_get_segment(Segment, IndexN, State) ->
-    put({sent, Segment}, os:timestamp()),
     send_asynchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State).
 
-wait_get_segment(Segment, _IndexN, State) ->
+wait_get_segment(_Segment, _IndexN, State) ->
     Reply = get_reply(State),
-    T0 = get({sent, Segment}),
-    Diff = timer:now_diff(os:timestamp(), T0) div 1000,
-    Delay = riak_repl_test_config:delay(),
-    if Diff >= Delay ->
-            %% io:format("No stall~n"),
-            ok;
-       true ->
-            %% io:format("Stalling for ~p~n", [Delay - Diff]),
-            timer:sleep(Delay - Diff)
-    end,
     Reply.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
