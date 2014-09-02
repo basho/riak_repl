@@ -39,6 +39,7 @@
                 tree_pid    :: pid(),
                 tree_mref   :: reference(),
                 built       :: non_neg_integer(),
+                bloom       :: term(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
                 diff_batch_size = 1000 :: non_neg_integer(),
@@ -190,7 +191,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock
     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
         ok ->
-            update_trees(start_exchange, State);
+            update_trees(init, State);
         Error ->
             lager:info("Remote lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
@@ -203,16 +204,31 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      a timely manner, the exchange will timeout. Since the trees will
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
+update_trees(init, State) ->
+    NumKeys = 10000000,
+    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+    State2 = State#state{bloom=Bloom},
+    update_trees(start_exchange, State2);
 update_trees(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
-update_trees(start_exchange, State=#state{indexns=IndexN, owner=Owner}) when IndexN == [] ->
+update_trees(finish_fullsync, State=#state{owner=Owner}) ->
     send_complete(State),
     lager:info("AAE fullsync source completed partition ~p",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
+    %% TODO: Why stay in update_trees? Should we stop instead?
     {next_state, update_trees, State};
+update_trees(continue, State=#state{indexns=IndexNs}) ->
+    case IndexNs of
+        [_] ->
+            send_diffs(init, State);
+        [_|RestNs] ->
+            State2 = State#state{built=0, indexns=RestNs},
+            gen_fsm:send_event(self(), start_exchange),
+            {next_state, update_trees, State2}
+    end;
 update_trees(start_exchange, State=#state{tree_pid=TreePid,
                                           index=Partition,
                                           indexns=[IndexN|_IndexNs]}) ->
@@ -337,8 +353,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% accumulates a list of one element that is the count of
     %% keys that differed. We can't prime the accumulator. It
     %% always starts as the empty list. KeyDiffs is a list of hashtree::keydiff()
-    NumKeys = 10000000,
-    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+    Bloom = State#state.bloom,
     AccFun = fun(KeyDiffs, Acc0) ->
             %% Gather diff keys into a bloom filter
             lists:foldl(fun(KeyDiff, AccIn) ->
@@ -354,7 +369,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                        riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, TreePid),
                        lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                                   [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
-                       gen_fsm:send_event(SourcePid, {'$aae_src', done, Bloom})
+                       gen_fsm:send_event(SourcePid, {'$aae_src', done})
                end),
 
     %% wait for differences from bloom_folder or to be done
@@ -383,15 +398,10 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     ok = Transport:controlling_process(Socket, WorkerPid),
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
-compute_differences({'$aae_src', done, Bloom}, State) ->
-
-    %% if we have anything in our bloom filter, start sending them now.
-    %% this will start a worker process, which will tell us it's done with
-    %% diffs_done once all differences are sent.
-    _ = finish_sending_differences(Bloom, State),
-
-    %% wait for differences from bloom_folder or to be done
-    {next_state, send_diffs, State}.
+compute_differences({'$aae_src', done}, State) ->
+    %% Just move on to the next tree exchange since we now roll all
+    %% differences into a single bloom filter.
+    update_trees(continue, State).
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
@@ -401,16 +411,19 @@ send_diffs({diff_obj, RObj}, _From, State) ->
     send_missing(RObj, State),
     {reply, ok, send_diffs, State}.
 
+send_diffs(init, State=#state{bloom=Bloom}) ->
+    %% if we have anything in our bloom filter, start sending them now.
+    %% this will start a worker process, which will tell us it's done with
+    %% diffs_done once all differences are sent.
+    _ = finish_sending_differences(Bloom, State),
+
+    %% wait for differences from bloom_folder or to be done
+    {next_state, send_diffs, State};
+
 %% All indexes in this Partition are done.
 %% Note: recv'd from an async send event
-send_diffs(diff_done, State=#state{indexns=[]}) ->
-    gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State#state{built=0, indexns=[]}};
-%% IndexN is done, restart for remaining
-send_diffs(diff_done, State=#state{indexns=[_IndexN|IndexNs]}) ->
-    %% re-start for next indexN
-    gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State#state{built=0, indexns=IndexNs}}.
+send_diffs(diff_done, State) ->
+    update_trees(finish_fullsync, State).
 
 %%%===================================================================
 %%% Internal functions
