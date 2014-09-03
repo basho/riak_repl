@@ -587,7 +587,7 @@ send_missing(RObj, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
     end.
 
 send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
-    case Client:get(Bucket, Key, 1, ?REPL_FSM_TIMEOUT) of
+    case Client:get(Bucket, Key, [{r, 1}, {timeout, ?REPL_FSM_TIMEOUT}, {n_val, 1}]) of
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
