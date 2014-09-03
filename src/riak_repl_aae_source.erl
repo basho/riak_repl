@@ -44,7 +44,8 @@
                 diff_batch_size = 1000 :: non_neg_integer(),
                 local_lock = false :: boolean(),
                 owner       :: pid(),
-                proto       :: term()
+                proto       :: term(),
+                bloom       :: reference() %% ebloom
                }).
 
 %% Per state transition timeout used by certain transitions
@@ -74,6 +75,9 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
+    NumKeys = 1000000,
+    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
@@ -82,7 +86,8 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    built=0,
                    owner=OwnerPid,
                    wire_ver=w1,
-                   proto=Proto},
+                   proto=Proto,
+                   bloom=Bloom },
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -337,8 +342,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% accumulates a list of one element that is the count of
     %% keys that differed. We can't prime the accumulator. It
     %% always starts as the empty list. KeyDiffs is a list of hashtree::keydiff()
-    NumKeys = 10000000,
-    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+    Bloom = State#state.bloom,
     AccFun = fun(KeyDiffs, Acc0) ->
             %% Gather diff keys into a bloom filter
             lists:foldl(fun(KeyDiff, AccIn) ->
@@ -405,7 +409,10 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     ok = Transport:controlling_process(Socket, WorkerPid),
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
-compute_differences({'$aae_src', done, Bloom}, State) ->
+
+compute_differences({'$aae_src', done, Bloom}, State=#state{ indexns=IndexNs, bloom=Bloom })
+  when length(IndexNs) =< 1 ->
+    %% we just finished diffing the *last* IndexN, so we go to the vnode fold / bloom state
 
     %% if we have anything in our bloom filter, start sending them now.
     %% this will start a worker process, which will tell us it's done with
@@ -413,7 +420,12 @@ compute_differences({'$aae_src', done, Bloom}, State) ->
     _ = finish_sending_differences(Bloom, State),
 
     %% wait for differences from bloom_folder or to be done
-    {next_state, send_diffs, State}.
+    {next_state, send_diffs, State};
+
+compute_differences({'$aae_src', done, _}, State=#state{ indexns=[_|IndexNs] }) ->
+    %% re-start for next indexN
+    gen_fsm:send_event(self(), start_exchange),
+    {next_state, update_trees, State#state{built=0, indexns=IndexNs}}.
 
 %% state send_diffs is where we wait for diff_obj messages from the bloom folder
 %% and send them to the sink for each diff_obj. We eventually finish upon receipt
@@ -425,14 +437,9 @@ send_diffs({diff_obj, RObj}, _From, State) ->
 
 %% All indexes in this Partition are done.
 %% Note: recv'd from an async send event
-send_diffs(diff_done, State=#state{indexns=[]}) ->
+send_diffs(diff_done, State) ->
     gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State#state{built=0, indexns=[]}};
-%% IndexN is done, restart for remaining
-send_diffs(diff_done, State=#state{indexns=[_IndexN|IndexNs]}) ->
-    %% re-start for next indexN
-    gen_fsm:send_event(self(), start_exchange),
-    {next_state, update_trees, State#state{built=0, indexns=IndexNs}}.
+    {next_state, update_trees, State#state{built=0, indexns=[]}}.
 
 %%%===================================================================
 %%% Internal functions
