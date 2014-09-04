@@ -345,10 +345,11 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% always starts as the empty list. KeyDiffs is a list of hashtree::keydiff()
     Bloom = State#state.bloom,
     Count0 = State#state.diff_cnt,
+    Limit = app_helper:get_env(riak_repl, fullsync_direct, ?GET_OBJECT_LIMIT),
     AccFun = fun(KeyDiffs, Acc0) ->
             Count = case Acc0 of [C] when is_integer(C) -> C; _ -> 0 end,
             FoldFun =
-              case (Count0+Count) > ?GET_OBJECT_LIMIT of
+              case (Count0+Count) > Limit of
                   %% Gather diff keys into a bloom filter
                   true  -> fun(KeyDiff, AccIn) ->
                                    accumulate_diff(KeyDiff, Bloom, AccIn, State)
