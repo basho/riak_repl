@@ -32,7 +32,6 @@
          pretty_print/2,
          jsonify_stats/2
         ]).
-
 -include_lib("webmachine/include/webmachine.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -108,7 +107,7 @@ get_stats() ->
     jsonify_stats(RTRemotesStatus,[]) ++ jsonify_stats(FSRemotesStatus,[]) ++ CMStats ++ Stats1 ++ LeaderStats
         ++ jsonify_stats(Clients, [])
         ++ jsonify_stats(Servers, [])
-    ++ RTQ 
+    ++ RTQ
     ++ jsonify_stats(Coord,[])
     ++ jsonify_stats(CoordSrv,[]) ++ PGStats ++ jsonify_stats(KbpsSums, []).
 
@@ -126,10 +125,12 @@ format_pid_stat(Pair) ->
 
 
 jsonify_stats([], Acc) ->
+    %?debugFmt("Got []: Acc: ~w", [Acc]),
     lists:flatten(lists:reverse(Acc));
 
 jsonify_stats([{fullsync, Num, _Left}|T], Acc) ->
     jsonify_stats(T, [{"partitions_left", Num} | Acc]);
+
 
 jsonify_stats([{S,PidAsBinary, IP,Port}|T], Acc) when is_atom(S) andalso
         is_list(IP) andalso is_integer(Port) andalso is_binary(PidAsBinary) ->
@@ -140,8 +141,7 @@ jsonify_stats([{S,PidAsBinary, IP,Port}|T], Acc) when is_atom(S) andalso
                     }|Acc]);
 
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
-    jsonify_stats(T, [{S,
-                       list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
+    jsonify_stats(T, [{S, list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_pid(V) ->
     jsonify_stats(T, [{K,list_to_binary(riak_repl_util:safe_pid_to_list(V))}|Acc]);
 
@@ -149,34 +149,46 @@ jsonify_stats([{K,V=[{_,_}|_Tl]}|T], Acc) when is_list(V) ->
     NewV = jsonify_stats(V,[]),
     jsonify_stats(T, [{K,NewV}|Acc]);
 
-jsonify_stats([{K,V}|T], Acc) when is_atom(K)
-        andalso (K == server_stats orelse K == client_stats) ->
+jsonify_stats([{K, V}|T], Acc) when is_atom(K) and is_tuple(V)
+        andalso (K == active) ->
     case V of
-        [{Pid, Mq, {status, Stats}}] ->
-            FormattedPid = format_pid(Pid),
-            NewStats = {status, lists:map(fun format_pid_stat/1, Stats)},
-            % could be client or server pid
-            ServerPid = [{pid, FormattedPid}],
-            jsonify_stats([NewStats | T], [Mq | [ServerPid | Acc]]);
-        [] ->
-            jsonify_stats(T, Acc)
+      {false, scheduled} ->
+         jsonify_stats([{active, false}, {reactivation_scheduled, true} | T], Acc)
     end;
+jsonify_stats([{K,V}|T], Acc) when is_atom(K)
+        andalso (K == server_stats orelse K == client_stats), is_list(V) ->
+    Filtered = lists:filter(fun
+        ({_Pid, _Mq, {status, _Stats}}) -> true;
+        (_) -> false
+    end, V),
+    StackedStats = lists:map(fun({Pid, Mq, {status, Stats}}) ->
+        FormattedPid = format_pid(Pid),
+        SectionName = proplists:get_value(site, Stats, FormattedPid),
+        NewStats = {status, jsonify_stats(lists:map(fun format_pid_stat/1, Stats), [])},
+        {list_to_binary(SectionName), {struct, [{pid, FormattedPid}, Mq, NewStats]}}
+    end, Filtered),
+    jsonify_stats(StackedStats ++ T, Acc);
 jsonify_stats([{S,IP,Port}|T], Acc) when is_atom(S) andalso is_list(IP) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        list_to_binary(IP++":"++integer_to_list(Port))}|Acc]);
 jsonify_stats([{S,{A,B,C,D},Port}|T], Acc) when is_atom(S) andalso is_integer(Port) ->
     jsonify_stats(T, [{S,
                        iolist_to_binary(io_lib:format("~b.~b.~b.~b:~b",[A,B,C,D,Port]))}|Acc]);
-jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega),
-                                                   is_integer(Secs),
-                                                   is_integer(Micro) ->
+jsonify_stats([{K,{Mega,Secs,Micro}=Now}|T], Acc) when is_integer(Mega), is_integer(Secs), is_integer(Micro) ->
     StrDate = httpd_util:rfc1123_date(calendar:now_to_local_time(Now)),
     jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
     jsonify_stats(T, [{K,list_to_binary(V)}|Acc]);
+jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], Acc) when is_integer(Year), is_integer(Month), is_integer(Day), is_integer(Hour), is_integer(Min), is_integer(Second) ->
+    % the guard clause may be insane, but I just want to be very sure it's a
+    % date time tuple that's being converted.
+    StrDate = httpd_util:rfc1123_date(DateTime),
+    jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
-    jsonify_stats(T, [{K,V}|Acc]).
-
+    jsonify_stats(T, [{K,V}|Acc]);
+jsonify_stats([KV|T], Acc) ->
+    lager:error("Could not encode stats: ~p", [KV]),
+    jsonify_stats(T, Acc).
 -ifdef(TEST).
 
 % The lines line the following:
@@ -188,6 +200,15 @@ jsonify_stats([{K,V}|T], Acc) ->
 
 jsonify_stats_test_() ->
     [
+     %% test with bad stat to make sure
+     %% the catch-all works
+     {"catch-all",
+      fun() ->
+            Actual = [{this_is_a_bad_stat_key, "bar"}],
+            Expected = [{this_is_a_bad_stat_key, <<"bar">>}],
+            ?assertEqual(Expected, jsonify_stats(Actual, [])),
+            _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
      %% simple stats w/out a ton of useful data
      {"client stats",
       fun() ->
@@ -228,6 +249,69 @@ jsonify_stats_test_() ->
               _Result = mochijson2:encode({struct, Expected}) % fail if crash
       end},
 
+     {"Coord during fullsync",
+      fun() ->
+             Date = {{2013, 9, 19}, {20, 51, 7}},
+             BinDate = list_to_binary(httpd_util:rfc1123_date(Date)),
+             Input = [{fullsync_coordinator, [{"bar", [
+                          {last_fullsync_started, Date}
+                      ]}]}],
+             Expected = [{fullsync_coordinator, [{"bar", [
+                          {last_fullsync_started, BinDate}
+                        ]}]}],
+             Got = jsonify_stats(Input, []),
+             %?debugFmt("Expected: ~p~nGot: ~p", [Expected, Got]),
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Got}) % fail if crash
+      end},
+
+     {"Socket active, false scheduled",
+      fun() ->
+             Input = [{active, {false, scheduled}}],
+             Expected = [{active, false}, {reactivation_scheduled, true}],
+             Got = jsonify_stats(Input, []),
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test catch-all",
+      fun() ->
+             Input = [{foo, bar, baz, 100, 200}],
+             Got = jsonify_stats(Input, []),
+             Expected = [],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test pid match",
+      fun() ->
+             Input = [{foo, self()}],
+             Got = jsonify_stats(Input, []),
+             MyPid = erlang:list_to_binary(erlang:pid_to_list(self())),
+             Expected = [{foo,MyPid}],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test ip:port",
+      fun() ->
+             Input = [{foo, "127.0.0.1", 9010}],
+             Got = jsonify_stats(Input, []),
+             Expected = [{foo,<<"127.0.0.1:9010">>}],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+     {"Test a,b,c,d:port",
+      fun() ->
+             Input = [{foo, {127,0,0,1}, 9010}],
+             Got = jsonify_stats(Input, []),
+             Expected = [{foo,<<"127.0.0.1:9010">>}],
+             ?assertEqual(Expected, Got),
+             _Result = mochijson2:encode({struct, Expected}) % fail if crash
+      end},
+
+
      {"Coordsrv, empty",
       fun() ->
               Actual = [{fullsync_coordinator_srv,[]}],
@@ -263,14 +347,14 @@ jsonify_stats_test_() ->
                            [{pid,"<0.2157.0>"},
                             {message_queue_len,0},
                             {rt_source_connected_to,
-                             [{source,"bar"},{pid,"<0.2157.0>"},
+                             [{sink,"bar"},{pid,"<0.2157.0>"},
                               {connected,false}]}]}]}],
                   Expected = [{sources,
                                [{source_stats,
                                  [{pid,<<"<0.2157.0>">>},
                                   {message_queue_len,0},
                                   {rt_source_connected_to,
-                                   [{source,<<"bar">>},
+                                   [{sink,<<"bar">>},
                                     {pid,<<"<0.2157.0>">>},
                                     {connected,false}]}]}]}],
               ?assertEqual(Expected, jsonify_stats(Actual, [])),
@@ -306,7 +390,8 @@ jsonify_stats_test_() ->
      {"rtqstats",
       fun() ->
               Actual = [{realtime_queue_stats,
-                         [{bytes,768},
+                         [{percent_bytes_used, 0.001},
+                          {bytes,768},
                           {max_bytes,104857600},
                           {consumers,
                            [{"bar",
@@ -344,6 +429,86 @@ jsonify_stats_test_() ->
                         {rt_dirty,1}],
               _Result = mochijson2:encode({struct, Actual}) % fail if crash
       end},
+
+    {"multiple fs client connections",
+     fun() ->
+             Pid = spawn(fun() -> ok end),
+             Actual = [{client_stats, [
+                {Pid, {message_queue_len,0}, {status, [
+                    {node,'riak@test-riak-1'},
+                    {site,"test3"},
+                    {strategy,riak_repl_keylist_server},
+                    {fullsync_worker,Pid},
+                    {queue_pid,Pid},
+                    {dropped_count,0},
+                    {queue_length,0},
+                    {queue_byte_size,0},
+                    {queue_max_size,104857600},
+                    {queue_percentage,0},
+                    {queue_pending,0},
+                    {queue_max_pending,5},
+                    {state,wait_for_partition}
+                ]}},
+                {Pid, {message_queue_len,0}, {status, [
+                    {node,'riak@test-riak-1'},
+                    {site,"site2"},
+                    {strategy,riak_repl_keylist_server},
+                    {fullsync_worker,Pid},
+                    {queue_pid,Pid},
+                    {dropped_count,0},
+                    {queue_length,0},
+                    {queue_byte_size,0},
+                    {queue_max_size,104857600},
+                    {queue_percentage,0},
+                    {queue_pending,0},
+                    {queue_max_pending,5},
+                    {state,wait_for_partition}
+                ]}}
+            ]}],
+            Jsonified = jsonify_stats(Actual, []),
+            _ = mochijson2:encode({struct, Jsonified})
+       end},
+
+    {"multiple fs client connections - structure",
+     fun() ->
+             Pid = spawn(fun() -> ok end),
+             Actual = [{client_stats, [
+                {Pid, {message_queue_len,0}, {status, [
+                    {node,'riak@test-riak-1'},
+                    {site,"test3"},
+                    {strategy,riak_repl_keylist_server},
+                    {fullsync_worker,Pid},
+                    {queue_pid,Pid},
+                    {dropped_count,0},
+                    {queue_length,0},
+                    {queue_byte_size,0},
+                    {queue_max_size,104857600},
+                    {queue_percentage,0},
+                    {queue_pending,0},
+                    {queue_max_pending,5},
+                    {state,wait_for_partition}
+                ]}},
+                {Pid, {message_queue_len,0}, {status, [
+                    {node,'riak@test-riak-1'},
+                    {site,"site2"},
+                    {strategy,riak_repl_keylist_server},
+                    {fullsync_worker,Pid},
+                    {queue_pid,Pid},
+                    {dropped_count,0},
+                    {queue_length,0},
+                    {queue_byte_size,0},
+                    {queue_max_size,104857600},
+                    {queue_percentage,0},
+                    {queue_pending,0},
+                    {queue_max_pending,5},
+                    {state,wait_for_partition}
+                ]}}
+            ]}],
+            Jsonified = jsonify_stats(Actual, []),
+            Json = mochijson2:encode({struct, Jsonified}),
+            Decoded = mochijson2:decode(Json),
+            ?assertMatch({struct, _}, Decoded)
+       end},
 
      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
      %%% tests during basho bench, bnw fullsync, 1.2 + 1.3 realtime, source side
@@ -435,7 +600,7 @@ jsonify_stats_test_() ->
                       [{pid,StringPid},
                        {message_queue_len,0},
                        {rt_source_connected_to,
-                        [{source,"bar"},
+                        [{sink,"bar"},
                          {pid,StringPid},
                          {connected,true},
                          {transport,ranch_tcp},
@@ -454,7 +619,8 @@ jsonify_stats_test_() ->
                          {sent_seq,9841},
                          {objects,9841}]}]}]}],
               Expected =
-                  [{pid,FormattedPid},
+                  [{<<"foo">>, {struct, [
+                   {pid,FormattedPid},
                    {message_queue_len,0},
                    {status,
                     [{node,'dev1@127.0.0.1'},
@@ -469,13 +635,13 @@ jsonify_stats_test_() ->
                      {queue_percentage,0},
                      {queue_pending,1},
                      {queue_max_pending,5},
-                     {state,wait_for_partition}]},
+                     {state,wait_for_partition}]}]}},
                    {sources,
                     [{source_stats,
                       [{pid,FormattedPid},
                        {message_queue_len,0},
                        {rt_source_connected_to,
-                        [{source,<<"bar">>},
+                        [{sink,<<"bar">>},
                          {pid,FormattedPid},
                          {connected,true},
                          {transport,ranch_tcp},
@@ -710,7 +876,7 @@ jsonify_stats_test_() ->
           [{pid,StringPid},
            {message_queue_len,0},
            {rt_source_connected_to,
-               [{source,"bar"},
+               [{sink,"bar"},
                 {pid,StringPid},
                 {connected,true},
                 {transport,ranch_tcp},
@@ -729,33 +895,36 @@ jsonify_stats_test_() ->
                 {sent_seq,229},
                 {objects,229}]}]}]}],
 
-              Expected =
-                  [{pid,FormattedPid},
-                   {message_queue_len,0},
-                   {status,
-                    [{node,'dev1@127.0.0.1'},
-                     {site,<<"foo">>},
-                     {strategy,riak_repl_keylist_server},
-                     {fullsync_worker,FormattedPid},
-                     {queue_pid,FormattedPid},
-                     {dropped_count,0},
-                     {queue_length,0},
-                     {queue_byte_size,0},
-                     {queue_max_size,104857600},
-                     {queue_percentage,0},
-                     {queue_pending,4},
-                     {queue_max_pending,5},
-                     {state,build_keylist},
-                     {fullsync,593735040165679310520246963290989976735222595584},
-                     {partition_start,0.28},
-                     {stage_start,0.28},
-                     {get_pool_size,5}]},
+              Expected = [
+                    {<<"foo">>, {struct, [
+                        {pid,FormattedPid},
+                        {message_queue_len,0},
+                        {status, [
+                            {node,'dev1@127.0.0.1'},
+                            {site,<<"foo">>},
+                            {strategy,riak_repl_keylist_server},
+                            {fullsync_worker,FormattedPid},
+                            {queue_pid,FormattedPid},
+                            {dropped_count,0},
+                            {queue_length,0},
+                            {queue_byte_size,0},
+                            {queue_max_size,104857600},
+                            {queue_percentage,0},
+                            {queue_pending,4},
+                            {queue_max_pending,5},
+                            {state,build_keylist},
+                            {fullsync,593735040165679310520246963290989976735222595584},
+                            {partition_start,0.28},
+                            {stage_start,0.28},
+                            {get_pool_size,5}
+                        ]}
+                    ]}},
                    {sources,
                     [{source_stats,
                       [{pid,FormattedPid},
                        {message_queue_len,0},
                        {rt_source_connected_to,
-                        [{source,<<"bar">>},
+                        [{sink,<<"bar">>},
                          {pid,FormattedPid},
                          {connected,true},
                          {transport,ranch_tcp},
@@ -842,17 +1011,21 @@ jsonify_stats_test_() ->
                 {state,request_partition}]}]}]}],
 
 
-              Expected = [{pid,FormattedPid},
- {message_queue_len,0},
- {status,
-     [{node,'dev4@127.0.0.1'},
-      {site,<<"foo">>},
-      {strategy,riak_repl_keylist_client},
-      {fullsync_worker,FormattedPid},
-      {put_pool_size,5},
-      {connected,<<"127.0.0.1:5666">>},
-      {cluster_name,<<"{'dev1@127.0.0.1',{1359,730694,756806}}">>},
-      {state,wait_for_fullsync}]},
+              Expected = [
+                {<<"foo">>, {struct, [
+                    {pid,FormattedPid},
+                    {message_queue_len,0},
+                    {status, [
+                        {node,'dev4@127.0.0.1'},
+                        {site,<<"foo">>},
+                        {strategy,riak_repl_keylist_client},
+                        {fullsync_worker,FormattedPid},
+                        {put_pool_size,5},
+                        {connected,<<"127.0.0.1:5666">>},
+                        {cluster_name,<<"{'dev1@127.0.0.1',{1359,730694,756806}}">>},
+                        {state,wait_for_fullsync}
+                    ]}
+                ]}},
  {sinks,
      [{sink_stats,
           [{pid,FormattedPid},
@@ -935,9 +1108,10 @@ jsonify_stats_test_() ->
                        {sources,[]}],
               FormattedPid = format_pid(DummyPid),
               Expected =
-                  [{pid,FormattedPid},
-                   {message_queue_len,0},
-                   {status,[{node,'dev1@127.0.0.1'},
+                  [{<<"foo">>, {struct, [
+                    {pid,FormattedPid},
+                    {message_queue_len,0},
+                    {status,[{node,'dev1@127.0.0.1'},
                             {site,<<"foo">>},
                             {strategy,riak_repl_keylist_server},
                             {fullsync_worker,FormattedPid},
@@ -949,7 +1123,8 @@ jsonify_stats_test_() ->
                             {queue_percentage,0},
                             {queue_pending,0},
                             {queue_max_pending,5},
-                            {state,wait_for_partition}]},
+                            {state,wait_for_partition}]}
+                    ]}},
                    {sources,<<>>}],
                   ?assertEqual(Expected, jsonify_stats(Stats, [])),
                   _Result = mochijson2:encode({struct, Expected}) % fail if crash
@@ -971,14 +1146,15 @@ jsonify_stats_test_() ->
                             {connecting,DummyPid,"127.0.0.1",5666}]}}]},
                        {sinks,[]}],
               Expected =
-                  [{pid,FormattedPid},
+                  [{<<"foo">>, {struct, [
+                   {pid,FormattedPid},
                    {message_queue_len,0},
                    {status,[{node,'dev4@127.0.0.1'},
                             {site,<<"foo">>},
                             {strategy,undefined},
                             {fullsync_worker,undefined},
                             {connecting,[{connecting_pid,FormattedPid},
-                                         {connecting_ip,<<"127.0.0.1:5666">>}]}]},
+                                         {connecting_ip,<<"127.0.0.1:5666">>}]}]}]}},
                    {sinks,<<>>}],
               ?assertEqual(Expected, jsonify_stats(Stats, [])),
               _Result = mochijson2:encode({struct, Expected}) % fail if crash
@@ -1038,7 +1214,7 @@ jsonify_stats_test_() ->
                            [{pid,FormattedPid},
                             {message_queue_len,0},
                             {rt_source_connected_to,
-                             [{source,<<"bar">>},
+                             [{sink,<<"bar">>},
                               {pid,FormattedPid},
                               {connected,false}]}]}]},
                         {realtime_queue_stats,

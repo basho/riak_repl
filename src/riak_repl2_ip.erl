@@ -11,7 +11,6 @@
 %% @doc Given the result of inet:getifaddrs() and an IP a client has
 %%      connected to, attempt to determine the appropriate subnet mask.  If
 %%      the IP the client connected to cannot be found, undefined is returned.
--spec determine_netmask(Ifaddrs :: [{atom(), any()}], SeekIP :: string() | {integer(), integer(), integer(), integer()}) -> 'undefined' | binary().
 determine_netmask(Ifaddrs, SeekIP) when is_list(SeekIP) ->
     {ok, NormIP} = riak_repl_util:normalize_ip(SeekIP),
     determine_netmask(Ifaddrs, NormIP);
@@ -139,8 +138,10 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
     lager:warning("Unable to find an approximate match for ~s/~b,"
         "trying to guess one.",
         [inet_parse:ntoa(MyIP), MyCIDR]),
-    %% when guessing, never guess loopback!
-    FixedIPs = lists:keydelete("lo", 1, MyIPs),
+
+    %% when guessing, only use non-loopback, "up" interfaces
+    NonLoopbackIPs = riak_repl_util:non_loopback_interfaces(MyIPs),
+
     Res = lists:foldl(fun({_IF, Attrs}, Acc) ->
                 V4Attrs = lists:filter(fun({addr, {_, _, _, _}}) ->
                             true;
@@ -165,7 +166,7 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
                                 Acc
                         end
                 end
-        end, undefined, FixedIPs),
+        end, undefined, NonLoopbackIPs),
     case Res of
         undefined ->
             lager:warning("Unable to guess an appropriate local IP to match"
@@ -270,7 +271,7 @@ expand_hostnames({External, {Host, InternalPort}}, Acc) when is_list(Host) ->
             [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
-            case inet_res:gethostnames(Host) of
+            case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
                     lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
@@ -288,7 +289,7 @@ expand_hostnames({External, Host}, Acc) when is_list(Host) ->
             [{External, Addr} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
-            case inet_res:gethostnames(Host) of
+            case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
                     lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, Addr} || Addr <- Addresses] ++ Acc;
@@ -316,177 +317,209 @@ make_ifaddrs(Interfaces) ->
 
 
 get_matching_address_test_() ->
-    {setup, fun() ->
-                application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
-                        9090}),
-                lager:start(),
-                %% for debugging
-                %%lager:set_loglevel(lager_console_backend, debug)
-                ok
-        end,
-        fun(_) ->
-                application:unset_env(riak_core, cluster_mgr),
-                application:stop(lager)
-        end,
-        [
-            {"adjacent RFC 1918 IPs in subnet",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 0, 0, 99}},
-                                        {netmask, {255, 0, 0, 0}}]}]),
-                        Res = get_matching_address({10, 0, 0, 1}, 8, Addrs),
-                        ?assertEqual({{10,0,0,99},9090}, Res)
-                end},
-            {"RFC 1918 IPs in adjacent subnets",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 4, 0, 99}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({10, 0, 0, 1}, 24, Addrs),
-                        ?assertEqual({{10,4,0,99},9090}, Res)
-                end
-            },
-            {"RFC 1918 IPs in different RFC 1918 blocks",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 4, 0, 99}},
-                                        {netmask, {255, 0, 0, 0}}]}]),
-                        Res = get_matching_address({192, 168, 0, 1}, 24, Addrs),
-                        ?assertEqual({{10,4,0,99},9090}, Res)
-                end
-            },
-            {"adjacent public IPs in subnet",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {8, 8, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({8, 8, 8, 1}, 24, Addrs),
-                        ?assertEqual({{8,8,8,8},9090}, Res)
-                end
-            },
-            {"public IPs in adjacent subnets",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {8, 0, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({8, 8, 8, 1}, 24, Addrs),
-                        ?assertEqual({{8,0,8,8},9090}, Res)
-                end
-            },
-            {"public IPs in different /8s",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {8, 0, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({64, 8, 8, 1}, 24, Addrs),
-                        ?assertEqual({{8,0,8,8},9090}, Res)
-                end
-            },
-            {"connecting to localhost",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {8, 0, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({127, 0, 0, 1}, 8, Addrs),
-                        ?assertEqual({{127,0,0,1},9090}, Res)
-                end
-            },
-            {"RFC 1918 IPs when all we have are public ones",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {172, 0, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({172, 16, 0, 1}, 24, Addrs),
-                        ?assertEqual(undefined, Res)
-                end
-            },
-            {"public IPs when all we have are RFC1918 ones",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {172, 16, 0, 1}},
-                                        {netmask, {255, 255, 255, 0}}]}]),
-                        Res = get_matching_address({172, 0, 8, 8}, 24, Addrs),
-                        ?assertEqual(undefined, Res)
-                end
-            },
-            {"public IPs when all we have are IPv6 ones",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr,
-                                            {65152,0,0,0,29270,33279,65179,6921}},
-                                        {netmask,
-                                            {65535,65535,65535,65535,0,0,0,0}}]}]),
-                        Res = get_matching_address({8, 8, 8, 1}, 8, Addrs),
-                        ?assertEqual(undefined, Res)
-                end
-            },
-            {"public IPs in different subnets, prefer closest",
-                fun() ->
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {8, 0, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]},
-                                {"eth1",
-                                    [{addr, {64, 172, 243, 100}},
-                                        {netmask, {255, 255, 255, 0}}]}
-                                    ]),
-                        Res = get_matching_address({64, 8, 8, 1}, 24, Addrs),
-                        ?assertEqual({{64,172,243,100},9090}, Res)
-                end
-            },
-            {"listen IP is not 0.0.0.0, return statically configured IP if both public",
-                fun() ->
-                        application:set_env(riak_core, cluster_mgr, {{12, 24, 36, 8},
-                                9096}),
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {8, 0, 8, 8}},
-                                        {netmask, {255, 255, 255, 0}}]},
-                                {"eth1",
-                                    [{addr, {64, 172, 243, 100}},
-                                        {netmask, {255, 255, 255, 0}}]}
-                                    ]),
-                        Res = get_matching_address({64, 8, 8, 1}, 24, Addrs),
-                        ?assertEqual({{12,24,36,8},9096}, Res)
-                end
-            },
-            {"listen IP is not 0.0.0.0, return statically configured IP if both private",
-                fun() ->
-                        application:set_env(riak_core, cluster_mgr, {{192, 168, 1, 1},
-                                9096}),
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 0, 0, 1}},
-                                        {netmask, {255, 255, 255, 0}}]},
-                                {"eth1",
-                                    [{addr, {64, 172, 243, 100}},
-                                        {netmask, {255, 255, 255, 0}}]}
-                                    ]),
-                        Res = get_matching_address({10, 0, 0, 1}, 24, Addrs),
-                        ?assertEqual({{192,168,1,1},9096}, Res)
-                end
-            },
-            {"listen IP is not 0.0.0.0, return undefined if both not public/private",
-                fun() ->
-                        application:set_env(riak_core, cluster_mgr, {{192, 168, 1, 1},
-                                9096}),
-                        Addrs = make_ifaddrs([{"eth0",
-                                    [{addr, {10, 0, 0, 1}},
-                                        {netmask, {255, 255, 255, 0}}]},
-                                {"eth1",
-                                    [{addr, {64, 172, 243, 100}},
-                                        {netmask, {255, 255, 255, 0}}]}
-                                    ]),
-                        Res = get_matching_address({8, 8, 8, 8}, 24, Addrs),
-                        ?assertEqual(undefined, Res)
-                end
-            }
-        ]}.
+        error_logger:tty(false),
+        {setup,
+         fun() ->
+                 application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
+                                                              9090}),
+                 ok
+         end,
+         fun(_) ->
+                 application:unset_env(riak_core, cluster_mgr)
+         end,
+         [
+          {timeout, 30,
+           {"adjacent RFC 1918 IPs in subnet",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {10, 0, 0, 99}},
+                                            {netmask, {255, 0, 0, 0}}]}]),
+                    Res = get_matching_address({10, 0, 0, 1}, 8, Addrs),
+                    ?assertEqual({{10,0,0,99},9090}, Res)
+            end}},
+          {timeout, 30,
+           {"RFC 1918 IPs in adjacent subnets",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {10, 4, 0, 99}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({10, 0, 0, 1}, 24, Addrs),
+                    ?assertEqual({{10,4,0,99},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"RFC 1918 IPs in different RFC 1918 blocks",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {10, 4, 0, 99}},
+                                            {netmask, {255, 0, 0, 0}}]}]),
+                    Res = get_matching_address({192, 168, 0, 1}, 24, Addrs),
+                    ?assertEqual({{10,4,0,99},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"adjacent public IPs in subnet",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {8, 8, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({8, 8, 8, 1}, 24, Addrs),
+                    ?assertEqual({{8,8,8,8},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"public IPs in adjacent subnets",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {8, 0, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({8, 8, 8, 1}, 24, Addrs),
+                    ?assertEqual({{8,0,8,8},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"public IPs in different /8s",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {8, 0, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({64, 8, 8, 1}, 24, Addrs),
+                    ?assertEqual({{8,0,8,8},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"connecting to localhost",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {8, 0, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({127, 0, 0, 1}, 8, Addrs),
+                    ?assertEqual({{127,0,0,1},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"RFC 1918 IPs when all we have are public ones",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {172, 0, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({172, 16, 0, 1}, 24, Addrs),
+                    ?assertEqual(undefined, Res)
+            end
+           }},
+          {timeout, 30,
+           {"public IPs when all we have are RFC1918 ones",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {172, 16, 0, 1}},
+                                            {netmask, {255, 255, 255, 0}}]}]),
+                    Res = get_matching_address({172, 0, 8, 8}, 24, Addrs),
+                    ?assertEqual(undefined, Res)
+            end
+           }},
+          {timeout, 30,
+           {"public IPs when all we have are IPv6 ones",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr,
+                                             {65152,0,0,0,29270,33279,65179,6921}},
+                                            {netmask,
+                                             {65535,65535,65535,65535,0,0,0,0}}]}]),
+                    Res = get_matching_address({8, 8, 8, 1}, 8, Addrs),
+                    ?assertEqual(undefined, Res)
+            end
+           }},
+          {timeout, 30,
+           {"public IPs in different subnets, prefer closest",
+            fun() ->
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {8, 0, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]},
+                                          {"eth1",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {64, 172, 243, 100}},
+                                            {netmask, {255, 255, 255, 0}}]}
+                                         ]),
+                    Res = get_matching_address({64, 8, 8, 1}, 24, Addrs),
+                    ?assertEqual({{64,172,243,100},9090}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"listen IP is not 0.0.0.0, return statically configured IP if both public",
+            fun() ->
+                    application:set_env(riak_core, cluster_mgr, {{12, 24, 36, 8},
+                                                                 9096}),
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {8, 0, 8, 8}},
+                                            {netmask, {255, 255, 255, 0}}]},
+                                          {"eth1",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {64, 172, 243, 100}},
+                                            {netmask, {255, 255, 255, 0}}]}
+                                         ]),
+                    Res = get_matching_address({64, 8, 8, 1}, 24, Addrs),
+                    ?assertEqual({{12,24,36,8},9096}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"listen IP is not 0.0.0.0, return statically configured IP if both private",
+            fun() ->
+                    application:set_env(riak_core, cluster_mgr, {{192, 168, 1, 1},
+                                                                 9096}),
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {10, 0, 0, 1}},
+                                            {netmask, {255, 255, 255, 0}}]},
+                                          {"eth1",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {64, 172, 243, 100}},
+                                            {netmask, {255, 255, 255, 0}}]}
+                                         ]),
+                    Res = get_matching_address({10, 0, 0, 1}, 24, Addrs),
+                    ?assertEqual({{192,168,1,1},9096}, Res)
+            end
+           }},
+          {timeout, 30,
+           {"listen IP is not 0.0.0.0, return undefined if both not public/private",
+            fun() ->
+                    application:set_env(riak_core, cluster_mgr, {{192, 168, 1, 1},
+                                                                 9096}),
+                    Addrs = make_ifaddrs([{"eth0",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {10, 0, 0, 1}},
+                                            {netmask, {255, 255, 255, 0}}]},
+                                          {"eth1",
+                                           [{flags,[up,broadcast,running,multicast]},
+                                            {addr, {64, 172, 243, 100}},
+                                            {netmask, {255, 255, 255, 0}}]}
+                                         ]),
+                    Res = get_matching_address({8, 8, 8, 8}, 24, Addrs),
+                    ?assertEqual(undefined, Res)
+            end
+           }}
+         ]}.
 
 determine_netmask_test_() ->
+    error_logger:tty(false),
     [
         {"simple case",
             fun() ->
                     Addrs = make_ifaddrs([{"eth0",
-                                [{addr, {10, 0, 0, 1}},
-                                    {netmask, {255, 255, 255, 0}}]}]),
+                                [{flags,[up,broadcast,running,multicast]},
+                                 {addr, {10, 0, 0, 1}},
+                                 {netmask, {255, 255, 255, 0}}]}]),
                     ?assertEqual(24, determine_netmask(Addrs,
                             {10, 0, 0, 1}))
             end
@@ -494,7 +527,8 @@ determine_netmask_test_() ->
         {"loopback",
             fun() ->
                     Addrs = make_ifaddrs([{"eth0",
-                                [{addr, {10, 0, 0, 1}},
+                                [{flags,[up,broadcast,running,multicast]},
+                                 {addr, {10, 0, 0, 1}},
                                     {netmask, {255, 255, 255, 0}}]}]),
                     ?assertEqual(8, determine_netmask(Addrs,
                             {127, 0, 0, 1}))
@@ -504,6 +538,7 @@ determine_netmask_test_() ->
     ].
 
 natmap_test_() ->
+    error_logger:tty(false),
     [
         {"forward lookups work",
             fun() ->
@@ -597,5 +632,3 @@ natmap_test_() ->
     ].
 
 -endif.
-
-

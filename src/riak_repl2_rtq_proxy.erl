@@ -21,7 +21,8 @@
 
 -record(state, {nodes=[],          %% peer replication nodes
                 versions=[],     %% {node(), wire-version()}
-                meta_support=[] :: [{node(), bool()}]
+                meta_support=[] :: [{node(), boolean()}],
+                refs=[] :: [reference()]
                 }).
 
 %%%===================================================================
@@ -52,11 +53,11 @@ init([]) ->
     %% trap exit so we can have terminate() called
     process_flag(trap_exit, true),
     Nodes = riak_repl_util:get_peer_repl_nodes(),
-    [erlang:monitor(process, {riak_repl2_rtq, Node}) || Node <- Nodes],
+    Refs = [erlang:monitor(process, {riak_repl2_rtq, Node}) || Node <- Nodes],
     %% cache the supported wire format of peer nodes to avoid rcp calls later.
     Versions = get_peer_wire_versions(Nodes),
     Metas = get_peer_meta_support(Nodes),
-    {ok, #state{nodes=Nodes, versions=Versions, meta_support = Metas}}.
+    {ok, #state{nodes=Nodes, versions=Versions, meta_support = Metas, refs=Refs}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -125,7 +126,7 @@ get_peer_wire_versions(Nodes) ->
 
 get_peer_meta_support(Nodes) ->
     GetSupport = fun(Node) ->
-        case rpc:call(Node, riak_core_capability, get, [{riak_repl, rtq_meta}, false]) of
+        case riak_core_util:safe_rpc(Node, riak_core_capability, get, [{riak_repl, rtq_meta}, false]) of
             Bool when is_boolean(Bool) ->
                 {Node, Bool};
             LolWut ->

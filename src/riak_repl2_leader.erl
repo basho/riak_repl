@@ -111,7 +111,7 @@ handle_call({set_leader_node, LeaderNode, LeaderPid}, _From, State) ->
                     {reply, ok, new_leader(LeaderNode, LeaderPid, State1)}
             end,
     %% notify all registered parties of the current leader node.
-    [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- State#state.notify_funs],
+    _ = [NotifyFun(LeaderNode, LeaderPid) || NotifyFun <- State#state.notify_funs],
     Reply;
 
 handle_call(helper_pid, _From, State) ->
@@ -121,7 +121,7 @@ handle_cast({register_notify_fun, Fun}, State) ->
     %% Notify the interested party immediately, in case leader election
     %% has already occured.
     Fun(State#state.leader_node, State#state.leader_pid),
-    {noreply, State#state{notify_funs=[Fun | State#state.notify_funs]}};
+    {noreply, State#state{notify_funs=State#state.notify_funs ++ [Fun]}};
 
 handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
     Candidates = lists:sort(CandidatesIn),
@@ -168,10 +168,12 @@ handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                       exit(normal)
                   catch
                       _:_ ->
-                          ok
+                        exit(normal)
                   after
                       exit(normal)
-                  end
+                  end,
+
+                  exit(normal)
           end),
     {noreply, State};
 handle_info(check_mailbox, State) ->

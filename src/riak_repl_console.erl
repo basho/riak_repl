@@ -32,10 +32,15 @@
          cascades/1,
          show_nat_map/1,
          add_nat_map/1,
-         del_nat_map/1
+         del_nat_map/1,
+         add_block_provider_redirect/1,
+         show_block_provider_redirect/1,
+         show_local_cluster_id/1,
+         delete_block_provider_redirect/1
      ]).
 
 add_listener(Params) ->
+    lager:warning(?V2REPLDEP, []),
     Ring = get_ring(),
     case add_listener_internal(Ring,Params) of
         {ok, NewRing} ->
@@ -44,6 +49,7 @@ add_listener(Params) ->
     end.
 
 add_nat_listener(Params) ->
+    lager:warning(?V2REPLDEP, []),
     Ring = get_ring(),
     case add_nat_listener_internal(Ring, Params) of
         {ok, NewRing} ->
@@ -86,12 +92,13 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
                     io:format("Invalid NAT IP address: ~p~n", [IPParseError]),
                     error
             end;
-        {error,_} ->
+        error ->
             io:format("Error adding nat address. ~n"),
             error
     end.
 
 del_listener([NodeName, IP, Port]) ->
+    lager:warning(?V2REPLDEP, []),
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
     NewRing0 = riak_repl_ring:del_listener(Ring, Listener),
@@ -99,12 +106,14 @@ del_listener([NodeName, IP, Port]) ->
     ok = maybe_set_ring(Ring, NewRing).
 
 add_site([IP, Port, SiteName]) ->
+    lager:warning(?V2REPLDEP, []),
     Ring = get_ring(),
     Site = make_site(SiteName, IP, Port),
     NewRing = riak_repl_ring:add_site(Ring, Site),
     ok = maybe_set_ring(Ring, NewRing).
 
 del_site([SiteName]) ->
+    lager:warning(?V2REPLDEP, []),
     Ring = get_ring(),
     NewRing = riak_repl_ring:del_site(Ring, SiteName),
     ok = maybe_set_ring(Ring, NewRing).
@@ -175,22 +184,26 @@ cluster_fs_running(Sink) ->
     riak_repl2_fscoordinator:is_running(ClusterCoord).
 
 start_fullsync([]) ->
-    [riak_repl_tcp_server:start_fullsync(Pid) ||
+    lager:warning(?V2REPLDEP, []),
+    _ = [riak_repl_tcp_server:start_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 cancel_fullsync([]) ->
-    [riak_repl_tcp_server:cancel_fullsync(Pid) ||
+    lager:warning(?V2REPLDEP, []),
+    _ = [riak_repl_tcp_server:cancel_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 pause_fullsync([]) ->
-    [riak_repl_tcp_server:pause_fullsync(Pid) ||
+    lager:warning(?V2REPLDEP, []),
+    _ = [riak_repl_tcp_server:pause_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 resume_fullsync([]) ->
-    [riak_repl_tcp_server:resume_fullsync(Pid) ||
+    lager:warning(?V2REPLDEP, []),
+    _ = [riak_repl_tcp_server:resume_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
@@ -260,21 +273,19 @@ clustername([]) ->
     io:format("~s~n", [MyName]),
     ok;
 clustername([ClusterName]) ->
+    ?LOG_USER_CMD("Set clustername to ~p", [ClusterName]),
     riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
                                       ClusterName),
     ok.
 
 clusters([]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
-    %% TODO: include our own cluster in the listing
-    %% MyAddr = ???
-    %% MyMembers = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, MyAddr}, infinity),
-    %% io:format("~-20s ~-15s ~p~n", [string_of_ipaddr(MyAddr), " ", MyMembers]),
     lists:foreach(
       fun(ClusterName) ->
               {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
               IPs = [string_of_ipaddr(Addr) || Addr <- Members],
-              io:format("~s: ~p~n", [ClusterName, IPs])
+              io:format("~s: ~p~n", [ClusterName, IPs]),
+              ok
       end,
       Clusters),
     ok.
@@ -321,10 +332,11 @@ connections([]) ->
     {ok, Conns} = riak_core_cluster_mgr:get_connections(),
     io:format("~-20s ~-20s ~-15s [Members]~n", ["Connection", "Cluster Name", "<Ctrl-Pid>"]),
     io:format("~-20s ~-20s ~-15s ---------~n", ["----------", "------------", "----------"]),
-    [showClusterConn(Conn) || Conn <- Conns],
+    _ = [showClusterConn(Conn) || Conn <- Conns],
     ok.
 
 connect([Address]) ->
+    ?LOG_USER_CMD("Connect to cluster at ~p", [Address]),
     NWords = string:words(Address, $:),
     case NWords of
         2 ->
@@ -332,10 +344,11 @@ connect([Address]) ->
             PortStr = string:sub_word(Address, 2, $:),
             connect([IP, PortStr]);
         _ ->
-            io:format("Error: remote connection is missing port. Expected 'connect <host:ip>'~n"),
+            io:format("Error: remote connection is missing port. Expected 'connect <host:port>'~n"),
             {error, {badarg, Address}}
     end;
 connect([IP, PortStr]) ->
+    ?LOG_USER_CMD("Connect to cluster at ~p:~p", [IP, PortStr]),
     {Port,_Rest} = string:to_integer(PortStr),
     case riak_core_connection:symbolic_clustername() of
         "undefined" ->
@@ -352,6 +365,7 @@ connect([IP, PortStr]) ->
 %% | ip:port
 %% | ip port
 disconnect([Address]) ->
+    ?LOG_USER_CMD("Disconnect from cluster at ~p", [Address]),
     NWords = string:words(Address, $:),
     case NWords of
         1 ->
@@ -367,12 +381,13 @@ disconnect([Address]) ->
         2 ->
             IP = string:sub_word(Address, 1, $:),
             PortStr = string:sub_word(Address, 2, $:),
-            disconnect([IP, PortStr]),
+            _ = disconnect([IP, PortStr]),
             ok;
         _ ->
             {error, {badarg, Address}}
     end;
 disconnect([IP, PortStr]) ->
+    ?LOG_USER_CMD("Disconnect from cluster at ~p:~p", [IP, PortStr]),
     {Port,_Rest} = string:to_integer(PortStr),
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}),
     ok.
@@ -380,44 +395,50 @@ disconnect([IP, PortStr]) ->
 realtime([Cmd, Remote]) ->
     case Cmd of
         "enable" ->
+            ?LOG_USER_CMD("Enable Realtime Replication to cluster ~p", [Remote]),
             riak_repl2_rt:enable(Remote);
         "disable" ->
+            ?LOG_USER_CMD("Disable Realtime Replication to cluster ~p", [Remote]),
             riak_repl2_rt:disable(Remote);
         "start" ->
+            ?LOG_USER_CMD("Start Realtime Replication to cluster ~p", [Remote]),
             riak_repl2_rt:start(Remote);
         "stop" ->
-            riak_repl2_rt:stop(Remote);
-        % easier to put this clause here and update 1 file
-        % than update riak_core's riak-repl bin script and make yet anothor
-        % place to change/potentially break stuff.
-        "cascades" ->
-            riak_repl_console:reatime_cascades(Remote)
+            ?LOG_USER_CMD("Stop Realtime Replication to cluster ~p", [Remote]),
+            riak_repl2_rt:stop(Remote)
     end,
     ok;
 realtime([Cmd]) ->
     Remotes = riak_repl2_rt:enabled(),
-    case Cmd of
+    _ = case Cmd of
         "start" ->
-            [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+            ?LOG_USER_CMD("Start Realtime Replication to all connected clusters",
+                          []),
+            _ = [riak_repl2_rt:start(Remote) || Remote <- Remotes];
         "stop" ->
-            [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+            ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters",
+                      []),
+            _ = [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
     end,
-    ok. %% TODO: we could gather the return codes of the list comprehensions
+    ok.
 
 fullsync([Cmd, Remote]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
     case Cmd of
         "enable" ->
+            ?LOG_USER_CMD("Enable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_enable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
+            _ = riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
             ok;
         "disable" ->
+            ?LOG_USER_CMD("Disable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:fs_disable_trans/2, Remote),
-            riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
+            _ = riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
             ok;
         "start" ->
+            ?LOG_USER_CMD("Start Fullsync Replication to cluster ~p", [Remote]),
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
@@ -429,6 +450,7 @@ fullsync([Cmd, Remote]) ->
                     ok
             end;
         "stop" ->
+            ?LOG_USER_CMD("Stop Fullsync Replication to cluster ~p", [Remote]),
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             case proplists:get_value(Remote, Fullsyncs) of
                 undefined ->
@@ -444,21 +466,27 @@ fullsync([Cmd]) ->
     Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
     case Cmd of
         "start" ->
-            [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
-                Fullsyncs];
+            ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
+            _ = [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
+                Fullsyncs],
+            ok;
         "stop" ->
-            [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
-                Fullsyncs]
+            ?LOG_USER_CMD("Stop Fullsync Replication to all connected clusters",[]),
+            _ = [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
+                Fullsyncs],
+            ok
     end,
     ok.
 
 proxy_get([Cmd, Remote]) ->
     case Cmd of
         "enable" ->
+            ?LOG_USER_CMD("Enable Riak CS Proxy GET block provider for ~p",[Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:pg_enable_trans/2, Remote),
             ok;
         "disable" ->
+            ?LOG_USER_CMD("Disable Riak CS Proxy GET block provider for ~p",[Remote]),
             riak_core_ring_manager:ring_trans(fun
                     riak_repl_ring:pg_disable_trans/2, Remote),
             ok
@@ -469,19 +497,22 @@ modes([]) ->
     io:format("Current replication modes: ~p~n",[CurrentModes]),
     ok;
 modes(NewModes) ->
+    ?LOG_USER_CMD("Set replication mode(s) to ~p",[NewModes]),
     Modes = [ list_to_atom(Mode) || Mode <- NewModes],
     set_modes(Modes),
     modes([]).
 
 realtime_cascades(["always"]) ->
+    ?LOG_USER_CMD("Enable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun
         riak_repl_ring:rt_cascades_trans/2, always);
 realtime_cascades(["never"]) ->
+    ?LOG_USER_CMD("Disable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun
         riak_repl_ring:rt_cascades_trans/2, never);
 realtime_cascades([]) ->
     Cascades = app_helper:get_env(riak_repl, realtime_cascades, always),
-    io:format("reatime_cascades: ~p~n", [Cascades]);
+    io:format("realtime_cascades: ~p~n", [Cascades]);
 realtime_cascades(_Wut) ->
     io:format("realtime_cascades either \"always\" or \"never\"~n").
 
@@ -501,9 +532,11 @@ max_fssource_node([]) ->
 max_fssource_node([FSSourceNode]) ->
     NewVal = erlang:list_to_integer(FSSourceNode),
     riak_core_util:rpc_every_member(?MODULE, max_fssource_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
+    ?LOG_USER_CMD("Set max number of Fullsync workers per Source node to ~p",[NewVal]),
     max_fssource_node([]),
     ok;
 max_fssource_node(NewVal) ->
+    ?LOG_USER_CMD("Locally set max number of Fullsync workers to ~p",[NewVal]),
     application:set_env(riak_repl, max_fssource_node, NewVal).
 
 max_fssource_cluster([]) ->
@@ -514,9 +547,11 @@ max_fssource_cluster([]) ->
 max_fssource_cluster([FSSourceCluster]) ->
     NewVal = erlang:list_to_integer(FSSourceCluster),
     riak_core_util:rpc_every_member(?MODULE, max_fssource_cluster, [NewVal], ?CONSOLE_RPC_TIMEOUT),
+    ?LOG_USER_CMD("Set max number of Fullsync workers for Source cluster to ~p",[NewVal]),
     max_fssource_cluster([]),
     ok;
 max_fssource_cluster(NewVal) ->
+    ?LOG_USER_CMD("Locally set max number of Fullsync workersfor Source cluster to ~p",[NewVal]),
     application:set_env(riak_repl, max_fssource_cluster, NewVal).
 
 max_fssink_node([]) ->
@@ -525,9 +560,11 @@ max_fssink_node([]) ->
 max_fssink_node([FSSinkNode]) ->
     NewVal = erlang:list_to_integer(FSSinkNode),
     riak_core_util:rpc_every_member(?MODULE, max_fssink_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
+    ?LOG_USER_CMD("Set max number of Fullsync works per Sink node to ~p",[NewVal]),
     max_fssink_node([]),
     ok;
 max_fssink_node(NewVal) ->
+    ?LOG_USER_CMD("Locally set max number of Fullsync workers per Sink node to ~p",[NewVal]),
     application:set_env(riak_repl, max_fssink_node, NewVal).
 
 show_nat_map([]) ->
@@ -547,6 +584,7 @@ add_nat_map([External, Internal]) ->
             io:format("Bad internal IP ~p", [Reason]),
             error;
         {ExternalIP, InternalIP} ->
+            ?LOG_USER_CMD("Add a NAT map from External IP ~p to Internal IP ~p", [ExternalIP, InternalIP]),
             riak_core_ring_manager:ring_trans(
                 fun riak_repl_ring:add_nat_map/2,
                 {ExternalIP, InternalIP}),
@@ -563,11 +601,40 @@ del_nat_map([External, Internal]) ->
             io:format("Bad internal IP ~p", [Reason]),
             error;
         {ExternalIP, InternalIP} ->
+            ?LOG_USER_CMD("Delete a NAT map from External IP ~p to Internal IP ~p", [ExternalIP, InternalIP]),
             riak_core_ring_manager:ring_trans(
                 fun riak_repl_ring:del_nat_map/2,
                 {ExternalIP, InternalIP}),
             ok
     end.
+
+% NB: the following commands are around the "Dead Cluster" redirect feature,
+%     306. They all operate using cluster_id (tuple), not clustername, for now, as 
+%     of this writing we had no reliable way to map a clustername to an id 
+%     over disterlang. When this API becomes available, this feature may use
+%     it. 
+add_block_provider_redirect([FromClusterId, ToClusterId]) ->
+    lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
+    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, 
+                           FromClusterId, ToClusterId).
+
+show_block_provider_redirect([FromClusterId]) ->
+    case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, FromClusterId) of
+        undefined ->
+            io:format("No mapping for ~p~n", [FromClusterId]);
+        ToClusterId ->
+            io:format("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId])
+    end.
+
+delete_block_provider_redirect([FromClusterId]) ->
+    lager:info("Deleting redirect to ~p", [FromClusterId]),
+    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
+
+show_local_cluster_id([]) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterId = lists:flatten(
+        io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+    io:format("local cluster id: ~p~n", [ClusterId]).
 
 %% helper functions
 
@@ -622,7 +689,7 @@ extract_rt_fs_send_recv_kbps(Most) ->
     RTRecvKbps = sum_rt_recv_kbps(Most),
     FSSendKbps = sum_fs_send_kbps(Most),
     FSRecvKbps = sum_fs_recv_kbps(Most),
-    [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kgbps, RTRecvKbps},
+    [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kbps, RTRecvKbps},
         {fullsync_send_kbps, FSSendKbps}, {fullsync_recv_kbps, FSRecvKbps}].
 
 print_ip_and_maybe_port({IP, Port}) when is_tuple(IP) ->

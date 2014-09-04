@@ -38,7 +38,7 @@
          terminate/2, code_change/3]).
 
 %% Server name has changed for 0.14.0 now that the gen_leader
-%% portion has been broken out into riak_repl_leader_helper. 
+%% portion has been broken out into riak_repl_leader_helper.
 %% During rolling upgrades old gen_leader messages from pre-0.14
 %% would be sent to the gen_server
 -define(SERVER, riak_repl_leader_gs).
@@ -58,12 +58,12 @@
                 leader_mref=undefined :: undefined | reference(), % monitor
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
-                receivers=[] :: [{reference(),pid()}], % {Mref,Pid} pairs
+                receivers=[] :: [{reference(),pid(), drop | send}],
                 check_tref :: timer:tref(),     % check mailbox timer
                 elected_mbox_size = 0 :: integer(), % elected leader box size
                 lastpoll = {0, 0, 0}
                }).
-     
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -93,7 +93,7 @@ postcommit(Object) ->
     end.
 
 %% Add the pid of a riak_repl_tcp_sender process.  The pid is monitored
-%% and removed from the list when it exits. 
+%% and removed from the list when it exits.
 add_receiver_pid(Pid) when is_pid(Pid) ->
     gen_server:call(?SERVER, {add_receiver_pid, Pid}, infinity).
 
@@ -193,7 +193,7 @@ handle_cast({set_candidates, CandidatesIn, WorkersIn}, State) ->
             {noreply, State};
         {_OldCandidates, _OldWorkers} ->
             UpdState1 = remonitor_leader(undefined, State),
-            UpdState2 = UpdState1#state{candidates=Candidates, 
+            UpdState2 = UpdState1#state{candidates=Candidates,
                                         workers=Workers,
                                         leader_node=undefined},
             leader_change(State#state.i_am_leader, false),
@@ -219,12 +219,12 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
                                     end,
                                     {Mref, Pid, S}
                             end, Receivers),
-                    [P ! {repl, Msg} || {_Mref, P, send} <- R2],
+                    _ = [P ! {repl, Msg} || {_Mref, P, send} <- R2],
                     riak_repl_stats:objects_sent(),
                     {noreply, State#state{receivers=R2,
                                           lastpoll=os:timestamp()}};
                 _ ->
-                    [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
+                    _ = [P ! {repl, Msg} || {_Mref, P, send} <- Receivers],
                     riak_repl_stats:objects_sent(),
                     {noreply, State}
             end
@@ -253,7 +253,7 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
             %% TODO: create a new stat rather than abusing this counter.
             riak_repl_util:dropped_realtime_hook(Msg),
             riak_repl_stats:objects_dropped_no_clients()
-    end,        
+    end,
     {noreply, State};
 handle_cast({repl, Msg}, State) ->
     %% No leader currently defined - cannot do anything
@@ -297,10 +297,12 @@ handle_info(check_mailbox, State) when State#state.i_am_leader =:= false,
                       exit(normal)
                   catch
                       _:_ ->
-                          ok
+                          exit(normal)
                   after
                       exit(normal)
-                  end
+                  end,
+
+                  exit(normal)
           end),
     {noreply, State};
 handle_info(check_mailbox, State) ->
@@ -388,8 +390,8 @@ remonitor_leader(LeaderPid, State) ->
             State#state{leader_mref = erlang:monitor(process, LeaderPid)}
     end.
 
-%% Restart the helper 
-restart_helper(State) ->    
+%% Restart the helper
+restart_helper(State) ->
     case State#state.helper_pid of
         undefined -> % no helper running, start one if needed
             maybe_start_helper(State);
@@ -421,19 +423,23 @@ leader_change(A, A) ->
 leader_change(false, true) ->
     %% we've become the leader, stop any local clients
     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-    [riak_repl_client_sup:stop_site(SiteName) || 
-        {SiteName, _Pid} <- RunningSiteProcs];
+    _ = [riak_repl_client_sup:stop_site(SiteName) ||
+        {SiteName, _Pid} <- RunningSiteProcs],
+    ok;
 leader_change(true, false) ->
     %% we've lost the leadership, close any local listeners
     case app_helper:get_env(riak_repl, inverse_connection) of
         true ->
             %% in the inverted case need to stop sites
             RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-            [riak_repl_client_sup:stop_site(SiteName) ||
-                {SiteName, _Pid} <- RunningSiteProcs];
-        _ -> ok
+            _ = [riak_repl_client_sup:stop_site(SiteName) ||
+                {SiteName, _Pid} <- RunningSiteProcs],
+            ok;
+        _ ->
+            ok
     end,
-    riak_repl_listener_sup:close_all_connections().
+    _ = riak_repl_listener_sup:close_all_connections(),
+    ok.
 
 %% Inspect the cluster and determine if we can balance clients between
 %% non-leader nodes
@@ -463,7 +469,7 @@ ensure_sites(Leader) ->
             end,
 
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-            ReplConfig = 
+            ReplConfig =
             case riak_repl_ring:get_repl_config(Ring) of
                 undefined ->
                     riak_repl_ring:initial_config();
@@ -486,16 +492,17 @@ ensure_sites(Leader) ->
                 _ ->
                     %% stop any local clients on the leader
                     RunningSiteProcs = riak_repl_client_sup:running_site_procs(),
-                    [riak_repl_client_sup:stop_site(SiteName) || 
+                    _ = [riak_repl_client_sup:stop_site(SiteName) ||
                         {SiteName, _Pid} <- RunningSiteProcs],
                     ConfiguredSites = [Site#repl_site.name ||
                         Site <- dict:fetch(sites, ReplConfig)],
                     {ToStop, ToStart} = balance_clients(CurrentConfig,
                         ConfiguredSites),
-                    [rpc:call(Node, riak_repl_client_sup, stop_site, [Site])
+                    _ = [riak_core_util:safe_rpc(Node, riak_repl_client_sup, stop_site, [Site])
                         || {Node, Site} <- ToStop],
-                    [rpc:call(Node, riak_repl_client_sup, start_site, [Site])
-                        || {Node, Site} <- ToStart]
+                    _ = [riak_core_util:safe_rpc(Node, riak_repl_client_sup, start_site, [Site])
+                        || {Node, Site} <- ToStart],
+                    ok
             end
     end.
 
@@ -761,8 +768,9 @@ prop_balance() ->
         end).
 
 %% eunit wrapper
-eqc_test() ->
-    ?assert(eqc:quickcheck(eqc:testing_time(4, prop_balance()))).
+eqc_test_() ->
+    {spawn,
+     [{timeout, 10, ?_assert(eqc:quickcheck(eqc:testing_time(4, prop_balance())))}]}.
 
 -endif.
 

@@ -54,7 +54,7 @@ send_heartbeat(Pid) ->
     gen_server:cast(Pid, send_heartbeat).
 
 init([Remote, Transport, Socket, Version]) ->
-    riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
+    _ = riak_repl2_rtq:register(Remote), % re-register to reset stale deliverfun
     Me = self(),
     Deliver = fun(Result) -> gen_server:call(Me, {pull, Result}, infinity) end,
     State = #state{remote = Remote, transport = Transport, proto = Version,
@@ -74,14 +74,16 @@ handle_call({pull, {Seq, NumObjects, _BinObjs, _Meta} = Entry}, From,
     {noreply, State2#state{sent_seq = Seq, objects = Objects + NumObjects}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-handle_call(status, _From, State = 
+handle_call(status, _From, State =
                 #state{sent_seq = SentSeq, objects = Objects}) ->
     {reply, [{sent_seq, SentSeq},
              {objects, Objects}], State}.
 
 handle_cast(send_heartbeat, State = #state{transport = T, socket = S}) ->
-    HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
-    T:send(S, HBIOL),
+    spawn(fun() ->
+            HBIOL = riak_repl2_rtframe:encode(heartbeat, undefined),
+            T:send(S, HBIOL)
+          end),
     {noreply, State};
 
 handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
@@ -122,12 +124,27 @@ maybe_send(Transport, Socket, QEntry, State) ->
             lager:debug("Did not forward to ~p; destination already in routed list", [Remote]),
             State;
         false ->
-            QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
-            {Encoded, State2} = encode(QEntry2, State),
-            lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
-            Transport:send(Socket, Encoded),
-            State2
+            case State#state.proto of
+                {Major, _Minor} when Major >= 3 ->
+                    encode_and_send(QEntry, Remote, Transport, Socket, State);
+                _ ->
+                    case riak_repl_bucket_type_util:is_bucket_typed(Meta) of
+                        false ->
+                            encode_and_send(QEntry, Remote, Transport, Socket, State);
+                        true ->
+                            lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending"),
+                            State
+                    end
+            end
     end.
+
+encode_and_send(QEntry, Remote, Transport, Socket, State) ->
+    QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
+    {Encoded, State2} = encode(QEntry2, State),
+    lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
+    Transport:send(Socket, Encoded),
+    State2.
+
 
 encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {2,0} ->
     Skips = orddict:fetch(skip_count, Meta),
@@ -138,7 +155,7 @@ encode({Seq, _NumObjs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver < {
     Encoded = riak_repl2_rtframe:encode(objects, {Seq2, BinObjs2}),
     State2 = State#state{v1_offset = Offset, v1_seq_map = V1Map},
     {Encoded, State2};
-encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = {2,0}}) ->
+encode({Seq, _NumbOjbs, BinObjs, Meta}, State = #state{proto = Ver}) when Ver >= {2,0} ->
     {riak_repl2_rtframe:encode(objects_and_meta, {Seq, BinObjs, Meta}), State}.
 
 get_routed(Meta) ->

@@ -25,7 +25,7 @@
 %% service manager callback Function Exports
 %% ------------------------------------------------------------------
 
--export([register_service/0, start_service/5]).
+-export([sync_register_service/0, start_service/5]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -47,7 +47,6 @@ start_link(Socket, Transport, Proto, Props) ->
 
 %% @doc Get the stats for every serv.
 %% @see status/1
--spec status() -> [tuple()].
 status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
@@ -78,12 +77,12 @@ status(Pid, Timeout) ->
 %% service manager Function Definitions
 %% ------------------------------------------------------------------
 
-register_service() ->
+sync_register_service() ->
     ProtoPrefs = {fs_coordinate, [{1,0}]},
     TcpOptions = [{keepalive, true}, {packet, 4}, {active, false}, 
         {nodelay, true}],
     HostSpec = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
-    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+    riak_core_service_mgr:sync_register_service(HostSpec, {round_robin, undefined}).
 
 start_service(Socket, Transport, Proto, _Args, Props) ->
     {ok, Pid} = riak_repl2_fscoordinator_serv_sup:start_child(Socket,
@@ -97,14 +96,16 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 %% ------------------------------------------------------------------
 
 %% @hidden
-init({Socket, Transport, Proto, _Props}) ->
+init({Socket, Transport, OkProto, _Props}) ->
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
-    lager:info("Starting fullsync coordinator server (sink) with max_fssink_node=~p", [Max]),
+    {ok, Proto} = OkProto,
+    lager:info("Starting fullsync coordinator server (sink) with
+               max_fssink_node=~p", [Max]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv,
                                        SocketTag}, Transport),
-    {ok, #state{socket = Socket, transport = Transport, proto = Proto}}.
+    {ok, #state{socket = Socket, transport = Transport, proto = Proto }}.
 
 
 %% @hidden
@@ -123,20 +124,19 @@ handle_call(_Request, _From, State) ->
 
 
 %% @hidden
-handle_cast(Msg, State) ->
-    lager:info("Unexpected message ~p", [Msg]),
+handle_cast(_Msg, State) ->
     {noreply, State}.
 
 
 %% @hidden
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
-    lager:info("Connect closed"),
+    lager:info("Fullsync sink connect closed"),
     {stop, normal, State};
 
 handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
-    lager:error("Connection closed unexpectedly"),
+    lager:error("Fullsync sink connection closed unexpectedly"),
     {stop, normal, State};
 
 handle_info({Proto, Socket, Data}, #state{socket = Socket,
@@ -171,7 +171,8 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
     % which node is the partition for
     % is that node available
     % send an appropriate reply
-    #state{transport = Transport, socket = Socket} = State,
+    AnyaCompat = app_helper:get_env(riak_repl, anya_fs_compat, false),
+    #state{transport = Transport, socket = Socket, proto = _Proto } = State,
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Node = get_partition_node(Partition, Ring),
     Map = riak_repl_ring:get_nat_map(Ring),
@@ -196,7 +197,12 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                                     lager:warning("There's no NAT mapping for"
                                         "~p:~b to an external IP on node ~p",
                                         [ListenIP, Port, Node]),
-                                    {location_down, Partition, Node};
+                                    case AnyaCompat of
+                                        true ->
+                                            {location_down, Partition};
+                                        false ->
+                                            {location_down, Partition, Node}
+                                    end;
                                 {ExternalIP, ExternalPort} ->
                                     {location, Partition, {Node, ExternalIP,
                                             ExternalPort}};
@@ -207,13 +213,22 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                     end;
                 {error, _} ->
                     riak_repl2_fs_node_reserver:unreserve(Partition),
-                    {location_down, Partition, Node}
+                    case AnyaCompat of
+                      true -> {location_down, Partition};
+                      false -> {location_down, Partition, Node}
+                    end
             end;
         busy ->
             lager:debug("node_reserver returned location_busy for partition ~p on node ~p", [Partition, Node]),
-            {location_busy, Partition, Node};
+            case AnyaCompat of
+                true -> {location_busy, Partition};
+                false -> {location_busy, Partition, Node}
+            end;
         down ->
-            {location_down, Partition, Node}
+            case AnyaCompat of
+                true -> {location_down, Partition};
+                false -> {location_down, Partition, Node}
+            end
     end,
     Transport:send(Socket, term_to_binary(Reply)),
     State;
@@ -227,14 +242,26 @@ get_partition_node(Partition, Ring) ->
     proplists:get_value(Partition, Owners).
 
 get_node_ip_port(Node, NormIP) ->
-    {ok, {_IP, Port}} = rpc:call(Node, application, get_env, [riak_core, cluster_mgr]),
     {ok, IfAddrs} = inet:getifaddrs(),
-    CIDR = riak_repl2_ip:determine_netmask(IfAddrs, NormIP),
-    case get_matching_address(Node, NormIP, CIDR) of
-        {ok, {ListenIP, _}} ->
-            {ok, {ListenIP, Port}};
-        Else ->
-            Else
+    case riak_repl2_ip:determine_netmask(IfAddrs, NormIP) of
+        undefined ->
+            lager:warning("Can't determine netmask for ~p, please ensure you have NAT configured correctly.",
+                          [NormIP]),
+            {error, ip_not_local};
+        CIDR ->
+            case get_matching_address(Node, NormIP, CIDR) of
+                {ok, {ListenIP, _}} ->
+                    case riak_core_util:safe_rpc(Node, application, get_env, [riak_core, cluster_mgr]) of
+                        {ok, {_RemoteIP, Port}} ->
+                            {ok, {ListenIP, Port}};
+                        RpcElse ->
+                            lager:error("Unable to query node ~p for it's cluster manager port due to ~p", [Node, RpcElse]),
+                            {error, remote_node_not_reachable}
+                    end;
+                Else ->
+                    lager:error("Unable to get matching address for ~p/~p from ~p due to ~p", [NormIP, CIDR, Node, Else]),
+                    Else
+            end
     end.
 
 get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
@@ -242,11 +269,11 @@ get_matching_address(Node, NormIP, Masked) when Node =:= node() ->
     {ok, Res};
 
 get_matching_address(Node, NormIP, Masked) ->
-    case rpc:call(Node, riak_repl2_ip, get_matching_address, [NormIP, Masked]) of
+    case riak_core_util:safe_rpc(Node, riak_repl2_ip, get_matching_address, [NormIP, Masked]) of
         % this is a clause that will be removed/useless once all nodes on a 
         % cluster are >= 1.3
         {badrpc, {'EXIT', {undef, _StackTrace}}} ->
-            case rpc:call(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
+            case riak_core_util:safe_rpc(Node, riak_repl_app, get_matching_address, [NormIP, Masked]) of
                 {badrpc, Err} ->
                     {error, Err};
                 OkRes ->

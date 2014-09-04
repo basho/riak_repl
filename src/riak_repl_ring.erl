@@ -274,6 +274,9 @@ set_clusterIpAddrs(Ring, {ClusterName, Addrs}) ->
                            _Addrs ->
                                lists:keyreplace(ClusterName, 1, OldClusters, Cluster)
                        end;
+                   _ when Addrs == [] ->
+                       %% New cluster has no members, don't add it to the ring
+                       OldClusters;
                    _ ->
                        [Cluster | OldClusters]
                end,
@@ -362,7 +365,7 @@ rt_cascades_trans(Ring, Val) ->
                               dict:store(realtime_cascades, Val, RC),
                               Ring)};
         _ ->
-            lager:warning("ignoring invalid casacding realtime setting: ~p; using old setting ~p", [Val, OldVal]),
+            lager:warning("ignoring invalid cascading realtime setting: ~p; using old setting ~p", [Val, OldVal]),
             {ignore, {invalid_option, Val}}
     end.
 

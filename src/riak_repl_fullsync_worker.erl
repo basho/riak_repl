@@ -45,18 +45,19 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
             %% key and let the other side sort things out.
             case riak_repl_util:repl_helper_send(RObj, Client) of
                 cancel ->
-                    skipped;
+                    ok;
                 Objects when is_list(Objects) ->
                     %% Cindy: Santa, why can we encode our own binary object?
                     %% Santa: Because the send() function will convert our tuple
                     %%        to a binary
-                    [riak_repl_tcp_server:send(Transport, Socket,
+                    _ = [riak_repl_tcp_server:send(Transport, Socket,
                                                riak_repl_util:encode_obj_msg(
                                                  Ver,{fs_diff_obj,O}))
                      || O <- Objects],
-                    riak_repl_tcp_server:send(Transport, Socket,
+                    _ = riak_repl_tcp_server:send(Transport, Socket,
                                               riak_repl_util:encode_obj_msg(
-                                                Ver,{fs_diff_obj,RObj}))
+                                                Ver,{fs_diff_obj,RObj})),
+                    ok
             end,
             ok;
         {error, notfound} ->
@@ -78,7 +79,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
 
     Preflist = [{Partition, OwnerNode}],
 
-    ReqID = make_ref(),
+    ReqID = make_req_id(),
 
     Req = ?KV_GET_REQ{bkey={B, K}, req_id=ReqID},
     %% Assuming this function is called from a FSM process
@@ -97,18 +98,19 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
                     {ok, Client} = riak:local_client(),
                     case riak_repl_util:repl_helper_send(RObj, Client) of
                         cancel ->
-                            skipped;
+                            ok;
                         Objects when is_list(Objects) ->
                             %% Cindy: Santa, why can we encode our own binary object?
                             %% Santa: Because, Cindy, the send() function accepts
                             %%        either a binary or a term.
-                            [riak_repl_tcp_server:send(Transport, Socket,
+                            _ = [riak_repl_tcp_server:send(Transport, Socket,
                                                        riak_repl_util:encode_obj_msg(
                                                          Ver,{fs_diff_obj,O}))
                              || O <- Objects],
-                            riak_repl_tcp_server:send(Transport, Socket,
+                            _ = riak_repl_tcp_server:send(Transport, Socket,
                                                       riak_repl_util:encode_obj_msg(
-                                                        Ver,{fs_diff_obj,RObj}))
+                                                        Ver,{fs_diff_obj,RObj})),
+                            ok
                     end,
                     ok;
                 {r, {error, notfound}, _, ReqID} ->
@@ -157,7 +159,10 @@ do_binputs_internal(BinObjs, DoneFun, Pool, Ver) ->
     %% TODO: add mechanism for detecting put failure so 
     %% we can drop rtsink and have it resent
     Objects = riak_repl_util:from_wire(Ver, BinObjs),
-    [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
+    _ = [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
     poolboy:checkin(Pool, self()),
     %% let the caller know
     DoneFun().
+
+make_req_id() ->
+        erlang:phash2({self(), os:timestamp()}). % stolen from riak_client

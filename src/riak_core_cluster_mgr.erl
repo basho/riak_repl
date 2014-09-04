@@ -47,13 +47,9 @@
 -behaviour(gen_server).
 
 -include("riak_core_cluster.hrl").
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
--else.
--define(TRACE(Stmt),ok).
 -endif.
 
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
@@ -65,7 +61,7 @@
 %% State of a resolved remote cluster
 -record(cluster, {name :: string(),     % obtained from the remote cluster by ask_name()
                   members :: [ip_addr()], % list of suspected ip addresses for cluster
-                  last_conn :: erlang:now() % last time we connected to the remote cluster
+                  last_conn :: erlang:timestamp() % last time we connected to the remote cluster
                  }).
 
 %% remotes := orddict, key = ip_addr(), value = unresolved | clustername()
@@ -85,7 +81,6 @@
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
-         register_cluster_locator/0,
          register_member_fun/1,
          register_restore_cluster_targets_fun/1,
          register_save_cluster_members_fun/1,
@@ -94,7 +89,8 @@
          get_connections/0,
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
-         stop/0
+         stop/0,
+         connect_to_clusters/0
          ]).
 
 %% gen_server callbacks
@@ -112,7 +108,6 @@
 %%% API
 %%%===================================================================
 %% @doc start the Cluster Manager
--spec(start_link() -> ok).
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
@@ -121,34 +116,26 @@ start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
-%% @doc register a bootstrap cluster locator that just uses the address passed
-%% to it for simple ip addresses and one that looks up clusters by name. This
-%% is needed before the cluster manager is up and running so that the
-%% connection supervisior can kick off some initial connections if some
-%% remotes are already known (in the ring) from previous additions.
--spec register_cluster_locator() -> 'ok'.
-register_cluster_locator() ->
-    register_cluster_addr_locator().
-
 %% @doc Tells us who the leader is. Called by riak_repl_leader whenever a
 %% leadership election takes place.
--spec set_leader(LeaderNode :: node(), _LeaderPid :: pid()) -> 'ok'.
 set_leader(LeaderNode, _LeaderPid) ->
     gen_server:cast(?SERVER, {set_leader_node, LeaderNode}).
 
 %% Reply with the current leader node.
--spec get_leader() -> node().
 get_leader() ->
     gen_server:call(?SERVER, leader_node, infinity).
 
+%% Reply with the current leader node.
+connect_to_clusters() ->
+    gen_server:call(?SERVER, connect_to_clusters, infinity).
+
 %% @doc True if the local manager is the leader.
--spec get_is_leader() -> boolean().
 get_is_leader() ->
     gen_server:call(?SERVER, get_is_leader, infinity).
 
 %% @doc Register a function that will get called to get out local riak node
-%% member's IP addrs. MemberFun(inet:addr()) -> [{IP,Port}] were IP is a string
--spec register_member_fun(MemberFun :: fun((inet:addr()) -> [{string(),pos_integer()}])) -> 'ok'.
+%% member's IP addrs. MemberFun(ip_addr()) -> [{IP,Port}] were IP is a string
+-spec register_member_fun(MemberFun :: fun((ip_addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
@@ -182,7 +169,6 @@ get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity).
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
--spec(get_ipaddrs_of_cluster(clustername()) -> [ip_addr()]).
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
 
@@ -206,7 +192,7 @@ init(Defaults) ->
         false ->
             ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
             ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
-            riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS});
+            riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
         true ->
             ok
     end,
@@ -244,6 +230,10 @@ handle_call({get_my_members, MyAddr}, _From, State) ->
 
 handle_call(leader_node, _From, State) ->
     {reply, State#state.leader_node, State};
+
+handle_call(connect_to_clusters, _From, State) ->
+    connect_to_persisted_clusters(State),
+    {reply, ok, State};
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
@@ -329,7 +319,7 @@ handle_cast({register_restore_cluster_targets_fun, Fun}, State) ->
     {noreply, State#state{restore_targets_fun=Fun}};
 
 handle_cast({add_remote_cluster, {_IP,_Port} = Addr}, State) ->
-    case State#state.is_leader of
+    _ = case State#state.is_leader of
         false ->
             %% forward request to leader manager
             proxy_cast({add_remote_cluster, Addr}, State);
@@ -380,13 +370,13 @@ handle_cast({cluster_updated, OldName, NewName, Members, Addr, Remote}, State) -
     end;
 
 handle_cast(_Unhandled, _State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server cast: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server cast: ~p", [_Unhandled]),
     {error, unhandled}. %% this will crash the server
 
 %% it is time to poll all clusters and get updated member lists
 handle_info(poll_clusters_timer, State) when State#state.is_leader == true ->
     Connections = riak_core_cluster_conn_sup:connections(),
-    [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
+    _ = [Pid ! {self(), poll_cluster} || {_Remote, Pid} <- Connections],
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
     {noreply, State};
 handle_info(poll_clusters_timer, State) ->
@@ -402,20 +392,11 @@ handle_info(garbage_collection_timer, State) ->
     {noreply, State1};
 
 handle_info(connect_to_clusters, State) ->
-    %% Open a connection to all known (persisted) clusters
-    case State#state.is_leader of
-        true ->
-            Fun = State#state.restore_targets_fun,
-            ClusterTargets = Fun(),
-            lager:debug("Cluster Manager will connect to clusters: ~p", [ClusterTargets]),
-            connect_to_targets(ClusterTargets);
-        _ ->
-            ok
-    end,
+    connect_to_persisted_clusters(State),
     {noreply, State};
 
 handle_info(_Unhandled, State) ->
-    ?TRACE(?debugFmt("Unhandled gen_server info: ~p", [_Unhandled])),
+    lager:debug("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -437,11 +418,9 @@ schedule_cluster_connections() ->
     erlang:send_after(60000, self(), connect_to_clusters).
 
 register_defaults(Defaults, State) ->
-    %% register a default cluster locator by identity
-    register_cluster_addr_locator(),
     case Defaults of
         [] ->
-            State;            
+            State;
         [MembersFun, SaveFun, RestoreFun] ->
             lager:debug("Registering default cluster manager functions."),
             State#state{member_fun=MembersFun,
@@ -489,7 +468,8 @@ schedule_gc_timer(0) ->
     ok;
 schedule_gc_timer(Interval) ->
     %% schedule a timer to garbage collect old cluster and endpoint data
-    erlang:send_after(Interval, self(), garbage_collection_timer).
+    _ = erlang:send_after(Interval, self(), garbage_collection_timer),
+    ok.
 
 is_valid_ip(Addr) when is_list(Addr) ->
     %% a string. try and parse it.
@@ -629,7 +609,8 @@ ensure_remote_connection({cluster_by_name, "undefined"}) ->
     ok;
 ensure_remote_connection(Remote) ->
     %% add will make sure there is only one connection per remote
-    riak_core_cluster_conn_sup:add_remote_connection(Remote).
+    _ = riak_core_cluster_conn_sup:add_remote_connection(Remote),
+    ok.
 
 %% Drop our connection to the remote cluster.
 remove_remote_connection(Remote) ->
@@ -683,13 +664,6 @@ add_ips_to_cluster(Name, RebalancedMembers, Clusters) ->
                            last_conn = erlang:now()},
                   Clusters).
 
-%% register a locator that just uses the address passed to it.
-%% This is a way to boot strap a connection to a cluster by IP address.
-register_cluster_addr_locator() ->
-    % Identity locator function just returns a list with single member Addr
-    Locator = fun(Addr, _Policy) -> {ok, [Addr]} end,
-    ok = riak_core_connection_mgr:register_locator(?CLUSTER_ADDR_LOCATOR_TYPE, Locator).
-
 %% Setup a connection to all given cluster targets
 connect_to_targets(Targets) ->
     lists:foreach(fun(Target) -> ensure_remote_connection(Target) end,
@@ -716,10 +690,11 @@ become_proxy(State, LeaderNode) when State#state.is_leader == true ->
     case riak_core_cluster_conn_sup:connections() of
         [] ->
             ok;
-        Connections ->        
+        Connections ->
             lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
-            [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
-             || {Remote, _Pid} <- Connections]
+            _ = [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
+             || {Remote, _Pid} <- Connections],
+            ok
     end,
     State#state{is_leader = false};
 become_proxy(State, LeaderNode) ->
@@ -734,7 +709,7 @@ persist_members_to_ring(State, ClusterName, Members) ->
 %% that were saved in the ring
 cluster_mgr_sites_fun() ->
     %% get cluster names from cluster manager
-    Ring = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Clusters = riak_repl_ring:get_clusters(Ring),
     [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].    
 
@@ -805,4 +780,18 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
                         [self(), Other]),
             % ignore and keep trying to be a nice service
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
+    end.
+
+%% @doc If the current leader, connect to all clusters that have been
+%%      currently persisted in the ring.
+connect_to_persisted_clusters(State) ->
+    case State#state.is_leader of
+        true ->
+            Fun = State#state.restore_targets_fun,
+            ClusterTargets = Fun(),
+            lager:debug("Cluster Manager will connect to clusters: ~p", 
+                        [ClusterTargets]),
+            connect_to_targets(ClusterTargets);
+        _ ->
+            ok
     end.

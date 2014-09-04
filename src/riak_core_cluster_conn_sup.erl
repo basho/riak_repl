@@ -10,10 +10,6 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
--else.
--define(TRACE(Stmt),ok).
 -endif.
 
 -export([start_link/0,
@@ -42,8 +38,8 @@ add_remote_connection(Remote) ->
 remove_remote_connection(Remote) ->
     lager:debug("Disconnecting from remote cluster at: ~p", [Remote]),
     %% remove supervised cluster connection
-    supervisor:terminate_child(?MODULE, Remote),
-    supervisor:delete_child(?MODULE, Remote),
+    _ = supervisor:terminate_child(?MODULE, Remote),
+    _ = supervisor:delete_child(?MODULE, Remote),
     %% This seems hacky, but someone has to tell the connection manager to stop
     %% trying to reach this target if it hasn't connected yet. It's the supervised
     %% cluster connection that requests the connection, but it's going to die, so
@@ -60,12 +56,6 @@ is_connected(Remote) ->
 
 %% @private
 init([]) ->
-    %% %% TODO: Move before riak_core_cluster_mgr_sup start
-    %% %% once connmgr is started by core. This must be registered
-    %% %% before the connections start up. Uses an identity function
-    %% %% to boostrap cluster connections by address.
-    %% riak_core_cluster_mgr:register_cluster_locator(),
-
     %% %% TODO: remote list of test addresses.
     %% Remotes = initial clusters or ip addrs from ring
     %% Children = [make_remote(Remote) || Remote <- Remotes],

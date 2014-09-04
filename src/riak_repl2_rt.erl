@@ -2,7 +2,9 @@
 %% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_rt).
 
-%% @doc Realtime replication 
+-include("riak_repl.hrl").
+
+%% @doc Realtime replication
 %%
 %% High level responsibility...
 %%
@@ -15,6 +17,8 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+
+
 -record(state, {sinks = []}).
 
 %% API - is there any state? who watches ring events?
@@ -98,20 +102,20 @@ ensure_rt(WantEnabled0, WantStarted0) ->
         _ ->
             %% Do enables/starts first to capture maximum amount of rtq
 
-            %% Create a registration to begin queuing, rtsource_sup:ensure_started 
+            %% Create a registration to begin queuing, rtsource_sup:ensure_started
             %% will bring up an rtsource process that will re-register
-            [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
-            [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
+            _ = [riak_repl2_rtq:register(Remote) || Remote <- ToEnable],
+            _ = [riak_repl2_rtsource_conn_sup:enable(Remote) || Remote <- ToStart],
 
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
-            [begin
-                 riak_repl2_rtsource_conn_sup:disable(Remote),
+            _ = [begin
+                 _ = riak_repl2_rtsource_conn_sup:disable(Remote),
                  riak_repl2_rtq:register(Remote)
              end || Remote <- ToStop],
 
             %% Unregister disabled sources, freeing up the queue
-            [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
+            _ = [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
 
             [{enabled, ToEnable},
              {started, ToStart},
@@ -129,27 +133,36 @@ register_remote_locator() ->
 register_sink(Pid) ->
     gen_server:call(?SERVER, {register_sink, Pid}, infinity).
 
-%% Get list of sink pids 
+%% Get list of sink pids
 %% TODO: Remove this once rtsink_sup is working right
 get_sink_pids() ->
     gen_server:call(?SERVER, get_sink_pids, infinity).
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
-    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined))++[RObj] of
+    lager:debug("maybe a mutate happened?~n    ~p", [RObj]),
+    case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined)) of
         %% always put the objects onto the shared queue in the new format; we'll
         %% down-convert if we have to before sending them to the RT sinks (based
         %% on what the RT source and sink negotiated as the common version).
-        Objects when is_list(Objects) ->
-            BinObjs = riak_repl_util:to_wire(w1, Objects),
+        Objects0 when is_list(Objects0) ->
+            Objects = Objects0 ++ [RObj],
+            Meta = set_bucket_meta(RObj),
+
+            BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
+                false ->
+                    riak_repl_util:to_wire(w1, Objects);
+                true ->
+                    riak_repl_util:to_wire(w2, Objects)
+            end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of
                 undefined ->
-                    riak_repl2_rtq:push(length(Objects), BinObjs);
+                    riak_repl2_rtq:push(length(Objects), BinObjs, Meta);
                 _ ->
                     %% we're shutting down and repl is stopped or stopping...
-                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs)
+                    riak_repl2_rtq_proxy:push(length(Objects), BinObjs, Meta)
             end;
         cancel -> % repl helper callback requested not to send over realtime
             ok
@@ -165,13 +178,13 @@ handle_call(status, _From, State = #state{sinks = SinkPids}) ->
                    riak_repl2_rtsource_conn:status(Pid, Timeout)
                catch
                    _:_ ->
-                       {Remote, Pid, unavailable} 
+                       {Remote, Pid, unavailable}
                end || {Remote, Pid} <- riak_repl2_rtsource_conn_sup:enabled()],
     Sinks = [try
                  riak_repl2_rtsink_conn:status(Pid, Timeout)
              catch
                  _:_ ->
-                     {will_be_remote_name, Pid, unavailable} 
+                     {will_be_remote_name, Pid, unavailable}
              end || Pid <- SinkPids],
     Status = [{enabled, enabled()},
               {started, started()},
@@ -190,7 +203,7 @@ handle_cast(_Msg, State) ->
     %% TODO: log unknown message
     {noreply, State}.
 
-handle_info({'DOWN', _MRef, process, SinkPid, _Reason}, 
+handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
             State = #state{sinks = Sinks}) ->
     %%TODO: Check how ranch logs sink process death
     Sinks2 = Sinks -- [SinkPid],
@@ -199,14 +212,12 @@ handle_info(Msg, State) ->
     %%TODO: Log unhandled message - e.g. timed out status result
     lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
-    
+
 terminate(_Reason, _State) ->
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-
 
 do_ring_trans(F, A) ->
     case riak_core_ring_manager:ring_trans(F, A) of
@@ -214,4 +225,16 @@ do_ring_trans(F, A) ->
             ok;
         ER ->
             ER
+    end.
+
+set_bucket_meta(Obj) ->
+    M = orddict:new(),
+    case riak_object:bucket(Obj) of
+        {Type, _B} ->
+            PropsHash = riak_repl_bucket_type_util:property_hash(Type),
+            M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
+            M2 = orddict:store(?BT_META_TYPE, Type, M1),
+            orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
+        _B ->
+            orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.

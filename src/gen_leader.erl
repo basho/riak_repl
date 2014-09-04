@@ -99,13 +99,9 @@
          worker_announce/2
         ]).
 
--export([behaviour_info/1]).
-
 %% Internal exports
--export([init_it/6, 
-         print_event/3
-         %%, safe_send/2
-        ]).
+-export([init_it/6,
+         print_event/3]).
 
 -import(error_logger , [format/2]).
 
@@ -149,22 +145,24 @@
 %%% Interface functions.
 %%% ---------------------------------------------------
 
-%% @hidden
-behaviour_info(callbacks) ->
-    [{init,1},
-     {elected,3},
-     {surrendered,3},
-     {handle_leader_call,4},
-     {handle_leader_cast,3},
-     {from_leader,3},
-     {handle_call,4},
-     {handle_cast,3},
-     {handle_DOWN,3},
-     {handle_info,2},
-     {terminate,2},
-     {code_change,4}];
-behaviour_info(_Other) ->
-    undefined.
+-type state() :: term().
+-type election() :: term().
+-type msg() :: term().
+-type reason() :: atom().
+-type extra() :: term().
+
+-callback init(list()) -> {ok, state()} | {ignore, term()} | {stop, term()}.
+-callback elected(state(), election(), node()) -> {ok, term(), state()}.
+-callback surrendered(state(), msg(), election()) -> {ok, state()}.
+-callback handle_leader_call(msg(), pid(), state(), election()) -> {reply, term(), state()} | {reply, term(), term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
+-callback handle_leader_cast(msg(), state(), election()) -> {noreply, state()} | {stop, term(), state()}.
+-callback from_leader(msg(), state(), election()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback handle_call(msg(), pid(), state(), election()) -> {reply, term(), state()} | {noreply, state()} | {stop, term(), term(), state()}.
+-callback handle_cast(msg(), state(), election()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback handle_DOWN(node(), state(), election()) -> {ok, state()}.
+-callback handle_info(msg(), state()) -> {noreply, state()} | {ok, state()} | {stop, term(), state()}.
+-callback terminate(reason(), state()) -> ok.
+-callback code_change(atom(), state(), election(), extra()) -> {ok, state()} | {ok, state(), term()}.
 
 %% @spec (Name::node(), CandidateNodes::[node()],
 %%             OptArgs::leader_options(), Mod::atom(), Arg, Options::list()) ->
@@ -433,11 +431,14 @@ init_it(Starter,Parent,Name,Mod,{CandidateNodes,OptArgs,Arg},Options) ->
             end;
         {{ok, State}, false} ->
             proc_lib:init_ack(Starter, {ok, self()}),
-            case lists:member(self(), Workers) of 
+            case lists:member(self(), Workers) of
               false ->
-                rpc:multicall(CandidateNodes, gen_leader, 
-                              worker_announce, [Name, node(self())]);
-              _ -> nop
+                    _ = rpc:multicall(CandidateNodes,
+                                      gen_leader, worker_announce,
+                                      [Name, node(self())]),
+                    ok;
+              _ ->
+                    ok
             end,
             safe_loop(#server{parent = Parent,mod = Mod,
                               state = State,debug = Debug},
@@ -510,7 +511,7 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
     {ldr,Synch,T,Workers, From} = Msg ->
       case ( (E#election.status == wait) and (E#election.elid == T) ) of
         true ->
-          timer:cancel(E#election.cand_timer),
+          _ = timer:cancel(E#election.cand_timer),
           NewE1 = mon_node(E, From),
           NewE = NewE1#election{leader = From,
                                 leadernode = node(From),
@@ -583,7 +584,7 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
           [] ->
             %% io:format("Canceling candidate timer (timer=~w\n  down=~w\n  role=~w, leader=~w)\n",
             %%    [E#election.cand_timer, E#election.down, Role, E#election.leadernode]),
-            timer:cancel(E#election.cand_timer),
+            _ = timer:cancel(E#election.cand_timer),
             E#election{cand_timer = undefined};
           Down ->
             %% get rid of any queued up candidate_timers, since we just
@@ -594,7 +595,7 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
                     %% io:format("Sending {heartbeat, ~w} to ~w\n", [N, node()]),
                     {E#election.name, N} ! {heartbeat, node()}
                 end,
-            [F(N) || N <- Down, {ok, up} =/= net_kernel:node_info(N, state)],
+            _ = [F(N) || N <- Down, {ok, up} =/= net_kernel:node_info(N, state)],
             E
         end,
       safe_loop(Server,Role,NewE,Msg);
@@ -614,7 +615,8 @@ safe_loop(#server{mod = Mod, state = State} = Server, Role,
           case ( pos(Node,E#election.candidate_nodes) >
                  pos(node(),E#election.candidate_nodes) ) of
             true ->
-                {Name, Node} ! {heartbeat, self()};
+                {Name, Node} ! {heartbeat, self()},
+                ok;
             _ ->
                 ok
           end;
@@ -811,9 +813,9 @@ loop(#server{parent = Parent,
                                     F = fun(N) ->
                                       {Name, N} ! {checklead, node()}
                                     end,
-                                    [F(N) || N <- Down],
+                                    _ = [F(N) || N <- Down],
                                     %% schedule another heartbeat
-                                    timer:send_after(E#election.cand_timer_int, {send_checklead}),
+                                    _ = timer:send_after(E#election.cand_timer_int, {send_checklead}),
                                     loop(Server, Role, E, Msg)
                             end;
                         false ->
@@ -844,7 +846,7 @@ loop(#server{parent = Parent,
                 {candidate_timer} = Msg ->
                     NewE =
                         if E#election.down =:= [] orelse (Role =/= elected andalso E#election.leadernode =/= none) ->
-                                timer:cancel(E#election.cand_timer),
+                                _ = timer:cancel(E#election.cand_timer),
                                 %% io:format("Canceling candidate timer (timer=~w\n  down=~w\n  role=~w, leader=~w)\n",
                                 %%    [E#election.cand_timer, E#election.down, Role, E#election.leadernode]),
                                 E#election{cand_timer=undefined};
@@ -1123,7 +1125,7 @@ terminate(Reason, Msg, #server{mod = Mod,
                                state = State,
                                debug = Debug} = _Server, _Role,
           #election{name = Name, cand_timer = Timer} = _E) ->
-    timer:cancel(Timer),
+    _ = timer:cancel(Timer),
     case catch Mod:terminate(Reason, State) of
         {'EXIT', R} ->
             error_info(R, Name, Msg, State, Debug),
@@ -1340,7 +1342,7 @@ hasBecomeLeader(E,Server,Msg) ->
 
             %% io:format("==> I am the leader! (acks: ~200p)\n", [E#election.acks]),
             %% Set the internal timeout (corresponds to Periodically)
-            timer:send_after(E#election.cand_timer_int, {heartbeat, node()}),
+            _ = timer:send_after(E#election.cand_timer_int, {heartbeat, node()}),
             {E#election.name, node()} ! {send_checklead},
             %%    (It's meaningful only when I am the leader!)
             loop(Server#server{state = NewState},elected,NewE,Msg);

@@ -1,11 +1,14 @@
 -module(riak_core_cluster_mgr_sup_tests).
 -compile(export_all).
 -ifdef(EQC).
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 murdering_test_() ->
-    {setup, fun() ->
+    error_logger:tty(false),
+    {spawn,
+     [
+      {setup, fun() ->
     % if the cluster_mgr is restarted after the leader process is running,
     % it should ask about who the current leader is.
         Kids = [
@@ -42,19 +45,15 @@ murdering_test_() ->
         TopSup
     end,
     fun(TopSup) ->
-        application:stop(ranch),
-        Mecks = [riak_repl_sup, riak_core_node_watcher_events, riak_core_node_watcher],
-        [meck:unload(Meck) || Meck <- Mecks],
-        riak_core_ring_manager:stop(),
-        case whereis(riak_core_ring_events) of
-            undefined ->
-                ok;
-            Events ->
-                unlink(Events),
-                exit(Events, kill)
-        end,
-        unlink(TopSup),
-        exit(TopSup, kill)
+            process_flag(trap_exit, true),
+            catch exit(TopSup, kill),
+            catch(exit(whereis(riak_repl_client_sup), kill)),
+            riak_core_ring_manager:stop(),
+            catch exit(riak_core_ring_events, kill),
+            application:stop(ranch),
+            meck:unload(),
+            process_flag(trap_exit, false),
+            ok
     end,
     fun(_) -> [
 
@@ -64,7 +63,7 @@ murdering_test_() ->
 
         {"Kill off the cluster manager, it can still find a leader", fun() ->
             OldPid = whereis(riak_core_cluster_manager),
-            exit(OldPid, kill),
+            catch exit(OldPid, kill),
             WaitFun = fun() ->
                 case whereis(riak_core_cluster_manager) of
                     OP when OP == OldPid ->
@@ -80,7 +79,7 @@ murdering_test_() ->
             ?assertEqual(ok, WaitRes)
         end}
 
-    ] end}.
+    ] end}]}.
 
 pester(Fun) ->
     pester(Fun, 10, 100).

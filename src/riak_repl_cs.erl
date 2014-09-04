@@ -58,7 +58,8 @@ skip_common_bucket(Bucket) ->
 
 -spec skip_block_object(riak_object:riak_object()) -> boolean().
 skip_block_object(Object) ->
-    block_bucket(riak_object:bucket(Object)).
+    Bucket = riak_object:bucket(Object),
+    block_bucket(Bucket).
 
 -spec block_bucket(binary()) -> boolean().
 block_bucket(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>) ->
@@ -123,7 +124,7 @@ buckets_bucket(?BUCKETS_BUCKET) ->
 buckets_bucket(_Bucket) ->
     false.
 
--spec bool_to_ok_or_cancel(boolean) -> ok | cancel.
+-spec bool_to_ok_or_cancel(boolean()) -> ok | cancel.
 bool_to_ok_or_cancel(true) ->
     ok;
 bool_to_ok_or_cancel(false) ->

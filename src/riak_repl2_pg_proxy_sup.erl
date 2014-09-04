@@ -20,8 +20,18 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-set_leader(_Node, _Pid) ->
-    lager:info("riak_repl2_pg_proxy:set_leader()").
+set_leader(Node, _Pid) ->
+    case node() of
+        Node -> ok;
+        _ ->
+          _ = [ begin
+                _ = supervisor:terminate_child(?MODULE, Remote),
+                _ = supervisor:delete_child(?MODULE, Remote)
+             end
+                || {Remote, Pid, _, _} <-
+                      supervisor:which_children(?MODULE), is_pid(Pid)
+           ]
+    end.
 
 start_proxy(Remote) ->
     lager:debug("Starting pg_proxy for ~p", [Remote]),
@@ -30,8 +40,8 @@ start_proxy(Remote) ->
 
 stop_proxy(Node, Remote) ->
     lager:debug("Stopping pg_proxy for ~p", [Remote]),    
-    supervisor:terminate_child({?MODULE, Node}, Remote),
-    supervisor:delete_child({?MODULE, Node}, Remote).
+    _ = supervisor:terminate_child({?MODULE, Node}, Remote),
+    _ = supervisor:delete_child({?MODULE, Node}, Remote).
 
 started(Node) ->
     [{Remote, Pid} || {Remote, Pid, _, _} <-

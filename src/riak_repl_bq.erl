@@ -115,6 +115,6 @@ send_diffobj(Msgs, State0) when is_list(Msgs) ->
                 send_diffobj(Msg, State)
         end, State0, Msgs);
 send_diffobj(Msg,State=#state{transport=Transport,socket=Socket,pending=Pending}) ->
-    riak_repl_tcp_server:send(Transport, Socket, Msg),
+    _ = riak_repl_tcp_server:send(Transport, Socket, Msg),
     State#state{pending=Pending+1}.
 

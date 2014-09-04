@@ -13,7 +13,7 @@
 -define(REPL_DEFAULT_ACK_FREQUENCY, 5).
 -define(FSM_SOCKOPTS, [{packet, 4}, {send_timeout, 300000}]).
 -define(REPL_VERSION, 3).
--define(LEGACY_STRATEGY, syncv1).
+-define(LEGACY_STRATEGY, keylist).
 -define(KEEPALIVE_TIME, 60000).
 -define(PEERINFO_TIMEOUT, 60000).
 -define(ELECTION_TIMEOUT, 60000).
@@ -24,6 +24,10 @@
 -define(DEFAULT_SOURCE_PER_NODE, 1).
 -define(DEFAULT_SOURCE_PER_CLUSTER, 5).
 -define(DEFAULT_MAX_SINKS_NODE, 1).
+%% How many times during a fullsync we should try a partition
+-define(DEFAULT_SOURCE_RETRIES, infinity).
+%% How many times we should retry when failing a reservation
+-define(DEFAULT_RESERVE_RETRIES, 0).
 %% 20 seconds. sources should claim within 5 seconds, but give them a little more time
 -define(RESERVATION_TIMEOUT, (20 * 1000)).
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
@@ -31,12 +35,17 @@
 -define(CONSOLE_RPC_TIMEOUT, 5000).
 -define(RETRY_AAE_LOCKED_INTERVAL, 1000).
 -define(DEFAULT_FULLSYNC_STRATEGY, keylist). %% keylist | aae
+-define(LOG_USER_CMD(Msg, Params), lager:notice("[user] " ++ Msg, Params)).
+%% the following are keys for bucket types related meta data
+-define(BT_META_TYPED_BUCKET, typed_bucket).
+-define(BT_META_TYPE, bucket_type).
+-define(BT_META_PROPS_HASH, properties_hash_val).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
 -type(repl_addr() :: {ip_addr_str(), ip_portnum()}).
 -type(repl_addrlist() :: [repl_addr()]).
--type(repl_socket() :: port()).
+-type(repl_socket() :: port() | ssl:sslsocket()).
 -type(repl_sitename() :: string()).
 -type(repl_sitenames() :: [repl_sitename()]).
 -type(repl_ns_pair() :: {node(), repl_sitename()}).
@@ -51,8 +60,14 @@
 %% the to_wire() and from_wire() operations, see riak_repl_util.erl.
 %% Also see analagous binary_version() in riak_object, which is carried
 %% inside the wire format in "BinObj". w0 implies v0. w1 imples v1.
+%% w2 still uses v1, but supports encoding the type information
+%% for bucket types.
 -type(wire_version() :: w0   %% simple term_to_binary() legacy encoding
-                      | w1). %% <<?MAGIC:8/integer, 1:8/integer,
+                      | w1   %% <<?MAGIC:8/integer, 1:8/integer,
+                             %% BLen:32/integer, B:BLen/binary,
+                             %% KLen:32/integer, K:KLen/binary, BinObj/binary>>.
+                      | w2). %% <<?MAGIC:8/integer, ?W2_VER:8/integer,
+                             %% TLen:32/integer, T:TLen/binary,
                              %% BLen:32/integer, B:BLen/binary,
                              %% KLen:32/integer, K:KLen/binary, BinObj/binary>>.
 
@@ -101,3 +116,4 @@
 
 -define(LONG_TIMEOUT, 120*1000).
 
+-define(V2REPLDEP, "DEPRECATION NOTICE: The replication protocol you are currently using in this cluster has been deprecated and will be unsupported and removed some time after the Riak Enterprise 2.1 release. Please upgrade to the latest replication protocol as soon as possible. If you need assistance migrating contact Basho Client Services or follow the instructions in our documentation ( http://docs.basho.com/riakee/latest/cookbooks/Multi-Data-Center-Replication-UpgradeV2toV3/ ).").

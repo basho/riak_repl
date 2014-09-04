@@ -128,9 +128,9 @@ handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when
     V = State#state.ver,
     case riak_repl_util:repl_helper_send_realtime(RObj, State#state.client) of
         Objects when is_list(Objects) ->
-            [send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, O}))
+            _ = [send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, O}))
              || O <- Objects],
-            send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, RObj})),
+            _ = send(Transport, Socket, riak_repl_util:encode_obj_msg(V, {diff_obj, RObj})),
             {noreply, State};
         cancel ->
             {noreply, State}
@@ -202,7 +202,7 @@ handle_info(timeout, State) ->
     case State#state.keepalive_time of
         Time when is_integer(Time) ->
             %% keepalive timeout fired
-            send(State#state.transport, State#state.socket, keepalive),
+            _ = send(State#state.transport, State#state.socket, keepalive),
             {noreply, State, Time};
         _ ->
             {noreply, State}
@@ -236,7 +236,7 @@ handle_msg({q_ack, N}, #state{q=BQ} = State) ->
     riak_repl_bq:q_ack(BQ, N),
     {noreply, State};
 handle_msg(keepalive, State) ->
-    send(State#state.transport, State#state.socket, keepalive_ack),
+    _ = send(State#state.transport, State#state.socket, keepalive_ack),
     {noreply, State};
 handle_msg(keepalive_ack, State) ->
     %% noop
@@ -246,8 +246,7 @@ handle_msg({proxy_get, Ref, Bucket, Key, Options}, State) ->
     %% do this GET in a worker?
     C = State#state.client,
     Res = C:get(Bucket, Key, Options),
-    send(State#state.transport, State#state.socket, {proxy_get_resp, Ref,
-            Res}),
+    _ = send(State#state.transport, State#state.socket, {proxy_get_resp, Ref, Res}),
     {noreply, State};
 handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
     gen_fsm:send_event(FSW, Msg),
@@ -283,7 +282,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     lager:info("Using fullsync strategy ~p.", [StratMod]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
-                        Transport, {self(), Socket}, WorkDir, State#state.client),
+                        Transport, {self(), Socket}, WorkDir, State#state.client, {1,0}),
                     %% Set up bounded queue if remote supports it
                     State1 = case proplists:get_bool(bounded_queue, Capability) of
                         true ->
@@ -330,7 +329,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
             erlang:send_after(5000, self(), election_wait),
             {noreply, State};
         OurNode ->
-            erlang:cancel_timer(State#state.election_timeout),
+            _ = erlang:cancel_timer(State#state.election_timeout),
             %% are we configured to upgrade to ssl?
             case {riak_repl_util:maybe_use_ssl(), Transport:name()} of
                 {B, T} when B == false; T == ssl ->
@@ -344,7 +343,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
 
                     PI = proplists:get_value(my_pi, Props),
-                    send(Transport, Socket, {peerinfo, PI,
+                    _ = send(Transport, Socket, {peerinfo, PI,
                                              [{cluster_name, riak_core_ring:cluster_name(Ring)},
                                              bounded_queue, keepalive, {fullsync_strategies,
                                                                          app_helper:get_env(riak_repl, fullsync_strategies,
@@ -355,7 +354,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                             election_timeout=undefined,
                             my_pi=PI}};
                 {Config, tcp} ->
-                    send(Transport, Socket, {peerinfo,
+                    _ = send(Transport, Socket, {peerinfo,
                                              riak_repl_util:make_fake_peer_info(),
                                              [ssl_required]}),
                     %% verify the other side has sent us a fake ring

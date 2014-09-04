@@ -64,7 +64,6 @@
                 overload_drops = 0 :: non_neg_integer(),
 
                 cs = [],
-                undeliverables = [],
                 shutting_down=false,
                 qsize_bytes = 0,
                 word_size=erlang:system_info(wordsize)
@@ -85,6 +84,8 @@
             % were skips before it's sent even one item.
            }).
 
+-type name() :: term().
+
 %% API
 %% @doc Start linked, registeres to module name.
 -spec start_link() -> {ok, pid()}.
@@ -104,7 +105,7 @@ start_link() ->
 start_link(Options) ->
     case ets:info(?overload_ets) of
         undefined ->
-            ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
+            ?overload_ets = ets:new(?overload_ets, [named_table, public, {read_concurrency, true}]),
             ets:insert(?overload_ets, {overloaded, false});
         _ ->
             ok
@@ -119,17 +120,17 @@ start_test() ->
 %% @doc Register a consumer with the given name. The Name of the consumer is
 %% the name of the remote cluster by convention. Returns the oldest unack'ed
 %% sequence number.
--spec register(Name :: string()) -> {'ok', number()}.
+-spec register(Name :: name()) -> {'ok', number()}.
 register(Name) ->
     gen_server:call(?SERVER, {register, Name}, infinity).
 
 %% @doc Removes a consumer.
--spec unregister(Name :: string()) -> 'ok' | {'error', 'not_registered'}.
+-spec unregister(Name :: name()) -> 'ok' | {'error', 'not_registered'}.
 unregister(Name) ->
     gen_server:call(?SERVER, {unregister, Name}, infinity).
 
 %% @doc True if the given consumer has no items to consume.
--spec is_empty(Name :: string()) -> boolean().
+-spec is_empty(Name :: name()) -> boolean().
 is_empty(Name) ->
     gen_server:call(?SERVER, {is_empty, Name}, infinity).
 
@@ -164,7 +165,7 @@ push(NumItems, Bin, Meta) ->
             lager:debug("rtq overloaded"),
             riak_repl2_rtq_overload_counter:drop();
         false ->
-            gen_server:cast(?SERVER, {push, NumItems, Bin, Meta})
+             gen_server:cast(?SERVER, {push, NumItems, Bin, Meta})
     end.
 
 should_drop() ->
@@ -181,28 +182,29 @@ push(NumItems, Bin) ->
 -type queue_entry() :: {pos_integer(), pos_integer(), binary(), orddict:orddict()}.
 -type not_reg_error() :: {'error', 'not_registered'}.
 -type deliver_fun() :: fun((queue_entry() | not_reg_error()) -> 'ok').
--spec pull(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
+-spec pull(Name :: name(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull(Name, DeliverFun) ->
     gen_server:cast(?SERVER, {pull, Name, DeliverFun}).
 
 %% @doc Block the caller while the pull is done.
--spec pull_sync(Name :: string(), DeliverFun :: deliver_fun()) -> 'ok'.
+-spec pull_sync(Name :: name(), DeliverFun :: deliver_fun()) -> 'ok'.
 pull_sync(Name, DeliverFun) ->
     gen_server:call(?SERVER, {pull_with_ack, Name, DeliverFun}, infinity).
 
 %% @doc Asynchronously acknowldge delivery of all objects with a sequence
 %% equal or lower to Seq for the consumer.
--spec ack(Name :: string(), Seq :: pos_integer()) -> 'ok'.
+-spec ack(Name :: name(), Seq :: pos_integer()) -> 'ok'.
 ack(Name, Seq) ->
     gen_server:cast(?SERVER, {ack, Name, Seq}).
 
 %% @doc Same as ack/2, but blocks the caller.
--spec ack_sync(Name :: string(), Seq :: pos_integer()) ->'ok'.
+-spec ack_sync(Name :: name(), Seq :: pos_integer()) ->'ok'.
 ack_sync(Name, Seq) ->
     gen_server:call(?SERVER, {ack_sync, Name, Seq}, infinity).
 
 %% @doc The status of the queue.
 %% <dl>
+%% <dt>percent_bytes_used</dt><dd>How full the queue is in percentage to 3 significant digits</dd>
 %% <dt>bytes</dt><dd>Size of the data store backend</dd>
 %% <dt>max_bytes</dt><dd>Maximum size of the data store backend</dd>
 %% <dt>consumers</dt><dd>Key - Value pair of the consumer stats, key is the
@@ -218,7 +220,13 @@ ack_sync(Name, Seq) ->
 %% </dl>
 -spec status() -> [any()].
 status() ->
-    gen_server:call(?SERVER, status, infinity).
+    Status = gen_server:call(?SERVER, status, infinity),
+    % I'm having the calling process do derived stats because
+    % I don't want to block the rtq from processing objects.
+    MaxBytes = proplists:get_value(max_bytes, Status),
+    CurrentBytes = proplists:get_value(bytes, Status),
+    PercentBytes = round( (CurrentBytes / MaxBytes) * 100000 ) / 1000,
+    [{percent_bytes_used, PercentBytes} | Status].
 
 %% @doc return the data store as a list.
 -spec dumpq() -> [any()].
@@ -258,11 +266,11 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
                                           qseq = QSeq, cs = Cs}) ->
     Consumers =
         [{Name, [{pending, QSeq - CSeq},  % items to be send
-                 {unacked, CSeq - ASeq},  % sent items requiring ack
+                 {unacked, CSeq - ASeq - Skips},  % sent items requiring ack
                  {drops, Drops},          % number of dropped entries due to max bytes
                  {errs, Errs}]}           % number of non-ok returns from deliver fun
          || #c{name = Name, aseq = ASeq, cseq = CSeq,
-               drops = Drops, errs = Errs} <- Cs],
+               drops = Drops, errs = Errs, skips = Skips} <- Cs],
     Status =
         [{bytes, qbytes(QTab, State)},
          {max_bytes, MaxBytes},
@@ -273,7 +281,7 @@ handle_call(status, _From, State = #state{qtab = QTab, max_bytes = MaxBytes,
 handle_call(shutting_down, _From, State = #state{shutting_down=false}) ->
     %% this will allow the realtime repl hook to determine if it should send
     %% to another host
-    riak_repl2_rtq_proxy:start(),
+    _ = riak_repl2_rtq_proxy:start(),
     {reply, ok, State#state{shutting_down = true}};
 
 handle_call(stop, _From, State) ->
@@ -345,6 +353,8 @@ handle_call({ack_sync, Name, Seq}, _From, State) ->
 handle_cast({push, NumItems, Bin}, State) ->
     handle_cast({push, NumItems, Bin, []}, State);
 
+handle_cast({push, _NumItems, _Bin, _Meta}, State=#state{cs=[]}) ->
+    {noreply, State};
 handle_cast({push, NumItems, Bin, Meta}, State) ->
     State2 = maybe_flip_overload(State),
     {noreply, push(NumItems, Bin, Meta, State2)};
@@ -377,9 +387,7 @@ ack_seq(Name, Seq, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                         end, {[], QSeq}, Cs),
     %% Remove any entries from the ETS table before MinSeq
     NewState = cleanup(QTab, MinSeq, State),
-    {ShrinkBy, Undeliverables} = clear_non_deliverables(QTab, UpdCs, State#state.word_size),
-    Undeliverables2 = union_undeliverables(NewState#state.undeliverables, Undeliverables, MinSeq),
-    NewState#state{cs = UpdCs, undeliverables = Undeliverables2, qsize_bytes = NewState#state.qsize_bytes - ShrinkBy}.
+    NewState#state{cs = UpdCs}.
 
 %% @private
 handle_info(_Msg, State) ->
@@ -390,7 +398,7 @@ terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    [case DeliverFun of
+    _ = [case DeliverFun of
          undefined ->
              ok;
          _ ->
@@ -449,16 +457,15 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
                              lists:min([Seq || #c{aseq = Seq} <- Cs2])
                      end,
             NewState0 = cleanup(QTab, MinSeq, State),
-            NewState = NewState0#state{cs = Cs2},
-            {ShrinkBy, Undeliverables} = clear_non_deliverables(QTab, Cs2, NewState#state.word_size),
-            Undeliverables2 = union_undeliverables(State#state.undeliverables, Undeliverables, 0),
-            {ok, NewState#state{undeliverables = Undeliverables2, qsize_bytes = NewState#state.qsize_bytes - ShrinkBy}};
+            {ok, NewState0#state{cs = Cs2}};
         false ->
             {{error, not_registered}, State}
     end.
 
-push(NumItems, Bin, Meta, State = #state{qtab = QTab, qseq = QSeq,
-                                                  cs = Cs, shutting_down = false}) ->
+push(NumItems, Bin, Meta, State = #state{qtab = QTab,
+                                         qseq = QSeq,
+                                         cs = Cs,
+                                         shutting_down = false}) ->
     QSeq2 = QSeq + 1,
     QEntry = {QSeq2, NumItems, Bin, Meta},
     %% Send to any pending consumers
@@ -487,28 +494,28 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
     CsNames = [Consumer#c.name || Consumer <- Cs],
      UpdCs = case lists:keytake(Name, #c.name, Cs) of
                 {value, C, Cs2} ->
-                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun, State#state.undeliverables) | Cs2];
+                    [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
                 false ->
                     lager:info("not_registered"),
                     DeliverFun({error, not_registered})
             end,
     State#state{cs = UpdCs}.
 
-maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun, Undeliverables) ->
+maybe_pull(QTab, QSeq, C = #c{cseq = CSeq}, CsNames, DeliverFun) ->
     CSeq2 = CSeq + 1,
     case CSeq2 =< QSeq of
         true -> % something reday
             case ets:lookup(QTab, CSeq2) of
                 [] -> % entry removed, due to previously being unroutable
                     C2 = C#c{skips = C#c.skips + 1, cseq = CSeq2},
-                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
+                    maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
                 [QEntry] ->
                     QEntry2 = set_local_forwards_meta(CsNames, QEntry),
                     % if the item can't be delivered due to cascading rt,
                     % just keep trying.
                     case maybe_deliver_item(C#c{deliver = DeliverFun}, QEntry2) of
                         {skipped, C2} ->
-                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun, Undeliverables);
+                            maybe_pull(QTab, QSeq, C2, CsNames, DeliverFun);
                         {_WorkedOrNoFun, C2} ->
                             C2
                     end
@@ -606,35 +613,6 @@ ets_obj_size(Obj, _) ->
 update_q_size(State = #state{qsize_bytes = CurrentQSize}, Diff) ->
   State#state{qsize_bytes = CurrentQSize + Diff}.
 
-clear_non_deliverables(QTab, ActiveConsumers, WordSize) ->
-    Accumulator = fun(QEntry, Acc) ->
-        {Seq, _, _, Meta} = QEntry,
-        Routed = case orddict:find(routed_clusters, Meta) of
-            error -> [];
-            {ok, V} -> V
-        end,
-        RoutableActives = [AC || AC <- ActiveConsumers, AC#c.aseq < Seq, not lists:member(AC#c.name, Routed)],
-        if
-            RoutableActives == [] ->
-                [Seq | Acc];
-            true ->
-                Acc
-        end
-    end,
-    ToDelete = ets:foldl(Accumulator, [], QTab),
-    DeleteFun = fun(Key, Acc) ->
-      [{Key, _NumItems, Bin, _Meta}] = ets:lookup(QTab, Key),
-      Size = ets_obj_size(Bin, WordSize),
-      ets:delete(QTab, Key),
-      Acc + Size
-    end,
-    Shrink = lists:foldl(DeleteFun, 0, ToDelete),
-    {Shrink, ToDelete}.
-
-union_undeliverables(SeqSet1, SeqSet2, MinSeq) ->
-    Undeliverables = ordsets:union(SeqSet1, SeqSet2),
-    lists:filter(fun(E) -> E >= MinSeq end, Undeliverables).
-
 %% Trim the queue if necessary
 trim_q(State = #state{max_bytes = undefined}) ->
     State;
@@ -667,11 +645,21 @@ trim_q(State = #state{qtab = QTab, qseq = QSeq, max_bytes = MaxBytes}) ->
     end.
 
 trim_q_entries(QTab, MaxBytes, Cs, State) ->
+    {Cs2, State2, Entries, Objects} = trim_q_entries(QTab, MaxBytes, Cs, State, 0, 0),
+    if
+        Entries + Objects > 0 ->
+            lager:debug("Dropped ~p objects in ~p entries due to reaching maximum queue size of ~p bytes", [Objects, Entries, MaxBytes]);
+        true ->
+            ok
+    end,
+    {Cs2, State2}.
+
+trim_q_entries(QTab, MaxBytes, Cs, State, Entries, Objects) ->
     case ets:first(QTab) of
         '$end_of_table' ->
-            {Cs, State};
+            {Cs, State, Entries, Objects};
         TrimSeq ->
-            [{_, _, Bin, _Meta}] = ets:lookup(QTab, TrimSeq),
+            [{_, NumObjects, Bin, _Meta}] = ets:lookup(QTab, TrimSeq),
             ShrinkSize = ets_obj_size(Bin, State),
             NewState = update_q_size(State, -ShrinkSize),
             ets:delete(QTab, TrimSeq),
@@ -686,9 +674,9 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
             %% Rinse and repeat until meet the target or the queue is empty
             case qbytes(QTab, NewState) > MaxBytes of
                 true ->
-                    trim_q_entries(QTab, MaxBytes, Cs2, NewState);
+                    trim_q_entries(QTab, MaxBytes, Cs2, NewState, Entries + 1, Objects + NumObjects);
                 _ ->
-                    {Cs2, NewState}
+                    {Cs2, NewState, Entries + 1, Objects + NumObjects}
             end
     end.
 
@@ -723,4 +711,3 @@ minseq(QTab, QSeq) ->
         MinSeq ->
             MinSeq - 1
     end.
-

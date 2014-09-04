@@ -59,7 +59,7 @@ enable(Remote) ->
 
 disable(Remote) ->
     F = fun(Ring, Remote1) ->
-            R2 = case riak_repl_ring:pg_stop_trans(Ring, Remote1) of
+            R2 = case riak_repl_ring:pg_disable_trans(Ring, Remote1) of
                 {new_ring, R1} ->
                     R1;
                 {ignore, _} ->
@@ -81,9 +81,9 @@ ensure_pg(WantEnabled0) ->
         _ ->
             lager:debug("proxy_get ToEnable : ~p", [ToEnable]),
             lager:debug("proxy_get ToDisable: ~p", [ToDisable]),
-            [riak_repl2_pg_block_provider_sup:enable(Remote) ||
+            _ = [riak_repl2_pg_block_provider_sup:enable(Remote) ||
                 Remote <- ToEnable],
-            [riak_repl2_pg_block_provider_sup:disable(Remote) ||
+            _ = [riak_repl2_pg_block_provider_sup:disable(Remote) ||
                 Remote<- ToDisable],
             [{enabled, ToEnable},
              {disabled, ToDisable}]

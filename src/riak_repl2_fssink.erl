@@ -35,7 +35,7 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/4, register_service/0, start_service/5, legacy_status/2, fullsync_complete/1]).
+-export([start_link/4, sync_register_service/0, start_service/5, legacy_status/2, fullsync_complete/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -59,18 +59,19 @@ fullsync_complete(Pid) ->
     %% cast to avoid deadlock in terminate
     gen_server:cast(Pid, fullsync_complete).
 
-%% Register with service manager
-register_service() ->
+%% @doc Register with service manager
+sync_register_service() ->
     %% 1,0 and up supports keylist strategy
     %% 1,1 and up supports binary object
     %% 2,0 and up supports AAE strategy
-    ProtoPrefs = {fullsync,[{1,1}, {2,0}]},
+    %% 3,0 and up supports Typed Buckets
+    ProtoPrefs = {fullsync,[{1,1}, {2,0}, {3,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, false},
                   {nodelay, true}],
     HostSpec     = {ProtoPrefs, {TcpOptions, ?MODULE, start_service, undefined}},
-    riak_core_service_mgr:register_service(HostSpec, {round_robin, undefined}).
+    riak_core_service_mgr:sync_register_service(HostSpec, {round_robin, undefined}).
 
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->
@@ -90,13 +91,13 @@ init([Socket, Transport, OKProto, Props]) ->
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Transport, Socket),
-    lager:info("Negotiated ~p with ver ~p", [Proto, Ver]),
+    lager:debug("Negotiated ~p with ver ~p", [Proto, Ver]),
     lager:debug("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
                                        SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
+    lager:debug("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
     {ok, #state{proto=Proto, socket=Socket, transport=Transport, cluster=Cluster, ver=Ver}}.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
@@ -116,7 +117,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
         [
             {node, node()},
             {site, State#state.cluster},
-            {strategy, fullsync},
+            {strategy, Strategy},
             {fullsync_worker, riak_repl_util:safe_pid_to_list(State#state.fullsync_worker)},
             {socket, riak_core_tcp_mon:format_socket_stats(SocketStats, [])}
         ],
@@ -127,6 +128,8 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast(fullsync_complete, State) ->
     %% sent from AAE fullsync worker
+    %% TODO: The sink state should include the partition ID
+    %% or some other useful information
     lager:info("Fullsync of partition complete."),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -161,9 +164,7 @@ handle_info(init_ack, State=#state{socket=Socket,
     %% possibly exchange fullsync capabilities with the remote
     OurCaps = decide_our_caps(CommonMajor),
     TheirCaps = maybe_exchange_caps(CommonMajor, OurCaps, Socket, Transport),
-    lager:info("Got caps: ~p", [TheirCaps]),
     Strategy = decide_common_strategy(OurCaps, TheirCaps),
-    lager:info("Common strategy: ~p", [Strategy]),
 
     case Strategy of
         keylist ->

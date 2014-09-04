@@ -11,9 +11,7 @@
 %% API
 -export([start_link/1,
          stop/1,
-         make_merkle/3,
          make_keylist/3,
-         merkle_to_keylist/3,
          diff/4,
          diff_stream/5,
          itr_new/2]).
@@ -23,14 +21,12 @@
          terminate/2, code_change/3]).
 
 %% HOFs
--export([merkle_fold/3, keylist_fold/3]).
+-export([keylist_fold/3]).
 
 -include("riak_repl.hrl").
--include("couch_db.hrl").
 
 -record(state, {owner_fsm,
                 ref,
-                merkle_pid,
                 folder_pid,
                 kl_fp,
                 kl_total,
@@ -58,14 +54,6 @@ start_link(OwnerFsm) ->
 stop(Pid) ->
     riak_core_gen_server:call(Pid, stop, infinity).
 
-%% Make a couch_btree of key/object hashes.
-%%
-%% Return {ok, Ref} if build starts successfully, then sends
-%% a gen_fsm event {Ref, merkle_built} to the OwnerFsm or
-%% a {Ref, {error, Reason}} event on failures
-make_merkle(Pid, Partition, Filename) ->
-    riak_core_gen_server:call(Pid, {make_merkle, Partition, Filename}, ?LONG_TIMEOUT).
-
 %% Make a sorted file of key/object hashes.
 %% 
 %% Return {ok, Ref} if build starts successfully, then sends
@@ -74,14 +62,6 @@ make_merkle(Pid, Partition, Filename) ->
 make_keylist(Pid, Partition, Filename) ->
     riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename}, ?LONG_TIMEOUT).
    
-%% Convert a couch_btree to a sorted keylist file.
-%%
-%% Returns {ok, Ref} or {error, Reason}.
-%% Sends a gen_fsm event {Ref, converted} on success or
-%% {Ref, {error, Reason}} on failure
-merkle_to_keylist(Pid, MerkleFn, KeyListFn) ->
-    riak_core_gen_server:call(Pid, {merkle_to_keylist, MerkleFn, KeyListFn}, ?LONG_TIMEOUT).
-    
 %% Computes the difference between two keylist sorted files.
 %% Returns {ok, Ref} or {error, Reason}
 %% Differences are sent as {Ref, {merkle_diff, {Bkey, Vclock}}}
@@ -108,38 +88,9 @@ handle_call(stop, _From, State) ->
             unlink(Pid),
             exit(Pid, kill)
     end,
-    file:close(State#state.kl_fp),
-    couch_merkle:close(State#state.merkle_pid),
-    file:delete(State#state.filename),
+    _ = file:close(State#state.kl_fp),
+    _ = file:delete(State#state.filename),
     {stop, normal, ok, State};
-handle_call({make_merkle, Partition, FileName}, From, State) ->
-    %% Return to caller immediately - under heavy load exceeded the 5s
-    %% default timeout.  Do not wish to block the repl server for
-    %% that long in any case.
-    Ref = make_ref(),
-    riak_core_gen_server:reply(From, {ok, Ref}),
-
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    OwnerNode = riak_core_ring:index_owner(Ring, Partition),
-    case lists:member(OwnerNode, riak_core_node_watcher:nodes(riak_kv)) of
-        true ->
-            {ok, DMerkle} = couch_merkle:open(FileName),
-            Self = self(),
-            Worker = fun() ->
-                             riak_kv_vnode:fold({Partition,OwnerNode},
-                                                fun ?MODULE:merkle_fold/3, Self),
-                             riak_core_gen_server:cast(Self, merkle_finish)
-                     end,
-            FolderPid = spawn_link(Worker),
-            NewState = State#state{ref = Ref, 
-                                   merkle_pid = DMerkle, 
-                                   folder_pid = FolderPid,
-                                   filename = FileName},
-            {noreply, NewState};
-        false ->
-            gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
-            {stop, normal, State}
-    end;
 %% request from client of server to write a keylist of hashed key/value to Filename for Partition
 handle_call({make_keylist, Partition, Filename}, From, State) ->
     Ref = make_ref(),
@@ -151,22 +102,50 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
         true ->
             {ok, FP} = file:open(Filename, [raw, write, binary]),
             Self = self(),
+            FoldRef = make_ref(),
             Worker = fun() ->
-                             %% Spend as little time on the vnode as possible,
-                             %% accept there could be a potentially huge message queue
-                             case riak_core_capability:get({riak_repl, bloom_fold}, false) of
-                                true ->
-                                    {Self, _, Total} = riak_kv_vnode:fold({Partition,OwnerNode},
-                                        fun ?MODULE:keylist_fold/3, {Self, 0, 0}),
-                                    riak_core_gen_server:cast(Self, {kl_finish, Total});
-                                false ->
-                                    %% use old accumulator without the total
-                                    {Self, _} = riak_kv_vnode:fold({Partition,OwnerNode},
-                                        fun ?MODULE:keylist_fold/3, {Self, 0}),
-                                    %% total is 0, not much else we can do
-                                    riak_core_gen_server:cast(Self, {kl_finish, 0})
+                    %% Spend as little time on the vnode as possible,
+                    %% accept there could be a potentially huge message queue
+                    Req = case riak_core_capability:get({riak_repl, bloom_fold}, false) of
+                        true ->
+                            riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
+                                                         {Self, 0, 0},
+                                                         false,
+                                                         [{iterator_refresh,
+                                                                 true}]);
+                        false ->
+                            %% use old accumulator without the total
+                            riak_core_util:make_fold_req(fun ?MODULE:keylist_fold/3,
+                                                         {Self, 0},
+                                                         false,
+                                                         [{iterator_refresh,
+                                                                 true}])
+                    end,
+                    try riak_core_vnode_master:command_return_vnode(
+                            {Partition, OwnerNode},
+                            Req,
+                            {raw, FoldRef, self()},
+                            riak_kv_vnode_master) of
+                        {ok, VNodePid} ->
+                            MonRef = erlang:monitor(process, VNodePid),
+                            receive
+                                {FoldRef, {Self, _}} ->
+                                    %% total is 0, sorry
+                                    riak_core_gen_server:cast(Self,
+                                                              {kl_finish, 0});
+                                {FoldRef, {Self, _, Total}} ->
+                                    riak_core_gen_server:cast(Self,
+                                                              {kl_finish, Total});
+                                {'DOWN', MonRef, process, VNodePid, Reason} ->
+                                    lager:warning("Keylist fold of ~p exited with ~p",
+                                               [Partition, Reason]),
+                                    exit({vnode_terminated, Reason})
                             end
-                     end,
+                    catch exit:{{nodedown, Node}, _GenServerCall} ->
+                            %% node died between services check and gen_server:call
+                            exit({nodedown, Node})
+                    end
+            end,
             FolderPid = spawn_link(Worker),
             NewState = State#state{ref = Ref, 
                                    folder_pid = FolderPid,
@@ -180,35 +159,6 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
 %% sent from keylist_fold every 100 key/value hashes
 handle_call(keylist_ack, _From, State) ->
     {reply, ok, State};
-handle_call({merkle_to_keylist, MerkleFn, KeyListFn}, From, State) ->
-    %% Return to the caller immediately, if we are unable to open/
-    %% write to files this process will crash and the caller
-    %% will discover the problem.
-    Ref = make_ref(),
-    riak_core_gen_server:reply(From, {ok, Ref}),
-
-    %% Iterate over the couch file and write out to the keyfile
-    {ok, InFileFd, InFileBtree} = open_couchdb(MerkleFn),
-    {ok, OutFile} = file:open(KeyListFn, [binary, write, raw]),
-    couch_btree:foldl(InFileBtree, fun({K, V}, _Acc) ->
-                                           B = term_to_binary({K, V}),
-                                           ok = file:write(OutFile, <<(size(B)):32, B/binary>>),
-                                           {ok, ok}
-                                   end, ok),
-    couch_file:close(InFileFd),
-    file:close(OutFile),
-
-    %% Verify the file is really sorted
-    case file_sorter:check(KeyListFn) of
-        {ok, []} ->
-            Msg = converted;
-        {ok, Result} ->
-            Msg = {error, {unsorted, Result}};
-        {error, Reason} ->
-            Msg = {error, Reason}
-    end,
-    gen_fsm:send_event(State#state.owner_fsm, {Ref, Msg}),
-    {stop, normal, State};
 handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}, From, State) ->
     %% Return to the caller immediately, if we are unable to open/
     %% read files this process will crash and the caller
@@ -251,39 +201,19 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
                     gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
             end
         after
-            file:close(RemoteFile),
-            file:close(LocalFile)
+            _ = file:close(RemoteFile),
+            _ = file:close(LocalFile)
         end
     after
-        file:delete(RemoteFilename),
-        file:delete(LocalFilename)
+        _ = file:delete(RemoteFilename),
+        _ = file:delete(LocalFilename)
     end,
 
     {stop, normal, State}.
 
-handle_cast({merkle, K, H}, State) ->
-    PackedKey = pack_key(K),
-    NewSize = State#state.size+size(PackedKey)+4,
-    NewBuf = [{PackedKey, H}|State#state.buf],
-    case NewSize >= ?MERKLE_BUFSZ of 
-        true ->
-            couch_merkle:update_many(State#state.merkle_pid, NewBuf),
-            {noreply, State#state{buf = [], size = 0}};
-        false ->
-            {noreply, State#state{buf = NewBuf, size = NewSize}}
-    end;
 %% write Key/Value Hash to file
 handle_cast({keylist, Row}, State) ->
     ok = file:write(State#state.kl_fp, <<(size(Row)):32, Row/binary>>),
-    {noreply, State};
-handle_cast(merkle_finish, State) ->
-    couch_merkle:update_many(State#state.merkle_pid, State#state.buf),
-    %% Close couch - beware, the close call is a cast so the process
-    %% may still be alive for a while.  Add a monitor and directly
-    %% receive the message - it should only be for a short time
-    %% and nothing else 
-    _Mref = erlang:monitor(process, State#state.merkle_pid),
-    couch_merkle:close(State#state.merkle_pid),
     {noreply, State};
 handle_cast({kl_finish, Count}, State) ->
     %% note: delayed_write has been removed as of 1.4.0
@@ -291,12 +221,18 @@ handle_cast({kl_finish, Count}, State) ->
     %% because of a previous error that is only now being reported. In this case,
     %% call close again. See http://www.erlang.org/doc/man/file.html#open-2
     case file:sync(State#state.kl_fp) of
-        ok -> ok;
-        _ -> file:sync(State#state.kl_fp)
+        ok ->
+            ok;
+        _ ->
+            _ = file:sync(State#state.kl_fp),
+            ok
     end,
     case file:close(State#state.kl_fp) of
-        ok -> ok;
-        _ -> file:close(State#state.kl_fp)
+        ok ->
+            ok;
+        _ ->
+            _ = file:close(State#state.kl_fp),
+            ok
     end,
     riak_core_gen_server:cast(self(), kl_sort),
     {noreply, State#state{kl_total=Count}};
@@ -313,15 +249,6 @@ handle_cast(kl_sort, State) ->
         State#state.kl_total}),
     {stop, normal, State}.
 
-handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.merkle_pid ->
-    case Reason of 
-        normal ->
-            {noreply, State};
-        _ ->
-            gen_fsm:send_event(State#state.owner_fsm, 
-                               {State#state.ref, {error, {merkle_died, Reason}}}),
-            {stop, normal, State}
-    end;
 handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid ->
     case Reason of
         normal ->
@@ -333,16 +260,7 @@ handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid -
     end;
 handle_info({'EXIT', _Pid,  _Reason}, State) ->
     %% The calling repl_tcp_server/client has gone away, so should we
-    {stop, normal, State};
-handle_info({'DOWN', _Mref, process, Pid, Exit}, State=#state{merkle_pid = Pid}) ->
-    case Exit of
-        normal ->
-            Msg = {State#state.ref, merkle_built};
-        _ ->
-            Msg = {State#state.ref, {error, {merkle_failed, Exit}}}
-    end,
-    gen_fsm:send_event(State#state.owner_fsm, Msg),        
-    {stop, normal, State#state{buf = [], size = 0}}.
+    {stop, normal, State}.
 
 terminate(_Reason, State) ->
     %% close file handles, in case they're open
@@ -371,19 +289,13 @@ hash_object(B,K,RObjBin) ->
     %% can't use the new binary version yet
     erlang:phash2(term_to_binary(UpdObj)).
 
-open_couchdb(Filename) ->
-    {ok, Fd} = couch_file:open(Filename),
-    {ok, #db_header{local_docs_btree_state=HeaderBtree}} = couch_file:read_header(Fd),
-    {ok, Btree} =  couch_btree:open(HeaderBtree, Fd),
-    {ok, Fd, Btree}.
-
 itr_new(File, Tag) ->
     erlang:put(Tag, 0),
     case file:read(File, 4) of
         {ok, <<Size:32/unsigned>>} ->
             itr_next(Size, File, Tag);
         _ ->
-            file:close(File),
+            _ = file:close(File),
             eof
     end.
 
@@ -391,13 +303,13 @@ itr_next(Size, File, Tag) ->
     case file:read(File, Size + 4) of
         {ok, <<Data:Size/bytes>>} ->
             erlang:put(Tag, erlang:get(Tag) + 1),
-            file:close(File),
+            _ = file:close(File),
             {binary_to_term(Data), fun() -> eof end};
         {ok, <<Data:Size/bytes, NextSize:32/unsigned>>} ->
             erlang:put(Tag, erlang:get(Tag) + 1),
             {binary_to_term(Data), fun() -> itr_next(NextSize, File, Tag) end};
         eof ->
-            file:close(File),
+            _ = file:close(File),
             eof
     end.
 
@@ -473,7 +385,7 @@ missing_key(PBKey, DiffState) ->
 
 %% @private
 %%
-%% @doc Visting function for building merkle tree.  This function was
+%% @doc Visting function for building keylist.  This function was
 %% purposefully created because if you use a lambda then things will
 %% go wrong when the MD5 of this module changes. I.e. if the lambda is
 %% shipped to another node with a different version of
@@ -482,37 +394,38 @@ missing_key(PBKey, DiffState) ->
 %% modules are not the same.
 %%
 %% @see http://www.javalimit.com/2010/05/passing-funs-to-other-erlang-nodes.html
-merkle_fold({B,Key}=K, V, Pid) ->
-    riak_core_gen_server:cast(Pid, {merkle, K, hash_object(B,Key,V)}),
-    Pid.
-
-%% @private
-%%
-%% @doc Visting function for building keylists. Similar to merkle_fold.
 keylist_fold({B,Key}=K, V, {MPid, Count, Total}) ->
-    H = hash_object(B,Key,V),
-    Bin = term_to_binary({pack_key(K), H}),
-    %% write key/value hash to file
-    riak_core_gen_server:cast(MPid, {keylist, Bin}),
-    case Count of
-        100 ->
-            %% send keylist_ack to "self" every 100 key/value hashes
-            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-            {MPid, 0, Total+1};
-        _ ->
-            {MPid, Count+1, Total+1}
+    try
+        H = hash_object(B,Key,V),
+        Bin = term_to_binary({pack_key(K), H}),
+        %% write key/value hash to file
+        riak_core_gen_server:cast(MPid, {keylist, Bin}),
+        case Count of
+            100 ->
+                %% send keylist_ack to "self" every 100 key/value hashes
+                ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+                {MPid, 0, Total+1};
+            _ ->
+                {MPid, Count+1, Total+1}
+        end
+    catch _:_ ->
+            {MPid, Count, Total}
     end;
 %% legacy support for the 2-tuple accumulator in 1.2.0 and earlier
 keylist_fold({B,Key}=K, V, {MPid, Count}) ->
-    H = hash_object(B,Key,V),
-    Bin = term_to_binary({pack_key(K), H}),
-    %% write key/value hash to file
-    riak_core_gen_server:cast(MPid, {keylist, Bin}),
-    case Count of
-        100 ->
-            %% send keylist_ack to "self" every 100 key/value hashes
-            ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
-            {MPid, 0};
-        _ ->
-            {MPid, Count+1}
+    try
+        H = hash_object(B,Key,V),
+        Bin = term_to_binary({pack_key(K), H}),
+        %% write key/value hash to file
+        riak_core_gen_server:cast(MPid, {keylist, Bin}),
+        case Count of
+            100 ->
+                %% send keylist_ack to "self" every 100 key/value hashes
+                ok = riak_core_gen_server:call(MPid, keylist_ack, infinity),
+                {MPid, 0};
+            _ ->
+                {MPid, Count+1}
+        end
+    catch _:_ ->
+            {MPid, Count}
     end.

@@ -25,8 +25,8 @@ init([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     AllNodes = riak_core_ring:all_members(Ring),
     riak_repl2_leader:set_candidates(AllNodes, []),
-    rt_update_events(Ring),
-    pg_update_events(Ring),
+    _ = rt_update_events(Ring),
+    _ = pg_update_events(Ring),
     {ok, #state{ring=Ring}}.
 
 handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
@@ -36,12 +36,20 @@ handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     %% Ring has changed.
     FinalRing = init_repl_config(OldRing, NewRing),
     update_leader(FinalRing),
-    rt_update_events(FinalRing),
-    pg_update_events(FinalRing),
+    _ = rt_update_events(FinalRing),
+    _ = pg_update_events(FinalRing),
     riak_repl_listener_sup:ensure_listeners(FinalRing),
     case riak_repl_leader:is_leader() of
         true ->
             riak_repl_leader:ensure_sites();
+        _ ->
+            ok
+    end,
+    %% Force the cluster manager to connect to the clusters when it
+    %% learns about an event *after* an election has occurred.
+    case riak_repl2_leader:is_leader() of
+        true ->
+            riak_core_cluster_mgr:connect_to_clusters();
         _ ->
             ok
     end,
@@ -145,8 +153,8 @@ listener_nodes(ReplConfig) ->
 %% Run whenever the ring is changed or on startup.
 %% Compare desired state of realtime repl to configured
 rt_update_events(Ring) ->
-    riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(Ring),
-                            riak_repl_ring:rt_started(Ring)),
+    _ = riak_repl2_rt:ensure_rt(riak_repl_ring:rt_enabled(Ring),
+                                riak_repl_ring:rt_started(Ring)),
     %% ensure_rt sets this
     RTEnabled = app_helper:get_env(riak_repl, rtenabled, false),
 

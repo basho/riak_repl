@@ -4,12 +4,10 @@
 -module(riak_core_cluster_mgr_tests).
 -compile(export_all).
 
+-ifdef(TEST).
 -include("riak_core_cluster.hrl").
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 -include_lib("eunit/include/eunit.hrl").
-
--define(TRACE(Stmt),Stmt).
-%%-define(TRACE(Stmt),ok).
 
 %% internal functions
 %-export([ctrlService/5, ctrlServiceProcess/5]).
@@ -33,22 +31,7 @@
 single_node_test_() ->
     {setup,
     fun start_link_setup/0,
-    fun(Pids) ->
-        cleanup(),
-        Mons = [erlang:monitor(process, Pid) || Pid <- Pids],
-        WaitFun = fun
-            ([], _CB) ->
-                ok;
-            (WaitingFor, CB) ->
-                receive
-                    {'DOWN', MonRef, process, _Pid, _Why} ->
-                        WaitingFor2 = lists:delete(MonRef, WaitingFor),
-                        CB(WaitingFor2, CB)
-                end
-        end,
-        WaitFun(Mons, WaitFun)
-    end,
-
+    fun cleanup/1,
     fun(_) -> [
 
         {"is leader", ?_assert(riak_core_cluster_mgr:get_is_leader() == false)},
@@ -84,7 +67,7 @@ single_node_test_() ->
 
         {"get known clusters when empty", fun() ->
             Clusters = riak_core_cluster_mgr:get_known_clusters(),
-            ?debugFmt("get_known_clusters_when_empty_test(): ~p", [Clusters]),
+            lager:debug("get_known_clusters_when_empty_test(): ~p", [Clusters]),
             ?assert({ok,[]} == Clusters)
         end},
 
@@ -107,10 +90,12 @@ single_node_test_() ->
         end},
 
         {"connect to remote cluster", fun() ->
-            start_fake_remote_cluster_service(),
             become_leader(),
+            lager:info("Is leader:~p~n", [riak_core_cluster_mgr:get_is_leader()]),
+            timer:sleep(2000),
             DoneFun = fun() ->
-                case riak_core_cluster_mgr:get_known_clusters() of
+                Out = riak_core_cluster_mgr:get_known_clusters(),
+                case Out of
                     {ok, [?REMOTE_CLUSTER_NAME]} = Out ->
                         {done, Out};
                     _ ->
@@ -135,7 +120,7 @@ single_node_test_() ->
 wait_for(Fun) ->
     wait_for(Fun, 2000, 10).
 
-wait_for(Fun, Remaining, Interval) when Remaining =< 0 ->
+wait_for(Fun, Remaining, _Interval) when Remaining =< 0 ->
     case Fun() of
         {done, Out} ->
             Out;
@@ -269,7 +254,6 @@ multinode_test__() ->
             rpc:multicall(Nodes, riak_core_cluster_mgr, set_leader, [Superman, undefined]),
             start_fake_remote_cluster_listener(),
             rpc:call(Superman, riak_core_cluster_mgr, add_remote_cluster, [?MULTINODE_REMOTE_ADDR]),
-            timer:sleep(2000),
             ?debugFmt("Connections:  ~p", [rpc:call(Superman, riak_core_cluster_conn_sup, connections, [])]),
             {Res, []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_known_clusters, []),
             Expected = repeat({ok, [?REMOTE_CLUSTER_NAME]}, 3),
@@ -278,7 +262,7 @@ multinode_test__() ->
 
         {"get ipaddres of cluster", fun() ->
             Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
-            Rotated1 = [{"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
+            Rotated1 = [{"eunit:test([riak_core_cluster_mgr_tests]).127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
             Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
             %{[R1, R2, R3], []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
             R1 = rpc:call(Superman, riak_core_cluster_mgr,
@@ -295,11 +279,11 @@ multinode_test__() ->
     ] end }.
 
 %% this test runs first and leaves the server running for other tests
-%start_link_test() ->
 start_link_setup() ->
     start_link_setup(?MY_CLUSTER_ADDR).
 
 start_link_setup(ClusterAddr) ->
+    error_logger:tty(false),
     % core features that are needed
     {ok, Eventer} = riak_core_ring_events:start_link(),
     {ok, RingMgr} = riak_core_ring_manager:start_link(test),
@@ -321,12 +305,10 @@ start_link_setup(ClusterAddr) ->
     {ok, Pid1} = riak_core_service_mgr:start_link(ClusterAddr),
     {ok, Pid2} = riak_core_connection_mgr:start_link(),
     {ok, Pid3} = riak_core_cluster_conn_sup:start_link(),
-    %unlink(Pid3),
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
-    Pids = [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4],
-    [unlink(P) || P <- Pids],
-    Pids.
+    start_fake_remote_cluster_service(),
+    [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4].
 
 watchit(Pid) ->
     proc_lib:spawn(?MODULE, watchit_loop, [Pid]).
@@ -347,28 +329,22 @@ watchit_loop(Pid, Mon) ->
             watchit_loop(Pid, Mon)
     end.
 
-%cleanup_test() ->
-cleanup() ->
+cleanup(Pids) ->
+    process_flag(trap_exit, true),
+    stop_fake_remote_cluster_service(),
     riak_core_service_mgr:stop(),
     riak_core_connection_mgr:stop(),
     %% tough to stop a supervisor
-    case whereis(riak_core_cluster_conn_sup) of
-        undefined -> ok;
-        Sup -> exit(Sup, kill)
-    end,
+    catch exit(riak_core_cluster_conn_sup),
+    catch exit(riak_repl2_leader_gs),
     riak_core_cluster_mgr:stop(),
     application:stop(ranch),
-    case whereis(riak_repl2_leader_gs) of
-        undefined -> ok;
-        Leader -> exit(Leader, kill)
-    end,
     riak_core_ring_manager:stop(),
-    case whereis(riak_core_ring_events) of
-        undefined -> ok;
-        RingEvents -> exit(RingEvents, kill)
-    end,
-    meck:unload(riak_core_node_watcher),
-    meck:unload(riak_core_node_watcher_events).
+    catch exit(riak_core_ring_events, kill),
+    [catch exit(Pid, kill) || Pid <- Pids],
+    meck:unload(),
+    process_flag(trap_exit, false),
+    ok.
 
 maybe_start_master() ->
     case node() of
@@ -470,6 +446,10 @@ start_fake_remote_cluster_service() ->
     ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
     riak_core_service_mgr:register_service(ServiceSpec, {round_robin,10}).
 
+stop_fake_remote_cluster_service() ->
+    ServiceProto = {test_cluster_mgr, [{1,0}]},
+    riak_core_service_mgr:unregister_service(ServiceProto).
+
 become_leader() ->
     riak_core_cluster_mgr:set_leader(node(), self()).
 
@@ -551,10 +531,10 @@ fake_remote_cluster_loop(service_loop, Sock, {test_cluster_mgr, [?CTRL_REV]} = S
 %% protocol-id. Of course, it did once or I wouldn't have written this note :-)
 
 ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
-    ?TRACE(?debugFmt("Failed to accept control channel connection: ~p", [Reason]));
+    lager:debug("Failed to accept control channel connection: ~p", [Reason]);
 ctrlService(Socket, Transport, {ok, {test_cluster_mgr, MyVer, RemoteVer}}, Args, Props) ->
     RemoteClusterName = proplists:get_value(clustername, Props),
-    ?TRACE(?debugFmt("ctrlService: received connection from cluster: ~p", [RemoteClusterName])),
+    lager:debug("ctrlService: received connection from cluster: ~p", [RemoteClusterName]),
     Pid = proc_lib:spawn_link(?MODULE,
                               ctrlServiceProcess,
                               [Socket, Transport, MyVer, RemoteVer, Args]),
@@ -565,7 +545,7 @@ read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinAddr} ->
             MyAddr = binary_to_term(BinAddr),
-            ?TRACE(?debugFmt("Cluster Manager: remote thinks my addr is ~p", [MyAddr])),
+            lager:debug("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             lager:info("Cluster Manager: remote thinks my addr is ~p", [MyAddr]),
             MyAddr;
         Error ->
@@ -579,20 +559,20 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
     case Transport:recv(Socket, 0, infinity) of
         {ok, ?CTRL_ASK_NAME} ->
             %% remote wants my name
-            ?TRACE(?debugMsg("wants my name")),
+            lager:debug("wants my name"),
             MyName = ?REMOTE_CLUSTER_NAME,
             Transport:send(Socket, term_to_binary(MyName)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
         {ok, ?CTRL_ASK_MEMBERS} ->
-            ?TRACE(?debugMsg("wants my members")),
+            lager:debug("wants my members"),
             %% remote wants list of member machines in my cluster
             MyAddr = read_ip_address(Socket, Transport, ?MY_CLUSTER_ADDR),
-            ?TRACE(?debugFmt("  client thinks my Addr is ~p", [MyAddr])),
+            lager:debug("  client thinks my Addr is ~p", [MyAddr]),
             Members = ?REMOTE_MEMBERS,
             Transport:send(Socket, term_to_binary(Members)),
             ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args);
         {error, Reason} ->
-            ?debugFmt("Failed recv on control channel. Error = ~p", [Reason]),
+            lager:debug("Failed recv on control channel. Error = ~p", [Reason]),
             % nothing to do now but die
             {error, Reason};
         Other ->
@@ -600,3 +580,5 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
                       [Other]),
             {error, bad_cluster_mgr_message}
     end.
+
+-endif.

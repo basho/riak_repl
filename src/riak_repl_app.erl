@@ -12,7 +12,7 @@
          cluster_mgr_read_cluster_targets_from_ring/0]).
 
 -include("riak_core_cluster.hrl").
--include_lib("riak_core/include/riak_core_connection.hrl").
+-include("riak_core_connection.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -65,33 +65,49 @@ start(_Type, _StartArgs) ->
     case riak_repl_sup:start_link() of
         {ok, Pid} ->
             %% Register connection manager stats application with core
-            riak_core:register(riak_conn_mgr_stats, [{stat_mod, riak_core_connection_mgr_stats}]),
+            riak_core:register(riak_conn_mgr_stats,
+                               [{stat_mod, riak_core_connection_mgr_stats}]),
+
             %% register functions for cluster manager to find it's own
             %% nodes' ip addrs
             riak_core_cluster_mgr:register_member_fun(
                 fun cluster_mgr_member_fun/1),
+
             %% cluster manager leader will follow repl leader
             riak_repl2_leader:register_notify_fun(
               fun riak_core_cluster_mgr:set_leader/2),
+
             %% fullsync co-ordincation will follow leader
             riak_repl2_leader:register_notify_fun(
                 fun riak_repl2_fscoordinator_sup:set_leader/2),
+            riak_repl2_leader:register_notify_fun(
+              fun riak_repl2_pg_proxy_sup:set_leader/2),
+
             name_this_cluster(),
-            riak_core_node_watcher:service_up(riak_repl, Pid),
+
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
-            ok = riak_core_ring_events:add_guarded_handler(riak_repl_ring_handler, []),
+            ok = riak_core_ring_events:add_guarded_handler(
+                    riak_repl_ring_handler, []),
+
             %% Add routes to webmachine
-            [ webmachine_router:add_route(R)
+            _ = [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],
-            %% Now that we have registered the ring handler, we can register the
-            %% cluster manager name locator function (which reads the ring).
+
+            %% Now that we have registered the ring handler, we can
+            %% register the cluster manager name locator function (which
+            %% reads the ring).
             register_cluster_name_locator(),
 
             %% makes service manager start connection dispatcher
-            riak_repl2_rtsink_conn:register_service(),
-            riak_repl2_fssink:register_service(),
-            riak_repl2_fscoordinator_serv:register_service(),
-            riak_repl2_pg_block_requester:register_service(),
+            ok = riak_repl2_rtsink_conn:sync_register_service(),
+            ok = riak_repl2_fssink:sync_register_service(),
+            ok = riak_repl2_fscoordinator_serv:sync_register_service(),
+            ok = riak_repl2_pg_block_requester:sync_register_service(),
+
+            %% Don't announce service is available until we've
+            %% registered all listeners.
+            riak_core_node_watcher:service_up(riak_repl, Pid),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
@@ -99,7 +115,7 @@ start(_Type, _StartArgs) ->
 
 %% @spec stop(State :: term()) -> ok
 %% @doc The application:stop callback for riak_repl.
-stop(_State) -> 
+stop(_State) ->
     lager:info("Stopped application riak_repl"),
     ok.
 
@@ -116,7 +132,7 @@ ensure_dirs() ->
     end,
     {ok, Incarnation} = application:get_env(riak_repl, incarnation),
     WorkRoot = filename:join([DataRoot, "work"]),
-    prune_old_workdirs(WorkRoot),
+    _ = prune_old_workdirs(WorkRoot),
     WorkDir = filename:join([WorkRoot, integer_to_list(Incarnation)]),
     case filelib:ensure_dir(filename:join([WorkDir, "empty"])) of
         ok ->
@@ -133,7 +149,8 @@ prune_old_workdirs(WorkRoot) ->
         {ok, SubDirs} ->
             DirPaths = [filename:join(WorkRoot, D) || D <- SubDirs],
             Cmds = [lists:flatten(io_lib:format("rm -rf ~s", [D])) || D <- DirPaths],
-            [os:cmd(Cmd) || Cmd <- Cmds];
+            _ = [os:cmd(Cmd) || Cmd <- Cmds],
+            ok;
         _ ->
             ignore
     end.
@@ -156,14 +173,17 @@ cluster_mgr_member_fun({IP, Port}) ->
             [{IP, Port}];
         CIDR ->
             ?TRACE(lager:notice("CIDR is ~p", [CIDR])),
-            %AddressMask = mask_address(NormIP, MyMask),
+            %AddressMask = riak_repl2_ip:mask_address(NormIP, MyMask),
             %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
             Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
                 get_matching_address, [RealIP, CIDR]),
             % when this code was written, a multicall will list the results
             % in the same order as the nodes where tried.
-            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP, CIDR]),
+            %% Anya specific
+            AddressMask = riak_repl2_ip:mask_address(RealIP, CIDR),
+            Results2 = maybe_retry_ip_rpc(Results, Nodes, BadNodes, [RealIP,
+                                                                     AddressMask]),
             case RealIP == NormIP of
                 true ->
                     %% No nat, just return the results
@@ -196,7 +216,9 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
     Zipped = lists:zip(Results, Nodes2),
     MaybeRetry = fun
         ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
-            rpc:call(Node, riak_repl_app, get_matching_address, Args);
+            RPCResult = riak_core_util:safe_rpc(Node, riak_repl_app, get_matching_address, Args),
+            lager:debug("rpc to get_matching_address: ~p", [RPCResult]),
+            RPCResult;
         ({Result, _Node}) ->
             Result
     end,
@@ -311,8 +333,25 @@ prep_stop(_State) ->
 
 %% This function is only here for nodes using a version < 1.3. Remove it in
 %% future version
-get_matching_address(IP, CIDR) ->
+get_matching_address(IP, Mask) ->
+    %% Riak 1.2.x incorrectly calculates the netmask before passing it to this
+    %% function. This works with 1.2 nodes, that expect the wrong input, but
+    %% the bug was fixed, so we need to undo that conversion here before
+    %% calling get_matching_address.
+    CIDR = unmask_address(list_to_binary(tuple_to_list(IP)), Mask, 32),
     riak_repl2_ip:get_matching_address(IP, CIDR).
+
+%% this is kind of brute force-y, but I couldn't cook up a better solution
+unmask_address(_, _, 0) ->
+    %% should never happen in normal usage
+    error;
+unmask_address(IP, Mask, Size) ->
+    case IP of
+        <<Mask:Size, _/bitstring>> ->
+            Size;
+        _ ->
+            unmask_address(IP, Mask, Size - 1)
+    end.
 
 %%%%%%%%%%%%%%%%
 %% Unit Tests %%
