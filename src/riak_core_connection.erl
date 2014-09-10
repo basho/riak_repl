@@ -141,6 +141,7 @@ init({IP, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}) ->
             MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
             Hello = term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}),
             ok = ranch_tcp:send(Socket, Hello),
+            ranch_tcp:setopts(Socket, [{active, once}]),
             State = #state{transport = ranch_tcp, socket = Socket, protocol = Protocol, protovers = ProtoVers, socket_opts = SocketOptions, mod = Mod, mod_args = ModArgs, cluster_name = MyName, local_capabilities = MyCaps, ip = IP, port = Port},
             {ok, wait_for_capabilities, State};
         Else ->
@@ -171,16 +172,17 @@ handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{so
         {?CTRL_ACK, _TheirRev, TheirCaps} ->
             case try_ssl(Socket, ranch_tcp, State#state.local_capabilities, TheirCaps) of
                 {error, _} = Error ->
-                    {stop, Error, wait_for_capabilities, State};
+                    {stop, Error, State};
                 {NewTransport, NewSocket} ->
                     FullProto = {State#state.protocol, State#state.protovers},
                     NewTransport:send(Socket, erlang:term_to_binary(FullProto)),
+                    NewTransport:setopts(Socket, [{active, once}]),
                     State2 = State#state{transport = NewTransport, socket = NewSocket, remote_capabilities = TheirCaps},
                     {next_state, wait_for_protocol, State2}
             end;
         Else ->
             lager:warning("Invalid response from remote server: ~p", [Else]),
-            {stop, {invalid_response, Else}, wait_for_capabilies, State}
+            {stop, {invalid_response, Else}, State}
     end;
 
 handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket = Socket}) ->
@@ -191,10 +193,10 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
             NegotiatedProto = {ProtoName, {CommonMajor, LocalMinor}, {CommonMajor, RemoteMinor}},
             _ = Transport:setopts(Socket, State#state.socket_opts),
             _ModStarted = Module:connected(Socket, Transport, IpPort, NegotiatedProto, ModArgs, State#state.remote_capabilities),
-            {stop, normal, connected, State};
+            {stop, normal, State};
         Else ->
             lager:warning("Invalid version returned: ~p", [Else]),
-            {stop, {error, Else}, wait_for_protocol, State}
+            {stop, {error, Else}, State}
     end.
 
 terminate(_Why, _StateName, _State) ->
