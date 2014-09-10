@@ -1,0 +1,129 @@
+Usage: riak-repl <command> [<sub-command> ...] [<arg> ...]
+
+  Commands:
+    modes                Show or set replication modes
+    status               Display status and metrics
+
+  Version 3 Commands:
+    clustername          Show or set the cluster name
+    clusterstats         Display cluster stats
+    connect              Connect to a remote cluster
+    connections          Display a list of connections
+    disconnect           Disconnect from a remote cluster
+    fullsync             Manipulate fullsync replication
+    nat-map              Manipulate NAT mappings
+    proxy-get            Manipulate proxy-get
+    realtime             Manipulate realtime replication
+
+  Version 2 Commands:
+    add-listener         Add a sink listener
+    add-nat-listener     Add a sink listener with NAT
+    add-site             Add a sink site
+    cancel-fullsync      Cancel running fullsync replication
+    del-listener         Delete a sink listener
+    del-site             Delete a sink site
+    pause-fullsync       Pause running fullsync replication
+    resume-fullsync      Resume paused fullsync replication
+    start-fullsync       Start fullsync replication
+
+Usage: riak-repl realtime <sub-command> [<arg> ...]
+
+  Manipulate realtime replication. Realtime replication streams
+  incoming writes on the source cluster to the sink cluster(s).
+
+  Sub-commands:
+    enable      Enable realtime replication
+    disable     Disable realtime replication
+    start       Start realtime replication
+    stop        Stop realtime replication
+    cascades    Manipulate cascading realtime replication
+
+Usage: riak-repl realtime cascades <sub-command>
+
+  Manipulate cascading realtime replication. When this cluster is a
+  sink and is receiving realtime replication, it can propagate
+  incoming writes to any clusters for which it is a source and
+  realtime replication is enabled.
+
+  Sub-commands:
+    enable      Enable cascading realtime replication
+    disable     Disable cascading realtime replication
+    show        Show the current cascading realtime replication setting
+
+Usage: riak-repl fullsync <sub-command> [<arg> ...]
+
+  Manipulate fullsync replication. Fullsync replication compares data
+  on the source and the sink and then sends detected differences to
+  the sink cluster.
+   
+  Sub-commands:
+    enable      Enable fullsync replication
+    disable     Disable fullsync replication
+    start       Start fullsync replication
+    stop        Stop fullsync replication
+    source      Manipulate source cluster limits
+    sink        Manipulate sink cluster limits
+
+Usage: riak-repl fullsync source (max_workers_per_node | max_workers_per_cluster) [<value>]
+
+  Set limits on the number of fullsync workers on a source cluster. If
+  <value> is omitted, the current setting is displayed.
+
+Usage: riak-repl fullsync sink max_workers_per_node [<value>]
+
+  Set limits on the number of fullsync workers on a sink cluster. If
+  <value> is omitted, the current setting is displayed.
+
+Usage: riak-repl nat-map <sub-command> [<arg> ...]
+
+  Manipulate NAT mappings. NAT mappings allow replication connections
+  to traverse firewalls between private networks on previously
+  configured ports.
+
+  Sub-commands:
+    add         Add a NAT mapping
+    del         Delete a NAT mapping
+    show        Display the NAT mapping table
+
+Usage: riak-repl nat-map add <external-ip>[:<port>] <internal-ip>
+
+  Add a NAT mapping from the given external IP to the given internal
+  IP. An optional external port can be supplied.
+
+Usage: riak-repl nat-map del <external-ip>[:<port>] <internal-ip>
+
+  Delete a NAT mapping between the given external IP and the given
+  internal IP.
+
+Usage: riak-repl proxy-get <sub-command> [ <args> ... ]
+
+  Manipulate proxy-get functionality. Proxy-get allows sink clusters
+  to actively fetch remote objects over a realtime replication
+  connection. Currently, this is only used by Riak CS.
+
+  Sub-commands:
+    enable     Enable proxy-get on the source
+    disable    Disable proxy-get on the source
+    redirect   Manipulation proxy-get redirection
+
+Usage: riak-repl proxy-get enable <sink-cluster-name>
+
+  Enables proxy-get requests from <sink-cluster-name> to this source
+  cluster.
+
+Usage: riak-repl proxy-get disable <sink-cluster-name>
+
+  Disables proxy-get requests from <sink-cluster-name> to this source
+  cluster.
+
+Usage: riak-repl proxy-get redirect <sub-command> [ <args> ... ]
+
+  Manipulate proxy-get redirection functionality. Redirection allows
+  existing proxy-get connections to be redirected to new source
+  clusters so that the original source cluster can be decommissioned.
+
+  Sub-commands:
+    add          Add a proxy-get redirection
+    delete       Delete an existing proxy-get redirection
+    show         Show a proxy-get redirection
+    cluster-id   Display the local cluster's identifier
