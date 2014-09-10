@@ -20,6 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_connection).
+-behavior(gen_fsm).
 
 -include("riak_core_connection.hrl").
 
@@ -27,12 +28,23 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-record(state, {
+    transport, socket, protocol, protovers, socket_opts, mod, mod_args,
+    cluster_name, local_capabilities, remote_capabilities, ip, port
+}).
+
 %% public API
 -export([connect/2,
          sync_connect/2]).
-
-%% internal functions
--export([async_connect_proc/3]).
+-export([start_link/2, start_link/7]).
+%% gen_fsm
+-export([init/1]).
+-export([
+    wait_for_capabilities/3, wait_for_capabilities/2,
+    wait_for_protocol/3, wait_for_protocol/2
+]).
+-export([handle_sync_event/4, handle_event/3, handle_info/3]).
+-export([terminate/3, code_change/4]).
 
 %%TODO: move to riak_ring_core...symbolic cluster naming
 -export([set_symbolic_clustername/2, set_symbolic_clustername/1,
@@ -91,100 +103,105 @@ symbolic_clustername() ->
 %% connect returns the pid() of the asynchronous process that will attempt the connection.
 
 -spec(connect(ip_addr(), clientspec()) -> pid()).
-connect({IP,Port}, ClientSpec) ->
-    lager:debug("spawning async_connect link"),
-    %% start a process to handle the connection request asyncrhonously
-    proc_lib:spawn_link(?MODULE, async_connect_proc, [self(), {IP,Port}, ClientSpec]).
+connect(IPPort, ClientSpec) ->
+    start_link(IPPort, ClientSpec).
 
 -spec sync_connect(ip_addr(), clientspec()) -> ok | {error, atom()}.
-sync_connect({IP,Port}, ClientSpec) ->
-    sync_connect_status(self(), {IP,Port}, ClientSpec).
-
-%% @private
-
-%% exchange brief handshake with client to ensure that we're supporting sub-protocols.
-%% client -> server : Hello {1,0} [Capabilities]
-%% server -> client : Ack {1,0} [Capabilities]
-exchange_handshakes_with(host, Socket, Transport, MyCaps) ->
-    Hello = term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}),
-    case Transport:send(Socket, Hello) of
-        ok ->
-            lager:debug("exchange_handshakes: waiting for ~p from host", [?CTRL_ACK]),
-            case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-                {ok, Ack} ->
-                    case binary_to_term(Ack) of
-                        {?CTRL_ACK, TheirRev, TheirCaps} ->
-                            Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
-                            {ok,Props};
-                        {error, _Reason} = Error ->
-                            Error;
-                        Msg ->
-                            {error, Msg}
-                    end;
-                {error, Reason} ->
-                    {error, Reason}
+sync_connect(IPPort, ClientSpec) ->
+    case start_link(IPPort, ClientSpec) of
+        {ok, Pid} ->
+            Mon = erlang:monitor(process, Pid),
+            receive
+                {'DOWN', Mon, process, Pid, normal} ->
+                    ok;
+                {'DOWN', Mon, process, Pid, Why} ->
+                    {error, Why}
             end;
-        Error ->
-            Error
+        Else ->
+            Else
     end.
 
-async_connect_proc(Parent, {IP,Port}, ProtocolSpec) ->
-    sync_connect_status(Parent, {IP,Port}, ProtocolSpec).
+start_link({Ip, Port}, ClientSpec) ->
+    {{Protocol, ProtoVers}, {TcpOptions, CallbackMod, CallbackArgs}} = ClientSpec,
+    start_link(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs).
 
-%% connect synchronously to remote addr/port and return status
-sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}}) ->
-    Timeout = ?CONNECTION_SETUP_TIMEOUT,
-    Transport = ranch_tcp,
-    %%   connect to host's {IP,Port}
-    lager:debug("sync_connect: connect to ~p", [{IP,Port}]),
-    case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, Timeout) of
+start_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs) ->
+    gen_fsm:start_link(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}).
+
+%% gen_fsm callbacks
+
+init({IP, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}) ->
+    case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, Socket} ->
-            lager:debug("Setting system options on client side: ~p", [?CONNECT_OPTIONS]),
-            ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
+            ok = ranch_tcp:setopts(Socket, ?CONNECT_OPTIONS),
             SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
-            %% handshake to make sure it's a riak sub-protocol dispatcher
             MyName = symbolic_clustername(),
             MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
-            case exchange_handshakes_with(host, Socket, Transport, MyCaps) of
-                {ok,TheirCaps} ->
-                    case try_ssl(Socket, Transport, MyCaps, TheirCaps) of
-                        {error, Reason} ->
-                            {error, Reason};
-                        {NewTransport, NewSocket} ->
-                            %% ask for protocol, see what host has
-                            case negotiate_proto_with_server(NewSocket, NewTransport, ClientProtocol) of
-                                {ok,HostProtocol} ->
-                                    %% set client's requested Tcp options
-                                    lager:debug("Setting user options on client side; ~p", [Options]),
-                                    %% notify requester of connection and negotiated protocol from host
-                                    %% pass back returned value in case problem detected on connection
-                                    %% by module.  requestor is responsible for transferring control
-                                    %% of the socket.
-                                    NewTransport:setopts(NewSocket, Options),
-                                    Module:connected(NewSocket, NewTransport,
-                                        {IP, Port}, HostProtocol,
-                                        Args, TheirCaps);
-                                {error, Reason} ->
-                                    lager:debug("negotiate_proto_with_server returned: ~p", [{error,Reason}]),
-                                    %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
-                                    {error, Reason}
-                            end
-                    end;
-                {error, closed} ->
-                    %% socket got closed, don't report this
-                    {error, closed};
-                {error, Reason} ->
-                    lager:error("Failed to exchange handshake with host. Error = ~p", [Reason]),
-                    {error, Reason};
-                Error ->
-                    %% failed to exchange handshakes
-                    lager:error("Failed to exchange handshake with host. Error = ~p", [Error]),
-                    {error, Error}
-            end;
-        {error, Reason} ->
-            %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
-            {error, Reason}
+            Hello = term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}),
+            ok = ranch_tcp:send(Socket, Hello),
+            State = #state{transport = ranch_tcp, socket = Socket, protocol = Protocol, protovers = ProtoVers, socket_opts = SocketOptions, mod = Mod, mod_args = ModArgs, cluster_name = MyName, local_capabilities = MyCaps, ip = IP, port = Port},
+            {ok, wait_for_capabilities, State};
+        Else ->
+            lager:notice("Could not connect ~p:~p due to ~p", [IP, Port, Else]),
+            ignore
     end.
+
+wait_for_capabilities(_Req, _From, State) ->
+    {reply, {error, invalid}, wait_for_capabilities, State}.
+
+wait_for_capabilities(_Req, State) ->
+    {next_state, wait_for_capabilities, State}.
+
+wait_for_protocol(_Req, _From, State) ->
+    {reply, {error, invalid}, wait_for_protocol, State}.
+
+wait_for_protocol(_Req, State) ->
+    {next_state, wait_for_protocol, State}.
+
+handle_sync_event(_Req, _From, StateName, State) ->
+    {reply, {error, invalid}, StateName, State}.
+
+handle_event(_Req, StateName, State) ->
+    {next_state, StateName, State}.
+
+handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{socket = Socket}) ->
+    case binary_to_term(Data) of
+        {?CTRL_ACK, _TheirRev, TheirCaps} ->
+            case try_ssl(Socket, ranch_tcp, State#state.local_capabilities, TheirCaps) of
+                {error, _} = Error ->
+                    {stop, Error, wait_for_capabilities, State};
+                {NewTransport, NewSocket} ->
+                    FullProto = {State#state.protocol, State#state.protovers},
+                    NewTransport:send(Socket, erlang:term_to_binary(FullProto)),
+                    State2 = State#state{transport = NewTransport, socket = NewSocket, remote_capabilities = TheirCaps},
+                    {next_state, wait_for_protocol, State2}
+            end;
+        Else ->
+            lager:warning("Invalid response from remote server: ~p", [Else]),
+            {stop, {invalid_response, Else}, wait_for_capabilies, State}
+    end;
+
+handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket = Socket}) ->
+    case binary_to_term(Data) of
+        {ok, {ProtoName, {CommonMajor, RemoteMinor, LocalMinor}}} ->
+            #state{transport = Transport, mod = Module, mod_args = ModArgs} = State,
+            IpPort = {State#state.ip, State#state.port},
+            NegotiatedProto = {ProtoName, {CommonMajor, LocalMinor}, {CommonMajor, RemoteMinor}},
+            _ = Transport:setopts(Socket, State#state.socket_opts),
+            _ModStarted = Module:connected(Socket, Transport, IpPort, NegotiatedProto, ModArgs, State#state.remote_capabilities),
+            {stop, normal, connected, State};
+        Else ->
+            lager:warning("Invalid version returned: ~p", [Else]),
+            {stop, {error, Else}, wait_for_protocol, State}
+    end.
+
+terminate(_Why, _StateName, _State) ->
+    ok.
+
+code_change(_OldVsn, StateName, State, _Extra) ->
+    {ok, StateName, State}.
+
+%% @private
 
 try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
     MySSL = proplists:get_value(ssl_enabled, TheirCaps, false),
@@ -216,25 +233,3 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             end
       end.
 
-
-%% Negotiate the highest common major protocol revision with the connected server.
-%% client -> server : Prefs List = {SubProto, [{Major, Minor}]}
-%% server -> client : selected version = {SubProto, {Major, HostMinor, ClientMinor}}
-%%
-%% returns {ok,{Proto,{Major,ClientMinor},{Major,HostMinor}}} | {error, Reason}
-negotiate_proto_with_server(Socket, Transport, ClientProtocol) ->
-    lager:debug("negotiate protocol with host, client proto = ~p", [ClientProtocol]),
-    Transport:send(Socket, erlang:term_to_binary(ClientProtocol)),
-    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-        {ok, NegotiatedProtocolBin} ->
-            case erlang:binary_to_term(NegotiatedProtocolBin) of
-                {ok, {Proto,{CommonMajor,HMinor,CMinor}}} ->
-                    {ok, {Proto,{CommonMajor,CMinor},{CommonMajor,HMinor}}};
-                {error, Reason} ->
-                    {error, Reason}
-            end;
-        {error, Reason} ->
-            lager:error("Failed to receive protocol ~p response from server. Reason = ~p",
-                        [ClientProtocol, Reason]),
-            {error, connection_failed}
-    end.
