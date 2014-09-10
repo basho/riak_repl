@@ -36,7 +36,7 @@
 %% public API
 -export([connect/2,
          sync_connect/2]).
--export([start_link/2, start_link/7]).
+-export([start_link/2, start_link/7, start/2, start/7]).
 %% gen_fsm
 -export([init/1]).
 -export([
@@ -104,18 +104,23 @@ symbolic_clustername() ->
 
 -spec(connect(ip_addr(), clientspec()) -> pid()).
 connect(IPPort, ClientSpec) ->
-    start_link(IPPort, ClientSpec).
+    start(IPPort, ClientSpec).
 
 -spec sync_connect(ip_addr(), clientspec()) -> ok | {error, atom()}.
 sync_connect(IPPort, ClientSpec) ->
-    case start_link(IPPort, ClientSpec) of
+    case start(IPPort, ClientSpec) of
         {ok, Pid} ->
             Mon = erlang:monitor(process, Pid),
             receive
                 {'DOWN', Mon, process, Pid, normal} ->
                     ok;
                 {'DOWN', Mon, process, Pid, Why} ->
-                    {error, Why}
+                    case Why of
+                        {error, _Wut} ->
+                            Why;
+                        _ ->
+                            {error, Why}
+                    end
             end;
         ignore ->
             {error, could_not_connect};
@@ -128,7 +133,23 @@ start_link({Ip, Port}, ClientSpec) ->
     start_link(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs).
 
 start_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs) ->
-    gen_fsm:start_link(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}, []).
+    start(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, true).
+
+start({IP, Port}, ClientSpec) ->
+    {{Protocol, ProtoVers}, {TcpOptions, CallbackMod, CallbackArgs}} = ClientSpec,
+    start(IP, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs, false).
+
+start(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs) ->
+    start(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs, false).
+
+start(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, Link) ->
+    StartFunc = if
+        Link ->
+            start_link;
+        true ->
+            start
+    end,
+    gen_fsm:StartFunc(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}, []).
 
 %% gen_fsm callbacks
 
@@ -196,7 +217,7 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
             {stop, normal, State};
         Else ->
             lager:warning("Invalid version returned: ~p", [Else]),
-            {stop, {error, Else}, State}
+            {stop, Else, State}
     end.
 
 terminate(_Why, _StateName, _State) ->
