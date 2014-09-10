@@ -117,6 +117,8 @@ sync_connect(IPPort, ClientSpec) ->
                 {'DOWN', Mon, process, Pid, Why} ->
                     {error, Why}
             end;
+        ignore ->
+            {error, could_not_connect};
         Else ->
             Else
     end.
@@ -126,7 +128,7 @@ start_link({Ip, Port}, ClientSpec) ->
     start_link(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs).
 
 start_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs) ->
-    gen_fsm:start_link(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}).
+    gen_fsm:start_link(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}, []).
 
 %% gen_fsm callbacks
 
@@ -142,7 +144,7 @@ init({IP, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}) ->
             State = #state{transport = ranch_tcp, socket = Socket, protocol = Protocol, protovers = ProtoVers, socket_opts = SocketOptions, mod = Mod, mod_args = ModArgs, cluster_name = MyName, local_capabilities = MyCaps, ip = IP, port = Port},
             {ok, wait_for_capabilities, State};
         Else ->
-            lager:notice("Could not connect ~p:~p due to ~p", [IP, Port, Else]),
+            lager:warning("Could not connect ~p:~p due to ~p", [IP, Port, Else]),
             ignore
     end.
 
