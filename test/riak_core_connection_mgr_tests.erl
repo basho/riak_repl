@@ -80,7 +80,12 @@ connections_test_() ->
      [
       {setup,
        fun() ->
-               error_logger:tty(false),
+               case os:getenv("ENABLE_LAGER") of
+                    false -> error_logger:tty(false);
+                    _ ->
+                        lager:start(),
+                        lager:set_loglevel(lager_console_backend, debug)
+               end,
                ok = application:start(ranch),
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
