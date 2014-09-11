@@ -283,7 +283,10 @@ start_link_setup() ->
     start_link_setup(?MY_CLUSTER_ADDR).
 
 start_link_setup(ClusterAddr) ->
-    error_logger:tty(false),
+    case os:getenv("ENABLE_LAGER") of
+        false -> error_logger:tty(false);
+        _ -> lager:start(), lager:set_loglevel(lager_console_backend, debug)
+    end,
     % core features that are needed
     {ok, Eventer} = riak_core_ring_events:start_link(),
     {ok, RingMgr} = riak_core_ring_manager:start_link(test),

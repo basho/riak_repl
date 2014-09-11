@@ -125,6 +125,7 @@ sync_connect(IPPort, ClientSpec) ->
         ignore ->
             {error, could_not_connect};
         Else ->
+            lager:debug("start returned ~p", [Else]),
             Else
     end.
 
@@ -218,7 +219,11 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
         Else ->
             lager:warning("Invalid version returned: ~p", [Else]),
             {stop, Else, State}
-    end.
+    end;
+
+handle_info({_LikelyClose, Socket}, _StateName, State = #state{socket = Socket}) ->
+    lager:debug("Socket closed"),
+    {stop, normal, State}.
 
 terminate(_Why, _StateName, _State) ->
     ok.

@@ -74,6 +74,12 @@ conection_test_() ->
      [
       {setup,
        fun() ->
+               case os:getenv("ENABLE_LAGER") of
+                    false -> ok;
+                    _ ->
+                        lager:start(),
+                        lager:set_loglevel(lager_console_backend, debug)
+               end,
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
                ok = application:start(ranch),
