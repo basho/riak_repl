@@ -63,6 +63,12 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 1296000),
     ok.
 
+heartbeat_interval_test() ->
+    Conf = [{["mdc", "realtime", "heartbeat"], false},
+            {["mdc", "realtime", "heartbeat", "interval"], 300}],
+    Config = cuttlefish_unit:generate_templated_config(["../priv/riak_repl.schema"], Conf, context()),
+    cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", undefined).
+
 fullsync_interval_test_() ->
     [
      {"interval=never but sink intervals set results in warning", 
@@ -97,6 +103,7 @@ fullsync_interval_test_() ->
                                                    "Cannot set both mdc.fullsync.interval and sink-specific intervals")
       end}
     ].
+
 
 
 %% this context() represents the substitution variables that rebar
