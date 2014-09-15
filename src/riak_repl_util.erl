@@ -40,6 +40,7 @@
          schedule_cluster_fullsync/2,
          elapsed_secs/1,
          shuffle_partitions/2,
+         lists_shuffle/1,
          proxy_get_active/0,
          log_dropped_realtime_obj/1,
          dropped_realtime_hook/1,
@@ -731,6 +732,17 @@ shuffle_partitions(Partitions, Seed) ->
     [Partition || {Partition, _} <-
         lists:keysort(2, [{Key, random:uniform()} || Key <- Partitions])].
 
+lists_shuffle([]) ->
+    [];
+lists_shuffle([E]) ->
+    [E];
+lists_shuffle(List) ->
+    case get(random_seed) of
+        undefined -> _ = random:seed(erlang:now());
+        _         -> ok
+    end,
+    [N || {_, N} <- lists:keysort(1, [{random:uniform(), E} || E <- List])].
+
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix
 parse_vsn(Str) ->
@@ -1164,5 +1176,17 @@ do_wire_list_w1_bucket_type_test() ->
     Encoded = to_wire(w2, Objs),
     Decoded = from_wire(w2, Encoded),
     ?assertEqual(Decoded, Objs).
+
+lists_shuffle_test() ->
+    %% We can rely on the output to "expected" to be deterministic only as long
+    %% as lists_shuffle/1 uses a deterministic random function. It does for now.
+
+    %% set seed so we know it
+    random:seed(),
+
+    In = lists:seq(0,9),
+    Expected = [4,0,8,3,9,5,7,1,6,2],
+    Out = lists_shuffle(In),
+    ?assert(Expected == Out).
 
 -endif.

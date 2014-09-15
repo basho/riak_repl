@@ -187,7 +187,7 @@ cluster_mgr_member_fun({IP, Port}) ->
             case RealIP == NormIP of
                 true ->
                     %% No nat, just return the results
-                    lists_shuffle(Results2);
+                    riak_repl_util:lists_shuffle(Results2);
                 false ->
                     %% NAT is in effect
                     NatRes = lists:foldl(fun({XIP, XPort}, Acc) ->
@@ -207,7 +207,7 @@ cluster_mgr_member_fun({IP, Port}) ->
                             end
                     end, [], Results2),
                     lager:debug("~p -> ~p", [Results2, NatRes]),
-                    lists_shuffle(NatRes)
+                    riak_repl_util:lists_shuffle(NatRes)
             end
     end.
 
@@ -223,18 +223,6 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
             Result
     end,
     lists:map(MaybeRetry, Zipped).
-
-lists_shuffle([]) ->
-    [];
-
-lists_shuffle([E]) ->
-    [E];
-
-lists_shuffle(List) ->
-    Max = length(List),
-    Keyed = [{random:uniform(Max), E} || E <- List],
-    Sorted = lists:sort(Keyed),
-    [N || {_, N} <- Sorted].
 
 %% TODO: check the config for a name. Don't overwrite one a user has set via cmd-line
 name_this_cluster() ->
@@ -353,18 +341,3 @@ unmask_address(IP, Mask, Size) ->
             unmask_address(IP, Mask, Size - 1)
     end.
 
-%%%%%%%%%%%%%%%%
-%% Unit Tests %%
-%%%%%%%%%%%%%%%%
-
--ifdef(TEST).
-
-lists_shuffle_test() ->
-    %% We can rely on the output to "expected" to be deterministic only as long
-    %% as lists_shuffle/1 uses a deterministic random function. It does for now.
-    In = lists:seq(0,9),
-    Expected = [4,0,8,3,5,9,7,1,2,6],
-    Out = lists_shuffle(In),
-    ?assert(Expected == Out).
-
--endif.
