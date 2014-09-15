@@ -170,7 +170,11 @@ get_my_members(MyAddr) ->
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
-        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
+    case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
+        {ok, Addrs} ->
+            Addrs2 = riak_repl_util:shuffle_remote_ipaddrs(Addrs),
+            {ok, Addrs2}
+    end.
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
@@ -198,7 +202,7 @@ init(Defaults) ->
     end,
     %% schedule a timer to poll remote clusters occasionaly
     erlang:send_after(?CLUSTER_POLLING_INTERVAL, self(), poll_clusters_timer),
-    BalancerFun = fun(Addr) -> round_robin_balancer(Addr) end,
+    BalancerFun = fun(Addrs) -> Addrs end,
     MeNode = node(),
     State = register_defaults(Defaults, #state{
                 is_leader = false,

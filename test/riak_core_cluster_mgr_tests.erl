@@ -107,12 +107,11 @@ single_node_test_() ->
         end},
 
         {"get ipaddres of cluster", fun() ->
-            Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
-            Rotated1 = [{"127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
-            Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
-            ?assert({ok,Original} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
-            ?assert({ok,Rotated1} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
-            ?assert({ok,Rotated2} == riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME))
+            %% assume "local" cluster is of size one
+            First1 = {"127.0.0.1",5001},
+            {ok, [First1|_]} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME),
+            {ok, [First1|_]} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME),
+            true
         end}
 
     ] end }.
@@ -261,19 +260,18 @@ multinode_test__() ->
         end},
 
         {"get ipaddres of cluster", fun() ->
-            Original = [{"127.0.0.1",5001}, {"127.0.0.1",5002}, {"127.0.0.1",5003}],
-            Rotated1 = [{"eunit:test([riak_core_cluster_mgr_tests]).127.0.0.1",5002}, {"127.0.0.1",5003}, {"127.0.0.1",5001}],
-            Rotated2 = [{"127.0.0.1",5003}, {"127.0.0.1",5001}, {"127.0.0.1",5002}],
+            %% this assumes that the local cluster has only one member
+            First = {"127.0.0.1",5001},
             %{[R1, R2, R3], []} = rpc:multicall(Nodes, riak_core_cluster_mgr, get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
-            R1 = rpc:call(Superman, riak_core_cluster_mgr,
+            {ok,[R1,_]} = rpc:call(Superman, riak_core_cluster_mgr,
                           get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
-            R2 = rpc:call(Batman, riak_core_cluster_mgr,
+            {ok,[R2,_]} = rpc:call(Batman, riak_core_cluster_mgr,
                           get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
-            R3 = rpc:call(Wonder, riak_core_cluster_mgr,
+            {ok,[R3,_]} = rpc:call(Wonder, riak_core_cluster_mgr,
                           get_ipaddrs_of_cluster, [?REMOTE_CLUSTER_NAME]),
-            ?assertEqual({ok, Original}, R1),
-            ?assertEqual({ok, Rotated1}, R2),
-            ?assertEqual({ok, Rotated2}, R3)
+            ?assertEqual(First, R1),
+            ?assertEqual(First, R2),
+            ?assertEqual(First, R3)
         end}
 
     ] end }.
