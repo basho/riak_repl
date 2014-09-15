@@ -18,7 +18,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.max_fssource_node", 1),
     cuttlefish_unit:assert_config(Config, "riak_repl.max_fssink_node", 1),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_on_connect", true),
-    cuttlefish_unit:assert_not_configured(Config, "riak_repl.fullsync_interval"),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_interval", 360),
     cuttlefish_unit:assert_config(Config, "riak_repl.rtq_max_bytes", 104857600),
     cuttlefish_unit:assert_config(Config, "riak_repl.proxy_get", disabled),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 15),
@@ -31,16 +31,17 @@ override_schema_test() ->
     Conf = [
             {["mdc", "data_root"], "/some/repl/place"},
             {["mdc", "cluster_manager"], {"4.3.2.1", 4321}},
-            {["mdc", "max_fssource_cluster"], 10},
-            {["mdc", "max_fssource_node"], 2},
-            {["mdc", "max_fssink_node"], 4},
-            {["mdc", "fullsync_on_connect"], false},
-            {["mdc", "fullsync_interval", "cluster1"], "15m"},
-            {["mdc", "fullsync_interval", "cluster2"], "1h"},
-            {["mdc", "rtq_max_bytes"], "50MB"},
+            {["mdc", "fullsync", "source", "max_workers_per_cluster"], 10},
+            {["mdc", "fullsync", "source", "max_workers_per_node"], 2},
+            {["mdc", "fullsync", "sink", "max_workers_per_node"], 4},
+            {["mdc", "fullsync", "start_on_connect"], off},
+            {["mdc", "fullsync", "interval"], per_sink},
+            {["mdc", "fullsync", "interval", "cluster1"], "15m"},
+            {["mdc", "fullsync", "interval", "cluster2"], "1h"},
+            {["mdc", "realtime", "queue_max_bytes"], "50MB"},
             {["mdc", "proxy_get"], on},
-            {["mdc", "realtime", "heartbeat_interval"], "15m"},
-            {["mdc", "realtime", "heartbeat_timeout"], "15d"}
+            {["mdc", "realtime", "heartbeat", "interval"], "15m"},
+            {["mdc", "realtime", "heartbeat", "timeout"], "15d"}
            ],
 
     %% The defaults are defined in ../priv/riak_repl.schema.
