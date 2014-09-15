@@ -539,7 +539,7 @@ determine_netmask_test_() ->
 
 natmap_test_() ->
     error_logger:tty(false),
-    [
+    [{timeout, 30,
         {"forward lookups work",
             fun() ->
                     Map = [
@@ -555,8 +555,8 @@ natmap_test_() ->
                         maybe_apply_nat_map({10, 0, 0, 10}, 9090, Map)),
                     ok
             end
-        },
-        {"forward lookups with ports work",
+        }},
+        {timeout, 30, {"forward lookups with ports work",
             fun() ->
                     Map = [
                         {{{65, 172, 243, 10}, 10080}, {10, 0, 0, 10}},
@@ -571,8 +571,8 @@ natmap_test_() ->
                         maybe_apply_nat_map({10, 0, 0, 10}, 9090, Map)),
                     ok
             end
-        },
-        {"reverse lookups work",
+        }},
+        {timeout, 30, {"reverse lookups work",
             fun() ->
                     Map = [
                         {{65, 172, 243, 10}, {10, 0, 0, 10}},
@@ -587,8 +587,8 @@ natmap_test_() ->
                         apply_reverse_nat_map({10, 0, 0, 20}, 9090, Map)),
                     ok
             end
-        },
-        {"reverse lookups with ports work",
+        }},
+        {timeout, 30, {"reverse lookups with ports work",
             fun() ->
                     Map = [
                         {{{65, 172, 243, 10}, 10080}, {10, 0, 0, 10}},
@@ -603,8 +603,8 @@ natmap_test_() ->
                         apply_reverse_nat_map({10, 0, 0, 20}, 9080, Map)),
                     ok
             end
-        },
-        {"forward lookups with hostnames work",
+        }},
+        {timeout, 30, {"forward lookups with hostnames work",
             fun() ->
                     Map = [
                         {{65, 172, 243, 10}, "localhost"},
@@ -615,8 +615,8 @@ natmap_test_() ->
                         maybe_apply_nat_map({65, 172, 243, 10}, 9080, Map)),
                     ok
             end
-        },
-        {"reverse lookups with hostnames work",
+        }},
+        {timeout, 30, {"reverse lookups with hostnames work",
             fun() ->
                     {ok, {hostent, "basho.com", _, inet, 4, Addresses}} = inet_res:gethostbyname("basho.com"),
                     Map = [
@@ -628,7 +628,7 @@ natmap_test_() ->
                         apply_reverse_nat_map(hd(Addresses), 9080, Map)),
                     ok
             end
-        }
+        }}
     ].
 
 -endif.
