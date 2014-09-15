@@ -23,6 +23,8 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.proxy_get", disabled),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 15),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 15),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_use_background_manager", false),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_stat_refresh_interval", 60000),
     ok.
 
 override_schema_test() ->
@@ -41,7 +43,9 @@ override_schema_test() ->
             {["mdc", "realtime", "queue_max_bytes"], "50MB"},
             {["mdc", "proxy_get"], on},
             {["mdc", "realtime", "heartbeat", "interval"], "15m"},
-            {["mdc", "realtime", "heartbeat", "timeout"], "15d"}
+            {["mdc", "realtime", "heartbeat", "timeout"], "15d"},
+            {["mdc", "fullsync", "background_manager"], on},
+            {["mdc", "fullsync", "source", "metrics_refresh_interval"], "30s"}
            ],
 
     %% The defaults are defined in ../priv/riak_repl.schema.
@@ -61,6 +65,8 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.proxy_get", enabled),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 900),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 1296000),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_use_background_manager", true),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_stat_refresh_interval", 30000),
     ok.
 
 heartbeat_interval_test() ->
