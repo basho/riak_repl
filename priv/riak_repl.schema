@@ -135,7 +135,7 @@
 %% @doc Whether heartbeats are enabled for realtime replication
 %% connections.
 {mapping, "mdc.realtime.heartbeat", "riak_repl.rt_heartbeat_interval", [
-    {datatype, flag}
+    {datatype, flag},
     {default, on}
 ]}.
 
@@ -162,7 +162,7 @@
  fun(Conf) ->
          case cuttlefish:conf_get("mdc.realtime.heartbeat", Conf) of
              true ->
-                 cuttlefish:conf_get("mdc.realtime.hearbeat.interval", Conf);
+                 cuttlefish:conf_get("mdc.realtime.heartbeat.interval", Conf);
              false ->
                  undefined
          end
@@ -170,7 +170,7 @@
 
 %% @doc Enable Riak CS proxy_get and block filter.
 {mapping, "mdc.proxy_get", "riak_repl.proxy_get", [
-    {datatype, {enum, [{on, enabled}, {off, disabled}]}},
+    {datatype, {flag, {on, enabled}, {off, disabled}}},
     {default, off},
     hidden
 ]}.
