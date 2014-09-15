@@ -63,6 +63,42 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 1296000),
     ok.
 
+fullsync_interval_test_() ->
+    [
+     {"interval=never but sink intervals set results in warning", 
+      fun() -> 
+              riak_repl_lager_test_backend:bounce(warning),
+              Conf = [{["mdc", "fullsync", "interval"], never},
+                      {["mdc", "fullsync", "interval", "cluster1"], 360}],
+              Config = cuttlefish_unit:generate_templated_config(["../priv/riak_repl.schema"], Conf, context()),
+              cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_interval", disabled),
+              Logs = riak_repl_lager_test_backend:get_logs(),
+              ?assertMatch([_|_], Logs),
+              [ ?assertEqual("mdc.fullsync.interval is set to never, sink specific intervals are ignored",
+                             Message) || [_Time, " ", ["[","warning","]"], Message] <- Logs ]
+      end},
+     {"interval=per_sink but no sink intervals is invalid", 
+      fun() -> 
+              Conf = [{["mdc", "fullsync", "interval"], per_sink}],
+              Config = cuttlefish_unit:generate_templated_config(["../priv/riak_repl.schema"], Conf, context()),
+              cuttlefish_unit:assert_error_message(Config, 
+                                                   "Translation for 'riak_repl.fullsync_interval' found invalid configuration: "
+                                                   "Cannot set mdc.fullsync.interval = per_sink and"
+                                                   " omit sink-specific intervals, set sink-specific"
+                                                   " intervals or use 'never'")
+      end},
+     {"interval=Time and per-sink intervals is invalid", 
+      fun() ->
+              Conf = [{["mdc", "fullsync", "interval"], 60},
+                      {["mdc", "fullsync", "interval", "cluster1"], 360}],
+              Config = cuttlefish_unit:generate_templated_config(["../priv/riak_repl.schema"], Conf, context()),
+              cuttlefish_unit:assert_error_message(Config, 
+                                                   "Translation for 'riak_repl.fullsync_interval' found invalid configuration: "
+                                                   "Cannot set both mdc.fullsync.interval and sink-specific intervals")
+      end}
+    ].
+
+
 %% this context() represents the substitution variables that rebar
 %% will use during the build process.  riak_jmx's schema file is
 %% written with some {{mustache_vars}} for substitution during
