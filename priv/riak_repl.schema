@@ -82,24 +82,22 @@
  "riak_repl.fullsync_interval",
  fun(Conf) ->
      FullSyncIntervals = cuttlefish_variable:filter_by_prefix("mdc.fullsync.interval", Conf),
-     Partitioned = lists:partition(fun({I, _}) -> ["mdc", "fullsync", "interval"] == I end, FullSyncIntervals),
-     case Partitioned of
-         {[{_, never}], Sinks} ->
-             if length(Sinks) > 0 ->
-                     cuttlefish:warn("mdc.fullsync.interval is set to never,"
-                                     " sink-specific intervals are ignored");
-                true -> ok
-             end,
+     {[{_, Global}], Sinks} = lists:partition(fun({I, _}) -> ["mdc", "fullsync", "interval"] == I end, FullSyncIntervals),
+     if Global == never, Sinks == [] ->
              disabled;
-         {[{_, Minutes}], []} when is_integer(Minutes) ->
-             Minutes;
-         {[{_, per_sink}], []} ->
+        Global == never ->
+             cuttlefish:warn("mdc.fullsync.interval is set to never,"
+                             " sink-specific intervals are ignored"),
+             disabled;
+        is_integer(Global), Sinks == [] ->
+             Global;
+        Global == per_sink, Sinks == [] ->
              cuttlefish:invalid("Cannot set mdc.fullsync.interval = per_sink and"
                                 " omit sink-specific intervals, set sink-specific"
                                 " intervals or use 'never'");
-         {[{_, per_sink}], Sinks} ->
+        Global == per_sink ->
              [{list_to_atom(SinkName), Value} || {["mdc", "fullsync", "interval", SinkName], Value} <- Sinks ];
-         _ ->
+        true -> 
              cuttlefish:invalid("Cannot set both mdc.fullsync.interval and"
                                 " sink-specific intervals")
      end
