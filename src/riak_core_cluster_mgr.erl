@@ -170,11 +170,8 @@ get_my_members(MyAddr) ->
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
-    case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
-        {ok, Addrs} ->
-            Addrs2 = riak_repl_util:shuffle_remote_ipaddrs(Addrs),
-            {ok, Addrs2}
-    end.
+    {ok, Addrs} = gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity),
+    shuffle_remote_ipaddrs(ClusterName, Addrs).
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
@@ -798,4 +795,64 @@ connect_to_persisted_clusters(State) ->
             connect_to_targets(ClusterTargets);
         _ ->
             ok
+    end.
+
+%%
+%% PRIORITIZE REMOTE CLUSTER IP ADDRESSES
+%%
+%% The idea is thus:
+%%
+%% The remote IPAddrs are Addrs=[{host1,port1}, {host2,port2}, ...]
+%% The local nodes are    Nodes=[Node1, ..., node(), ...]
+%%
+%% Then, we shuffle Addrs in a deterministic way
+%%
+%%   RemoteAddrs = shuffle(sort(Addrs), seed=[ClusterNameA, ClusterNameB])
+%%   SortedNodes = sort(Nodes)
+%%
+%% Next, determine *this* node's position in SortedNodes, call it MyPos
+%% Then our "buddy" is determined as
+%%
+%%   Buddy = nth(MyPos, RemoteAddrs)  ... plus some modulus magic
+%%
+%% And this function will return
+%%
+%%   [Buddy | shuffle( [IP || IP <- RemoteAddrs, IP /= Buddy] )]
+%%
+%% namely, a list where a *relatively* stable buddy is our prime contact
+%% point in the remote cluster, the rest are truely random.
+%%
+shuffle_remote_ipaddrs(_, []) ->
+    {ok, []};
+shuffle_remote_ipaddrs(_, [A]) ->
+    {ok, [A]};
+shuffle_remote_ipaddrs(ClusterName,  Addrs) ->
+
+    %% first, deterministically shuffle remote IPAddrs, seeded by the
+    %% combination of this cluster name and the remote cluster name.
+    <<_:10, N1:50, N2:50, N3:50>> =
+        crypto:hash(sha, term_to_binary([riak_core_connection:symbolic_clustername(),
+                                         ClusterName])),
+    random:seed(N1,N2,N3),
+    RemoteAddrs = riak_repl_util:lists_shuffle(lists:sort(Addrs)),
+
+    %% re-seed so different nodes in this cluster don't get the same tail sequence
+    random:seed(erlang:now()),
+
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
+
+    NodesTagged = lists:zip( lists:seq(1, length(SortedNodes)), SortedNodes ),
+    case lists:keyfind(node(), 2, NodesTagged) of
+        {MyPos, _} ->
+            %% MyPos is the position if *this* node in the sorted list of
+            %% all nodes in my ring.  Now choose the node at the corresponding
+            %% index in RemoteAddrs as out "buddy"
+            SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
+            case lists:split(SplitPos,RemoteAddrs) of
+                {Last,[Buddy|Then]} ->
+                    {ok, [Buddy | riak_repl_util:lists_shuffle(Then ++ Last) ]}
+            end;
+        false ->
+            {ok, riak_repl_util:lists_shuffle(RemoteAddrs)}
     end.

@@ -41,7 +41,6 @@
          elapsed_secs/1,
          shuffle_partitions/2,
          lists_shuffle/1,
-         shuffle_remote_ipaddrs/1,
          proxy_get_active/0,
          log_dropped_realtime_obj/1,
          dropped_realtime_hook/1,
@@ -1067,49 +1066,9 @@ maybe_get_vnode_lock(SrcPartition) ->
     end.
 
 
-%%
-%% Choose remote ip "round robin" based on this node()'s position in
-%% the sorted list of nodes in our ring.  The first element in result
-%% will be the element with the corresponding position as the sorted
-%% node list; following member will be shuffled.
-%%
-%% When a remote riak_core_cluster_manager provides an AddrList, it
-%% is shuffled, but the local cluster manager holds on to the list
-%%
-shuffle_remote_ipaddrs([])    -> [];
-shuffle_remote_ipaddrs([A])   -> [A];
-shuffle_remote_ipaddrs(Addrs) ->
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    indexed_shuffle(riak_core_ring:all_members(MyRing), Addrs).
-
-indexed_shuffle(_, []) -> [];
-indexed_shuffle(Nodes, Addrs) ->
-    SortedNodes = lists:sort(Nodes),
-    NodesTagged = lists:zip( lists:seq(1, length(SortedNodes)), SortedNodes ),
-    case lists:keyfind(node(), 2, NodesTagged) of
-        {MyIndex, _} ->
-            SplitPos = ((MyIndex-1) rem length(Addrs)),
-            case lists:split(SplitPos,Addrs) of
-                {Last,[First|Then]} ->
-                    [First | lists_shuffle( Then ++ Last )]
-            end;
-        false ->
-            lists_shuffle(Addrs)
-    end.
 
 %% Some eunit tests
 -ifdef(TEST).
-
-do_index_shuffle_test() ->
-
-    'nonode@nohost' = node(),
-    [3|_] = indexed_shuffle([a,b,node()], [1,2,3,4,5]),
-    [3|_] = indexed_shuffle([node(),a,b,x,y], [1,2,3,4,5]),
-    [1,2] = indexed_shuffle([node(),a,b], [1,2]),
-    [1]   = indexed_shuffle([node(),a,b], [1]),
-    []    = indexed_shuffle([node(),a,b], []),
-    true.
-
 
 do_wire_old_format_test() ->
     %% old wire format is just term_to_binary of the riak object,
