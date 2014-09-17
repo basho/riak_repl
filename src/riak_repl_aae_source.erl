@@ -392,7 +392,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                        Exchange2 = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, Exchange, TreePid),
                        lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                                   [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
-                       gen_fsm:send_event(SourcePid, {'$aae_src', Exchange2, done})
+                       gen_fsm:send_event(SourcePid, {'$aae_src', done, Exchange2})
                end),
 
     %% wait for differences from bloom_folder or to be done
@@ -422,7 +422,7 @@ compute_differences({'$aae_src', worker_pid, WorkerPid},
     WorkerPid ! {'$aae_src', ready, self()},
     {next_state, compute_differences, State};
 
-compute_differences({'$aae_src', Exchange, done}, State) ->
+compute_differences({'$aae_src', done, Exchange}, State) ->
     %% Just move on to the next tree exchange since we accumulate
     %% differences across all trees.
     State2 = State#state{exchange=Exchange},
