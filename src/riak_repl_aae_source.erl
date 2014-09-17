@@ -85,6 +85,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                [Partition]),
 
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    {_, ClientVer, _} = Proto,
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
@@ -93,7 +94,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    built=0,
                    owner=OwnerPid,
                    wire_ver=Ver,
-                   proto=Proto},
+                   proto=ClientVer},
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
