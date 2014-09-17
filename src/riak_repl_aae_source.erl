@@ -84,6 +84,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
@@ -91,7 +92,7 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    index=Partition,
                    built=0,
                    owner=OwnerPid,
-                   wire_ver=w1,
+                   wire_ver=Ver,
                    proto=Proto},
     {ok, prepare_exchange, State}.
 

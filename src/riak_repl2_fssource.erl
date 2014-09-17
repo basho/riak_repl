@@ -118,7 +118,7 @@ handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             {ok, FullsyncWorker} = riak_repl_aae_source:start_link(Cluster,
                                                                    Client, Transport,
                                                                    Socket, Partition,
-                                                                   self(), ClientVer),
+                                                                   self(), Proto),
             %% Give control of socket to AAE worker. It will consume all TCP messages.
             ok = Transport:controlling_process(Socket, FullsyncWorker),
             riak_repl_aae_source:start_exchange(FullsyncWorker),
