@@ -141,9 +141,9 @@ process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=Tre
 
 %% no reply
 process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
-    RObj = riak_repl_util:from_wire(BObj),
-    %% do the put
-    riak_repl_util:do_repl_put(RObj),
+    %% may block on worker pool, ok return means work was submitted
+    %% to pool, not that put FSM completed successfully.
+    ok = riak_repl2_fssink_pool:bin_put(BObj),
     {noreply, State};
 
 %% replies: ok | not_responsible
