@@ -305,36 +305,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% allow us to pass control of the TCP socket around. This is needed so
     %% that the process needing to send/receive on that socket has ownership
     %% of it.
-    %%
-    %% Old, non-pipelined verison
-    TestR1 = fun(init, _) ->
-                     %% cause control of the socket to be given to AAE so that
-                     %% the get_bucket and key_hashes can send messages via the
-                     %% socket (with correct ownership). We'll send a 'ready'
-                     %% back here once the socket ownership is transfered and
-                     %% we are ready to proceed with the compare.
-                     gen_fsm:send_event(SourcePid, {'$aae_src', worker_pid, self()}),
-                     receive
-                         {'$aae_src', ready, SourcePid} ->
-                             ok
-                     end;
-                (get_bucket, {L, B}) ->
-                     async_get_bucket(L, B, IndexN, State),
-                     wait_get_bucket(L, B, IndexN, State);
-                (key_hashes, Segment) ->
-                     async_get_segment(Segment, IndexN, State),
-                     wait_get_segment(Segment, IndexN, State);
-                (start_exchange_level, {_Level, _Buckets}) ->
-                     ok;
-                (start_exchange_segments, _Segments) ->
-                     ok;
-                (final, _) ->
-                     %% give ourself control of the socket again
-                     ok = Transport:controlling_process(Socket, SourcePid)
-             end,
-
-    %% Pipelined verison
-    TestR2 = fun(init, _) ->
+    Remote = fun(init, _) ->
                      %% cause control of the socket to be given to AAE so that
                      %% the get_bucket and key_hashes can send messages via the
                      %% socket (with correct ownership). We'll send a 'ready'
@@ -358,13 +329,6 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                 (final, _) ->
                      %% give ourself control of the socket again
                      ok = Transport:controlling_process(Socket, SourcePid)
-             end,
-
-    Remote = case app_helper:get_env(riak_repl, fullsync_pipeline, false) of
-                 false ->
-                     TestR1;
-                 true ->
-                     TestR2
              end,
 
     %% Unclear if we should allow exchange to run indefinitely or enforce
