@@ -270,71 +270,42 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {reply, Reply, StateName, State}.
 
 %% @doc Handle any non-fsm messages
-handle_info({tcp, Socket, {cluster_members_changed, BinMembers}},
+handle_info({_TransTag, Socket, Name},
+            waiting_for_cluster_name,
+            State=#state{socket=Socket}) ->
+    gen_fsm:send_event(self(), {cluster_name, binary_to_term(Name)}),
+    Transport = State#state.transport,
+    _ = Transport:setopts(Socket, [{active, once}]),
+    {next_state, waiting_for_cluster_name, State};
+handle_info({_TransTag, Socket, Members},
+            waiting_for_cluster_members,
+            State=#state{socket=Socket}) ->
+    Transport = State#state.transport,
+    gen_fsm:send_event(self(), {cluster_members, binary_to_term(Members)}),
+    _ = Transport:setopts(Socket, [{active, once}]),
+    {next_state, waiting_for_cluster_members, State};
+handle_info({_TransTag, Socket, Data},
             StateName,
             State=#state{address=Addr,
                          name=Name,
                          remote=Remote,
-                         socket=Socket}) ->
-    Members = binary_to_term(BinMembers),
+                         socket=Socket}) when is_binary(Data) ->
+    {cluster_members_changed, Members} = binary_to_term(Data),
     ClusterUpdMsg = {cluster_updated, Name, Name, Members, Addr, Remote},
     gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdMsg),
-    _ = inet:setopts(Socket, [{active, once}]),
+    Transport = State#state.transport,
+    _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, StateName, State#state{members=Members}};
-handle_info({tcp, Socket, Name},
-            waiting_for_cluster_name,
-            State=#state{socket=Socket}) ->
-    gen_fsm:send_event(self(), {cluster_name, binary_to_term(Name)}),
-    _ = inet:setopts(Socket, [{active, once}]),
-    {next_state, waiting_for_cluster_name, State};
-handle_info({tcp, Socket, Members},
-            waiting_for_cluster_members,
-            State=#state{socket=Socket}) ->
-    gen_fsm:send_event(self(), {cluster_members, binary_to_term(Members)}),
-    _ = inet:setopts(Socket, [{active, once}]),
-    {next_state, waiting_for_cluster_members, State};
-handle_info({tcp, Socket, Other},
+handle_info({_TransErrorTag, Socket, Error},
             StateName,
             State=#state{remote=Remote,
                          socket=Socket}) ->
-    _ = lager:error("cluster_conn: client got unexpected "
-                    "msg from remote: ~p, ~p",
-                    [Remote, Other]),
-    _ = inet:setopts(Socket, [{active, once}]),
-    {next_state, StateName, State};
-handle_info({tcp_error, Socket, Error},
-            waiting_for_cluster_members,
-            State=#state{remote=Remote,
-                         socket=Socket}) ->
-    _ = lager:error("cluster_conn: failed to recv "
-                    "members from remote cluster at ~p because ~p",
-                    [Remote, Error]),
+    _ = lager:error("cluster_conn: connection ~p failed in state ~s because ~p", [Remote, StateName, Error]),
     {stop, Error, State};
-handle_info({tcp_error, Socket, Error},
-            waiting_for_cluster_name,
-            State=#state{remote=Remote,
-                         socket=Socket}) ->
-    _ = lager:error("cluster_conn: failed to recv name from "
-                    "remote cluster at ~p because ~p",
-                    [Remote, Error]),
-    {stop, Error, State};
-handle_info({tcp_error, Socket, Err},
-            _StateName,
-            State=#state{socket=Socket}) ->
-    {stop, Err, State};
-handle_info({tcp_closed, Socket},
+handle_info({_TransTagClosed, Socket},
             _StateName,
             State=#state{socket=Socket}) ->
     {stop, normal, State};
-handle_info({tcp, _, _}, StateName, State=#state{socket=Socket}) ->
-    _ = inet:setopts(Socket, [{active, once}]),
-    {next_state, StateName, State};
-handle_info({tcp_error, _, _Err}, StateName, State=#state{socket=Socket}) ->
-    _ = inet:setopts(Socket, [{active, once}]),
-    {next_state, StateName, State};
-handle_info({tcp_closed, _}, StateName, State=#state{socket=Socket}) ->
-    _ = inet:setopts(Socket, [{active, once}]),
-    {next_state, StateName, State};
 handle_info(_, StateName, State) ->
     {next_state, StateName, State}.
 
