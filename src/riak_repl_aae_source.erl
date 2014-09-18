@@ -354,8 +354,8 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     %% keys that differed. We can't prime the accumulator. It
     %% always starts as the empty list. KeyDiffs is a list of hashtree::keydiff()
     EstimatedNrKeys = State#state.estimated_nr_keys,
-    Limit = app_helper:get_env(riak_repl, fullsync_direct, ?GET_OBJECT_LIMIT),
-    PercentLimit = app_helper:get_env(riak_repl, diff_percentage, ?DIFF_PERCENTAGE),
+    Limit = app_helper:get_env(riak_repl, fullsync_direct_limit, ?GET_OBJECT_LIMIT),
+    PercentLimit = app_helper:get_env(riak_repl, fullsync_direct_percentage_limit, ?DIFF_PERCENTAGE),
 
     UsedLimit = max(Limit, EstimatedNrKeys * PercentLimit div 100),
 
