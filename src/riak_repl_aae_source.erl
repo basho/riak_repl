@@ -596,8 +596,33 @@ send_missing(RObj, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
             1 + length(Objects)
     end.
 
+%% Copied from riak_kv_vnode:local_get to extend with timeout,
+%% might port back to riak_kv_vnode.erl in the future.
+%%
+%% Note: responses that timeout can result in future late
+%% messages arriving from the vnode. This is currently safe
+%% because of the catch-all handle_info that will ignore these
+%% messages. But, something to keep in mind in the future.
+kv_local_get(Index, BKey, Timeout) ->
+    Ref = make_ref(),
+    ReqId = erlang:phash2(erlang:now()),
+    Sender = {raw, Ref, self()},
+    riak_kv_vnode:get({Index,node()}, BKey, ReqId, Sender),
+    receive
+        {Ref, {r, Result, Index, ReqId}} ->
+            Result;
+        {Ref, Reply} ->
+            {error, Reply}
+    after Timeout ->
+            {error, timeout}
+    end.
+
+%% Get the K/V directly from the local vnode
+local_get(Bucket, Key, #state{index=Index}) ->
+    kv_local_get(Index, {Bucket, Key}, ?REPL_FSM_TIMEOUT).
+
 send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
-    case Client:get(Bucket, Key, [{r, 1}, {timeout, ?REPL_FSM_TIMEOUT}, {n_val, 1}]) of
+    case local_get(Bucket, Key, State) of
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.
@@ -620,7 +645,8 @@ send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}
             %% can't find the key!
             lager:warning("not_found returned for fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
             0;
-        _ ->
+        {error, timeout} ->
+            lager:warning("timeout during fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
             0
     end.
 
