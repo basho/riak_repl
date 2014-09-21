@@ -220,7 +220,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 update_trees(init, State) ->
     NumKeys = 10000000,
     {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
-    Limit = app_helper:get_env(riak_repl, fullsync_direct, ?GET_OBJECT_LIMIT),
+    Limit = app_helper:get_env(riak_repl, fullsync_direct_limit, ?GET_OBJECT_LIMIT),
     Mode = app_helper:get_env(riak_repl, fullsync_direct_mode, inline),
     Buffer = case Mode of
                  inline ->
