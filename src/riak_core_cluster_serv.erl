@@ -59,7 +59,7 @@ handle_call(_Req, _From, State) ->
 
 handle_cast(control_given, State) ->
     #state{transport = Transport, socket = Socket} = State,
-    ok = Transport:setops(Socket, [{active, once}]),
+    ok = Transport:setopts(Socket, [{active, once}]),
     {noreply, State};
 
 handle_cast(_Req, State) ->
@@ -70,11 +70,11 @@ handle_cast(_Req, State) ->
 %% ==========
 
 handle_info({_TransTag, Socket, Data}, State = #state{socket = Socket}) when is_binary(Data) ->
-    Termed = binary_to_term(Data),
-    handle_socket_info(Termed, State#state.transport, State#state.socket, State);
+    %Termed = binary_to_term(Data),
+    handle_socket_info(Data, State#state.transport, State#state.socket, State);
 
 handle_info({TransClosed, Socket}, State = #state{socket = Socket}) when is_atom(TransClosed) ->
-    {stop, {error, closed}, State};
+    {stop, normal, State};
 
 handle_info({_TransTag, Socket, Error}, State = #state{socket = Socket}) ->
     {stop, {error, {connection_error, Error}}, State}.
@@ -97,21 +97,26 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal
 %% ==========
 
-handle_socket_info({ok, ?CTRL_ASK_NAME}, Transport, Socket, State) ->
+handle_socket_info(?CTRL_ASK_NAME, Transport, Socket, State) ->
     LocalName = riak_core_connection:symbolic_clustername(),
     ok = Transport:send(Socket, term_to_binary(LocalName)),
-    ok = Transport:setopts([{active, once}]),
+    ok = Transport:setopts(Socket, [{active, once}]),
     {noreply, State};
 
-handle_socket_info({ok, ?CTRL_ASK_MEMBERS}, Transport, Socket, State) ->
+handle_socket_info(?CTRL_ASK_MEMBERS, Transport, Socket, State) ->
     case read_ip_address(Socket, Transport, State#state.remote_addr) of
         {ok, RemoteConnectedToIp} ->
             Members = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_my_members, RemoteConnectedToIp}, infinity),
             ok = Transport:send(Socket, term_to_binary(Members)),
+            ok = Transport:setopts(Socket, [{active, once}]),
             {noreply, State};
         Else ->
             {stop, Else, State}
-    end.
+    end;
+
+handle_socket_info(OtherData, _Transport, _Socket, State) ->
+    ok = lager:warning("Some other data from the socket: ~p", [OtherData]),
+    {stop, {error, unrecognized_request}, State}.
 
 read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
