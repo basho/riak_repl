@@ -32,6 +32,7 @@
 -export([start_link/1,
          start_link/2,
          status/1,
+         status/2,
          connected/6,
          connect_failed/3,
          stop/1]).
@@ -90,7 +91,11 @@ stop(Ref) ->
 
 -spec status(pid()) -> term().
 status(Ref) ->
-    gen_fsm:sync_send_event(Ref, status).
+    status(Ref, infinity).
+
+-spec status(pid(), timeout()) -> term().
+status(Ref, Timeout) ->
+    gen_fsm:sync_send_event(Ref, status, Timeout).
 
 -spec connected(port(), atom(), ip_addr(), term(), term(), proplists:proplist()) -> ok.
 connected(Socket,
@@ -264,6 +269,7 @@ handle_sync_event(current_state, _From, StateName, State) ->
     Reply = {StateName, State},
     {reply, Reply, StateName, State};
 handle_sync_event(force_stop, _From, _StateName, State) ->
+    ok = lager:debug("Stopping because I was asked nicely to."),
     {stop, normal, ok, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
@@ -305,6 +311,7 @@ handle_info({_TransErrorTag, Socket, Error},
 handle_info({_TransTagClosed, Socket},
             _StateName,
             State=#state{socket=Socket}) ->
+    ok = lager:debug("Stopping because it looks like the connect closed"),
     {stop, normal, State};
 handle_info(_, StateName, State) ->
     {next_state, StateName, State}.
