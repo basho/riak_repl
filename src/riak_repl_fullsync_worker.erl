@@ -7,7 +7,7 @@
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
--export([start_link/1, do_put/3, do_binputs/5, do_get/7, do_get/8]).
+-export([start_link/1, do_put/3, do_binput/3, do_binputs/5, do_get/7, do_get/8]).
 
 -export([do_binputs_internal/4]). %% Used for unit/integration testing, not public interface
 
@@ -18,6 +18,11 @@ start_link(_Args) ->
 
 do_put(Pid, Obj, Pool) ->
     gen_server:cast(Pid, {put, Obj, Pool}).
+
+%% Put a single object, encoded as replication binary from wire format
+do_binput(Pid, BinObj, Pool) ->
+    %% safe to cast as the pool size will add backpressure on the sink
+    gen_server:cast(Pid, {bin_put, BinObj, Pool}).
 
 do_binputs(Pid, BinObjs, DoneFun, Pool, Ver) ->
     %% safe to cast as the pool size will add backpressure on the sink
@@ -133,6 +138,11 @@ handle_cast({put, RObj, Pool}, State) ->
     riak_repl_util:do_repl_put(RObj),
     %% unblock this worker for more work (or death)
     poolboy:checkin(Pool, self()),
+    {noreply, State};
+handle_cast({bin_put, BinObj, Pool}, State) ->
+    RObj = riak_repl_util:from_wire(BinObj),
+    riak_repl_util:do_repl_put(RObj),
+    poolboy:checkin(Pool, self()), % resume work
     {noreply, State};
 handle_cast({puts, BinObjs, DoneFun, Pool, Ver}, State) ->
     ?MODULE:do_binputs_internal(BinObjs, DoneFun, Pool, Ver), % so it can be mecked
