@@ -308,15 +308,19 @@ handle_info({_TransErrorTag, Socket, Error},
                          socket=Socket}) ->
     _ = lager:error("cluster_conn: connection ~p failed in state ~s because ~p", [Remote, StateName, Error]),
     {stop, Error, State};
-handle_info({_TransTagClosed, Socket},
+handle_info({_TransTagClosed, Socket} = Msg,
             _StateName,
             State=#state{socket=Socket}) ->
-    ok = lager:debug("Stopping because it looks like the connect closed"),
-    {stop, normal, State};
+    % if the connection spuriously closes, it is more likley something is
+    % wrong, like the remote node has gone down, than something is normal.
+    % thus, we exit abnormally and let the supervisor restart a new us.
+    ok = lager:debug("Stopping because it looks like the connect closed: ~p", [Msg]),
+    {stop, connection_closed, State};
 handle_info(_, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, _State) ->
+terminate(Reason, StateName, _State) ->
+    lager:debug("Exiting while in state ~s due to ~p", [StateName, Reason]),
     ok.
 
 %% @doc this fsm has no special upgrade process
