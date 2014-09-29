@@ -125,7 +125,6 @@ format_pid_stat(Pair) ->
 
 
 jsonify_stats([], Acc) ->
-    %?debugFmt("Got []: Acc: ~w", [Acc]),
     lists:flatten(lists:reverse(Acc));
 
 jsonify_stats([{fullsync, Num, _Left}|T], Acc) ->

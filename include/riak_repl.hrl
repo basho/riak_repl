@@ -28,6 +28,9 @@
 -define(DEFAULT_SOURCE_RETRIES, infinity).
 %% How many times we should retry when failing a reservation
 -define(DEFAULT_RESERVE_RETRIES, 0).
+%% How many times during a fullsync we should retry a partion that has sent
+%% a 'soft_exit' message to the coordinator
+-define(DEFAULT_SOURCE_SOFT_RETRIES, infinity).
 %% 20 seconds. sources should claim within 5 seconds, but give them a little more time
 -define(RESERVATION_TIMEOUT, (20 * 1000)).
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
