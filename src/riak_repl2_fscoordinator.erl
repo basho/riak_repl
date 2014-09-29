@@ -61,12 +61,16 @@
     partition_queue = queue:new(),
     retries = dict:new(),
     reserve_retries = dict:new(),
+    soft_retries = dict:new(),
     whereis_waiting = [],
     busy_nodes = sets:new(),
     running_sources = [],
+    purgatory = queue:new(),
+    dropped = [],
     successful_exits = 0,
     error_exits = 0,
     retry_exits = 0,
+    soft_retry_exits = 0,
     pending_fullsync = false,
     dirty_nodes = ordsets:new(),          % these nodes should run fullsync
     dirty_nodes_during_fs = ordsets:new(), % these nodes reported realtime errors
@@ -75,6 +79,13 @@
     fullsync_start_time = undefined,
     last_fullsync_duration = undefined,
     stat_cache = #stat_cache{}
+}).
+
+-record(partition_info, {
+    index,
+    node,
+    running_source,
+    whereis_tref
 }).
 
 %% ------------------------------------------------------------------
@@ -253,10 +264,12 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
         {in_progress, length(State#state.running_sources)},
+        {waiting_for_retry, queue:len(State#state.purgatory)},
         {starting, length(State#state.whereis_waiting)},
         {successful_exits, State#state.successful_exits},
         {error_exits, State#state.error_exits},
         {retry_exits, State#state.retry_exits},
+        {soft_retry_exits, State#state.soft_retry_exits},
         {busy_nodes, sets:size(State#state.busy_nodes)},
         {last_running_refresh, StatFreshness},
         {running_stats, SourceStats},
@@ -321,7 +334,7 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
 handle_cast({connect_failed, _From, Why}, State) ->
     lager:warning("Fullsync remote connection to ~p failed due to ~p, retrying",
                   [State#state.other_cluster, Why]),
-    {stop, normal, State};
+    {stop, connect_failed, State};
 
 handle_cast(start_fullsync, #state{socket=undefined} = State) ->
     %% not connected yet...
@@ -345,6 +358,9 @@ handle_cast(start_fullsync,  State) ->
                 partition_queue = queue:from_list(Partitions),
                 retries = dict:new(),
                 reserve_retries = dict:new(),
+                purgatory = queue:new(),
+                soft_retries = dict:new(),
+                dropped = [],
                 successful_exits = 0,
                 error_exits = 0,
                 retry_exits = 0,
@@ -356,18 +372,20 @@ handle_cast(start_fullsync,  State) ->
 
 handle_cast(stop_fullsync, State) ->
     % exit all running, cancel all timers, and reset the state.
-    _ = [erlang:cancel_timer(Tref) || {_, {_, Tref}} <- State#state.whereis_waiting],
-    _ = [begin
+    [erlang:cancel_timer(Tref) || #partition_info{whereis_tref = Tref} <- State#state.whereis_waiting],
+    [begin
         unlink(Pid),
         riak_repl2_fssource:stop_fullsync(Pid),
         riak_repl2_fssource_sup:disable(node(Pid), Part)
-    end || {Pid, {Part, _PartN}} <- State#state.running_sources],
+    end || #partition_info{index = Part, running_source = Pid} <- State#state.running_sources],
     State2 = State#state{
         largest_n = undefined,
         owners = [],
         partition_queue = queue:new(),
         retries = dict:new(),
         reserve_retries = dict:new(),
+        purgatory = queue:new(),
+        dropped = [],
         whereis_waiting = [],
         running_sources = []
     },
@@ -380,17 +398,16 @@ handle_cast(_Msg, State) ->
 %% @hidden
 handle_info({'EXIT', Pid, Cause},
             #state{socket=Socket, transport=Transport}=State) when Cause =:= normal; Cause =:= shutdown ->
-    lager:debug("Fssource ~p exited normally", [Pid]),
-    PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
+    lager:debug("fssource ~p exited normally", [Pid]),
+    PartitionEntry = lists:keytake(Pid, #partition_info.running_source, State#state.running_sources),
     case PartitionEntry of
         false ->
             % late exit or otherwise non-existant
             {noreply, State};
-        {value, {Pid, {Index, _, _}=Partition}, Running} ->
-
+        {value, Partition, Running} ->
+            #partition_info{index = Index, node = Node} = Partition,
             % likely a slot on the remote node opened up, so re-enable that
             % remote node for whereis requests.
-            {_, _, Node} = Partition,
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
 
             % ensure we unreserve the partition on the remote node
@@ -406,68 +423,22 @@ handle_info({'EXIT', Pid, Cause},
             maybe_complete_fullsync(Running, State2)
     end;
 
-handle_info({'EXIT', Pid, Cause},
-            #state{socket=Socket, transport=Transport}=State) ->
-    lager:warning("Fssource ~p exited abnormally: ~p", [Pid, Cause]),
-    PartitionEntry = lists:keytake(Pid, 1, State#state.running_sources),
-    case PartitionEntry of
-        false ->
-            % late exit
-            {noreply, State};
-        {value, {Pid, {Index, _, _}=Partition}, Running} ->
+handle_info({soft_exit, Pid, Cause}, State) ->
+    lager:info("fssource ~p soft exit with reason ~p", [Pid, Cause]),
+    handle_abnormal_exit(soft_exit, Pid, Cause, State);
 
-            % even a bad exit opens a slot on the remote node
-            {_, _, Node} = Partition,
-            NewBusies = sets:del_element(Node, State#state.busy_nodes),
-
-            % ensure we unreserve the partition on the remote node
-            % instead of waiting for a timeout.
-            Transport:send(Socket, term_to_binary({unreserve, Index})),
-
-            % stats
-            #state{partition_queue = PQueue, retries = Retries0} = State,
-
-            RetryLimit = app_helper:get_env(riak_repl, max_fssource_retries,
-                                            ?DEFAULT_SOURCE_RETRIES),
-            Retries = dict:update_counter(Partition, 1, Retries0),
-
-            case dict:fetch(Partition, Retries) of
-                N when N > RetryLimit, is_integer(RetryLimit) ->
-                    lager:warning("Fullsync dropping partition: ~p, ~p"
-                                  " failed retries",
-                                  [Partition, RetryLimit]),
-                    ErrorExits = State#state.error_exits + 1,
-                    State2 = State#state{busy_nodes = NewBusies,
-                                         retries = Retries,
-                                         running_sources = Running,
-                                         error_exits = ErrorExits},
-                    maybe_complete_fullsync(Running, State2);
-                _ -> %% have not run out of retries yet
-                    % reset for retry later
-                    lager:debug("Fssource rescheduling partition: ~p",
-                               [Partition]),
-                    PQueue2 = queue:in(Partition, PQueue),
-                    RetryExits = State#state.retry_exits + 1,
-                    State2 = State#state{partition_queue = PQueue2,
-                                         retries = Retries,
-                                         busy_nodes = NewBusies,
-                                         running_sources = Running,
-                                         retry_exits = RetryExits},
-                    State3 = start_up_reqs(State2),
-                    {noreply, State3}
-            end
-    end;
+handle_info({'EXIT', Pid, Cause}, State) ->
+    lager:info("fssource ~p exited abnormally: ~p", [Pid, Cause]),
+    handle_abnormal_exit('EXIT', Pid, Cause, State);
 
 handle_info({Partition, whereis_timeout}, State) ->
     #state{whereis_waiting = Waiting} = State,
-    case proplists:get_value(Partition, Waiting) of
-        undefined ->
+    case lists:keytake(Partition, #partition_info.index, Waiting) of
+        false ->
             % late timeout.
             {noreply, State};
-        {N, NodeData, _Tref} ->
-            Waiting2 = proplists:delete(Partition, Waiting),
-            Partition1 = {Partition, N, NodeData},
-            Q = queue:in(Partition1, State#state.partition_queue),
+        {value, PartitionInfo, Waiting2} ->
+            Q = queue:in(PartitionInfo#partition_info{whereis_tref = undefined}, State#state.partition_queue),
             State2 = State#state{whereis_waiting = Waiting2, partition_queue = Q},
             State3 = start_up_reqs(State2),
             {noreply, State3}
@@ -523,6 +494,80 @@ handle_info({'DOWN', Mon, process, Pid, Why}, #state{stat_cache = #stat_cache{wo
 handle_info(_Info, State) ->
     {noreply, State}.
 
+handle_abnormal_exit(ExitType, Pid, Cause, State) ->
+    PartitionEntry = lists:keytake(Pid, #partition_info.running_source, State#state.running_sources),
+    handle_abnormal_exit(ExitType, Pid, Cause, PartitionEntry, State).
+
+handle_abnormal_exit(_ExtiType, _Pid, _Cause, false, State) ->
+    % late exit
+    {noreply, State};
+
+handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running}, State) ->
+
+    Partition = PartitionWithSource#partition_info{running_source = undefined},
+
+    #partition_info{index = Index, node = Node} = Partition,
+    #state{socket = Socket, transport = Transport} = State,
+    % even a bad exit opens a slot on the remote node
+    NewBusies = sets:del_element(Node, State#state.busy_nodes),
+
+    % ensure we unreserve the partition on the remote node
+    % instead of waiting for a timeout.
+    Transport:send(Socket, term_to_binary({unreserve, Index})),
+
+    % stats
+    #state{partition_queue = PQueue} = State,
+
+    State2 = State#state{busy_nodes = NewBusies, running_sources = Running},
+    {ErrorCount, State3} = increment_error_dict(Partition, ExitType, State2),
+
+    case ExitType of
+        soft_exit ->
+            lager:debug("putting partition ~p in purgatory due to soft exit of ~p", [Index, Pid]),
+            _ = flush_exit_message(Pid),
+            State4 = start_up_reqs(State3),
+            SoftRetryLimit = app_helper:get_env(riak_repl, max_fssource_soft_retries, ?DEFAULT_SOURCE_SOFT_RETRIES),
+            SoftRetryCount = State4#state.soft_retry_exits + 1,
+            if
+                SoftRetryLimit =:= infinity ->
+                    Purgatory = queue:in(Partition, State4#state.purgatory),
+                    {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}};
+
+                SoftRetryLimit < ErrorCount ->
+                    lager:info("Discaring partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
+                    ErrorExits1 = State4#state.error_exits + 1,
+                    Dropped = [Partition#partition_info.index | State4#state.dropped],
+                    {noreply, State4#state{error_exits = ErrorExits1, dropped = Dropped}};
+                true ->
+                    Purgatory = queue:in(Partition, State4#state.purgatory),
+                    {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}}
+            end;
+
+        'EXIT' ->
+            lager:debug("Incrementing retries for partition ~p due to error exit of ~p", [Index, Pid]),
+            RetryLimit = app_helper:get_env(riak_repl, max_fssource_retries,
+                                            ?DEFAULT_SOURCE_RETRIES),
+
+            if
+                ErrorCount > RetryLimit ->
+                    lager:warning("fssource dropping partition: ~p, ~p failed"
+                                "retries", [Partition, RetryLimit]),
+                    ErrorExits = State#state.error_exits + 1,
+                    State4 = State3#state{ error_exits = ErrorExits},
+                    Dropped = [Partition#partition_info.index | State4#state.dropped],
+                    maybe_complete_fullsync(Running, State4#state{dropped = Dropped});
+                true -> %% have not run out of retries yet
+                    % reset for retry later
+                    lager:info("fssource rescheduling partition: ~p",
+                                [Partition]),
+                    PQueue2 = queue:in(Partition, PQueue),
+                    RetryExits = State3#state.retry_exits + 1,
+                    State4 = State3#state{partition_queue = PQueue2,
+                                         retry_exits = RetryExits},
+                    State5 = start_up_reqs(State4),
+                    {noreply, State5}
+            end
+    end.
 
 %% @hidden
 terminate(_Reason, _State) ->
@@ -541,109 +586,91 @@ code_change(_OldVsn, State, _Extra) ->
 % we stash on our side what nodes gave a busy reply so we don't send too many
 % pointless whereis requests.
 handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waiting = Waiting} = State) ->
-    case proplists:get_value(Partition, Waiting) of
-        undefined ->
+    case lists:keytake(Partition, #partition_info.index, Waiting) of
+        false ->
             State;
-        {N, _OldNode, Tref} ->
-            _ = erlang:cancel_timer(Tref),
-            Waiting2 = proplists:delete(Partition, Waiting),
+        {value, PartitionInfo, Waiting2} ->
+            Tref = PartitionInfo#partition_info.whereis_tref,
+            erlang:cancel_timer(Tref),
             % we don't know for sure it's no longer busy until we get a busy reply
             NewBusies = sets:del_element(Node, State#state.busy_nodes),
             State2 = State#state{whereis_waiting = Waiting2, busy_nodes = NewBusies},
-            Partition2 = {Partition, N, Node},
+            Partition2 = PartitionInfo#partition_info{node = Node, whereis_tref = undefined},
             State3 = start_fssource(Partition2, Ip, Port, State2),
             start_up_reqs(State3)
     end;
 handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} = State) ->
-    lager:debug("Location_busy, partition = ~p", [Partition]),
-    case proplists:get_value(Partition, Waiting) of
-        undefined ->
+    lager:debug("anya location_busy, partition = ~p", [Partition]),
+    case lists:keytake(Partition, #partition_info.index, Waiting) of
+        false ->
             State;
-        {N, OldNode, Tref} ->
-            lager:info("Partition ~p is too busy on cluster ~p at node ~p",
-                       [Partition, State#state.other_cluster, OldNode]),
-            _ = erlang:cancel_timer(Tref),
-            Waiting2 = proplists:delete(Partition, Waiting),
+        {value, PartitionInfo, Waiting2} ->
+            lager:info("anya Partition ~p is too busy on cluster ~p at node ~p",
+                       [Partition, State#state.other_cluster, PartitionInfo#partition_info.node]),
+            Tref = PartitionInfo#partition_info.whereis_tref,
+            erlang:cancel_timer(Tref),
             State2 = State#state{whereis_waiting = Waiting2},
-            Partition2 = {Partition, N, OldNode},
+            Partition2 = PartitionInfo#partition_info{whereis_tref = undefined},
             PQueue = State2#state.partition_queue,
             PQueue2 = queue:in(Partition2, PQueue),
-            NewBusies = sets:add_element(OldNode, State#state.busy_nodes),
+            NewBusies = sets:add_element(Partition2#partition_info.node, State#state.busy_nodes),
             State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
             start_up_reqs(State3)
     end;
 handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Waiting} = State) ->
-    case proplists:get_value(Partition, Waiting) of
-        undefined ->
+    case lists:keytake(Partition, #partition_info.index, Waiting) of
+        false ->
             State;
-        {N, _OldNode, Tref} ->
+        {value, PartitionInfo, Waiting2} ->
             lager:info("Partition ~p is too busy on cluster ~p at node ~p", [Partition, State#state.other_cluster, Node]),
-            _ = erlang:cancel_timer(Tref),
+            Tref = PartitionInfo#partition_info.whereis_tref,
+            erlang:cancel_timer(Tref),
 
-            Waiting2 = proplists:delete(Partition, Waiting),
             State2 = State#state{whereis_waiting = Waiting2},
 
-            Partition2 = {Partition, N, Node},
+            Partition2 = PartitionInfo#partition_info{node = Node},
             PQueue = State2#state.partition_queue,
             PQueue2 = queue:in(Partition2, PQueue),
             NewBusies = sets:add_element(Node, State#state.busy_nodes),
             State3 = State2#state{partition_queue = PQueue2, busy_nodes = NewBusies},
             start_up_reqs(State3)
     end;
-handle_socket_msg({location_down, Partition},
-                  #state{whereis_waiting=Waiting0} = State) ->
-    case proplists:get_value(Partition, Waiting0) of
-        undefined ->
+
+handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
+    lager:warning("anya location_down, partition = ~p", [Partition]),
+    case lists:keytake(Partition, #partition_info.index, Waiting) of
+        false ->
             State;
-        {N, OldNode, Tref} ->
-            handle_location_down({Partition, N, OldNode, Tref}, State)
-    end;
-handle_socket_msg({location_down, Partition, Node},
-                  #state{whereis_waiting=Waiting0} = State) ->
-    case proplists:get_value(Partition, Waiting0) of
-        undefined ->
-            State;
-        {N, _OldNode, Tref} ->
-            handle_location_down({Partition, N, Node, Tref}, State)
-    end.
-
-handle_location_down({Partition, N, Node, Tref},
-                     #state{reserve_retries=Retries0,
-                            partition_queue=PQueue0,
-                            whereis_waiting=Waiting0} = State) ->
-    lager:info("Partition ~p is unavailable on cluster ~p",
-               [Partition, State#state.other_cluster]),
-
-    RetryLimit = app_helper:get_env(riak_repl,
-                                    max_reserve_retries,
-                                    ?DEFAULT_RESERVE_RETRIES),
-
-    Retries = dict:update_counter(Partition, 1, Retries0),
-
-    _ = erlang:cancel_timer(Tref),
-
-    case dict:fetch(Partition, Retries) of
-        X when X > RetryLimit, is_integer(RetryLimit) ->
-            lager:warning("Fullsync dropping partition: ~p, ~p location_down failed retries",
-                          [Partition, RetryLimit]),
-            Waiting = proplists:delete(Partition, Waiting0),
-            ErrorExits = State#state.error_exits + 1,
-            State2 = State#state{whereis_waiting = Waiting,
-                                 error_exits = ErrorExits,
-                                 reserve_retries = Retries},
-            start_up_reqs(State2);
-        _ ->
-            lager:warning("Fssource rescheduling partition after location_down: ~p ~p < ~p",
-                          [Partition, N, RetryLimit]),
-            Waiting = proplists:delete(Partition, Waiting0),
-            Partition2 = {Partition, N, Node},
-            PQueue = queue:in(Partition2, PQueue0),
-            RetryExits = State#state.retry_exits + 1,
-            State2 = State#state{whereis_waiting=Waiting,
-                                 partition_queue = PQueue,
-                                 reserve_retries = Retries,
-                                 retry_exits = RetryExits},
+        {value, PartitionInfo, Waiting2} ->
+            lager:info("Partition ~p is unavailable on cluster ~p",
+                [Partition, State#state.other_cluster]),
+            Tref = PartitionInfo#partition_info.whereis_tref,
+            erlang:cancel_timer(Tref),
+            Dropped = [Partition | State#state.dropped],
+            State2 = State#state{whereis_waiting = Waiting2, dropped = Dropped},
             start_up_reqs(State2)
+    end;
+handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Waiting} = State) ->
+    case lists:keytake(Partition, #partition_info.index, Waiting) of
+        false ->
+            State;
+        {value, PartitionInfo, Waiting2} ->
+            Tref = PartitionInfo#partition_info.whereis_tref,
+            erlang:cancel_timer(Tref),
+            RetryLimit = app_helper:get_env(riak_repl, max_reserve_retries, ?DEFAULT_RESERVE_RETRIES),
+            lager:info("Partition ~p is unavailable on cluster ~p", [Partition, State#state.other_cluster]),
+            State2 = State#state{whereis_waiting = Waiting2},
+            {RetriedCount, State3} = increment_error_dict(PartitionInfo, State#state.reserve_retries, State2),
+            State4 = case RetriedCount of
+                N when N > RetryLimit, is_integer(N) ->
+                    lager:warning("Fullsync dropping partition ~p, ~p location_down failed retries", [PartitionInfo#partition_info.index, RetryLimit]),
+                    Dropped = [Partition | State#state.dropped],
+                    State3#state{dropped = Dropped};
+                _ ->
+                    PQueue = queue:in(PartitionInfo, State3#state.partition_queue),
+                    State3#state{partition_queue = PQueue}
+            end,
+            start_up_reqs(State4)
     end.
 
 % try our best to reach maximum capacity by sending as many whereis requests
@@ -654,7 +681,17 @@ start_up_reqs(State) ->
     Running = length(State#state.running_sources),
     Waiting = length(State#state.whereis_waiting),
     StartupCount = Max - Running - Waiting,
-    start_up_reqs(State, StartupCount).
+    State2 = maybe_pop_from_purgatory(State),
+    start_up_reqs(State2, StartupCount).
+
+maybe_pop_from_purgatory(State) ->
+    case queue:out(State#state.purgatory) of
+        {empty, _} ->
+            State;
+        {{value, Partition}, NewPurgatory} ->
+            PartitionQ2 = queue:in(Partition, State#state.partition_queue),
+            State#state{purgatory = NewPurgatory, partition_queue = PartitionQ2}
+    end.
 
 start_up_reqs(State, N) when N < 1 ->
     State;
@@ -693,14 +730,16 @@ send_next_whereis_req(State) ->
                     % one of those to finish and try again
                     {defer, State#state{partition_queue = Queue}};
 
-                {Pval, N, RemoteNode} = P ->
+                P when is_record(P, partition_info) ->
+                    #partition_info{index = Pval} = P,
                     #state{transport = Transport, socket = Socket, whereis_waiting = Waiting} = State,
                     Tref = erlang:send_after(?WAITING_TIMEOUT, self(), {Pval, whereis_timeout}),
-                    Waiting2 = [{Pval, {N, RemoteNode, Tref}} | Waiting],
+                    PartitionInfo2 = P#partition_info{whereis_tref = Tref},
+                    Waiting2 = [PartitionInfo2 | Waiting],
                     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
                     lager:debug("Sending whereis request for partition ~p", [P]),
                     Transport:send(Socket,
-                        term_to_binary({whereis, element(1, P), PeerIP, PeerPort})),
+                        term_to_binary({whereis, Pval, PeerIP, PeerPort})),
                     {ok, State#state{partition_queue = Queue, whereis_waiting =
                         Waiting2}}
             end
@@ -740,13 +779,14 @@ below_max_sources(State) ->
     Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
     ( length(State#state.running_sources) + length(State#state.whereis_waiting) ) < Max.
 
-node_available({Partition, _, _}, Owners, Waiting) ->
+node_available(PartitionInfo, Owners, Waiting) ->
+    Partition = PartitionInfo#partition_info.index,
     LocalNode = proplists:get_value(Partition, Owners),
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
     try riak_repl2_fssource_sup:enabled(LocalNode) of
         RunningList ->
             PartsSameNode = [Part || {Part, PNode} <- Owners, PNode =:= LocalNode],
-            PartsWaiting = [Part || {Part, _} <- Waiting, lists:member(Part, PartsSameNode)],
+            PartsWaiting = [Part || #partition_info{index = Part} <- Waiting, lists:member(Part, PartsSameNode)],
             if
                 ( length(PartsWaiting) + length(RunningList) ) < Max ->
                     case proplists:get_value(Partition, RunningList) of
@@ -765,12 +805,13 @@ node_available({Partition, _, _}, Owners, Waiting) ->
             skip
     end.
 
-remote_node_available({_Partition, _, undefined}, _Busies) ->
+remote_node_available(Partition, _Busies) when Partition#partition_info.node =:= undefined ->
     true;
-remote_node_available({_Partition, _, RemoteNode}, Busies) ->
-    not sets:is_element(RemoteNode, Busies).
+remote_node_available(Partition, Busies) ->
+    not sets:is_element(Partition#partition_info.node, Busies).
 
-start_fssource(Partition2={Partition,_,_} = PartitionVal, Ip, Port, State) ->
+start_fssource(PartitionVal, Ip, Port, State) ->
+    Partition = PartitionVal#partition_info.index,
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
     lager:info("Starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
@@ -778,7 +819,8 @@ start_fssource(Partition2={Partition,_,_} = PartitionVal, Ip, Port, State) ->
     case riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}) of
         {ok, Pid} ->
             link(Pid),
-            Running = orddict:store(Pid, PartitionVal, State#state.running_sources),
+            _ = riak_repl2_fssource:soft_link(Pid),
+            Running = lists:keystore(Pid, #partition_info.running_source, State#state.running_sources, PartitionVal#partition_info{running_source = Pid}),
             State#state{running_sources = Running};
         {error, Reason} ->
             case Reason of
@@ -796,7 +838,7 @@ start_fssource(Partition2={Partition,_,_} = PartitionVal, Ip, Port, State) ->
             end,
             #state{transport = Transport, socket = Socket} = State,
             Transport:send(Socket, term_to_binary({unreserve, Partition})),
-            PQueue = queue:in(Partition2, State#state.partition_queue),
+            PQueue = queue:in(PartitionVal, State#state.partition_queue),
             State#state{partition_queue=PQueue}
     end.
 
@@ -822,7 +864,7 @@ sort_partitions(Ring) ->
     sort_partitions(OffsetPartitions, BigN, []).
 
 sort_partitions([], _, Acc) ->
-    [{P,N,undefined} || {P,N} <- lists:reverse(Acc)];
+    [#partition_info{index = P} || {P,_N} <- lists:reverse(Acc)];
 sort_partitions(In, N, Acc) ->
     Split = min(length(In), N) - 1,
     {A, [P|B]} = lists:split(Split, In),
@@ -880,7 +922,8 @@ gather_source_stats(PDict) ->
 gather_source_stats([], Acc) ->
     lists:reverse(Acc);
 
-gather_source_stats([{Pid, _} | Tail], Acc) ->
+gather_source_stats([PartitionInfo | Tail], Acc) ->
+    Pid = PartitionInfo#partition_info.running_source,
     try riak_repl2_fssource:legacy_status(Pid, infinity) of
         Stats ->
             gather_source_stats(Tail, [{riak_repl_util:safe_pid_to_list(Pid), Stats} | Acc])
@@ -892,10 +935,11 @@ gather_source_stats([{Pid, _} | Tail], Acc) ->
 
 is_fullsync_in_progress(State) ->
     QEmpty = queue:is_empty(State#state.partition_queue),
+    PurgatoryEmpty = queue:is_empty(State#state.purgatory),
     Waiting = State#state.whereis_waiting,
     Running = State#state.running_sources,
-    case {QEmpty, Waiting, Running} of
-        {true, [], []} ->
+    case {QEmpty, PurgatoryEmpty, Waiting, Running} of
+        {true, true, [], []} ->
             false;
         _ ->
             true
@@ -904,9 +948,10 @@ is_fullsync_in_progress(State) ->
 maybe_complete_fullsync(Running, State) ->
     EmptyRunning =  Running == [],
     QEmpty = queue:is_empty(State#state.partition_queue),
+    PurgatoryEmpty = queue:is_empty(State#state.purgatory),
     Waiting = State#state.whereis_waiting,
-    case {EmptyRunning, QEmpty, Waiting} of
-        {true, true, []} ->
+    case {EmptyRunning, QEmpty, PurgatoryEmpty, Waiting} of
+        {true, true, true, []} ->
             MyClusterName = riak_core_connection:symbolic_clustername(),
             lager:info("Fullsync complete from ~s to ~s",
                        [MyClusterName, State#state.other_cluster]),
@@ -971,3 +1016,39 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
 
 nodeset_to_string_list(Set) ->
     string:join([erlang:atom_to_list(V) || V <- ordsets:to_list(Set)],",").
+
+increment_error_dict(PartitionInfo, ExitType, State) when is_record(PartitionInfo, partition_info) ->
+    increment_error_dict(PartitionInfo#partition_info.index, ExitType, State);
+
+increment_error_dict(PartitionIndex, soft_exit, State) ->
+    increment_error_dict(PartitionIndex, #state.soft_retries, State);
+
+increment_error_dict(PartitionIndex, 'EXIT', State) ->
+    increment_error_dict(PartitionIndex, #state.retries, State);
+
+increment_error_dict(PartitionIndex, ElementN, State) when is_integer(ElementN) ->
+    Dict = element(ElementN, State),
+    Dict2 = dict:update_counter(PartitionIndex, 1, Dict),
+    State2 = setelement(ElementN, State, Dict2),
+    {dict:fetch(PartitionIndex, Dict2), State2}.
+
+% If we are linked to a remote pid, it is possible for the disterl to
+% reconnect at a bad time and lose the exit message, thus we cannot
+% rely solely on the exit message to flush it. What we can do is monitor
+% the process. 'DOWN' messages always come in after the exit message, so
+% if we get the 'DOWN' message first, we know the exit message is never
+% going to arrive, and is effectively flushed. If we get the exit first,
+% we can flush the down message next, since that will arrive as a noproc
+% in any case.
+flush_exit_message(Pid) ->
+    Mon = erlang:monitor(process, Pid),
+    receive
+        {'EXIT', Pid, _} ->
+            receive
+                {'DOWN', Mon, process, Pid, _} ->
+                    ok
+            end;
+        {'DOWN', Mon, process, Pid, _} ->
+            ok
+    end.
+
