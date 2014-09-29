@@ -6,7 +6,7 @@
 
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
--define(NODEBUG, true).
+% -define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TRACE(Stmt),Stmt).
@@ -137,7 +137,7 @@ single_node_test_() ->
 wait_for(Fun) ->
     wait_for(Fun, 2000, 10).
 
-wait_for(Fun, Remaining, Interval) when Remaining =< 0 ->
+wait_for(Fun, Remaining, _Interval) when Remaining =< 0 ->
     case Fun() of
         {done, Out} ->
             Out;

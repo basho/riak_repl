@@ -125,7 +125,6 @@ format_pid_stat(Pair) ->
 
 
 jsonify_stats([], Acc) ->
-    %?debugFmt("Got []: Acc: ~w", [Acc]),
     lists:flatten(lists:reverse(Acc));
 
 jsonify_stats([{fullsync, Num, _Left}|T], Acc) ->
@@ -1119,7 +1118,6 @@ jsonify_stats_test_() ->
                             {connecting,[{connecting_pid,FormattedPid},
                                          {connecting_ip,<<"127.0.0.1:5666">>}]}]}]}},
                    {sinks,<<>>}],
-              Got = jsonify_stats(Stats, []),
               ?assertEqual(Expected, jsonify_stats(Stats, [])),
               _Result = mochijson2:encode({struct, Expected}) % fail if crash
             end
