@@ -37,16 +37,317 @@
          show_block_provider_redirect/1,
          show_local_cluster_id/1,
          delete_block_provider_redirect/1
-     ]).
+        ]).
+
+-export([command/1]).
+
+-spec command([string()]) -> ok | error.
+command([_Script, "status"]) ->
+    %% TODO: how does 'quiet' even work?
+    status([]);
+command([_Script, "add-listener"|[_,_,_]=Params]) ->
+    add_listener(Params);
+command([_Script, "add-nat-listener"|[_,_,_,_,_]=Params]) ->
+    add_nat_listener(Params);
+command([_Script, "del-listener"|[_,_,_]=Params]) ->
+    del_listener(Params);
+command([_Script, "add-site"|[_,_,_]=Params]) ->
+    add_site(Params);
+command([_Script, "del-site"|[_]=Params]) ->
+    del_site(Params);
+command([_Script, "start-fullsync"]) ->
+    start_fullsync([]);
+command([_Script, "cancel-fullsync"]) ->
+    cancel_fullsync([]);
+command([_Script, "pause-fullsync"]) ->
+    pause_fullsync([]);
+command([_Script, "resume-fullsync"]) ->
+    resume_fullsync([]);
+command([_Script, "clusterstats"|Params]) when length(Params) =< 1 ->
+    clusterstats(Params);
+command([_Script, "clustername"|Params]) when length(Params) =< 1 ->
+    clustername(Params);
+command([_Script, "connections"]) ->
+    connections([]);
+command([_Script, "clusters"]) ->
+    clusters([]);
+command([_Script, "connect"|[_]=Params]) ->
+    connect(Params);
+command([_Script, "disconnect"|[_]=Params]) ->
+    disconnect(Params);
+command([_Script, "modes"|Params]) ->
+    modes(Params);
+command([_Script, "realtime"|["enable",_]=Params]) ->
+    realtime(Params);
+command([_Script, "realtime"|["disable",_]=Params]) ->
+    realtime(Params);
+command([_Script, "realtime"|["start"|_]=Params]) when length(Params) =< 2 ->
+    realtime(Params);
+command([_Script, "realtime"|["stop"|_]=Params]) when length(Params) =< 2 ->
+    realtime(Params);
+command([_Script, "realtime", "cascades"|[_]=Params]) ->
+    realtime_cascades(Params);
+command([_Script, "fullsync"|["enable",_]=Params]) ->
+    fullsync(Params);
+command([_Script, "fullsync"|["disable",_]=Params]) ->
+    fullsync(Params);
+command([_Script, "fullsync"|["start"|_]=Params]) when length(Params) =< 2 ->
+    fullsync(Params);
+command([_Script, "fullsync"|["stop"|_]=Params]) when length(Params) =< 2 ->
+    fullsync(Params);
+command([_Script, "fullsync", "source","max_workers_per_cluster"|[_]=Params]) ->
+    max_fssource_cluster(Params);
+command([_Script, "fullsync", "source", "max_workers_per_node"|[_]=Params]) ->
+    max_fssource_node(Params);
+command([_Script, "fullsync", "sink", "max_workers_per_node"|[_]=Params]) ->
+    max_fssink_node(Params);
+command([_Script, "proxy-get"|["enable",_]=Params]) ->
+    proxy_get(Params);
+command([_Script, "proxy-get"|["disable",_]=Params]) ->
+    proxy_get(Params);
+command([_Script, "proxy-get", "redirect", "show"|[_]=Params]) ->
+    show_block_provider_redirect(Params);
+command([_Script, "proxy-get", "redirect", "add"|[_,_]=Params]) ->
+    add_block_provider_redirect(Params);
+command([_Script, "proxy-get", "redirect", "delete"|[_]=Params]) ->
+    delete_block_provider_redirect(Params);
+command([_Script, "proxy-get", "redirect", "cluster-id"]) ->
+    show_local_cluster_id([]);
+command([_Script, "nat-map", "show"]) ->
+    show_nat_map([]);
+command([_Script, "nat-map", "add"|[_,_]=Params]) ->
+    add_nat_map(Params);
+command([_Script, "nat-map", "delete"|[_,_]=Params]) ->
+    del_nat_map(Params);
+command([Script|Params]) ->
+    usage(Script, Params),
+    error.
+
+-spec usage_out(string(), iodata()) -> ok.
+usage_out(Script, Desc) ->
+    io:format(standard_error, "Usage: ~s ~s~n", [Script, Desc]).
+
+-spec usage(string(), [string()]) -> ok.
+usage(Script, ["add-listener"|_]) ->
+    warn_v2_repl(),
+    usage_out(Script, "add-listener <nodename> <ip> <port>");
+usage(Script, ["add-nat-listener"|_]) ->
+    warn_v2_repl(),
+    usage_out(Script, "add-nat-listener <nodename> <internal_ip> <internal_port> <public_ip> <public_port>");
+usage(Script, ["del-listener"|_]) ->
+    warn_v2_repl(),
+    usage_out(Script, "del-listener <nodename> <ip> <port>");
+usage(Script, ["add-site"|_]) ->
+    warn_v2_repl(),
+    usage_out(Script, "add-site <ipaddr> <portnum> <sitename>");
+usage(Script, ["del-site"|_]) ->
+    warn_v2_repl(),
+    usage_out(Script, "del-site <sitename>");
+usage(Script, [V2CMD|_]) when V2CMD == "start-fullsync";
+                              V2CMD == "cancel-fullsync";
+                              V2CMD == "pause-fullsync";
+                              V2CMD == "resume-fullsync" ->
+    warn_v2_repl(),
+    usage(Script, []);
+usage(Script, ["clusterstats"|_]) ->
+    usage_out(Script, "clusterstats [ <protocol-id> | <ip>:<port> ]");
+usage(Script, ["clustername"|_]) ->
+    usage_out(Script, "clustername [ <clustername> ]");
+usage(Script, ["connect"|_]) ->
+    usage_out(Script, "connect <ip>:<port>");
+usage(Script, ["disconnect"|_]) ->
+    usage_out(Script, "disconnect ( <ip>:<port> | <clustername> )");
+usage(Script, ["modes"|_]) ->
+    usage_out(Script, "modes [ <mode> ... ]");
+usage(Script, ["realtime"|Params]) ->
+    realtime_usage(Script, Params);
+usage(Script, ["fullsync"|Params]) ->
+    fullsync_usage(Script, Params);
+usage(Script, ["proxy-get"|Params]) ->
+    proxy_get_usage(Script, Params);
+usage(Script, ["nat-map"|Params]) ->
+    nat_map_usage(Script, Params);
+usage(Script, _) ->
+    EnabledModes = get_modes(),
+    ModeHelp = [{mode_repl13,
+                 "  Version 3 Commands:\n"
+                 "    clustername                 Show or set the cluster name\n"
+                 "    clusterstats                Display cluster stats\n"
+                 "    connect                     Connect to a remote cluster\n"
+                 "    connections                 Display a list of connections\n"
+                 "    disconnect                  Disconnect from a remote cluster\n"
+                 "    fullsync                    Manipulate fullsync replication\n"
+                 "    nat-map                     Manipulate NAT mappings\n"
+                 "    proxy-get                   Manipulate proxy-get\n"
+                 "    realtime                    Manipulate realtime replication\n\n"},
+                {mode_repl12,
+                 "  Version 2 Commands:\n"
+                 "    add-listener                Add a sink listener\n"
+                 "    add-nat-listener            Add a sink listener with NAT\n"
+                 "    add-site                    Add a sink site\n"
+                 "    cancel-fullsync             Cancel running fullsync replication\n"
+                 "    del-listener                Delete a sink listener\n"
+                 "    del-site                    Delete a sink site\n"
+                 "    pause-fullsync              Pause running fullsync replication\n"
+                 "    resume-fullsync             Resume paused fullsync replication\n"
+                 "    start-fullsync              Start fullsync replication\n\n"}],
+    ModesCommands = [ Commands || {Mode, Commands} <- ModeHelp,
+                                  lists:member(Mode, EnabledModes) ],
+    usage_out(Script,
+              ["<command> [<args> ...]\n\n",
+               "  Commands:\n"
+               "    modes                       Show or set replication modes\n"
+               "    status                      Display status and metrics\n\n",
+               ModesCommands]).
+
+realtime_usage(Script, ["cascades"|_]) ->
+    usage_out(Script,
+              ["realtime cascades <sub-command>\n\n"
+               "  Manipulate cascading realtime replication. When this cluster is a\n"
+               "  sink and is receiving realtime replication, it can propagate\n"
+               "  incoming writes to any clusters for which it is a source and\n"
+               "  realtime replication is enabled.\n\n"
+               "  Sub-commands:\n"
+               "    enable      Enable cascading realtime replication\n"
+               "    disable     Disable cascading realtime replication\n"
+               "    show        Show the current cascading realtime replication setting"]
+             );
+realtime_usage(Script, _) ->
+    usage_out(Script,
+              ["realtime <sub-command> [<arg> ...]\n\n"
+               "  Manipulate realtime replication. Realtime replication streams\n"
+               "  incoming writes on the source cluster to the sink cluster(s).\n\n"
+               "  Sub-commands:"
+               "    enable      Enable realtime replication"
+               "    disable     Disable realtime replication"
+               "    start       Start realtime replication"
+               "    stop        Stop realtime replication"
+               "    cascades    Manipulate cascading realtime replication"]
+             ).
+
+fullsync_usage(Script, ["max_fssink_node"|_]) ->
+    fullsync_usage(Script, ["sink"]);
+fullsync_usage(Script, ["max_fssource_node"|_]) ->
+    fullsync_usage(Script, ["source"]);
+fullsync_usage(Script, ["max_fssource_cluster"|_]) ->
+    fullsync_usage(Script, ["source"]);
+fullsync_usage(Script, ["source"|_]) ->
+    usage_out(Script,
+              ["fullsync source <setting> [<value>]\n\n"
+               "  Set limits on the number of fullsync workers on a source cluster. If\n"
+               "  <value> is omitted, the current setting is displayed.\n\n"
+               "  Available settings:\n"
+               "    max_workers_per_node\n"
+               "    max_workers_per_cluster"
+              ]);
+fullsync_usage(Script, ["sink"|_]) ->
+    usage_out(Script,
+              ["fullsync sink max_workers_per_node [<value>]\n\n"
+               "  Set limits on the number of fullsync workers on a sink cluster. If\n"
+               "  <value> is omitted, the current setting is displayed."
+              ]);
+fullsync_usage(Script, _) ->
+    usage_out(Script,
+              ["fullsync <sub-command> [<arg> ...]\n\n"
+               "  Manipulate fullsync replication. Fullsync replication compares data\n"
+               "  on the source and the sink and then sends detected differences to\n"
+               "  the sink cluster.\n\n"
+               "  Sub-commands:\n"
+               "    enable      Enable fullsync replication\n"
+               "    disable     Disable fullsync replication\n"
+               "    start       Start fullsync replication\n"
+               "    stop        Stop fullsync replication\n"
+               "    source      Manipulate source cluster limits\n"
+               "    sink        Manipulate sink cluster limits"
+              ]).
+
+proxy_get_usage(Script, ["enable"|_]) ->
+    usage_out(Script,
+              ["proxy-get enable <sink-cluster-name>\n\n"
+               "  Enables proxy-get requests from <sink-cluster-name> to this source\n"
+               "  cluster."]);
+proxy_get_usage(Script, ["disable"|_]) ->
+    usage_out(Script,
+              ["proxy-get disable <sink-cluster-name>\n\n"
+               "  Disables proxy-get requests from <sink-cluster-name> to this source\n"
+               "  cluster."]);
+proxy_get_usage(Script, ["redirect", "add"|_]) ->
+    usage_out(Script,
+              ["proxy-get redirect add <from-cluster-id> <to-cluster-id>\n\n"
+               "  Add a proxy-get redirection to a new cluster. Arguments\n"
+               "  <from-cluster-id> and <to-cluster-id> must correspond to the result\n"
+               "  from the `", Script, " proxy-get redirect cluster-id` command.\n"
+              ]);
+proxy_get_usage(Script, ["redirect", "del"|_]) ->
+    usage_out(Script,
+              ["proxy-get redirect delete <from-cluster-id> <to-cluster-id>\n\n"
+               "  Delete a proxy-get redirection. Arguments <from-cluster-id> and\n"
+               "  <to-cluster-id> must correspond to the result from the `", Script, "\n",
+               "  proxy-get redirect cluster-id` command."
+              ]);
+proxy_get_usage(Script, ["redirect", "show"|_]) ->
+    usage_out(Script,
+              ["proxy-get redirect show <from-cluster-id>\n\n"
+               "  Show an existing proxy-get redirection. Argument <from-cluster-id>\n"
+               "  must correspond to the result from the `", Script, "proxy-get redirect\n"
+               "  cluster-id` command."
+              ]);
+proxy_get_usage(Script, ["redirect"|_]) ->
+    usage_out(Script,
+              ["proxy-get redirect <sub-command> [ <args> ... ]\n\n"
+               "  Manipulate proxy-get redirection functionality. Redirection allows\n"
+               "  existing proxy-get connections to be redirected to new source\n"
+               "  clusters so that the original source cluster can be decommissioned.\n\n"
+               "  Sub-commands:\n"
+               "    add          Add a proxy-get redirection\n"
+               "    delete       Delete an existing proxy-get redirection\n"
+               "    show         Show a proxy-get redirection\n"
+               "    cluster-id   Display the local cluster's identifier"]);
+proxy_get_usage(Script, _) ->
+    usage_out(Script,
+              ["proxy-get <sub-command> [ <args> ... ]\n\n"
+               "  Manipulate proxy-get functionality. Proxy-get allows sink clusters\n"
+               "  to actively fetch remote objects over a realtime replication\n"
+               "  connection. Currently, this is only used by Riak CS.\n"
+               "  Sub-commands:\n"
+               "    enable     Enable proxy-get on the source\n"
+               "    disable    Disable proxy-get on the source\n"
+               "    redirect   Manipulation proxy-get redirection"]).
+
+nat_map_usage(Script, ["add"|_]) ->
+    usage_out(Script,
+              ["nat-map add <external-ip>[:<port>] <internal-ip>\n\n"
+               "  Add a NAT mapping from the given external IP to the given internal"
+               "  IP. An optional external port can be supplied."]);
+nat_map_usage(Script, ["delete"|_]) ->
+    usage_out(Script,
+              ["nat-map delete <external-ip>[:<port>] <internal-ip>\n\n"
+               "  Delete a NAT mapping between the given external IP and the given"
+               "  internal IP."]);
+nat_map_usage(Script, _) ->
+    usage_out(Script,
+              ["nat-map <sub-command> [<arg> ...]\n\n"
+               "  Manipulate NAT mappings. NAT mappings allow replication connections\n"
+               "  to traverse firewalls between private networks on previously\n"
+               "  configured ports.\n\n"
+               "  Sub-commands:\n"
+               "    add         Add a NAT mapping\n"
+               "    delete      Delete a NAT mapping\n"
+               "    show        Display the NAT mapping table"
+              ]).
 
 add_listener(Params) ->
-    lager:warning(?V2REPLDEP, []),
+    warn_v2_repl(),
     Ring = get_ring(),
     case add_listener_internal(Ring,Params) of
         {ok, NewRing} ->
             ok = maybe_set_ring(Ring, NewRing);
         error -> error
     end.
+
+warn_v2_repl() ->
+    io:format(?V2REPLDEP, []),
+    lager:warning(?V2REPLDEP, []).
 
 add_nat_listener(Params) ->
     lager:warning(?V2REPLDEP, []),

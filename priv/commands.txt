@@ -83,7 +83,7 @@ Usage: riak-repl nat-map <sub-command> [<arg> ...]
   Sub-commands:
     add         Add a NAT mapping
     del         Delete a NAT mapping
-    show        Display the NAT mapping table
+    show        Display the NAT mapping table 
 
 Usage: riak-repl nat-map add <external-ip>[:<port>] <internal-ip>
 
@@ -127,3 +127,21 @@ Usage: riak-repl proxy-get redirect <sub-command> [ <args> ... ]
     delete       Delete an existing proxy-get redirection
     show         Show a proxy-get redirection
     cluster-id   Display the local cluster's identifier
+
+Usage: riak-repl proxy-get redirect add <from-cluster-id> <to-cluster-id>
+
+  Add a proxy-get redirection to a new cluster. Arguments
+  <from-cluster-id> and <to-cluster-id> must correspond to the result
+  from the `riak-repl proxy-get redirect cluster-id` command.
+
+Usage: riak-repl proxy-get redirect delete <from-cluster-id> <to-cluster-id>
+
+  Delete a proxy-get redirection. Arguments <from-cluster-id> and
+  <to-cluster-id> must correspond to the result from the `riak-repl
+  proxy-get redirect cluster-id` command.
+
+Usage: riak-repl proxy-get redirect show <from-cluster-id>
+
+  Show an existing proxy-get redirection. Argument <from-cluster-id>
+  must correspond to the result from the `riak-repl proxy-get redirect
+  cluster-id` command.
