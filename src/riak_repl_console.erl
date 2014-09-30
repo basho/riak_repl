@@ -125,7 +125,7 @@ command([Script|Params]) ->
 
 -spec usage_out(string(), iodata()) -> ok.
 usage_out(Script, Desc) ->
-    io:format(standard_error, "Usage: ~s ~s~n", [Script, Desc]).
+    io:format("Usage: ~s ~s~n", [Script, Desc]).
 
 -spec usage(string(), [string()]) -> ok.
 usage(Script, ["add-listener"|_]) ->
@@ -179,7 +179,7 @@ usage(Script, _) ->
                  "    fullsync                    Manipulate fullsync replication\n"
                  "    nat-map                     Manipulate NAT mappings\n"
                  "    proxy-get                   Manipulate proxy-get\n"
-                 "    realtime                    Manipulate realtime replication\n\n"},
+                 "    realtime                    Manipulate realtime replication"},
                 {mode_repl12,
                  "  Version 2 Commands:\n"
                  "    add-listener                Add a sink listener\n"
@@ -190,9 +190,9 @@ usage(Script, _) ->
                  "    del-site                    Delete a sink site\n"
                  "    pause-fullsync              Pause running fullsync replication\n"
                  "    resume-fullsync             Resume paused fullsync replication\n"
-                 "    start-fullsync              Start fullsync replication\n\n"}],
-    ModesCommands = [ Commands || {Mode, Commands} <- ModeHelp,
-                                  lists:member(Mode, EnabledModes) ],
+                 "    start-fullsync              Start fullsync replication"}],
+    ModesCommands = string:join([ Commands || {Mode, Commands} <- ModeHelp,
+                                  lists:member(Mode, EnabledModes) ], "\n\n"),
     usage_out(Script,
               ["<command> [<args> ...]\n\n",
                "  Commands:\n"
@@ -346,7 +346,7 @@ add_listener(Params) ->
     end.
 
 warn_v2_repl() ->
-    io:format(?V2REPLDEP, []),
+    io:format(?V2REPLDEP++"~n~n", []),
     lager:warning(?V2REPLDEP, []).
 
 add_nat_listener(Params) ->
