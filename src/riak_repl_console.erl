@@ -488,24 +488,28 @@ start_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:start_fullsync(Pid) ||
             Pid <- riak_repl_listener_sup:server_pids()],
+    io:format("Fullsync started~n"),
     ok.
 
 cancel_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:cancel_fullsync(Pid) ||
             Pid <- riak_repl_listener_sup:server_pids()],
+    io:format("Fullsync canceled~n"),
     ok.
 
 pause_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:pause_fullsync(Pid) ||
             Pid <- riak_repl_listener_sup:server_pids()],
+    io:format("Fullsync paused~n"),
     ok.
 
 resume_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:resume_fullsync(Pid) ||
             Pid <- riak_repl_listener_sup:server_pids()],
+    io:format("Fullsync resumed~n"),
     ok.
 
 
