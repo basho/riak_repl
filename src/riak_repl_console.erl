@@ -487,25 +487,25 @@ cluster_fs_running(Sink) ->
 start_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:start_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+            Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 cancel_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:cancel_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+            Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 pause_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:pause_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+            Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 resume_fullsync([]) ->
     lager:warning(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:resume_fullsync(Pid) ||
-        Pid <- riak_repl_listener_sup:server_pids()],
+            Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 
@@ -523,11 +523,11 @@ cluster_mgr_stats() ->
     case erlang:whereis(riak_repl_leader_gs) of
         Pid when is_pid(Pid) ->
             ConnectedClusters = case riak_core_cluster_mgr:get_known_clusters() of
-                {ok, Clusters} ->
-                    [erlang:list_to_binary(Cluster) || Cluster <-
-                                                       Clusters];
-                Error -> Error
-            end,
+                                    {ok, Clusters} ->
+                                        [erlang:list_to_binary(Cluster) || Cluster <-
+                                                                               Clusters];
+                                    Error -> Error
+                                end,
             [{cluster_name,
               erlang:list_to_binary(riak_core_connection:symbolic_clustername())},
              {cluster_leader, riak_core_cluster_mgr:get_leader()},
@@ -712,15 +712,15 @@ realtime([Cmd, Remote]) ->
 realtime([Cmd]) ->
     Remotes = riak_repl2_rt:enabled(),
     _ = case Cmd of
-        "start" ->
-            ?LOG_USER_CMD("Start Realtime Replication to all connected clusters",
-                          []),
-            _ = [riak_repl2_rt:start(Remote) || Remote <- Remotes];
-        "stop" ->
-            ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters",
-                      []),
-            _ = [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
-    end,
+            "start" ->
+                ?LOG_USER_CMD("Start Realtime Replication to all connected clusters",
+                              []),
+                _ = [riak_repl2_rt:start(Remote) || Remote <- Remotes];
+            "stop" ->
+                ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters",
+                              []),
+                _ = [riak_repl2_rt:stop(Remote) || Remote <- Remotes]
+        end,
     ok.
 
 fullsync([Cmd, Remote]) ->
@@ -729,13 +729,13 @@ fullsync([Cmd, Remote]) ->
         "enable" ->
             ?LOG_USER_CMD("Enable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
-                    riak_repl_ring:fs_enable_trans/2, Remote),
+                                                  riak_repl_ring:fs_enable_trans/2, Remote),
             _ = riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
             ok;
         "disable" ->
             ?LOG_USER_CMD("Disable Fullsync Replication to cluster ~p", [Remote]),
             riak_core_ring_manager:ring_trans(fun
-                    riak_repl_ring:fs_disable_trans/2, Remote),
+                                                  riak_repl_ring:fs_disable_trans/2, Remote),
             _ = riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
             ok;
         "start" ->
@@ -769,12 +769,12 @@ fullsync([Cmd]) ->
         "start" ->
             ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
             _ = [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
-                Fullsyncs],
+                                                                     Fullsyncs],
             ok;
         "stop" ->
             ?LOG_USER_CMD("Stop Fullsync Replication to all connected clusters",[]),
             _ = [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
-                Fullsyncs],
+                                                                    Fullsyncs],
             ok
     end,
     ok.
@@ -784,12 +784,12 @@ proxy_get([Cmd, Remote]) ->
         "enable" ->
             ?LOG_USER_CMD("Enable Riak CS Proxy GET block provider for ~p",[Remote]),
             riak_core_ring_manager:ring_trans(fun
-                    riak_repl_ring:pg_enable_trans/2, Remote),
+                                                  riak_repl_ring:pg_enable_trans/2, Remote),
             ok;
         "disable" ->
             ?LOG_USER_CMD("Disable Riak CS Proxy GET block provider for ~p",[Remote]),
             riak_core_ring_manager:ring_trans(fun
-                    riak_repl_ring:pg_disable_trans/2, Remote),
+                                                  riak_repl_ring:pg_disable_trans/2, Remote),
             ok
     end.
 
@@ -806,11 +806,11 @@ modes(NewModes) ->
 realtime_cascades(["always"]) ->
     ?LOG_USER_CMD("Enable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun
-        riak_repl_ring:rt_cascades_trans/2, always);
+                                          riak_repl_ring:rt_cascades_trans/2, always);
 realtime_cascades(["never"]) ->
     ?LOG_USER_CMD("Disable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun
-        riak_repl_ring:rt_cascades_trans/2, never);
+                                          riak_repl_ring:rt_cascades_trans/2, never);
 realtime_cascades([]) ->
     Cascades = app_helper:get_env(riak_repl, realtime_cascades, always),
     io:format("realtime_cascades: ~p~n", [Cascades]);
@@ -857,7 +857,7 @@ max_fssource_cluster(NewVal) ->
 
 max_fssink_node([]) ->
     io:format("max_fssink_node value = ~p~n",
-        [app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE)]);
+              [app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE)]);
 max_fssink_node([FSSinkNode]) ->
     NewVal = erlang:list_to_integer(FSSinkNode),
     riak_core_util:rpc_every_member(?MODULE, max_fssink_node, [NewVal], ?CONSOLE_RPC_TIMEOUT),
@@ -872,12 +872,12 @@ show_nat_map([]) ->
     Ring = get_ring(),
     io:format("Nat map: ~n"),
     [io:format("        ~-21.. s -> ~s~n",
-            [print_ip_and_maybe_port(Int), print_ip_and_maybe_port(Ext)])
-        || {Int, Ext} <- riak_repl_ring:get_nat_map(Ring)].
+               [print_ip_and_maybe_port(Int), print_ip_and_maybe_port(Ext)])
+     || {Int, Ext} <- riak_repl_ring:get_nat_map(Ring)].
 
 add_nat_map([External, Internal]) ->
     case {parse_ip_and_maybe_port(External, false),
-            parse_ip_and_maybe_port(Internal, true)} of
+          parse_ip_and_maybe_port(Internal, true)} of
         {{error, Reason}, _} ->
             io:format("Bad external IP ~p", [Reason]),
             error;
@@ -887,14 +887,14 @@ add_nat_map([External, Internal]) ->
         {ExternalIP, InternalIP} ->
             ?LOG_USER_CMD("Add a NAT map from External IP ~p to Internal IP ~p", [ExternalIP, InternalIP]),
             riak_core_ring_manager:ring_trans(
-                fun riak_repl_ring:add_nat_map/2,
-                {ExternalIP, InternalIP}),
+              fun riak_repl_ring:add_nat_map/2,
+              {ExternalIP, InternalIP}),
             ok
     end.
 
 del_nat_map([External, Internal]) ->
     case {parse_ip_and_maybe_port(External, false),
-            parse_ip_and_maybe_port(Internal, true)} of
+          parse_ip_and_maybe_port(Internal, true)} of
         {{error, Reason}, _} ->
             io:format("Bad external IP ~p", [Reason]),
             error;
@@ -904,19 +904,19 @@ del_nat_map([External, Internal]) ->
         {ExternalIP, InternalIP} ->
             ?LOG_USER_CMD("Delete a NAT map from External IP ~p to Internal IP ~p", [ExternalIP, InternalIP]),
             riak_core_ring_manager:ring_trans(
-                fun riak_repl_ring:del_nat_map/2,
-                {ExternalIP, InternalIP}),
+              fun riak_repl_ring:del_nat_map/2,
+              {ExternalIP, InternalIP}),
             ok
     end.
 
-% NB: the following commands are around the "Dead Cluster" redirect feature,
-%     306. They all operate using cluster_id (tuple), not clustername, for now, as 
-%     of this writing we had no reliable way to map a clustername to an id 
-%     over disterlang. When this API becomes available, this feature may use
-%     it. 
+%% NB: the following commands are around the "Dead Cluster" redirect feature,
+%%     306. They all operate using cluster_id (tuple), not clustername, for now, as
+%%     of this writing we had no reliable way to map a clustername to an id
+%%     over disterlang. When this API becomes available, this feature may use
+%%     it.
 add_block_provider_redirect([FromClusterId, ToClusterId]) ->
     lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
-    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, 
+    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>},
                            FromClusterId, ToClusterId).
 
 show_block_provider_redirect([FromClusterId]) ->
@@ -934,7 +934,7 @@ delete_block_provider_redirect([FromClusterId]) ->
 show_local_cluster_id([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
-        io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+                  io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
     io:format("local cluster id: ~p~n", [ClusterId]).
 
 %% helper functions
@@ -991,7 +991,7 @@ extract_rt_fs_send_recv_kbps(Most) ->
     FSSendKbps = sum_fs_send_kbps(Most),
     FSRecvKbps = sum_fs_recv_kbps(Most),
     [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kbps, RTRecvKbps},
-        {fullsync_send_kbps, FSSendKbps}, {fullsync_recv_kbps, FSRecvKbps}].
+     {fullsync_send_kbps, FSSendKbps}, {fullsync_recv_kbps, FSRecvKbps}].
 
 print_ip_and_maybe_port({IP, Port}) when is_tuple(IP) ->
     [inet_parse:ntoa(IP), $:, integer_to_list(Port)];
@@ -1006,13 +1006,13 @@ format_counter_stats([]) -> ok;
 format_counter_stats([{K,V}|T]) when is_list(K) ->
     io:format("~s: ~p~n", [K,V]),
     format_counter_stats(T);
-%format_counter_stats([{K,V}|T]) when K == fullsync_coordinator ->
-%    io:format("V = ~p",[V]),
-%    case V of
-%        [] -> io:format("~s: {}~n",[K]);
-%        Val -> io:format("~s: ~s",[K,Val])
-%    end,
-%    format_counter_stats(T);
+%%format_counter_stats([{K,V}|T]) when K == fullsync_coordinator ->
+%%    io:format("V = ~p",[V]),
+%%    case V of
+%%        [] -> io:format("~s: {}~n",[K]);
+%%        Val -> io:format("~s: ~s",[K,Val])
+%%    end,
+%%    format_counter_stats(T);
 format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
                                      K == client_tx_kbps;
                                      K == server_rx_kbps;
@@ -1033,8 +1033,8 @@ make_listener(NodeName, IP, Port) ->
 
 make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort) ->
     #nat_listener{nodename=list_to_atom(NodeName),
-                listen_addr={IP, list_to_integer(Port)},
-                nat_addr={PublicIP, list_to_integer(PublicPort)}}.
+                  listen_addr={IP, list_to_integer(Port)},
+                  nat_addr={PublicIP, list_to_integer(PublicPort)}}.
 
 
 make_site(SiteName, IP, Port) ->
@@ -1066,18 +1066,18 @@ get_config() ->
                 {ok, Sites} ->
                     lists:flatten([format_site(S) || S <- Sites])
             end ++
-            case dict:find(listeners, Repl) of
-                error ->
-                    [];
-                {ok, Listeners} ->
-                    lists:flatten([format_listener(L) || L <- Listeners])
-            end ++
-            case dict:find(natlisteners, Repl) of
-                error ->
-                    [];
-                {ok, NatListeners} ->
-                    lists:flatten([format_nat_listener(L) || L <- NatListeners])
-            end
+                case dict:find(listeners, Repl) of
+                    error ->
+                        [];
+                    {ok, Listeners} ->
+                        lists:flatten([format_listener(L) || L <- Listeners])
+                end ++
+                case dict:find(natlisteners, Repl) of
+                    error ->
+                        [];
+                    {ok, NatListeners} ->
+                        lists:flatten([format_nat_listener(L) || L <- NatListeners])
+                end
     end.
 
 format_site(S) ->
@@ -1096,36 +1096,36 @@ format_listener(L) ->
 format_nat_listener(L) ->
     [{"natlistener_" ++ atom_to_list(L#nat_listener.nodename),
       format_ip(L#nat_listener.listen_addr) ++ "->" ++
-      format_ip(L#nat_listener.nat_addr)}].
+          format_ip(L#nat_listener.nat_addr)}].
 
 leader_stats() ->
     case erlang:whereis(riak_repl_leader_gs) of
         Pid when is_pid(Pid) ->
             LeaderNode = riak_repl_leader:leader_node(),
             LocalStats =
-                         try
-                LocalProcInfo = erlang:process_info(whereis(riak_repl_leader_gs),
-                                                    [message_queue_len, heap_size]),
-                [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
-            catch _:_ ->
-                    []
-            end,
+                try
+                    LocalProcInfo = erlang:process_info(whereis(riak_repl_leader_gs),
+                                                        [message_queue_len, heap_size]),
+                    [{"local_leader_" ++  atom_to_list(K), V} || {K,V} <- LocalProcInfo]
+                catch _:_ ->
+                        []
+                end,
             RemoteStats =
-                          try
-                LeaderPid = rpc:call(LeaderNode, erlang, whereis,
-                                     [riak_repl_leader_gs]),
-                LeaderStats = rpc:call(LeaderNode, erlang, process_info,
-                                       [LeaderPid, [message_queue_len,
-                                                    total_heap_size,
-                                                    heap_size,
-                                                    stack_size,
-                                                    reductions,
-                                                    garbage_collection]]),
-                [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
-            catch
-                _:_ ->
-                    []
-            end,
+                try
+                    LeaderPid = rpc:call(LeaderNode, erlang, whereis,
+                                         [riak_repl_leader_gs]),
+                    LeaderStats = rpc:call(LeaderNode, erlang, process_info,
+                                           [LeaderPid, [message_queue_len,
+                                                        total_heap_size,
+                                                        heap_size,
+                                                        stack_size,
+                                                        reductions,
+                                                        garbage_collection]]),
+                    [{"leader_" ++  atom_to_list(K), V} || {K,V} <- LeaderStats]
+                catch
+                    _:_ ->
+                        []
+                end,
             [{leader, LeaderNode}] ++ RemoteStats ++ LocalStats;
         _ -> []
     end.
@@ -1140,7 +1140,7 @@ client_stats() ->
 
 client_stats_rpc() ->
     RT2 = [rt2_sink_stats(P) || P <- riak_repl2_rt:get_sink_pids()] ++
-          [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
+        [fs2_sink_stats(P) || P <- riak_repl2_fssink_sup:started()],
     Pids = [P || {_,P,_,_} <- supervisor:which_children(riak_repl_client_sup), P /= undefined],
     [{client_stats, [client_stats(P) || P <- Pids]}, {sinks, RT2}].
 
@@ -1148,7 +1148,7 @@ server_stats() ->
     case erlang:whereis(riak_repl_leader_gs) of
         Pid when is_pid(Pid) ->
             RT2 = [rt2_source_stats(P) || {_R,P} <-
-                                          riak_repl2_rtsource_conn_sup:enabled()],
+                                              riak_repl2_rtsource_conn_sup:enabled()],
             LeaderNode = riak_repl_leader:leader_node(),
             case LeaderNode of
                 undefined ->
@@ -1219,7 +1219,7 @@ rt2_source_stats(Pid) ->
             end,
     FormattedPid = riak_repl_util:safe_pid_to_list(Pid),
     {source_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
-     {rt_source_connected_to, State}]}.
+                    {rt_source_connected_to, State}]}.
 
 rt2_sink_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
@@ -1232,18 +1232,18 @@ rt2_sink_stats(Pid) ->
     %%{Pid, erlang:process_info(Pid, message_queue_len), State}.
     FormattedPid = riak_repl_util:safe_pid_to_list(Pid),
     {sink_stats, [{pid,FormattedPid}, erlang:process_info(Pid, message_queue_len),
-     {rt_sink_connected_to, State}]}.
+                  {rt_sink_connected_to, State}]}.
 
 fs2_sink_stats(Pid) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
     State = try
-        %% even though it's named legacy_status, it's BNW code
-        riak_repl2_fssink:legacy_status(Pid, Timeout)
-    catch
-        _:_ ->
-            too_busy
-    end,
-   %% {Pid, erlang:process_info(Pid, message_queue_len), State}.
+                %% even though it's named legacy_status, it's BNW code
+                riak_repl2_fssink:legacy_status(Pid, Timeout)
+            catch
+                _:_ ->
+                    too_busy
+            end,
+    %% {Pid, erlang:process_info(Pid, message_queue_len), State}.
     {sink_stats, [{pid,riak_repl_util:safe_pid_to_list(Pid)},
                   erlang:process_info(Pid, message_queue_len),
                   {fs_connected_to, State}]}.
@@ -1258,14 +1258,14 @@ sum_rt_kbps(Stats, KbpsDirection) ->
     Sinks = proplists:get_value(sinks, Stats, []),
     Sources = proplists:get_value(sources, Stats, []),
     Kbpss = lists:foldl(fun({StatKind, SinkProps}, Acc) ->
-        Path1 = case StatKind of
-            sink_stats -> rt_sink_connected_to;
-            source_stats -> rt_source_connected_to;
-            _Else -> not_found
-        end,
-        KbpsStr = proplists_get([Path1, socket, KbpsDirection], SinkProps, "[]"),
-        get_first_kbsp(KbpsStr) + Acc
-    end, 0, Sinks ++ Sources),
+                                Path1 = case StatKind of
+                                            sink_stats -> rt_sink_connected_to;
+                                            source_stats -> rt_source_connected_to;
+                                            _Else -> not_found
+                                        end,
+                                KbpsStr = proplists_get([Path1, socket, KbpsDirection], SinkProps, "[]"),
+                                get_first_kbsp(KbpsStr) + Acc
+                        end, 0, Sinks ++ Sources),
     Kbpss.
 
 sum_fs_send_kbps(Stats) ->
@@ -1277,40 +1277,40 @@ sum_fs_recv_kbps(Stats) ->
 sum_fs_kbps(Stats, Direction) ->
     Coordinators = proplists:get_value(fullsync_coordinator, Stats),
     CoordFoldFun = fun({_SinkName, FSCoordStats}, Acc) ->
-        CoordKbpsStr = proplists_get([socket, Direction], FSCoordStats, "[]"),
-        CoordKbps = get_first_kbsp(CoordKbpsStr),
-        CoordSourceKpbs = sum_fs_source_kbps(FSCoordStats, Direction),
-        SinkKbps = sum_fs_sink_kbps(Stats, Direction),
-        Acc + CoordKbps + CoordSourceKpbs + SinkKbps
-    end,
+                           CoordKbpsStr = proplists_get([socket, Direction], FSCoordStats, "[]"),
+                           CoordKbps = get_first_kbsp(CoordKbpsStr),
+                           CoordSourceKpbs = sum_fs_source_kbps(FSCoordStats, Direction),
+                           SinkKbps = sum_fs_sink_kbps(Stats, Direction),
+                           Acc + CoordKbps + CoordSourceKpbs + SinkKbps
+                   end,
     CoordSrvs = proplists:get_value(fullsync_coordinator_srv, Stats),
     CoordSrvsFoldFun = fun({_IPPort, SrvStats}, Acc) ->
-        KbpsStr = proplists_get([socket, Direction], SrvStats, "[]"),
-        Kbps = get_first_kbsp(KbpsStr),
-        Kbps + Acc
-    end,
+                               KbpsStr = proplists_get([socket, Direction], SrvStats, "[]"),
+                               Kbps = get_first_kbsp(KbpsStr),
+                               Kbps + Acc
+                       end,
     lists:foldl(CoordFoldFun, 0, Coordinators) + lists:foldl(CoordSrvsFoldFun, 0, CoordSrvs).
 
 sum_fs_source_kbps(CoordStats, Direction) ->
     Running = proplists:get_value(running_stats, CoordStats, []),
     FoldFun = fun({_Pid, Stats}, Acc) ->
-        KbpsStr = proplists_get([socket, Direction], Stats, "[]"),
-        Kbps = get_first_kbsp(KbpsStr),
-        Acc + Kbps
-    end,
+                      KbpsStr = proplists_get([socket, Direction], Stats, "[]"),
+                      Kbps = get_first_kbsp(KbpsStr),
+                      Acc + Kbps
+              end,
     lists:foldl(FoldFun, 0, Running).
 
 sum_fs_sink_kbps(Stats, Direction) ->
     Sinks = proplists:get_value(sinks, Stats, []),
     FoldFun = fun({sink_stats, SinkStats}, Acc) ->
-        case proplists_get([fs_connected_to, socket, Direction], SinkStats) of
-            undefined ->
-                Acc;
-            KbpsStr ->
-                Kbps = get_first_kbsp(KbpsStr),
-                Acc + Kbps
-        end
-    end,
+                      case proplists_get([fs_connected_to, socket, Direction], SinkStats) of
+                          undefined ->
+                              Acc;
+                          KbpsStr ->
+                              Kbps = get_first_kbsp(KbpsStr),
+                              Acc + Kbps
+                      end
+              end,
     lists:foldl(FoldFun, 0, Sinks).
 
 proplists_get(Path, Props) ->
