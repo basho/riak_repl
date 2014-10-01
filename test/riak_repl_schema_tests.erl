@@ -25,6 +25,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 15),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_use_background_manager", false),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_stat_refresh_interval", 60000),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_strategy", keylist),
     ok.
 
 override_schema_test() ->
@@ -33,6 +34,7 @@ override_schema_test() ->
     Conf = [
             {["mdc", "data_root"], "/some/repl/place"},
             {["mdc", "cluster_manager"], {"4.3.2.1", 4321}},
+            {["mdc", "fullsync", "strategy"], aae},
             {["mdc", "fullsync", "source", "max_workers_per_cluster"], 10},
             {["mdc", "fullsync", "source", "max_workers_per_node"], 2},
             {["mdc", "fullsync", "sink", "max_workers_per_node"], 4},
@@ -67,6 +69,7 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 1296000),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_use_background_manager", true),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_stat_refresh_interval", 30000),
+    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_strategy", aae),
     ok.
 
 heartbeat_interval_test() ->

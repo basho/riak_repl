@@ -19,6 +19,13 @@
     {datatype, ip}
 ]}.
 
+%% @doc The fullsync strategy to use.
+{mapping, "mdc.fullsync.strategy", "riak_repl.fullsync_strategy",
+[{datatype, {enum, [keylist, aae]}},
+ {default, keylist},
+ hidden
+]}.
+
 %% @doc The limit of fullsync workers running per source-side of a
 %% replication connection. For example, if you have a cluster that is
 %% replicating to 3 sink clusters and this set to 5, you will have at
@@ -172,3 +179,4 @@
     {default, off},
     hidden
 ]}.
+
