@@ -75,7 +75,9 @@ command([_Script, "connect"|[_]=Params]) ->
     connect(Params);
 command([_Script, "disconnect"|[_]=Params]) ->
     disconnect(Params);
-command([_Script, "modes"|Params]) ->
+command([_Script, "modes", "show"]) ->
+    modes([]);
+command([_Script, "modes", "set"|Params]) when length(Params) >= 1 ->
     modes(Params);
 command([_Script, "realtime"|["enable",_]=Params]) ->
     realtime(Params);
@@ -95,11 +97,17 @@ command([_Script, "fullsync"|["start"|_]=Params]) when length(Params) =< 2 ->
     fullsync(Params);
 command([_Script, "fullsync"|["stop"|_]=Params]) when length(Params) =< 2 ->
     fullsync(Params);
-command([_Script, "fullsync", "source","max_workers_per_cluster"|[_]=Params]) ->
+command([_Script, "fullsync", "source", "max_workers_per_cluster", "show"]) ->
+    max_fssource_cluster([]);
+command([_Script, "fullsync", "source", "max_workers_per_cluster", "set"|[_]=Params]) ->
     max_fssource_cluster(Params);
-command([_Script, "fullsync", "source", "max_workers_per_node"|[_]=Params]) ->
+command([_Script, "fullsync", "source", "max_workers_per_node", "show"]) ->
+    max_fssource_node([]);
+command([_Script, "fullsync", "source", "max_workers_per_node", "set"|[_]=Params]) ->
     max_fssource_node(Params);
-command([_Script, "fullsync", "sink", "max_workers_per_node"|[_]=Params]) ->
+command([_Script, "fullsync", "sink", "max_workers_per_node", "show"]) ->
+    max_fssink_node([]);
+command([_Script, "fullsync", "sink", "max_workers_per_node", "set"|[_]=Params]) ->
     max_fssink_node(Params);
 command([_Script, "proxy-get"|["enable",_]=Params]) ->
     proxy_get(Params);
@@ -157,8 +165,12 @@ usage(Script, ["connect"|_]) ->
     usage_out(Script, "connect <ip>:<port>");
 usage(Script, ["disconnect"|_]) ->
     usage_out(Script, "disconnect ( <ip>:<port> | <clustername> )");
-usage(Script, ["modes"|_]) ->
-    usage_out(Script, "modes [ <mode> ... ]");
+usage(Script, ["modes"|_]) ->    
+    usage_out(Script, 
+              "modes <sub-command> [ <mode> ... ]\n\n"
+              "  Sub-commands:\n"
+              "    show   Show the active replication modes\n"
+              "    set    Set the active replication modes");
 usage(Script, ["realtime"|Params]) ->
     realtime_usage(Script, Params);
 usage(Script, ["fullsync"|Params]) ->
@@ -807,19 +819,23 @@ modes(NewModes) ->
     set_modes(Modes),
     modes([]).
 
-realtime_cascades(["always"]) ->
+realtime_cascades(["enable"]) ->
     ?LOG_USER_CMD("Enable Realtime Replication cascading", []),
-    riak_core_ring_manager:ring_trans(fun
-                                          riak_repl_ring:rt_cascades_trans/2, always);
-realtime_cascades(["never"]) ->
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:rt_cascades_trans/2, 
+                                      always),
+    io:format("Realtime cascades enabled.~n");
+realtime_cascades(["disable"]) ->
     ?LOG_USER_CMD("Disable Realtime Replication cascading", []),
-    riak_core_ring_manager:ring_trans(fun
-                                          riak_repl_ring:rt_cascades_trans/2, never);
-realtime_cascades([]) ->
-    Cascades = app_helper:get_env(riak_repl, realtime_cascades, always),
-    io:format("realtime_cascades: ~p~n", [Cascades]);
-realtime_cascades(_Wut) ->
-    io:format("realtime_cascades either \"always\" or \"never\"~n").
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:rt_cascades_trans/2, 
+                                      never),
+    io:format("Realtime cascades disabled.~n");
+realtime_cascades(["show"]) ->
+    case app_helper:get_env(riak_repl, realtime_cascades, always) of
+        always ->
+            io:format("Realtime cascades are enabled.~n");
+        never ->
+            io:format("Realtime cascades are disabled.~n")
+    end.
 
 cascades(Val) ->
     realtime_cascades(Val).
