@@ -217,11 +217,11 @@ realtime_usage(Script, _) ->
               ["realtime <sub-command> [<arg> ...]\n\n"
                "  Manipulate realtime replication. Realtime replication streams\n"
                "  incoming writes on the source cluster to the sink cluster(s).\n\n"
-               "  Sub-commands:"
-               "    enable      Enable realtime replication"
-               "    disable     Disable realtime replication"
-               "    start       Start realtime replication"
-               "    stop        Stop realtime replication"
+               "  Sub-commands:\n"
+               "    enable      Enable realtime replication\n"
+               "    disable     Disable realtime replication\n"
+               "    start       Start realtime replication\n"
+               "    stop        Stop realtime replication\n"
                "    cascades    Manipulate cascading realtime replication"]
              ).
 
