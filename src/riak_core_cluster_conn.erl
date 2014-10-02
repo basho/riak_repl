@@ -163,10 +163,10 @@ initiating_connection(_, State) ->
     {next_state, initiating_connection, State}.
 
 %% Sync message handling for the `initiating_connection' state
-initiating_connection(status, _From, _State) ->
-    {reply, initiating_connection, initiating_connection, _State};
-initiating_connection(_, _From, _State) ->
-    {reply, ok, initiating_connection, _State}.
+initiating_connection(status, _From, State) ->
+    {reply, {initiating_connection, State#state.remote}, initiating_connection, State};
+initiating_connection(_, _From, State) ->
+    {reply, ok, initiating_connection, State}.
 
 %% Async message handling for the `connecting' state
 connecting(timeout, State=#state{remote=Remote}) ->
@@ -217,7 +217,7 @@ connecting(Other, State=#state{remote=Remote}) ->
 
 %% Sync message handling for the `connecting' state
 connecting(status, _From, State) ->
-    {reply, connecting, connecting, State};
+    {reply, {connecting, State#state.remote}, connecting, State};
 connecting(_, _From, _State) ->
     {reply, ok, connecting, _State}.
 
@@ -235,7 +235,7 @@ waiting_for_cluster_name(_, _State) ->
 
 %% Sync message handling for the `waiting_for_cluster_name' state
 waiting_for_cluster_name(status, _From, State) ->
-    {reply, waiting_for_cluster_name, waiting_for_cluster_name, State};
+    {reply, {waiting_for_cluster_name, State#state.remote}, waiting_for_cluster_name, State};
 waiting_for_cluster_name(_, _From, _State) ->
     {reply, ok, waiting_for_cluster_name, _State}.
 
@@ -260,7 +260,7 @@ waiting_for_cluster_members(_, _State) ->
 
 %% Sync message handling for the `waiting_for_cluster_members' state
 waiting_for_cluster_members(status, _From, State) ->
-    {reply, waiting_for_cluster_members, waiting_for_cluster_members, State};
+    {reply, {waiting_for_cluster_members, State#state.name}, waiting_for_cluster_members, State};
 waiting_for_cluster_members(_, _From, _State) ->
     {reply, ok, waiting_for_cluster_members, _State}.
 
