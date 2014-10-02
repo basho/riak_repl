@@ -19,6 +19,18 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @doc This module handles the protocol negotiation for new connections.
+%% Basic operation is this:
+%%
+%% Connections are initally a raw tcp socket {packet, 4}.
+%% <ol>
+%% <li>Initally the client sends `term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}).'</li>
+%% <li>The server sends `term_to_binary({?CTRL_ACK, ?CTRL_REV, TheirCaps}).'</li>
+%% <li>If the server and client agree on SSL, the session is upgraded.</li>
+%% <li>The client sends `term_to_binary({Protocol, Version}).'</li>
+%% <li>The server sends `term_to_binary({ok, {ProtoName, {CommonMajor, RemoteMinor, LocalMinor}}})', after which we call ?MODULE:connect/6 and exit.</li>
+
 -module(riak_core_connection).
 -behavior(gen_fsm).
 
