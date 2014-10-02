@@ -1,9 +1,27 @@
 %% Riak Core Cluster Manager Connections to Remote Clusters
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
-%% Connections get started by who-ever and they report to the cluster manager.
-%% Once an ip-address has been resolved to a cluster, the cluster manager
-%% might remove the connection if it already has a connection to that cluster.
+%% @doc This is an instance of the core cluster-cluster connection.
+%% Initially, it asks the riak_core_connection_mgr to establish a socket
+%% connection and enters the connecting state. Once connected, this module
+%% receives a ?MODULE:connected/6 callback.
+%%
+%% At any time, a riak_core_cluster_conn can be asked for its status.
+%%
+%% Once connected, it will issue a request for the name of the remote
+%% cluster: `Transport:send(Socket, ?CTRL_ASK_NAME)'. Then enter the
+%% wait_for_cluster_name. The next `{tcp, Socket, Data}' to arrive is the
+%% remote cluster name.
+%%
+%% Next, it requests the remote cluster members, by sending <i>two</i>
+%% separate packets. First, Transport:send(Socket, ?CTRL_ASK_MEMBERS), and
+%% then as a separate packet,`Transport:send(Socket, term_to_binary({PeerIPStr, PeerPort}))'
+%% where `PeerIPStr' is the remote's IP address as seen from here (using
+%% Socket:peername/1).
+%%
+%% Once the list of remote IPs has been received it sends a cast to
+%% `?CLUSTER_MANAGER_SERVER' with all its information and enters the stable %% state named connected. Once in this state, it can be asked to poll,
+%% which restats the process from (1) above.
 
 -module(riak_core_cluster_conn).
 
