@@ -134,22 +134,16 @@ start_link({Ip, Port}, ClientSpec) ->
     start_link(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs).
 
 start_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs) ->
-    start(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, true).
+    start_maybe_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, start_link).
 
 start({IP, Port}, ClientSpec) ->
     {{Protocol, ProtoVers}, {TcpOptions, CallbackMod, CallbackArgs}} = ClientSpec,
-    start(IP, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs, false).
+    start(IP, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs).
 
 start(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs) ->
-    start(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs, false).
+    start_maybe_link(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs, start).
 
-start(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, Link) ->
-    StartFunc = if
-        Link ->
-            start_link;
-        true ->
-            start
-    end,
+start_maybe_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, StartFunc) ->
     gen_fsm:StartFunc(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}, []).
 
 %% gen_fsm callbacks
