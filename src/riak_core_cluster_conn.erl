@@ -334,7 +334,8 @@ handle_info({_TransTagClosed, Socket} = Msg,
     % thus, we exit abnormally and let the supervisor restart a new us.
     ok = lager:debug("Stopping because it looks like the connect closed: ~p", [Msg]),
     {stop, connection_closed, State};
-handle_info(_, StateName, State) ->
+handle_info(Msg, StateName, State) ->
+    lager:warning("Unmatch message ~p", [Msg]),
     {next_state, StateName, State}.
 
 terminate(Reason, StateName, _State) ->
