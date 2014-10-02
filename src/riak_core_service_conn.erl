@@ -15,7 +15,7 @@
 -export([code_change/4, terminate/3]).
 
 -record(state, {
-    transport, socket, remote_rev, remote_caps, init_args
+    transport, transport_msgs, socket, remote_rev, remote_caps, init_args
 }).
 
 %% ===============
@@ -41,7 +41,8 @@ init({Listener, Socket, Transport, InArgs}) ->
     ok = ranch:accept_ack(Listener),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     ok = Transport:setopts(Socket, [{active, once}]),
-    State = #state{transport = Transport, socket = Socket, init_args = InArgs},
+    TransportMsgs = Transport:messages(),
+    State = #state{transport = Transport, transport_msgs = TransportMsgs, socket = Socket, init_args = InArgs},
     gen_fsm:enter_loop(?MODULE, [], wait_for_hello, State).
 
 %% ===============
@@ -78,7 +79,7 @@ handle_event(_Req, StateName, State) ->
 %% handle_info
 %% ===============
 
-handle_info({_TransTag, Socket, Data}, wait_for_hello, State = #state{socket = Socket}) when is_binary(Data) ->
+handle_info({TransOk, Socket, Data}, wait_for_hello, State = #state{socket = Socket, transport_msgs = {TransOk, _, _}}) when is_binary(Data) ->
     case binary_to_term(Data) of
         {?CTRL_HELLO, TheirRev, ThierCaps} ->
             SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
@@ -92,7 +93,8 @@ handle_info({_TransTag, Socket, Data}, wait_for_hello, State = #state{socket = S
                     {stop, Err, State};
                 {NewTransport, NewSocket} ->
                     NewTransport:setopts(NewSocket, [{active, once}]),
-                    State2 = State#state{transport = NewTransport, socket = NewSocket, remote_caps = ThierCaps, remote_rev = TheirRev},
+                    TransMsgs = NewTransport:messages(),
+                    State2 = State#state{transport = NewTransport, transport_msgs = TransMsgs, socket = NewSocket, remote_caps = ThierCaps, remote_rev = TheirRev},
                     {next_state, wait_for_protocol_versions, State2}
             end;
         _Else ->
@@ -100,7 +102,7 @@ handle_info({_TransTag, Socket, Data}, wait_for_hello, State = #state{socket = S
             {stop, {error, invalid_hello}, State}
     end;
 
-handle_info({_TransTag, Socket, Data}, wait_for_protocol_versions, State = #state{socket = Socket}) when is_binary(Data) ->
+handle_info({TransOk, Socket, Data}, wait_for_protocol_versions, State = #state{socket = Socket, transport_msgs = {TransOk, _, _}}) when is_binary(Data) ->
     case binary_to_term(Data) of
         {ClientProto, _Versions} = ClientVersions->
             Transport = State#state.transport,
@@ -124,7 +126,11 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol_versions, State = #stat
             {stop, {error, invalid_protocol_response}, State}
     end;
 
-handle_info({_LikelyClosed, Socket}, StateName, State = #state{socket = Socket}) ->
+handle_info({TransError, Socket, Error}, StateName, State = #state{socket = Socket, transport_msgs = {_, _, TransError}}) ->
+    lager:warning("Socket error: ~p", [Error]),
+    {stop, Error, StateName, State};
+
+handle_info({TransClosed, Socket}, StateName, State = #state{socket = Socket, transport_msgs = {_, TransClosed, _}}) ->
     lager:debug("Socket closed"),
     {stop, normal, StateName, State}.
 

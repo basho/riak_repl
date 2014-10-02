@@ -197,7 +197,9 @@ handle_event(_Req, StateName, State) ->
 
 handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{socket = Socket}) ->
     case binary_to_term(Data) of
-        {?CTRL_ACK, _TheirRev, TheirCaps} ->
+        % 'Tis better to check this a fail than hope the future is always
+        % compatible.
+        {?CTRL_ACK, ?CTRL_REV, TheirCaps} ->
             case try_ssl(Socket, ranch_tcp, State#state.local_capabilities, TheirCaps) of
                 {error, _} = Error ->
                     {stop, Error, State};
