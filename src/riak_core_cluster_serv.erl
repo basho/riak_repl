@@ -121,8 +121,17 @@ handle_socket_info(OtherData, _Transport, _Socket, State) ->
 read_ip_address(Socket, Transport, Remote) ->
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, BinAddr} ->
-            MyAddr = binary_to_term(BinAddr),
-            {ok, MyAddr};
+            try binary_to_term(BinAddr, [safe]) of
+                {IPAddrStr, IPPort} when is_list(IPAddrStr), is_integer(IPPort) ->
+                    {ok, {IPAddrStr, IPPort}};
+                InvalidTerm ->
+                    lager:error("Cluster Manager: failed to receive ip addr from remote ~p: invalid term recieved: ~p", [Remote, InvalidTerm]),
+                    {error, bad_address_format}
+            catch
+                error:badarg ->
+                    lager:error("Cluster Manager: failed to receive ip addr from remote ~p: unsafe binary to decode was sent", [Remote]),
+                    {error, unsafe_data}
+            end;
         {error, closed} ->
             {error, closed};
         Error ->
