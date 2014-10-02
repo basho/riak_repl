@@ -75,6 +75,7 @@
 
 -type remote() :: {cluster_by_name, clustername()} | {cluster_by_addr, ip_addr()}.
 -type peer_address() :: {string(), pos_integer()}.
+-type ranch_transport_messages() :: {atom(), atom(), atom()}.
 -record(state, {mode :: atom(),
                 remote :: remote(),
                 socket :: port(),
@@ -85,7 +86,8 @@
                 connection_timeout :: timeout(),
                 transport :: atom(),
                 address :: peer_address(),
-                connection_props :: proplist:proplist()}).
+                connection_props :: proplist:proplist(),
+                transport_msgs :: ranch_transport_messages()}).
 -type state() :: #state{}.
 
 %%%===================================================================
@@ -195,10 +197,12 @@ connecting({connected_to_remote, Socket, Transport, Addr, Props}, State) ->
     _ = lager:debug("Cluster Manager control channel client connected to"
                     " remote ~p at ~p named ~p",
                     [State#state.remote, Addr, RemoteName]),
+    TransportMsgs = Transport:messages(),
     UpdState = State#state{socket=Socket,
                            transport=Transport,
                            address=Addr,
-                           connection_props=Props},
+                           connection_props=Props,
+                           transport_msgs = TransportMsgs},
     _ = request_cluster_name(UpdState),
     {next_state, waiting_for_cluster_name, UpdState, ?CONNECTION_SETUP_TIMEOUT};
 connecting(poll_cluster, State) ->
@@ -294,41 +298,42 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {reply, Reply, StateName, State}.
 
 %% @doc Handle any non-fsm messages
-handle_info({_TransTag, Socket, Name},
+handle_info({TransOK, Socket, Name},
             waiting_for_cluster_name,
-            State=#state{socket=Socket}) ->
+            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
     gen_fsm:send_event(self(), {cluster_name, binary_to_term(Name)}),
     Transport = State#state.transport,
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_name, State};
-handle_info({_TransTag, Socket, Members},
+handle_info({TransOK, Socket, Members},
             waiting_for_cluster_members,
-            State=#state{socket=Socket}) ->
+            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
     Transport = State#state.transport,
     gen_fsm:send_event(self(), {cluster_members, binary_to_term(Members)}),
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_members, State};
-handle_info({_TransTag, Socket, Data},
+handle_info({TransOK, Socket, Data},
             StateName,
             State=#state{address=Addr,
                          name=Name,
                          remote=Remote,
-                         socket=Socket}) when is_binary(Data) ->
+                         socket=Socket, transport_msgs = {TransOK, _, _}}) ->
     {cluster_members_changed, Members} = binary_to_term(Data),
     ClusterUpdMsg = {cluster_updated, Name, Name, Members, Addr, Remote},
     gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdMsg),
     Transport = State#state.transport,
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, StateName, State#state{members=Members}};
-handle_info({_TransErrorTag, Socket, Error},
+handle_info({TransError, Socket, Error},
             StateName,
             State=#state{remote=Remote,
-                         socket=Socket}) ->
+                         socket=Socket,
+                         transport_msgs = {_, _, TransError}}) ->
     _ = lager:error("cluster_conn: connection ~p failed in state ~s because ~p", [Remote, StateName, Error]),
     {stop, Error, State};
-handle_info({_TransTagClosed, Socket} = Msg,
+handle_info({TransClosed, Socket} = Msg,
             _StateName,
-            State=#state{socket=Socket}) ->
+            State=#state{socket=Socket, transport_msgs = {_, TransClosed, _}}) ->
     % if the connection spuriously closes, it is more likley something is
     % wrong, like the remote node has gone down, than something is normal.
     % thus, we exit abnormally and let the supervisor restart a new us.
