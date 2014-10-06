@@ -78,7 +78,7 @@
                }).
 
 -export([start_link/0,
-         start_link/3,
+         start_link/4,
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
@@ -113,8 +113,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
-    Args = [DefaultLocator, DefaultSave, DefaultRestore],
+start_link(DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore) ->
+    Args = [DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
