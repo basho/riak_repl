@@ -78,7 +78,7 @@
                }).
 
 -export([start_link/0,
-         start_link/3,
+         start_link/4,
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
@@ -113,8 +113,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
-    Args = [DefaultLocator, DefaultSave, DefaultRestore],
+start_link(DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore) ->
+    Args = [DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
@@ -181,7 +181,12 @@ get_all_members(MyAddr) ->
 
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
-        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
+    case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
+        {ok, Reply} ->
+            shuffle_remote_ipaddrs(Reply);
+        Reply ->
+            Reply
+    end.
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
@@ -372,9 +377,6 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
     {noreply, State2};
 
 %% The client connection recived (or polled for) an update from the remote cluster.
-%% Note that here, the Members are sorted in least connected order. Preserve that.
-%% TODO: we really want to keep all nodes we have every seen, except remove nodes
-%% that explicitly leave the cluster or show up in other clusters.
 handle_cast({cluster_updated, "undefined", NewName, Members, Addr,
              {cluster_by_addr, _CAddr}=Remote}, State) ->
     %% replace connection by address with connection by clustername if that would be safe.
@@ -752,4 +754,33 @@ connect_to_persisted_clusters(State) ->
             connect_to_targets(ClusterTargets);
         _ ->
             ok
+    end.
+
+shuffle_with_seed(List, Seed={_,_,_}) ->
+    _ = random:seed(Seed),
+    [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])];
+shuffle_with_seed(List, Seed) ->
+    <<_:10,S1:50,S2:50,S3:50>> = crypto:hash(sha, term_to_binary(Seed)),
+    shuffle_with_seed(List, {S1,S2,S3}).
+
+
+shuffle_remote_ipaddrs(RemoteUnsorted) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
+    NodesTagged = lists:zip( lists:seq(1, length(SortedNodes)), SortedNodes ),
+    case lists:keyfind(node(), 2, NodesTagged) of
+        {MyPos, _} ->
+            OurClusterName = riak_core_connection:symbolic_clustername(),
+            RemoteAddrs = shuffle_with_seed( lists:sort( RemoteUnsorted ), [OurClusterName] ),
+
+            %% MyPos is the position if *this* node in the sorted list of
+            %% all nodes in my ring.  Now choose the node at the corresponding
+            %% index in RemoteAddrs as out "buddy"
+            SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
+            case lists:split(SplitPos,RemoteAddrs) of
+                {BeforeBuddy,[Buddy|AfterBuddy]} ->
+                    {ok, [Buddy | shuffle_with_seed(AfterBuddy ++ BeforeBuddy, node()) ]}
+            end;
+        false ->
+            {ok, shuffle_with_seed(lists:sort( RemoteUnsorted ), node())}
     end.
