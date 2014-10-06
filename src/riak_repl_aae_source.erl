@@ -25,8 +25,6 @@
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
 
--export([replicate_diff/3]).
-
 -type index() :: non_neg_integer().
 -type index_n() :: {index(), pos_integer()}.
 
@@ -516,34 +514,6 @@ bloom_fold({B, K}, V, {MPid, Bloom}) ->
             ok
     end,
     {MPid, Bloom}.
-
-%% @private
-%% Returns accumulator as a list of one element that is the count of
-%% keys that differed. Initial value of Acc is always [].
-replicate_diff(KeyDiff, {DiffCount, Bloom} = Acc, State=#state{index=Partition}) ->
-    case KeyDiff of
-        {remote_missing, Bin} ->
-            %% send object and related objects to remote
-            {Bucket,Key} = binary_to_term(Bin),
-            lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
-                        [Partition, Bucket, Key]),
-            {DiffCount + send_missing(Bucket, Key, State), Bloom};
-        {different, Bin} ->
-            %% send object and related objects to remote
-            {Bucket,Key} = binary_to_term(Bin),
-            lager:debug("Keydiff: remote partition ~p different: ~p:~p",
-                        [Partition, Bucket, Key]),
-            {DiffCount + send_missing(Bucket, Key, State), Bloom};
-        {missing, Bin} ->
-            %% remote has a key we don't have. Ignore it.
-            {Bucket,Key} = binary_to_term(Bin),
-            lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
-                        [Partition, Bucket, Key]),
-            Acc;
-        Other ->
-            lager:warning("Unexpected error keydiff: ~p (ignored)", [Other]),
-            Acc
-    end.
 
 accumulate_diff(KeyDiff, Exchange, State=#state{index=Partition}) ->
     case KeyDiff of
