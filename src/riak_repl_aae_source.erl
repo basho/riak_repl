@@ -51,6 +51,7 @@
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
                 diff_batch_size = 1000 :: non_neg_integer(),
+                estimated_nr_keys :: non_neg_integer(),
                 local_lock = false :: boolean(),
                 owner       :: pid(),
                 proto       :: term(),
@@ -63,6 +64,9 @@
 %% the first this many differences are not put in the bloom
 %% filter, but simply sent to the remote site directly.
 -define(GET_OBJECT_LIMIT, 1000).
+
+%% Diff percentage needed to use bloom filter
+-define(DIFF_PERCENTAGE, 5).
 
 %%%===================================================================
 %%% API
@@ -88,6 +92,8 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
     lager:info("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
+    Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
+    {_, ClientVer, _} = Proto,
     State = #state{cluster=Cluster,
                    client=Client,
                    transport=Transport,
@@ -95,8 +101,8 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    index=Partition,
                    built=0,
                    owner=OwnerPid,
-                   wire_ver=w1,
-                   proto=Proto},
+                   wire_ver=Ver,
+                   proto=ClientVer},
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -218,9 +224,52 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
 update_trees(init, State) ->
-    NumKeys = 10000000,
-    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+    update_trees(start_exchange, State);
+update_trees(cancel_fullsync, State) ->
+    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    send_complete(State),
+    {stop, normal, State};
+update_trees(start_exchange, State=#state{tree_pid=TreePid,
+                                          index=Partition,
+                                          indexns=IndexNs}) ->
+    lager:info("Start update for partition,IndexN ~p,~p", [Partition, IndexNs]),
+    lists:foreach(fun(IndexN) ->
+                          update_request(TreePid, {Partition, undefined}, IndexN),
+                          case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
+                              ok ->
+                                  gen_fsm:send_event(self(), {tree_built, Partition, IndexN});
+                              not_responsible ->
+                                  gen_fsm:send_event(self(), {not_responsible, Partition, IndexN}, State)
+                          end
+                  end, IndexNs),
+    {next_state, update_trees, State};
+
+update_trees({not_responsible, Partition, IndexN}, State = #state{owner=Owner}) ->
+    lager:debug("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
+    gen_server:cast(Owner, not_responsible),
+    {stop, normal, State};
+update_trees({tree_built, _, _}, State = #state{indexns=IndexNs}) ->
+    Built = State#state.built + 1,
+    NeededBuilts = length(IndexNs) * 2, %% All local and remote
+    case Built of
+        NeededBuilts ->
+            %% Trees built now we can estimate how many keys
+            {ok, EstimatedNrKeys} = riak_kv_index_hashtree:estimate_keys(State#state.tree_pid),
+            lager:info("EstimatedNrKeys ~p for partition ~p", [EstimatedNrKeys, State#state.index]),
+
+            lager:debug("Moving to key exchange state"),
+            key_exchange(init, State#state{built=Built, estimated_nr_keys = EstimatedNrKeys});
+        _ ->
+            {next_state, update_trees, State#state{built=Built}}
+    end.
+
+%% @doc Now that locks have been acquired and both hashtrees have been updated,
+%%      perform a key exchange and trigger replication for any divergent keys.
+key_exchange(init, State) ->
+    EstimatedNrKeys = State#state.estimated_nr_keys,
     Limit = app_helper:get_env(riak_repl, fullsync_direct_limit, ?GET_OBJECT_LIMIT),
+    PercentLimit = app_helper:get_env(riak_repl, fullsync_direct_percentage_limit, ?DIFF_PERCENTAGE),
+    UsedLimit = max(Limit, EstimatedNrKeys * PercentLimit div 100),
     Mode = app_helper:get_env(riak_repl, fullsync_direct_mode, inline),
     Buffer = case Mode of
                  inline ->
@@ -230,64 +279,31 @@ update_trees(init, State) ->
              end,
     Exchange = #exchange{mode=Mode,
                          buffer=Buffer,
-                         bloom=Bloom,
-                         limit=Limit,
+                         bloom=undefined,
+                         limit=UsedLimit,
                          count=0},
     State2 = State#state{exchange=Exchange},
-    update_trees(start_exchange, State2);
-update_trees(cancel_fullsync, State) ->
+    key_exchange(start_key_exchange, State2);
+key_exchange(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
-update_trees(finish_fullsync, State=#state{owner=Owner}) ->
+key_exchange(finish_fullsync, State=#state{owner=Owner}) ->
     send_complete(State),
     lager:info("AAE fullsync source completed partition ~p",
                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
-    %% TODO: Why stay in update_trees? Should we stop instead?
-    {next_state, update_trees, State};
-update_trees(continue, State=#state{indexns=IndexNs}) ->
+    %% TODO: Why stay in key_exchange? Should we stop instead?
+    {next_state, key_exchange, State};
+key_exchange(continue, State=#state{indexns=IndexNs}) ->
     case IndexNs of
         [_] ->
             send_diffs(init, State);
         [_|RestNs] ->
             State2 = State#state{built=0, indexns=RestNs},
-            gen_fsm:send_event(self(), start_exchange),
-            {next_state, update_trees, State2}
-    end;
-update_trees(start_exchange, State=#state{tree_pid=TreePid,
-                                          index=Partition,
-                                          indexns=[IndexN|_IndexNs]}) ->
-    lager:debug("Start exchange for partition,IndexN ~p,~p", [Partition, IndexN]),
-    update_request(TreePid, {Partition, undefined}, IndexN),
-    case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
-        ok ->
-            update_trees({tree_built, Partition, IndexN}, State);
-        not_responsible ->
-            update_trees({not_responsible, Partition, IndexN}, State)
-    end;
-
-update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
-    lager:debug("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
-    gen_server:cast(Owner, not_responsible),
-    {stop, normal, State};
-update_trees({tree_built, _, _}, State) ->
-    Built = State#state.built + 1,
-    case Built of
-        2 ->
-            lager:debug("Moving to key exchange state"),
             gen_fsm:send_event(self(), start_key_exchange),
-            {next_state, key_exchange, State};
-        _ ->
-            {next_state, update_trees, State#state{built=Built}}
-    end.
-
-%% @doc Now that locks have been acquired and both hashtrees have been updated,
-%%      perform a key exchange and trigger replication for any divergent keys.
-key_exchange(cancel_fullsync, State) ->
-    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
-    send_complete(State),
-    {stop, normal, State};
+            {next_state, key_exchange, State2}
+    end;
 key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                               transport=Transport,
                                               socket=Socket,
@@ -390,7 +406,7 @@ compute_differences({'$aae_src', done, Exchange}, State) ->
     %% Just move on to the next tree exchange since we accumulate
     %% differences across all trees.
     State2 = State#state{exchange=Exchange},
-    update_trees(continue, State2).
+    key_exchange(continue, State2).
 
 maybe_send_direct(#exchange{mode=inline, count=Count, limit=Limit},
                   #state{index=Partition}) ->
@@ -421,7 +437,7 @@ send_diffs(init, State=#state{exchange=Exchange}) ->
     %% this will start a worker process, which will tell us it's done with
     %% diffs_done once all differences are sent.
     _ = maybe_send_direct(Exchange, State),
-    _ = finish_sending_differences(Exchange#exchange.bloom, State),
+    _ = finish_sending_differences(Exchange, State),
 
     %% wait for differences from bloom_folder or to be done
     {next_state, send_diffs, State};
@@ -429,22 +445,29 @@ send_diffs(init, State=#state{exchange=Exchange}) ->
 %% All indexes in this Partition are done.
 %% Note: recv'd from an async send event
 send_diffs(diff_done, State) ->
-    update_trees(finish_fullsync, State).
+    key_exchange(finish_fullsync, State).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+finish_sending_differences(#exchange{bloom=undefined, count=DiffCnt},
+                           #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
+    lager:info("No Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+               [0, DiffCnt, Partition, EstimatedNrKeys]),
+    gen_fsm:send_event(self(), diff_done);
 
-finish_sending_differences(Bloom, #state{index=Partition}) ->
-    case ebloom:elements(Bloom) == 0 of
-        true ->
-            lager:info("No differences, skipping bloom fold for partition ~p", [Partition]),
+finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
+                           #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
+    case ebloom:elements(Bloom) of
+        Count = 0 ->
+            lager:info("No Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+                       [Count, DiffCnt, Partition, EstimatedNrKeys]),
             gen_fsm:send_event(self(), diff_done);
-        false ->
+        Count ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             OwnerNode = riak_core_ring:index_owner(Ring, Partition),
-            Count = ebloom:elements(Bloom),
-            lager:info("Bloom folding over ~p differences for partition ~p", [Count, Partition]),
+            lager:info("Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+                       [Count, DiffCnt, Partition, EstimatedNrKeys]),
             Self = self(),
             Worker = fun() ->
                     FoldRef = make_ref(),
@@ -477,6 +500,13 @@ finish_sending_differences(Bloom, #state{index=Partition}) ->
             spawn_link(Worker) %% this isn't the Pid we need because it's just the vnode:fold
     end.
 
+maybe_create_bloom(#exchange{bloom=undefined}, State) ->
+    EstimatedNrKeys = State#state.estimated_nr_keys,
+    {ok, Bloom} = ebloom:new(max(10000, EstimatedNrKeys), 0.01, random:uniform(1000)),
+    Bloom;
+maybe_create_bloom(#exchange{bloom=Bloom}, _State) ->
+    Bloom.
+
 bloom_fold({B, K}, V, {MPid, Bloom}) ->
     case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
         true ->
@@ -490,39 +520,28 @@ bloom_fold({B, K}, V, {MPid, Bloom}) ->
 %% @private
 %% Returns accumulator as a list of one element that is the count of
 %% keys that differed. Initial value of Acc is always [].
-replicate_diff(KeyDiff, Acc, State=#state{index=Partition}) ->
-    NumObjects =
-        case KeyDiff of
-            {remote_missing, Bin} ->
-                %% send object and related objects to remote
-                {Bucket,Key} = binary_to_term(Bin),
-                lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
-                            [Partition, Bucket, Key]),
-                send_missing(Bucket, Key, State);
-            {different, Bin} ->
-                %% send object and related objects to remote
-                {Bucket,Key} = binary_to_term(Bin),
-                lager:debug("Keydiff: remote partition ~p different: ~p:~p",
-                            [Partition, Bucket, Key]),
-                send_missing(Bucket, Key, State);
-            {missing, Bin} ->
-                %% remote has a key we don't have. Ignore it.
-                {Bucket,Key} = binary_to_term(Bin),
-                lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
-                            [Partition, Bucket, Key]),
-                0;
-            Other ->
-                lager:warning("Unexpected error keydiff: ~p (ignored)", [Other]),
-                0
-        end,
-
-    case Acc of
-        [] ->
-            [1];
-        [Count] ->
-            %% accrue number of differences sent from this segment
-            [Count+NumObjects];
-        _Other ->
+replicate_diff(KeyDiff, {DiffCount, Bloom} = Acc, State=#state{index=Partition}) ->
+    case KeyDiff of
+        {remote_missing, Bin} ->
+            %% send object and related objects to remote
+            {Bucket,Key} = binary_to_term(Bin),
+            lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
+                        [Partition, Bucket, Key]),
+            {DiffCount + send_missing(Bucket, Key, State), Bloom};
+        {different, Bin} ->
+            %% send object and related objects to remote
+            {Bucket,Key} = binary_to_term(Bin),
+            lager:debug("Keydiff: remote partition ~p different: ~p:~p",
+                        [Partition, Bucket, Key]),
+            {DiffCount + send_missing(Bucket, Key, State), Bloom};
+        {missing, Bin} ->
+            %% remote has a key we don't have. Ignore it.
+            {Bucket,Key} = binary_to_term(Bin),
+            lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
+                        [Partition, Bucket, Key]),
+            Acc;
+        Other ->
+            lager:warning("Unexpected error keydiff: ~p (ignored)", [Other]),
             Acc
     end.
 
@@ -553,7 +572,6 @@ accumulate_diff(KeyDiff, Exchange, State=#state{index=Partition}) ->
 
 maybe_accumulate_key(Bucket, Key,
                      Exchange=#exchange{mode=Mode,
-                                        bloom=Bloom,
                                         count=Count,
                                         limit=Limit},
                      State) ->
@@ -563,8 +581,9 @@ maybe_accumulate_key(Bucket, Key,
             Exchange2#exchange{count=Count+1};
        true ->
             %% Past threshold, add to bloom filter for future bloom fold
+            Bloom = maybe_create_bloom(Exchange, State),
             ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
-            Exchange#exchange{count=Count+1}
+            Exchange#exchange{bloom=Bloom, count=Count+1}
     end.
 
 handle_direct(inline, Bucket, Key, Exchange, State) ->
