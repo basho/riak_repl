@@ -86,8 +86,9 @@
                 connection_timeout :: timeout(),
                 transport :: atom(),
                 address :: peer_address(),
-                connection_props :: proplists:proplist(),
-                transport_msgs :: ranch_transport_messages()}).
+                connection_props :: proplist:proplist(),
+                transport_msgs :: ranch_transport_messages(),
+                proto_version :: {non_neg_integer(), non_neg_integer()} }).
 -type state() :: #state{}.
 
 %%%===================================================================
@@ -121,14 +122,17 @@ status(Ref, Timeout) ->
 connected(Socket,
           Transport,
           Addr,
-          {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer},
+          {?REMOTE_CLUSTER_PROTO_ID,
+           _MyVer    ={CommonMajor,LocalMinor},
+           _RemoteVer={CommonMajor,RemoteMinor}},
           {_Remote, Client},
           Props) ->
     %% give control over the socket to the `Client' process.
     %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
     gen_fsm:send_event(Client,
-                       {connected_to_remote, Socket, Transport, Addr, Props}).
+                       {connected_to_remote, Socket, Transport, Addr, Props,
+                        {CommonMajor, min(LocalMinor,RemoteMinor)}}).
 
 -spec connect_failed({term(), term()}, {error, term()}, {_, atom() | pid() | port() | {atom(), _} | {via, _, _}}) -> ok.
 connect_failed({_Proto, _Vers}, {error, _}=Error, {_Remote, Client}) ->
@@ -189,7 +193,7 @@ connecting({connect_failed, Error}, State=#state{remote=Remote}) ->
     %% This is fatal! We are being supervised by conn_sup and if we
     %% die, it will restart us.
     {stop, Error, State};
-connecting({connected_to_remote, Socket, Transport, Addr, Props}, State) ->
+connecting({connected_to_remote, Socket, Transport, Addr, Props, ProtoVersion}, State) ->
     RemoteName = proplists:get_value(clustername, Props),
     _ = lager:debug("Cluster Manager control channel client connected to"
                     " remote ~p at ~p named ~p",
@@ -202,7 +206,9 @@ connecting({connected_to_remote, Socket, Transport, Addr, Props}, State) ->
                            transport=Transport,
                            address=Addr,
                            connection_props=Props,
-                           transport_msgs = TransportMsgs},
+                           transport_msgs = TransportMsgs,
+                           proto_version=ProtoVersion
+                          },
     _ = request_cluster_name(UpdState),
     {next_state, waiting_for_cluster_name, UpdState, ?CONNECTION_SETUP_TIMEOUT};
 connecting(poll_cluster, State) ->
@@ -383,7 +389,7 @@ initiate_connection(State=#state{remote=Remote}) ->
     %% `riak_core_connection_mgr::connect/4' is incorrect.
     {ok, Ref} = riak_core_connection_mgr:connect(
                   Remote,
-                  {{?REMOTE_CLUSTER_PROTO_ID, [{1,0}]},
+                  {{?REMOTE_CLUSTER_PROTO_ID, [{1,1},{1,0}]},
                    {?CTRL_OPTIONS, ?MODULE, {Remote, self()}}},
                   default),
     State#state{connection_ref=Ref}.

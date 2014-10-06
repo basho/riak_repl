@@ -8,6 +8,7 @@
 % versions < 1.3
 -export([get_matching_address/2,
          cluster_mgr_member_fun/1,
+         cluster_mgr_all_member_fun/1,
          cluster_mgr_write_cluster_members_to_ring/2,
          cluster_mgr_read_cluster_targets_from_ring/0]).
 
@@ -156,7 +157,19 @@ prune_old_workdirs(WorkRoot) ->
     end.
 
 %% Get the list of nodes of our ring
+%% This list includes all up-nodes, that host the riak_kv service
 cluster_mgr_member_fun({IP, Port}) ->
+    lists_shuffle([ {XIP,XPort} || {_Node,{XIP,XPort}} <- cluster_mgr_members({IP, Port}, riak_core_node_watcher:nodes(riak_kv)),
+                                 is_integer(XPort) ]).
+
+%% this list includes *all* members of the ring (even those marked down).
+%% returns a list [ { node(), {IP, Port} | unreachable }, ... ]
+cluster_mgr_all_member_fun({IP, Port}) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    cluster_mgr_members({IP, Port}, riak_core_ring:all_members(Ring)).
+
+cluster_mgr_members({IP, Port}, Nodes) ->
+
     %% find the subnet for the interface we connected to
     {ok, MyIPs} = inet:getifaddrs(),
     {ok, NormIP} = riak_repl_util:normalize_ip(IP),
@@ -170,12 +183,11 @@ cluster_mgr_member_fun({IP, Port}) ->
             lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
                          [{IP,Port}]),
             %% might as well return the one IP we know will work
-            [{IP, Port}];
+            [{node(), {IP, Port}}];
         CIDR ->
             ?TRACE(lager:notice("CIDR is ~p", [CIDR])),
             %AddressMask = riak_repl2_ip:mask_address(NormIP, MyMask),
             %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
-            Nodes = riak_core_node_watcher:nodes(riak_kv),
             {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
                 get_matching_address, [RealIP, CIDR]),
             % when this code was written, a multicall will list the results
@@ -187,27 +199,28 @@ cluster_mgr_member_fun({IP, Port}) ->
             case RealIP == NormIP of
                 true ->
                     %% No nat, just return the results
-                    lists_shuffle(Results2);
+                    Results2;
                 false ->
                     %% NAT is in effect
-                    NatRes = lists:foldl(fun({XIP, XPort}, Acc) ->
+                    NatRes = lists:foldl(fun({XNode, {XIP, XPort}}, Acc) ->
                             case riak_repl2_ip:apply_reverse_nat_map(XIP, XPort, Map) of
                                 error ->
                                     %% there's no NAT configured for this IP!
                                     %% location_down is the closest thing we
                                     %% can reply with.
                                     lager:warning("There's no NAT mapping for"
-                                        "~p:~b to an external IP",
-                                        [XIP, XPort]),
+                                        "~p:~b to an external IP (node: ~p)",
+                                        [XIP, XPort, XNode]),
                                     Acc;
                                 {ExternalIP, ExternalPort} ->
-                                    [{ExternalIP, ExternalPort}|Acc];
+                                    [{XNode, {ExternalIP, ExternalPort}} | Acc];
                                 ExternalIP ->
-                                    [{ExternalIP, XPort}|Acc]
+                                    [{XNode, {ExternalIP, XPort}}|Acc]
                             end
                     end, [], Results2),
-                    lager:debug("~p -> ~p", [Results2, NatRes]),
-                    lists_shuffle(NatRes)
+                    Results3 = NatRes ++ [ {Node, unreachable} || Node <- BadNodes ],
+                    lager:debug("nat: ~p -> ~p", [Results2, Results3]),
+                    Results3
             end
     end.
 
@@ -218,9 +231,9 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
         ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
             RPCResult = riak_core_util:safe_rpc(Node, riak_repl_app, get_matching_address, Args),
             lager:debug("rpc to get_matching_address: ~p", [RPCResult]),
-            RPCResult;
-        ({Result, _Node}) ->
-            Result
+            {Node, RPCResult};
+        ({Result, Node}) ->
+            {Node, Result}
     end,
     lists:map(MaybeRetry, Zipped).
 

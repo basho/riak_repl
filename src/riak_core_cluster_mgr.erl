@@ -70,6 +70,7 @@
                 leader_node = undefined :: undefined | node(),
                 gc_interval = infinity,
                 member_fun = fun(_Addr) -> [] end,             % return members of local cluster
+                all_member_fun = fun(_Addr) -> [] end,             % return members of local cluster
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
                 balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
@@ -82,6 +83,7 @@
          get_leader/0,
          get_is_leader/0,
          register_member_fun/1,
+         register_all_member_fun/1,
          register_restore_cluster_targets_fun/1,
          register_save_cluster_members_fun/1,
          add_remote_cluster/1, remove_remote_cluster/1,
@@ -100,7 +102,7 @@
 %% internal functions
 -export([%ctrlService/5, ctrlServiceProcess/5,
          round_robin_balancer/1, cluster_mgr_sites_fun/0,
-         get_my_members/1]).
+         get_my_members/1, get_all_members/1]).
 
 -export([ensure_valid_ip_addresses/1]).
 
@@ -139,6 +141,12 @@ get_is_leader() ->
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
 
+%% @doc Register a function that will get called to get out local riak node
+%% member's IP addrs. MemberFun(ip_addr()) -> [{node(),{IP,Port}}] were IP is a string
+-spec register_all_member_fun(MemberFun :: fun((ip_addr()) -> [{atom(),{string(),pos_integer()}}])) -> 'ok'.
+register_all_member_fun(MemberFun) ->
+    gen_server:cast(?SERVER, {register_all_member_fun, MemberFun}).
+
 register_restore_cluster_targets_fun(ReadClusterFun) ->
     gen_server:cast(?SERVER, {register_restore_cluster_targets_fun, ReadClusterFun}).
 
@@ -168,6 +176,9 @@ get_connections() ->
 get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity).
 
+get_all_members(MyAddr) ->
+    gen_server:call(?SERVER, {get_all_members, MyAddr}, infinity).
+
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
         gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
@@ -190,7 +201,7 @@ init(Defaults) ->
     %% start our cluster_mgr service if not already started.
     case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
         false ->
-            ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
+            ServiceProto = {?CLUSTER_PROTO_ID, [{1,1}, {1,0}]},
             %ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
             ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, riak_core_cluster_serv, start_link, []}},
             riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
@@ -226,7 +237,18 @@ handle_call(get_is_leader, _From, State) ->
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to call the leader.
     MemberFun = State#state.member_fun,
-    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr)],
+    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr), is_integer(Port)],
+    {reply, MyMembers, State};
+
+handle_call({get_all_members, MyAddr}, _From, State) ->
+    %% This doesn't need to call the leader.
+    AllMemberFun = State#state.all_member_fun,
+    MyMembers = lists:map(fun({Node,{IP,Port}}) when is_integer(Port) ->
+                                  {Node,{string_of_ip(IP),Port}};
+                             ({Node,_}) ->
+                                  {Node, unreachable}
+                          end,
+                          AllMemberFun(MyAddr)),
     {reply, MyMembers, State};
 
 handle_call(leader_node, _From, State) ->
@@ -308,6 +330,9 @@ handle_cast({set_gc_interval, Interval}, State) ->
 
 handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
+
+handle_cast({register_all_member_fun, Fun}, State) ->
+    {noreply, State#state{all_member_fun=Fun}};
 
 handle_cast({register_save_cluster_members_fun, Fun}, State) ->
     {noreply, State#state{save_members_fun=Fun}};
@@ -422,9 +447,10 @@ register_defaults(Defaults, State) ->
     case Defaults of
         [] ->
             State;
-        [MembersFun, SaveFun, RestoreFun] ->
+        [MembersFun, AllMembersFun, SaveFun, RestoreFun] ->
             lager:debug("Registering default cluster manager functions."),
             State#state{member_fun=MembersFun,
+                        all_member_fun=AllMembersFun,
                         save_members_fun=SaveFun,
                         restore_targets_fun=RestoreFun}
     end.
