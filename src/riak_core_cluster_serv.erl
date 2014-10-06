@@ -115,6 +115,17 @@ handle_socket_info(?CTRL_ASK_MEMBERS, Transport, Socket, State) ->
             {stop, Else, State}
     end;
 
+handle_socket_info(?CTRL_ALL_MEMBERS, Transport, Socket, State) ->
+    case read_ip_address(Socket, Transport, State#state.remote_addr) of
+        {ok, RemoteConnectedToIp} ->
+            Members = gen_server:call(?CLUSTER_MANAGER_SERVER, {get_all_members, RemoteConnectedToIp}, infinity),
+            ok = Transport:send(Socket, term_to_binary(Members)),
+            ok = Transport:setopts(Socket, [{active, once}]),
+            {noreply, State};
+        Else ->
+            {stop, Else, State}
+    end;
+
 handle_socket_info(OtherData, _Transport, _Socket, State) ->
     ok = lager:warning("Some other data from the socket: ~p", [OtherData]),
     {stop, {error, unrecognized_request}, State}.
