@@ -75,13 +75,14 @@
 
 -type remote() :: {cluster_by_name, clustername()} | {cluster_by_addr, ip_addr()}.
 -type peer_address() :: {string(), pos_integer()}.
+-type node_address() :: {atom(), peer_address()}.
 -type ranch_transport_messages() :: {atom(), atom(), atom()}.
 -record(state, {mode :: atom(),
                 remote :: remote(),
                 socket :: port(),
                 name :: clustername(),
                 previous_name="undefined" :: clustername(),
-                members=[] :: [peer_address()],
+                members=[] :: [peer_address() | node_address()],
                 connection_ref :: reference(),
                 connection_timeout :: timeout(),
                 transport :: atom(),
@@ -246,17 +247,54 @@ waiting_for_cluster_name(_, _From, _State) ->
     {reply, ok, waiting_for_cluster_name, _State}.
 
 %% Async message handling for the `waiting_for_cluster_members' state
-waiting_for_cluster_members({cluster_members, Members}, State) ->
+waiting_for_cluster_members({cluster_members, NewMembers}, State = #state{ proto_version={1,0} }) ->
     #state{address=Addr,
            name=Name,
            previous_name=PreviousName,
+           members=OldMembers,
            remote=Remote} = State,
-    %% This is the first time we're updating the cluster manager
-    %% with the name of this cluster, so it's old name is undefined.
+    %% this is 1.0 code. NewMembers is list of {IP,Port}
+
+    SortedNew = ordsets:from_list(NewMembers),
+    Members = NewMembers ++ lists:filter( fun(Mem) ->
+                                                  not ordsets:is_element(Mem, SortedNew)
+                                          end,
+                                          OldMembers ),
+
     ClusterUpdatedMsg = {cluster_updated,
                          PreviousName,
                          Name,
                          Members,
+                         Addr,
+                         Remote},
+    gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdatedMsg),
+    {next_state, connected, State#state{members=Members}};
+waiting_for_cluster_members({all_cluster_members, NewMembers}, State) ->
+    #state{address=Addr,
+           name=Name,
+           previous_name=PreviousName,
+           members=OldMembers,
+           remote=Remote} = State,
+
+    %% this is 1.1+ code. Members is list of {node,{IP,Port}}
+
+    Members = lists:foldl( fun(Elm={_Node,{_Ip,Port}}, Acc) when is_integer(Port) ->
+                                   [Elm|Acc];
+                              ({Node,_}, Acc) ->
+                                   case lists:keyfind(Node, 1, OldMembers) of
+                                       Elm={Node,{_IP,Port}} when is_integer(Port) ->
+                                           [Elm|Acc];
+                                       _ ->
+                                           Acc
+                                   end
+                           end,
+                           [],
+                           NewMembers ),
+
+    ClusterUpdatedMsg = {cluster_updated,
+                         PreviousName,
+                         Name,
+                         [Member || {_Node,Member} <- Members],
                          Addr,
                          Remote},
     gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdatedMsg),
@@ -313,9 +351,16 @@ handle_info({TransOK, Socket, Name},
     {next_state, waiting_for_cluster_name, State};
 handle_info({TransOK, Socket, Members},
             waiting_for_cluster_members,
-            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
+            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}, proto_version={1,0}}) ->
     Transport = State#state.transport,
     gen_fsm:send_event(self(), {cluster_members, binary_to_term(Members)}),
+    _ = Transport:setopts(Socket, [{active, once}]),
+    {next_state, waiting_for_cluster_members, State};
+handle_info({TransOK, Socket, Members},
+            waiting_for_cluster_members,
+            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
+    Transport = State#state.transport,
+    gen_fsm:send_event(self(), {all_cluster_members, binary_to_term(Members)}),
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_members, State};
 handle_info({TransOK, Socket, Data},
@@ -374,8 +419,15 @@ request_cluster_name(#state{socket=Socket, transport=Transport}) ->
 -spec request_member_ips(state()) -> ok | {error, term()}.
 request_member_ips(#state{mode=test}) ->
     ok;
-request_member_ips(#state{socket=Socket, transport=Transport}) ->
+request_member_ips(#state{socket=Socket, transport=Transport, proto_version={1,0}}) ->
     Transport:send(Socket, ?CTRL_ASK_MEMBERS),
+    %% get the IP we think we've connected to
+    {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
+    %% make it a string
+    PeerIPStr = inet_parse:ntoa(PeerIP),
+    Transport:send(Socket, term_to_binary({PeerIPStr, PeerPort}));
+request_member_ips(#state{socket=Socket, transport=Transport, proto_version={1,1}}) ->
+    Transport:send(Socket, ?CTRL_ALL_MEMBERS),
     %% get the IP we think we've connected to
     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
     %% make it a string
