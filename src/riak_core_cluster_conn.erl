@@ -339,6 +339,9 @@ handle_info({TransClosed, Socket} = Msg,
     % thus, we exit abnormally and let the supervisor restart a new us.
     ok = lager:debug("Stopping because it looks like the connect closed: ~p", [Msg]),
     {stop, connection_closed, State};
+handle_info({_ClusterManager, poll_cluster}, StateName, State) ->
+    gen_fsm:send_event(self(), poll_cluster),
+    {next_state, StateName, State};
 handle_info(Msg, StateName, State) ->
     lager:warning("Unmatch message ~p", [Msg]),
     {next_state, StateName, State}.
