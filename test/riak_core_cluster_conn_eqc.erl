@@ -77,9 +77,11 @@ eqc_test_() ->
 
 setup() ->
     error_logger:tty(false),
+    lager:start(),
     ok.
 
 cleanup(_) ->
+    application:stop(lager),
     ok.
 
 %% ====================================================================
@@ -174,7 +176,7 @@ postcondition(initiating_connection, connecting, _S, {call, ?MODULE, send_timeou
     ?P(?MODULE:current_fsm_state(Pid) =:= connecting);
 postcondition(connected, connected, _S ,{call, ?MODULE, status, _}, R) ->
     ExpectedStatus = {fake_socket,
-                      gen_netbeui,
+                      ranch_tcp,
                       "overtherainbow",
                       [{clustername, "FARFARAWAY"}]},
     {_, status, Status} = R,
@@ -225,7 +227,7 @@ garbage_event(Pid) ->
 connected_to_remote(Pid) ->
     Event = {connected_to_remote,
              fake_socket,
-             gen_netbeui,
+             ranch_tcp,
              "overtherainbow",
              [{clustername, "FARFARAWAY"}]},
     gen_fsm:send_event(Pid, Event).
