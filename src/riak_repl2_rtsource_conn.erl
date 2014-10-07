@@ -276,7 +276,8 @@ handle_cast({maybe_reconnect, BetterAddrs}, State=#state{ remote=Remote }) ->
     % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
     ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
 
-    %% Todo: check for bad remote name
+    %% TODO: SCHEDULE THIS RECONNECT SOME RANDOM TIME IN THE FUTURE???
+
     lager:debug("re-connecting to remote ~p", [Remote]),
     case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec, {use_only, BetterAddrs}) of
         {ok, Ref} ->
