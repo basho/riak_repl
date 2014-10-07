@@ -222,8 +222,8 @@ connecting(_, _From, _State) ->
     {reply, ok, connecting, _State}.
 
 %% Async message handling for the `waiting_for_cluster_name' state
-waiting_for_cluster_name({cluster_name, NewName}, State=#state{previous_name="undefined"}) ->
-    UpdState = State#state{name=NewName},
+waiting_for_cluster_name({cluster_name, NewName}, State=#state{name=undefined}) ->
+    UpdState = State#state{name=NewName, previous_name="undefined"},
     _ = request_member_ips(UpdState),
     {next_state, waiting_for_cluster_members, UpdState, ?CONNECTION_SETUP_TIMEOUT};
 waiting_for_cluster_name({cluster_name, NewName}, State=#state{name=Name}) ->
