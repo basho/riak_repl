@@ -124,8 +124,10 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     end.
 
 register_remote_locator() ->
-    Locator = fun(Name, _Policy) ->
-            riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
+    Locator = fun (_, {use_only, Addrs}) ->
+                      {ok, Addrs};
+                  (Name, _Policy) ->
+                      riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
     end,
     ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
 
