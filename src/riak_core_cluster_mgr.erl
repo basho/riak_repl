@@ -92,7 +92,8 @@
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
          stop/0,
-         connect_to_clusters/0
+         connect_to_clusters/0,
+         shuffle_remote_ipaddrs/1
          ]).
 
 %% gen_server callbacks
@@ -764,6 +765,8 @@ shuffle_with_seed(List, Seed) ->
     shuffle_with_seed(List, {S1,S2,S3}).
 
 
+shuffle_remote_ipaddrs([]) ->
+  {ok, []};
 shuffle_remote_ipaddrs(RemoteUnsorted) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
