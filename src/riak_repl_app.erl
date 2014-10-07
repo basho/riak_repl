@@ -74,6 +74,11 @@ start(_Type, _StartArgs) ->
             riak_core_cluster_mgr:register_member_fun(
                 fun cluster_mgr_member_fun/1),
 
+            %% register functions for cluster manager to find it's own
+            %% nodes' ip addrs
+            riak_core_cluster_mgr:register_all_member_fun(
+                fun cluster_mgr_all_member_fun/1),
+
             %% cluster manager leader will follow repl leader
             riak_repl2_leader:register_notify_fun(
               fun riak_core_cluster_mgr:set_leader/2),
