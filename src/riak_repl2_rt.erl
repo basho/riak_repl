@@ -105,26 +105,27 @@ ensure_rt(WantEnabled0, WantStarted0) ->
                  {ok, ConnectedAddr} = riak_repl2_rtsource_conn:address(PID),
                  Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
                  {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
-                 case ShuffledAddrs of
-                     [ConnectedAddr|_] ->
+                 case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
+                     true ->
                          ok; % we're already connected to the ideal buddy
 
-                     _ ->
+                     false ->
                          %% compute the addrs that are "better" than the currently connected addr
-                         BetterAddrs = keepwhile(fun(A) -> A /= ConnectedAddr end,
+                         BetterAddrs = keepwhile(fun(A) -> not same_ipaddr(A, ConnectedAddr) end,
                                                  ShuffledAddrs),
 
                          %% remove those that are blacklisted anyway
                          case riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs) of
-                             [ConnectedAddr|_] ->
-                                 ok; % this is as good as it gets ...
-
                              [] ->
-                                 ok; % hmm?  Good thing we're already connected to someone!
-
-                             BetterRemoteAddrs->
-                                 %% should try to reconnect to one of those...
-                                 riak_repl2_rtsource_conn:maybe_reconnect(PID, BetterRemoteAddrs)
+                                 ok;
+                             UsefulAddrs ->
+                                 case same_ipaddr(ConnectedAddr, hd(UsefulAddrs)) of
+                                     true ->
+                                         ok; % this is as good as it gets ...
+                                     false ->
+                                         %% should try to reconnect to one of those...
+                                         riak_repl2_rtsource_conn:maybe_reconnect(PID, UsefulAddrs)
+                                 end
                          end
                  end;
              false ->
@@ -288,3 +289,10 @@ keepwhile(Pred, [E|Rest], Acc) ->
         false ->
             lists:reverse(Acc)
     end.
+
+
+same_ipaddr({IP,Port}, {IP,Port}) ->
+    true;
+same_ipaddr(_,_) ->
+    %% TODO: make sure we support string format
+    false.
