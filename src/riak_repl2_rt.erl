@@ -79,7 +79,8 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     Status = riak_repl2_rtq:status(),
     CStatus = proplists:get_value(consumers, Status, []),
     Enabled = lists:sort([Remote || {Remote, _Stats} <- CStatus]),
-    Started = lists:sort([Remote || {Remote, _Pid}  <- riak_repl2_rtsource_conn_sup:enabled()]),
+    Connections = riak_repl2_rtsource_conn_sup:enabled(),
+    Started = lists:sort([Remote || {Remote, _Pid}  <- Connections]),
 
     ToEnable  = WantEnabled -- Enabled,
     ToDisable = Enabled -- WantEnabled,
@@ -95,6 +96,40 @@ ensure_rt(WantEnabled0, WantStarted0) ->
         _ ->
             application:set_env(riak_repl, rtenabled, true)
     end,
+
+    %% Check if we're connected to our preferred peer(s). If not, initate reconnect
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ToValidate = Started -- ToStop,
+    _ = [case lists:keyfind(Remote, 1, Connections) of
+             {_, PID} ->
+                 {ok, ConnectedAddr} = riak_repl2_rtsource_conn:address(PID),
+                 Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
+                 {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
+                 case ShuffledAddrs of
+                     [ConnectedAddr|_] ->
+                         ok; % we're already connected to the ideal buddy
+
+                     _ ->
+                         %% compute the addrs that are "better" than the currently connected addr
+                         BetterAddrs = keepwhile(fun(A) -> A /= ConnectedAddr end,
+                                                 ShuffledAddrs),
+
+                         %% remove those that are blacklisted anyway
+                         case riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs) of
+                             [ConnectedAddr|_] ->
+                                 ok; % this is as good as it gets ...
+
+                             [] ->
+                                 ok; % hmm?  Good thing we're already connected to someone!
+
+                             BetterRemoteAddrs->
+                                 %% should try to reconnect to one of those...
+                                 riak_repl2_rtsource_conn:maybe_reconnect(PID, BetterRemoteAddrs)
+                         end
+                 end;
+             false ->
+                 ok
+         end || Remote <- ToValidate ],
 
     case ToEnable ++ ToDisable ++ ToStart ++ ToStop of
         [] ->
@@ -239,4 +274,17 @@ set_bucket_meta(Obj) ->
             orddict:store(?BT_META_PROPS_HASH, PropsHash, M2);
         _B ->
             orddict:store(?BT_META_TYPED_BUCKET, false, M)
+    end.
+
+keepwhile(Pred, List) ->
+    keepwhile(Pred, List, []).
+
+keepwhile(_, [], Acc) ->
+    lists:reverse(Acc);
+keepwhile(Pred, [E|Rest], Acc) ->
+    case Pred(E) of
+        true ->
+            keepwhile(Pred, Rest, [E|Acc]);
+        false ->
+            lists:reverse(Acc)
     end.
