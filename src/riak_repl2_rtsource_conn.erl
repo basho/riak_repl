@@ -44,6 +44,7 @@
 -export([start_link/1,
          stop/1,
          status/1, status/2,
+         address/1, maybe_reconnect/2,
          legacy_status/1, legacy_status/2]).
 
 %% connection manager callbacks
@@ -80,6 +81,12 @@ start_link(Remote) ->
 
 stop(Pid) ->
     gen_server:call(Pid, stop, ?LONG_TIMEOUT).
+
+address(Pid) ->
+    gen_server:call(Pid, address, ?LONG_TIMEOUT).
+
+maybe_reconnect(Pid, BetterAddrs) ->
+    gen_server:cast(Pid, {maybe_reconnect, BetterAddrs}).
 
 status(Pid) ->
     status(Pid, infinity).
@@ -143,6 +150,8 @@ init([Remote]) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
+handle_call(address, _From, State = #state{ address=A }) ->
+    {reply, {ok, A}, State};
 handle_call(status, _From, State =
                 #state{remote = R, address = _A, transport = T, socket = S,
                        helper_pid = H,
@@ -246,7 +255,37 @@ handle_cast({connect_failed, _HelperPid, Reason},
             State = #state{remote = Remote}) ->
     lager:warning("Realtime replication connection to site ~p failed - ~p\n",
                   [Remote, Reason]),
-    {stop, normal, State}.
+    {stop, normal, State};
+handle_cast({maybe_reconnect, BetterAddrs}, State=#state{ remote=Remote }) ->
+
+    lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
+
+    %% if we have a pending connection attempt - drop that
+    riak_core_connection_mgr:disconnect({rt_repl, Remote}),
+
+    TcpOptions = [{keepalive, true},
+                  {nodelay, true},
+                  {packet, 0},
+                  {active, false}],
+    % nodes running 1.3.1 have a bug in the service_mgr module.
+    % this bug prevents it from being able to negotiate a version list longer
+    % than 2. Until we no longer support communicating with that version,
+    % we need to artifically truncate the version list.
+    % TODO: expand version list or remove comment when we no
+    % longer support 1.3.1
+    % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
+    ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
+
+    %% Todo: check for bad remote name
+    lager:debug("re-connecting to remote ~p", [Remote]),
+    case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec, {use_only, BetterAddrs}) of
+        {ok, Ref} ->
+            lager:debug("connecting ref ~p", [Ref]),
+            {noreply, State#state{ connection_ref = Ref}};
+        {error, Reason}->
+            lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
+            {noreply, State}
+    end.
 
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
         when Proto == tcp; Proto == ssl ->
