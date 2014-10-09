@@ -97,34 +97,11 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             application:set_env(riak_repl, rtenabled, true)
     end,
 
-    %% Check if we're connected to our preferred peer(s). If not, initate reconnect
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    %% For each connection to validate, call maybe_rebalance_delayed to handle the potential need to rebalance connections.
     ToValidate = Started -- ToStop,
     _ = [case lists:keyfind(Remote, 1, Connections) of
              {_, PID} ->
-                 {ok, ConnectedAddr} = riak_repl2_rtsource_conn:address(PID),
-                 Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
-                 {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
-                 lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
-                 case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
-                     true ->
-                         ok; % we're already connected to the ideal buddy
-
-                     false ->
-                         %% compute the addrs that are "better" than the currently connected addr
-                         BetterAddrs = lists:takewhile(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
-                                                       ShuffledAddrs),
-
-                         %% remove those that are blacklisted anyway
-                         UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
-                         lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
-                         case UsefulAddrs of
-                             [] ->
-                                 ok;
-                             UsefulAddrs ->
-                                 riak_repl2_rtsource_conn:maybe_reconnect(PID, UsefulAddrs)
-                         end
-                 end;
+                 riak_repl2_rtsource_conn:maybe_rebalance_delayed(PID);
              false ->
                  ok
          end || Remote <- ToValidate ],
@@ -273,11 +250,3 @@ set_bucket_meta(Obj) ->
         _B ->
             orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.
-
-same_ipaddr({IP,Port}, {IP,Port}) ->
-    true;
-same_ipaddr({_IP1,_Port1}, {_IP2,_Port2}) ->
-    false;
-same_ipaddr(X,Y) ->
-    lager:warning("ipaddrs have unexpected format! ~p, ~p", [X,Y]),
-    false.
