@@ -335,7 +335,7 @@ handle_info({backoff_timer, Addr}, State = #state{endpoints = EPs}) ->
             {noreply, State#state{endpoints = orddict:store(Addr,EP2,EPs)}};
         error ->
             %% TODO: Should never happen because the Addr came from the EP list.
-            {norepy, State}
+            {noreply, State}
     end;
 handle_info({retry_req, Ref}, State = #state{pending = Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
@@ -653,12 +653,14 @@ update_endpoints(Addrs, Endpoints) ->
 %% Return the addresses of non-blacklisted endpoints that are also
 %% members of the list EpAddrs.
 filter_blacklisted_endpoints(EpAddrs, AllEps) ->
+  lager:info("filter_blacklisted_endpoints(EpAddrs ~p, AllEps ~p) ->", [EpAddrs, AllEps]),
     PredicateFun = (fun(Addr) ->
                             case orddict:find(Addr, AllEps) of
                                 {ok, EP} ->
                                     EP#ep.is_black_listed == false;
                                 error ->
-                                    false
+                                    %% If we don't know this endpoint, it is not blacklisted.
+                                    true
                             end
                     end),
     lists:filter(PredicateFun, EpAddrs).
