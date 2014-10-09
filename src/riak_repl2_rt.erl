@@ -105,27 +105,24 @@ ensure_rt(WantEnabled0, WantStarted0) ->
                  {ok, ConnectedAddr} = riak_repl2_rtsource_conn:address(PID),
                  Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
                  {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
+                 lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
                  case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
                      true ->
                          ok; % we're already connected to the ideal buddy
 
                      false ->
                          %% compute the addrs that are "better" than the currently connected addr
-                         BetterAddrs = keepwhile(fun(A) -> not same_ipaddr(A, ConnectedAddr) end,
-                                                 ShuffledAddrs),
+                         BetterAddrs = lists:takewhile(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
+                                                       ShuffledAddrs),
 
                          %% remove those that are blacklisted anyway
-                         case riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs) of
+                         UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
+                         lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
+                         case UsefulAddrs of
                              [] ->
                                  ok;
                              UsefulAddrs ->
-                                 case same_ipaddr(ConnectedAddr, hd(UsefulAddrs)) of
-                                     true ->
-                                         ok; % this is as good as it gets ...
-                                     false ->
-                                         %% should try to reconnect to one of those...
-                                         riak_repl2_rtsource_conn:maybe_reconnect(PID, UsefulAddrs)
-                                 end
+                                 riak_repl2_rtsource_conn:maybe_reconnect(PID, UsefulAddrs)
                          end
                  end;
              false ->
@@ -146,9 +143,9 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
             _ = [begin
-                 _ = riak_repl2_rtsource_conn_sup:disable(Remote),
-                 riak_repl2_rtq:register(Remote)
-             end || Remote <- ToStop],
+                     _ = riak_repl2_rtsource_conn_sup:disable(Remote),
+                     riak_repl2_rtq:register(Remote)
+                 end || Remote <- ToStop],
 
             %% Unregister disabled sources, freeing up the queue
             _ = [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
@@ -164,7 +161,7 @@ register_remote_locator() ->
                       {ok, Addrs};
                   (Name, _Policy) ->
                       riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
-    end,
+              end,
     ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
 
 %% Register an active realtime sink (supervised under ranch)
@@ -188,11 +185,11 @@ postcommit(RObj) ->
             Meta = set_bucket_meta(RObj),
 
             BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
-                false ->
-                    riak_repl_util:to_wire(w1, Objects);
-                true ->
-                    riak_repl_util:to_wire(w2, Objects)
-            end,
+                          false ->
+                              riak_repl_util:to_wire(w1, Objects);
+                          true ->
+                              riak_repl_util:to_wire(w2, Objects)
+                      end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of
@@ -208,7 +205,7 @@ postcommit(RObj) ->
 
 %% gen_server callbacks
 init([]) ->
-     {ok, #state{}}.
+    {ok, #state{}}.
 
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
@@ -277,22 +274,10 @@ set_bucket_meta(Obj) ->
             orddict:store(?BT_META_TYPED_BUCKET, false, M)
     end.
 
-keepwhile(Pred, List) ->
-    keepwhile(Pred, List, []).
-
-keepwhile(_, [], Acc) ->
-    lists:reverse(Acc);
-keepwhile(Pred, [E|Rest], Acc) ->
-    case Pred(E) of
-        true ->
-            keepwhile(Pred, Rest, [E|Acc]);
-        false ->
-            lists:reverse(Acc)
-    end.
-
-
 same_ipaddr({IP,Port}, {IP,Port}) ->
     true;
-same_ipaddr(_,_) ->
-    %% TODO: make sure we support string format
+same_ipaddr({_IP1,_Port1}, {_IP2,_Port2}) ->
+    false;
+same_ipaddr(X,Y) ->
+    lager:warning("ipaddrs have unexpected format! ~p, ~p", [X,Y]),
     false.

@@ -217,7 +217,7 @@ choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
     case [H || {{HostProto,_Versions},_Rest}=H <- HostProtocols, ClientProto == HostProto] of
         [] ->
             %% oops! The host does not support this sub protocol type
-            lager:error("Failed to find host support for protocol: ~p", [ClientProto]),
+            lager:error("Failed to find host support for protocol: ~p, HostProtocols = ~p", [ClientProto, HostProtocols]),
             lager:debug("choose_version: no common protocols"),
             {error,protocol_not_supported};
         [{{_HostProto,HostVersions},Rest}=_Matched | _DuplicatesIgnored] ->
