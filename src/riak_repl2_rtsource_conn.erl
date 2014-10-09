@@ -262,7 +262,7 @@ handle_cast({connect_failed, _HelperPid, Reason},
     {stop, normal, State};
 
 handle_cast(rebalance_delayed, State) ->
-  {noreply, rebalance(State, delayed)}.
+  {noreply, maybe_rebalance(State, delayed)}.
 
 
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
@@ -315,7 +315,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
             {stop, normal, State}
     end;
 handle_info(rebalance_now, State) ->
-  {noreply, rebalance(State, now)};
+  {noreply, maybe_rebalance(State, now)};
 handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
@@ -327,14 +327,28 @@ terminate(_Reason, #state{helper_pid=_HelperPid, remote=Remote}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-rebalance(State=#state{address=ConnectedAddr, remote=Remote}, NowOrDelayed) ->
+maybe_rebalance(State, NowOrDelayed) ->
+  case should_rebalance(State) of
+      no ->
+          State;
+    {yes, UsefulAddrs} ->
+      case NowOrDelayed of
+        now ->
+          reconnect(State, UsefulAddrs);
+        delayed ->
+          erlang:send_after(rebalance_delay_millis(), self(), rebalance_now),
+          State
+      end
+  end.
+
+should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
   {ok, Ring} = riak_core_ring_manager:get_my_ring(),
   Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
   {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
   lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
   case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
     true ->
-      State; % we're already connected to the ideal buddy
+      no; % we're already connected to the ideal buddy
 
     false ->
       %% compute the addrs that are "better" than the currently connected addr
@@ -346,22 +360,17 @@ rebalance(State=#state{address=ConnectedAddr, remote=Remote}, NowOrDelayed) ->
       lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
       case UsefulAddrs of
         [] ->
-          State;
+          no;
         UsefulAddrs ->
-          case NowOrDelayed of
-            now ->
-              do_maybe_reconnect(State, UsefulAddrs);
-            delayed ->
-              MaxDelaySecs = application:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
-              DelayMillis = round(MaxDelaySecs * 1000 * crypto:rand_uniform(0, 1000)),
-              erlang:send_after(DelayMillis, self(), rebalance_now),
-              State
-          end
+          {yes, UsefulAddrs}
       end
   end.
 
+rebalance_delay_millis() ->
+    MaxDelaySecs = application:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
+    round(MaxDelaySecs * 1000 * crypto:rand_uniform(0, 1000)).
 
-do_maybe_reconnect(State=#state{remote=Remote}, BetterAddrs) ->
+reconnect(State=#state{remote=Remote}, BetterAddrs) ->
   lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
 
   %% if we have a pending connection attempt - drop that
