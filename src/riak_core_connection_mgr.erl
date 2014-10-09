@@ -653,7 +653,6 @@ update_endpoints(Addrs, Endpoints) ->
 %% Return the addresses of non-blacklisted endpoints that are also
 %% members of the list EpAddrs.
 filter_blacklisted_endpoints(EpAddrs, AllEps) ->
-  lager:info("filter_blacklisted_endpoints(EpAddrs ~p, AllEps ~p) ->", [EpAddrs, AllEps]),
     PredicateFun = (fun(Addr) ->
                             case orddict:find(Addr, AllEps) of
                                 {ok, EP} ->
