@@ -44,7 +44,7 @@
 -export([start_link/1,
          stop/1,
          status/1, status/2,
-         address/1, maybe_reconnect/2,
+         address/1, maybe_rebalance_delayed/1,
          legacy_status/1, legacy_status/2]).
 
 %% connection manager callbacks
@@ -85,8 +85,12 @@ stop(Pid) ->
 address(Pid) ->
     gen_server:call(Pid, address, ?LONG_TIMEOUT).
 
-maybe_reconnect(Pid, BetterAddrs) ->
-    gen_server:cast(Pid, {maybe_reconnect, BetterAddrs}).
+%% @doc Check if we need to rebalance.
+%% If we do, delay some time, recheck that we still
+%% need to rebalance, and if we still do, then execute
+%% reconnection to the better sink node.
+maybe_rebalance_delayed(Pid) ->
+     gen_server:cast(Pid, rebalance_delayed).
 
 status(Pid) ->
     status(Pid, infinity).
@@ -256,37 +260,10 @@ handle_cast({connect_failed, _HelperPid, Reason},
     lager:warning("Realtime replication connection to site ~p failed - ~p\n",
                   [Remote, Reason]),
     {stop, normal, State};
-handle_cast({maybe_reconnect, BetterAddrs}, State=#state{ remote=Remote }) ->
 
-    lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
+handle_cast(rebalance_delayed, State) ->
+  {noreply, rebalance(State, delayed)}.
 
-    %% if we have a pending connection attempt - drop that
-    riak_core_connection_mgr:disconnect({rt_repl, Remote}),
-
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 0},
-                  {active, false}],
-    % nodes running 1.3.1 have a bug in the service_mgr module.
-    % this bug prevents it from being able to negotiate a version list longer
-    % than 2. Until we no longer support communicating with that version,
-    % we need to artifically truncate the version list.
-    % TODO: expand version list or remove comment when we no
-    % longer support 1.3.1
-    % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
-    ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
-
-    %% TODO: SCHEDULE THIS RECONNECT SOME RANDOM TIME IN THE FUTURE???
-
-    lager:debug("re-connecting to remote ~p", [Remote]),
-    case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec, {use_only, BetterAddrs}) of
-        {ok, Ref} ->
-            lager:debug("connecting ref ~p", [Ref]),
-            {noreply, State#state{ connection_ref = Ref}};
-        {error, Reason}->
-            lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
-            {noreply, State}
-    end.
 
 handle_info({Proto, _S, TcpBin}, State= #state{cont = Cont})
         when Proto == tcp; Proto == ssl ->
@@ -337,6 +314,8 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
             lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
             {stop, normal, State}
     end;
+handle_info(rebalance_now, State) ->
+  {noreply, rebalance(State, now)};
 handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
@@ -347,6 +326,63 @@ terminate(_Reason, #state{helper_pid=_HelperPid, remote=Remote}) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+rebalance(State=#state{address=ConnectedAddr, remote=Remote}, NowOrDelayed) ->
+  {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+  Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
+  {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
+  lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
+  case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
+    true ->
+      State; % we're already connected to the ideal buddy
+
+    false ->
+      %% compute the addrs that are "better" than the currently connected addr
+      BetterAddrs = lists:takewhile(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
+        ShuffledAddrs),
+
+      %% remove those that are blacklisted anyway
+      UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
+      lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
+      case UsefulAddrs of
+        [] ->
+          State;
+        UsefulAddrs ->
+          case NowOrDelayed of
+            now ->
+              do_maybe_reconnect(State, UsefulAddrs);
+            delayed ->
+              MaxDelaySecs = application:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
+              DelayMillis = round(MaxDelaySecs * 1000 * crypto:rand_uniform(0, 1000)),
+              erlang:send_after(DelayMillis, self(), rebalance_now),
+              State
+          end
+      end
+  end.
+
+
+do_maybe_reconnect(State=#state{remote=Remote}, BetterAddrs) ->
+  lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
+
+  %% if we have a pending connection attempt - drop that
+  riak_core_connection_mgr:disconnect({rt_repl, Remote}),
+
+  TcpOptions = [{keepalive, true},
+    {nodelay, true},
+    {packet, 0},
+    {active, false}],
+  ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
+
+  lager:debug("re-connecting to remote ~p", [Remote]),
+  case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec, {use_only, BetterAddrs}) of
+    {ok, Ref} ->
+      lager:debug("connecting ref ~p", [Ref]),
+      {noreply, State#state{ connection_ref = Ref}};
+    {error, Reason}->
+      lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
+      {noreply, State}
+  end.
+
 
 cancel_timer(undefined) -> ok;
 cancel_timer(TRef)      -> _ = erlang:cancel_timer(TRef).
@@ -433,6 +469,14 @@ schedule_heartbeat(State = #state{hb_interval_tref = undefined,
 schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
+
+same_ipaddr({IP,Port}, {IP,Port}) ->
+  true;
+same_ipaddr({_IP1,_Port1}, {_IP2,_Port2}) ->
+  false;
+same_ipaddr(X,Y) ->
+  lager:warning("ipaddrs have unexpected format! ~p, ~p", [X,Y]),
+  false.
 
 %% ===================================================================
 %% EUnit tests
