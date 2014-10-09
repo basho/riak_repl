@@ -550,8 +550,8 @@ save_cluster(NewName, OldMembers, ReturnedMembers, State) ->
                                   [NewName, Members]);
                 _ ->
                     persist_members_to_ring(State, NewName, Members),
-                    lager:info("Cluster Manager: updated ~p with members: ~p",
-                               [NewName, Members])
+                    lager:info("Cluster Manager: updated ~p with members: ~p OldMembers ~p",
+                               [NewName, Members, OldMembers])
             end
     end,
     %% clear out these IPs from other clusters
