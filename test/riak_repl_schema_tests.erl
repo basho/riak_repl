@@ -24,7 +24,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_interval", 15),
     cuttlefish_unit:assert_config(Config, "riak_repl.rt_heartbeat_timeout", 15),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_use_background_manager", false),
-    cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_stat_refresh_interval", 60000),
+    cuttlefish_unit:assert_not_configured(Config, "riak_repl.fullsync_stat_refresh_interval"),
     cuttlefish_unit:assert_config(Config, "riak_repl.fullsync_strategy", keylist),
     ok.
 
