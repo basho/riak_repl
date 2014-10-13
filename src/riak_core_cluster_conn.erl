@@ -256,10 +256,11 @@ waiting_for_cluster_members({cluster_members, NewMembers}, State = #state{ proto
     %% this is 1.0 code. NewMembers is list of {IP,Port}
 
     SortedNew = ordsets:from_list(NewMembers),
-    Members = NewMembers ++ lists:filter( fun(Mem) ->
-                                                  not ordsets:is_element(Mem, SortedNew)
-                                          end,
-                                          OldMembers ),
+    Members =
+        NewMembers ++ lists:filter(fun(Mem) ->
+                                           not ordsets:is_element(Mem, SortedNew)
+                                   end,
+                                   OldMembers),
 
     ClusterUpdatedMsg = {cluster_updated,
                          PreviousName,
@@ -278,18 +279,19 @@ waiting_for_cluster_members({all_cluster_members, NewMembers}, State) ->
 
     %% this is 1.1+ code. Members is list of {node,{IP,Port}}
 
-    Members = lists:foldl( fun(Elm={_Node,{_Ip,Port}}, Acc) when is_integer(Port) ->
-                                   [Elm|Acc];
-                              ({Node,_}, Acc) ->
-                                   case lists:keyfind(Node, 1, OldMembers) of
-                                       Elm={Node,{_IP,Port}} when is_integer(Port) ->
-                                           [Elm|Acc];
-                                       _ ->
-                                           Acc
-                                   end
-                           end,
-                           [],
-                           NewMembers ),
+    Members =
+        lists:foldl(fun(Elm={_Node,{_Ip,Port}}, Acc) when is_integer(Port) ->
+                            [Elm|Acc];
+                       ({Node,_}, Acc) ->
+                            case lists:keyfind(Node, 1, OldMembers) of
+                                Elm={Node,{_IP,Port}} when is_integer(Port) ->
+                                    [Elm|Acc];
+                                _ ->
+                                    Acc
+                            end
+                    end,
+                    [],
+                    NewMembers ),
 
     ClusterUpdatedMsg = {cluster_updated,
                          PreviousName,
