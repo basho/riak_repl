@@ -38,6 +38,7 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-export([riak_core_connection_mgr_connect/1]).
 -endif.
 
 %% API
@@ -332,24 +333,21 @@ terminate(_Reason, #state{helper_pid=_HelperPid, remote=Remote}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-maybe_rebalance(State, NowOrDelayed) ->
+maybe_rebalance(State, now) ->
     case should_rebalance(State) of
         no ->
             State;
         {yes, UsefulAddrs} ->
-            case NowOrDelayed of
-                now ->
-                    reconnect(State, UsefulAddrs);
-                delayed ->
-                    case State#state.rb_timeout_tref of
-                        undefined ->
-                            RbTimeoutTref = erlang:send_after(rebalance_delay_millis(), self(), rebalance_now),
-                            State#state{rb_timeout_tref = RbTimeoutTref};
-                        _ ->
-                            %% Already sent a "rebalance_now"
-                            State
-                    end
-            end
+            reconnect(State, UsefulAddrs)
+    end;
+maybe_rebalance(State, delayed) ->
+    case State#state.rb_timeout_tref of
+        undefined ->
+            RbTimeoutTref = erlang:send_after(rebalance_delay_millis(), self(), rebalance_now),
+            State#state{rb_timeout_tref = RbTimeoutTref};
+        _ ->
+            %% Already sent a "rebalance_now"
+            State
     end.
 
 should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
@@ -360,12 +358,10 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
     case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
         true ->
             no; % we're already connected to the ideal buddy
-
         false ->
             %% compute the addrs that are "better" than the currently connected addr
             BetterAddrs = lists:takewhile(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
                                           ShuffledAddrs),
-
             %% remove those that are blacklisted anyway
             UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
             lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
@@ -378,7 +374,8 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
     end.
 
 rebalance_delay_millis() ->
-    MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
+    MaxDelaySecs =
+        app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
     round(MaxDelaySecs * crypto:rand_uniform(0, 1000)).
 
 reconnect(State=#state{remote=Remote}, BetterAddrs) ->
@@ -462,8 +459,11 @@ send_heartbeat(State = #state{hb_interval = undefined}) ->
 send_heartbeat(State = #state{hb_timeout = HBTimeout,
                               hb_sent_q = SentQ,
                               helper_pid = HelperPid}) when is_integer(HBTimeout) ->
-    Now = now(), % using now as need a unique reference for this heartbeat
-                                                % to spot late heartbeat timeout messages
+
+    % Using now as need a unique reference for this heartbeat
+    % to spot late heartbeat timeout messages
+    Now = now(),
+
     riak_repl2_rtsource_helper:send_heartbeat(HelperPid),
     TRef = erlang:send_after(timer:seconds(HBTimeout), self(), {heartbeat_timeout, Now}),
     State2 = State#state{hb_interval_tref = undefined, hb_timeout_tref = TRef,
@@ -552,30 +552,29 @@ cache_peername_test_case() ->
 %% Set up the test
 setup_connection_for_peername() ->
     riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
-    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
-                                                           proc_lib:spawn_link(fun() ->
-                                                                                       Version = stateful:version(),
-                                                                                       {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
-                                                                                       {ok, Socket} = gen_tcp:connect("127.0.0.1", ?SINK_PORT, [binary | TcpOpts]),
+    meck:expect(riak_core_connection_mgr, connect,
+                fun(_ServiceAndRemote, ClientSpec) ->
+                        proc_lib:spawn_link(?MODULE, riak_core_connection_mgr_connect, [ClientSpec]),
+                        {ok, make_ref()}
+                end).
+riak_core_connection_mgr_connect(ClientSpec) ->
+    Version = stateful:version(),
+    {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
+    {ok, Socket} = gen_tcp:connect("127.0.0.1", ?SINK_PORT, [binary | TcpOpts]),
 
-                                                                                       ok = Module:connected(Socket, gen_tcp, {"127.0.0.1", ?SINK_PORT}, Version, Pid, []),
+    ok = Module:connected(Socket, gen_tcp, {"127.0.0.1", ?SINK_PORT}, Version, Pid, []),
 
-                                                % simulate local socket problem
-                                                                                       inet:close(Socket),
+    % simulate local socket problem
+    inet:close(Socket),
 
-                                                % get the State from the source connection.
-                                                                                       {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
+    % get the State from the source connection.
+    {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
 
-                                                % getting the peername from the socket should produce error string
-                                                                                       ?assertEqual("error:einval", peername(inet, Socket)),
+    % getting the peername from the socket should produce error string
+    ?assertEqual("error:einval", peername(inet, Socket)),
 
-                                                % while getting the peername from the State should produce the cached string
-                                                                                       ?assertEqual("127.0.0.1:5007", peername(State))
-
-                                                                               end),
-
-                                                           {ok, make_ref()}
-                                                   end).
+    % while getting the peername from the State should produce the cached string
+    ?assertEqual("127.0.0.1:5007", peername(State)).
 
 %% Connect to the 'fake' sink
 connect(RemoteName) ->
