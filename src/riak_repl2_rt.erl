@@ -97,7 +97,8 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             application:set_env(riak_repl, rtenabled, true)
     end,
 
-    %% For each connection to validate, call maybe_rebalance_delayed to handle the potential need to rebalance connections.
+    %% For each connection to validate, call maybe_rebalance_delayed to handle 
+    %% the potential need to rebalance connections.
     ToValidate = Started -- ToStop,
     _ = [case lists:keyfind(Remote, 1, Connections) of
              {_, PID} ->
