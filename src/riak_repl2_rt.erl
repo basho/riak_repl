@@ -135,10 +135,10 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     end.
 
 register_remote_locator() ->
-    Locator = fun (_, {use_only, Addrs}) ->
-                      {ok, Addrs};
-                  (Name, _Policy) ->
-                      riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
+    Locator = fun(_, {use_only, Addrs}) ->
+                       {ok, Addrs};
+                 (Name, _Policy) ->
+                       riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
               end,
     ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
 
@@ -162,12 +162,13 @@ postcommit(RObj) ->
             Objects = Objects0 ++ [RObj],
             Meta = set_bucket_meta(RObj),
 
-            BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
-                          false ->
-                              riak_repl_util:to_wire(w1, Objects);
-                          true ->
-                              riak_repl_util:to_wire(w2, Objects)
-                      end,
+            BinObjs =
+                case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
+                    false ->
+                        riak_repl_util:to_wire(w1, Objects);
+                    true ->
+                        riak_repl_util:to_wire(w2, Objects)
+                end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of
