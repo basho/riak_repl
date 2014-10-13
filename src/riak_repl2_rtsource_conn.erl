@@ -374,8 +374,8 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
     end.
 
 rebalance_delay_millis() ->
-    MaxDelaySecs = application:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
-    round(MaxDelaySecs * 1000 * crypto:rand_uniform(0, 1000)).
+    MaxDelaySecs = app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
+    round(MaxDelaySecs * crypto:rand_uniform(0, 1000)).
 
 reconnect(State=#state{remote=Remote}, BetterAddrs) ->
     lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
