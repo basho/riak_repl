@@ -58,6 +58,23 @@
 -define(DEFAULT_HBINTERVAL, 15).
 -define(DEFAULT_HBTIMEOUT, 15).
 
+-define(TCP_OPTIONS,  [{keepalive, true},
+                       {nodelay, true},
+                       {packet, 0},
+                       {active, false}]).
+
+%% nodes running 1.3.1 have a bug in the service_mgr module.
+%% this bug prevents it from being able to negotiate a version list longer
+%% than 2. Until we no longer support communicating with that version,
+%% we need to artifically truncate the version list.
+%% TODO: expand version list or remove comment when we no
+%% longer support 1.3.1
+%% prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
+
+
+-define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
+                      {?TCP_OPTIONS, ?MODULE, self()}}).
+
 -record(state, {remote,    % remote name
                 address,   % {IP, Port}
                 connection_ref, % reference handed out by connection manager
@@ -129,22 +146,9 @@ connect_failed(_ClientProto, Reason, RtSourcePid) ->
 
 %% Initialize
 init([Remote]) ->
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 0},
-                  {active, false}],
-                                                % nodes running 1.3.1 have a bug in the service_mgr module.
-                                                % this bug prevents it from being able to negotiate a version list longer
-                                                % than 2. Until we no longer support communicating with that version,
-                                                % we need to artifically truncate the version list.
-                                                % TODO: expand version list or remove comment when we no
-                                                % longer support 1.3.1
-                                                % prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
-    ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
-
     %% Todo: check for bad remote name
     lager:debug("connecting to remote ~p", [Remote]),
-    case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec) of
+    case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC) of
         {ok, Ref} ->
             lager:debug("connection ref ~p", [Ref]),
             {ok, #state{remote = Remote, connection_ref = Ref}};
@@ -383,14 +387,8 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
     %% if we have a pending connection attempt - drop that
     riak_core_connection_mgr:disconnect({rt_repl, Remote}),
 
-    TcpOptions = [{keepalive, true},
-                  {nodelay, true},
-                  {packet, 0},
-                  {active, false}],
-    ClientSpec = {{realtime,[{3,0}, {2,0}, {1,5}]}, {TcpOptions, ?MODULE, self()}},
-
     lager:debug("re-connecting to remote ~p", [Remote]),
-    case riak_core_connection_mgr:connect({rt_repl, Remote}, ClientSpec, {use_only, BetterAddrs}) of
+    case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, {use_only, BetterAddrs}) of
         {ok, Ref} ->
             lager:debug("connecting ref ~p", [Ref]),
             {noreply, State#state{ connection_ref = Ref}};
