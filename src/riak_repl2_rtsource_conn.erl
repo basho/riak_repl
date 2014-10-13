@@ -73,6 +73,7 @@
                 hb_timeout_tref,% heartbeat timeout timer reference
                 hb_sent_q,   % queue of heartbeats now() that were sent
                 hb_rtt,    % RTT in milliseconds for last completed heartbeat
+                rb_timeout_tref,% Rebalance timeout timer reference
                 cont = <<>>}). % continuation from previous TCP buffer
 
 %% API - start trying to send realtime repl to remote site
@@ -315,7 +316,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
             {stop, normal, State}
     end;
 handle_info(rebalance_now, State) ->
-    {noreply, maybe_rebalance(State, now)};
+    {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
@@ -336,8 +337,14 @@ maybe_rebalance(State, NowOrDelayed) ->
                 now ->
                     reconnect(State, UsefulAddrs);
                 delayed ->
-                    erlang:send_after(rebalance_delay_millis(), self(), rebalance_now),
-                    State
+                    case State#state.rb_timeout_tref of
+                        undefined ->
+                            RbTimeoutTref = erlang:send_after(rebalance_delay_millis(), self(), rebalance_now),
+                            State#state{rb_timeout_tref = RbTimeoutTref};
+                        _ ->
+                            %% Already sent a "rebalance_now"
+                            State
+                    end
             end
     end.
 
