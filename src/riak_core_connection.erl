@@ -260,7 +260,7 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             {Transport, Socket};
         {true, true} ->
             lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
-            ssl:start(),
+            ok = ssl:start(),
             case riak_core_ssl_util:upgrade_client_to_ssl(Socket, riak_core) of
                 {ok, SSLSocket} ->
                     {ranch_ssl, SSLSocket};

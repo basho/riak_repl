@@ -86,7 +86,7 @@
                 connection_timeout :: timeout(),
                 transport :: atom(),
                 address :: peer_address(),
-                connection_props :: proplist:proplist(),
+                connection_props :: proplists:proplist(),
                 transport_msgs :: ranch_transport_messages()}).
 -type state() :: #state{}.
 
