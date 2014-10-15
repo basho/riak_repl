@@ -1,0 +1,163 @@
+%%-*- mode: erlang -*-
+%% ============ Experimental / Transient Settings ============
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting.
+{mapping, "mdc.cluster_manager.cancellation_interval", 
+ "riak_repl.cm_cancellation_interval",
+ [{datatype, {duration, ms}},
+  hidden
+ ]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting.
+{mapping, "mdc.cluster_manager.no_endpoints_retry_interval", 
+ "riak_repl.connmgr_no_endpoint_retry",
+ [{datatype, {duration, ms}},
+  hidden
+ ]}.
+                                                                                             
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.status_timeout", "riak_repl.status_timeout",
+[{datatype, {duration, ms}},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.status_helper_timeout", "riak_repl.status_helper_timeout",
+[{datatype, {duration, ms}},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.replicate_cs_bucket_objects", "riak_repl.replicate_cs_bucket_objects",
+[{datatype, flag},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.replicate_cs_user_objects", "riak_repl.replicate_cs_user_objects",
+[{datatype, flag},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.sink.min_put_workers", "riak_repl.fssink_min_workers",
+[{datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.sink.max_put_workers", "riak_repl.fssink_max_workers",
+[{datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.queue.overload_threshold", "riak_repl.rtq_overload_threshold",
+[{datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.queue.overload_recover", "riak_repl.rtq_overload_recover",
+[{datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.source.max_retries", "riak_repl.max_fssource_retries",
+[{datatype, [{atom, infinity}, integer]},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.max_reserve_retries", "riak_repl.max_reserve_retries",
+[{datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.queue.drop_report_interval", "riak_repl.rtq_drop_report_interval",
+[{datatype, {duration, ms}},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.sink.max_pending", "riak_repl.rtsink_max_pending",
+[
+ %% TODO: Jon says size this according to the rtsink_max_workers
+ %% setting
+ {datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.sink.min_put_workers", "riak_repl.rtsink_min_workers",
+[{datatype, integer},
+ {default, 5},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.sink.max_put_workers", "riak_repl.rtsink_max_workers",
+[{datatype, integer},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.sink.bucket_type_drop_report_interval", "riak_repl.bucket_type_drop_report_interval",
+[{datatype, {duration, ms}},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.socket_reactivate_interval", "riak_repl.reactivate_socket_interval_millis",
+[{datatype, {duration, ms}},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.source.helper_status_timeout", "riak_repl.riak_repl2_rtsource_helper_status_to",
+[{datatype, {duration, ms}},
+ hidden
+]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.aae.direct.limit", "riak_repl.fullsync_direct_limit",
+ [{datatype, integer},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.aae.direct.mode", "riak_repl.fullsync_direct_mode",
+ [{datatype, {enum, [inline, buffered]}},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.keylist.min_get_workers", "riak_repl.min_get_workers",
+ [{datatype, integer},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.keylist.max_get_workers", "riak_repl.max_get_workers",
+ [{datatype, integer},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.keylist.vnode_gets", "riak_repl.vnode_gets",
+ [{datatype, flag},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.keylist.diff_batch_size", "riak_repl.diff_batch_size",
+ [{datatype, integer},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.fullsync.keylist.bloom_fold", "riak_repl.bloom_fold",
+ [{datatype, flag},
+  hidden]}.
+
+%% @doc EXPERIMENTAL:: Consult with Basho about changing this setting
+{mapping, "mdc.realtime.queue_migration_timeout", "riak_repl.queue_migration_timeout",
+[{datatype, {duration, ms}},
+ hidden
+]}.
