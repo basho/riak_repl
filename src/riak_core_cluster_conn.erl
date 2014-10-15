@@ -307,8 +307,11 @@ waiting_for_cluster_members(_, _State) ->
 %% Sync message handling for the `waiting_for_cluster_members' state
 waiting_for_cluster_members(status, _From, State) ->
     {reply, {waiting_for_cluster_members, State#state.name}, waiting_for_cluster_members, State};
-waiting_for_cluster_members(_, _From, _State) ->
-    {reply, ok, waiting_for_cluster_members, _State}.
+waiting_for_cluster_members(Other, _From, State) ->
+    _ = lager:error("cluster_conn: client got unexpected "
+                    "msg from remote: ~p, ~p",
+                    [State#state.remote, Other]),
+    {reply, ok, waiting_for_cluster_members, State}.
 
 %% Async message handling for the `connected' state
 connected(poll_cluster, State) ->
