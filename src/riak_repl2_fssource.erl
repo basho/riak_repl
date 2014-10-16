@@ -81,8 +81,9 @@ init([Partition, IP]) ->
     end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
-            _From, State=#state{partition=Partition, strategy=RequestedStrategy}) ->
+            _From, State=#state{ip=IP, partition=Partition, strategy=RequestedStrategy}) ->
     Cluster = proplists:get_value(clustername, Props),
+    lager:info("Fullsync connection to ~p for ~p",[IP, Partition]),
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
     lager:debug("Keeping stats for " ++ SocketTag),

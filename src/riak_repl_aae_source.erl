@@ -87,7 +87,8 @@ cancel_fullsync(Pid) ->
 %%%===================================================================
 
 init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
-
+    lager:debug("AAE fullsync source worker started for partition ~p",
+               [Partition]),
 
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     {_, ClientVer, _} = Proto,
@@ -251,6 +252,7 @@ update_trees({tree_built, _, _}, State = #state{indexns=IndexNs}) ->
         NeededBuilts ->
             %% Trees built now we can estimate how many keys
             {ok, EstimatedNrKeys} = riak_kv_index_hashtree:estimate_keys(State#state.tree_pid),
+            lager:debug("EstimatedNrKeys ~p for partition ~p", [EstimatedNrKeys, State#state.index]),
 
             lager:debug("Moving to key exchange state"),
             key_exchange(init, State#state{built=Built, estimated_nr_keys = EstimatedNrKeys});
@@ -285,6 +287,8 @@ key_exchange(cancel_fullsync, State) ->
     {stop, normal, State};
 key_exchange(finish_fullsync, State=#state{owner=Owner}) ->
     send_complete(State),
+    lager:debug("AAE fullsync source completed partition ~p",
+                [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
     %% TODO: Why stay in key_exchange? Should we stop instead?
     {next_state, key_exchange, State};
@@ -408,10 +412,12 @@ maybe_send_direct(#exchange{mode=inline, count=Count, limit=Limit},
     lager:info("Directly sent ~b differences inline for partition ~p",
                [Sent, Partition]),
     ok;
-maybe_send_direct(#exchange{buffer=Buffer}, State) ->
+maybe_send_direct(#exchange{buffer=Buffer}, State=#state{index=Partition}) ->
     Keys = [{Bucket, Key} || {_, {Bucket, Key}} <- ets:tab2list(Buffer)],
     true = ets:delete(Buffer),
     Sorted = lists:sort(Keys),
+    Count = length(Sorted),
+    lager:debug("Directly sending ~p differences for partition ~p", [Count, Partition]),
     _ = [send_missing(Bucket, Key, State) || {Bucket, Key} <- Sorted],
     ok.
 
