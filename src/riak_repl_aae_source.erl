@@ -223,8 +223,14 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
 update_trees(init, State) ->
-    NumKeys = 10000000,
-    {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+    %% Temporary variables for 1.4 series to override default bloom parameters
+    %% 2.0 series will make estimates of bloom size from AAE trees.
+    %% Set aae_bloom_num_keys to estimate of number of objects in the
+    %% vnode, sum of (nval * objects with nval) forall active nval, divided
+    %% by number of vnodes.  Better to guess high.
+    NumKeys = app_helper:get_env(riak_repl, aae_bloom_num_keys, 10000000),
+    ErrorRate = app_helper:get_env(riak_repl, aae_bloom_rate, 0.01),
+    {ok, Bloom} = ebloom:new(NumKeys, ErrorRate, random:uniform(1000)),
     Limit = app_helper:get_env(riak_repl, fullsync_direct_limit, ?GET_OBJECT_LIMIT),
     Mode = app_helper:get_env(riak_repl, fullsync_direct_mode, inline),
     Buffer = case Mode of
