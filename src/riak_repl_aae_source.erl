@@ -229,7 +229,7 @@ update_trees(init, State) ->
     %% vnode, sum of (nval * objects with nval) forall active nval, divided
     %% by number of vnodes.  Better to guess high.
     NumKeys = app_helper:get_env(riak_repl, aae_bloom_num_keys, 10000000),
-    ErrorRate = app_helper:get_env(riak_repl, aae_bloom_rate, 0.1),
+    ErrorRate = app_helper:get_env(riak_repl, aae_bloom_rate, 0.01),
     {ok, Bloom} = ebloom:new(NumKeys, ErrorRate, random:uniform(1000)),
     Limit = app_helper:get_env(riak_repl, fullsync_direct_limit, ?GET_OBJECT_LIMIT),
     Mode = app_helper:get_env(riak_repl, fullsync_direct_mode, inline),
