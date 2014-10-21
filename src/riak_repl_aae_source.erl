@@ -236,7 +236,7 @@ update_trees(start_exchange, State=#state{tree_pid=TreePid,
                               ok ->
                                   gen_fsm:send_event(self(), {tree_built, Partition, IndexN});
                               not_responsible ->
-                                  gen_fsm:send_event(self(), {not_responsible, Partition, IndexN}, State)
+                                  gen_fsm:send_event(self(), {not_responsible, Partition, IndexN})
                           end
                   end, IndexNs),
     {next_state, update_trees, State};
