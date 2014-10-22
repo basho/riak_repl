@@ -770,7 +770,7 @@ prop_balance() ->
 %% eunit wrapper
 eqc_test_() ->
     {spawn,
-     [{timeout, 10, ?_assert(eqc:quickcheck(eqc:testing_time(4, prop_balance())))}]}.
+     [{timeout, 60, ?_assert(eqc:quickcheck(eqc:testing_time(4, prop_balance())))}]}.
 
 -endif.
 
