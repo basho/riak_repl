@@ -26,6 +26,8 @@
 -define(DEFAULT_MAX_SINKS_NODE, 1).
 %% How many times during a fullsync we should try a partition
 -define(DEFAULT_SOURCE_RETRIES, infinity).
+%% How many times we should retry when failing a reservation
+-define(DEFAULT_RESERVE_RETRIES, 0).
 %% 20 seconds. sources should claim within 5 seconds, but give them a little more time
 -define(RESERVATION_TIMEOUT, (20 * 1000)).
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
@@ -39,7 +41,7 @@
 -type(ip_portnum() :: non_neg_integer()).
 -type(repl_addr() :: {ip_addr_str(), ip_portnum()}).
 -type(repl_addrlist() :: [repl_addr()]).
--type(repl_socket() :: port()).
+-type(repl_socket() :: port() | ssl:sslsocket()).
 -type(repl_sitename() :: string()).
 -type(repl_sitenames() :: [repl_sitename()]).
 -type(repl_ns_pair() :: {node(), repl_sitename()}).
