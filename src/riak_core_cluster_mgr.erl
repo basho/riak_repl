@@ -770,11 +770,11 @@ shuffle_remote_ipaddrs([]) ->
 shuffle_remote_ipaddrs(RemoteUnsorted) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
-    NodesTagged = lists:zip( lists:seq(1, length(SortedNodes)), SortedNodes ),
+    NodesTagged = lists:zip(lists:seq(1, length(SortedNodes)), SortedNodes),
     case lists:keyfind(node(), 2, NodesTagged) of
         {MyPos, _} ->
             OurClusterName = riak_core_connection:symbolic_clustername(),
-            RemoteAddrs = shuffle_with_seed( lists:sort( RemoteUnsorted ), [OurClusterName] ),
+            RemoteAddrs = shuffle_with_seed(lists:sort(RemoteUnsorted), [OurClusterName]),
 
             %% MyPos is the position if *this* node in the sorted list of
             %% all nodes in my ring.  Now choose the node at the corresponding
@@ -782,8 +782,8 @@ shuffle_remote_ipaddrs(RemoteUnsorted) ->
             SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
             case lists:split(SplitPos,RemoteAddrs) of
                 {BeforeBuddy,[Buddy|AfterBuddy]} ->
-                    {ok, [Buddy | shuffle_with_seed(AfterBuddy ++ BeforeBuddy, node()) ]}
+                    {ok, [Buddy | shuffle_with_seed(AfterBuddy ++ BeforeBuddy, node())]}
             end;
         false ->
-            {ok, shuffle_with_seed(lists:sort( RemoteUnsorted ), node())}
+            {ok, shuffle_with_seed(lists:sort(RemoteUnsorted), node())}
     end.

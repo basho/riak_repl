@@ -29,7 +29,8 @@
 %% <li>The server sends `term_to_binary({?CTRL_ACK, ?CTRL_REV, TheirCaps}).'</li>
 %% <li>If the server and client agree on SSL, the session is upgraded.</li>
 %% <li>The client sends `term_to_binary({Protocol, Version}).'</li>
-%% <li>The server sends `term_to_binary({ok, {ProtoName, {CommonMajor, RemoteMinor, LocalMinor}}})', after which we call ?MODULE:connect/6 and exit.</li>
+%% <li>The server sends `term_to_binary({ok, {ProtoName, {CommonMajor, RemoteMinor, LocalMinor}}})',</li>
+%% <li>after which we call ?MODULE:connect/6 and exit.</li>
 
 -module(riak_core_connection).
 -behavior(gen_fsm).
@@ -170,7 +171,17 @@ init({IP, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}) ->
             Hello = term_to_binary({?CTRL_HELLO, ?CTRL_REV, MyCaps}),
             ok = ranch_tcp:send(Socket, Hello),
             ranch_tcp:setopts(Socket, [{active, once}]),
-            State = #state{transport = ranch_tcp, socket = Socket, protocol = Protocol, protovers = ProtoVers, socket_opts = SocketOptions, mod = Mod, mod_args = ModArgs, cluster_name = MyName, local_capabilities = MyCaps, ip = IP, port = Port},
+            State = #state{transport = ranch_tcp,
+                           socket = Socket,
+                           protocol = Protocol,
+                           protovers = ProtoVers,
+                           socket_opts = SocketOptions,
+                           mod = Mod,
+                           mod_args = ModArgs,
+                           cluster_name = MyName,
+                           local_capabilities = MyCaps,
+                           ip = IP,
+                           port = Port},
             {ok, wait_for_capabilities, State};
         Else ->
             lager:warning("Could not connect ~p:~p due to ~p", [IP, Port, Else]),
@@ -205,9 +216,11 @@ handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{so
                     {stop, Error, State};
                 {NewTransport, NewSocket} ->
                     FullProto = {State#state.protocol, State#state.protovers},
-                    NewTransport:send(NewSocket, erlang:term_to_binary(FullProto)),
-                    NewTransport:setopts(NewSocket, [{active, once}]),
-                    State2 = State#state{transport = NewTransport, socket = NewSocket, remote_capabilities = TheirCaps},
+                    NewTransport:send(Socket, erlang:term_to_binary(FullProto)),
+                    NewTransport:setopts(Socket, [{active, once}]),
+                    State2 = State#state{transport = NewTransport,
+                                         socket = NewSocket,
+                                         remote_capabilities = TheirCaps},
                     {next_state, wait_for_protocol, State2}
             end;
         Else ->
@@ -222,7 +235,12 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
             IpPort = {State#state.ip, State#state.port},
             NegotiatedProto = {ProtoName, {CommonMajor, LocalMinor}, {CommonMajor, RemoteMinor}},
             _ = Transport:setopts(Socket, State#state.socket_opts),
-            _ModStarted = Module:connected(Socket, Transport, IpPort, NegotiatedProto, ModArgs, State#state.remote_capabilities),
+            _ModStarted = Module:connected(Socket,
+                                           Transport,
+                                           IpPort,
+                                           NegotiatedProto,
+                                           ModArgs,
+                                           State#state.remote_capabilities),
             {stop, normal, State};
         Else ->
             lager:warning("Invalid version returned: ~p", [Else]),
