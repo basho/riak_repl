@@ -5,6 +5,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 murdering_test_() ->
+     error_logger:tty(false),
     {setup, fun() ->
     % if the cluster_mgr is restarted after the leader process is running,
     % it should ask about who the current leader is.

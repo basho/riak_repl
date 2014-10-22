@@ -5,6 +5,7 @@
         maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
 
 -ifdef(TEST).
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -270,7 +271,7 @@ expand_hostnames({External, {Host, InternalPort}}, Acc) when is_list(Host) ->
             [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
-            case inet_res:gethostnames(Host) of
+            case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
                     lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
@@ -316,7 +317,8 @@ make_ifaddrs(Interfaces) ->
 
 
 get_matching_address_test_() ->
-    {setup, fun() ->
+        error_logger:tty(false),
+        {setup, fun() ->
                 application:set_env(riak_core, cluster_mgr, {{0, 0, 0, 0},
                         9090}),
                 lager:start(),
@@ -481,6 +483,7 @@ get_matching_address_test_() ->
         ]}.
 
 determine_netmask_test_() ->
+    error_logger:tty(false),
     [
         {"simple case",
             fun() ->
@@ -504,6 +507,7 @@ determine_netmask_test_() ->
     ].
 
 natmap_test_() ->
+    error_logger:tty(false),
     [
         {"forward lookups work",
             fun() ->

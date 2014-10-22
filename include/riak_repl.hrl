@@ -13,7 +13,7 @@
 -define(REPL_DEFAULT_ACK_FREQUENCY, 5).
 -define(FSM_SOCKOPTS, [{packet, 4}, {send_timeout, 300000}]).
 -define(REPL_VERSION, 3).
--define(LEGACY_STRATEGY, syncv1).
+-define(LEGACY_STRATEGY, keylist).
 -define(KEEPALIVE_TIME, 60000).
 -define(PEERINFO_TIMEOUT, 60000).
 -define(ELECTION_TIMEOUT, 60000).

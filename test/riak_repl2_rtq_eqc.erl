@@ -8,11 +8,17 @@
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
+
+-ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").
+-endif.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -define(BINARIED_OBJ_SIZE, 39). % 39 = byte_size(term_to_binary([make_ref()])).
 
@@ -32,39 +38,43 @@
 % queued item, get it?
 -record(qed_item, {seq, num_items, item_list = [], meta = []}).
 
--ifdef(TEST).
 rtq_test_() ->
-    {timeout, 80, {setup, fun() -> ok end,
-    fun(_) -> catch(meck:unload(riak_repl_stats)) end,
-    fun(_) -> [
+    {spawn,
+     [
+      {setup,
+       fun setup/0,
+       fun cleanup/1,
+       [ % run qc tests
+          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main()))))},
+          {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_parallel()))))}
 
-        {"prop_main", timeout, 40,
-            ?_assert(eqc:quickcheck(eqc:testing_time(20,
-                                                        ?MODULE:prop_main())))},
-
-        {"prop_parallel", timeout, 40,
-            ?_assert(eqc:quickcheck(eqc:testing_time(20,
-                                                        ?MODULE:prop_parallel())))}
-
-    ] end}}.
--endif.
-
+       ]
+      }
+     ]
+    }.
 
 max_bytes() ->
     ?LET(MaxBytes, nat(), {size, (MaxBytes+1) * ?BINARIED_OBJ_SIZE}).
 
-cleanup() ->
-    catch(meck:unload(riak_repl_stats)),
+setup() ->
+    error_logger:tty(false),
     ok = meck:new(riak_repl_stats, [passthrough]),
     ok = meck:expect(riak_repl_stats, rt_source_errors,
         fun() -> ok end),
     ok = meck:expect(riak_repl_stats, rt_sink_errors,
-        fun() -> ok end).
+        fun() -> ok end),
+    ok.
+
+cleanup(_) ->
+    kill_and_wait(riak_repl2_rtq),
+    catch(meck:unload(riak_repl_stats)),
+    meck:unload(),
+    ok.
 
 prop_main() ->
     ?FORALL(Cmds, commands(?MODULE),
         begin
-                cleanup(),
+%                setup(),
                 {H, S, Res} = run_commands(?MODULE,Cmds),
                 catch(exit(S#state.rtq, kill)),
                 aggregate(command_names(Cmds),
@@ -76,18 +86,20 @@ prop_parallel() ->
     ?FORALL(Cmds, parallel_commands(?MODULE),
     ?ALWAYS(Repeat,
         begin
-                cleanup(),
+%                setup(),
                 {H, S, Res} = run_parallel_commands(?MODULE,Cmds),
                 kill_all_pids({H, S}),
-                aggregate(command_names(Cmds),
-                    pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok))
+%                aggregate(command_names(Cmds),
+                command_names(Cmds),
+                    pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok)
         end))).
+
+-ifdef(PULSE).
 
 prop_pulse() ->
   ?FORALL(Cmds, parallel_commands(?MODULE),
   ?PULSE(HSR={_, _, R},
     begin
-      cleanup(),
       run_parallel_commands(?MODULE, Cmds)
     end,
     %catch(exit((element(2, HSR))#state.rtq, kill)),
@@ -112,6 +124,8 @@ pulse_instrument(File) ->
   code:purge(Mod),
   code:load_file(Mod),
   Mod.
+
+-endif.
 
 kill_all_pids(Pid) when is_pid(Pid) -> exit(Pid, kill);
 kill_all_pids([H|T])                -> kill_all_pids(H), kill_all_pids(T);
@@ -159,10 +173,8 @@ command(S) ->
     frequency(lists:map(fun(Call={call, _, Fun, _}) -> {weight(Fun), Call} end,
         [{call, ?MODULE, push, [make_item(), S#state.rtq]}] ++
         [{call, ?MODULE, push, [make_item(), routed_clusters(S#state.cs), S#state.rtq]}] ++
-        [{call, ?MODULE, new_consumer, [elements(S#state.pcs), S#state.rtq]} ||
+        [{call, ?MODULE, reregister_consumer, [elements(S#state.pcs), S#state.rtq]} ||
           S#state.pcs /= []] ++
-        [{call, ?MODULE, rm_consumer, [client_name(S), S#state.rtq]} ||
-          S#state.cs /= []] ++
         [{call, ?MODULE, replace_consumer, [client_name(S), S#state.rtq]} ||
           S#state.cs /= []] ++
         [{call, ?MODULE, pull, [client_name(S), S#state.rtq]} ||
@@ -175,11 +187,11 @@ command(S) ->
     )).
 
 weight(push) -> 5;
-weight(new_consumer) -> 3;
+weight(new_consumer) -> 1;
 weight(rm_consumer) -> 1;
 weight(replace_consumer) -> 1;
 weight(pull) -> 8;
-weight(ack) -> 6;
+weight(ack) -> 8;
 weight(_) -> 1.
 
 precondition(S,{call,riak_repl2_rtq,test_init,_}) ->
@@ -248,8 +260,6 @@ next_state(S, _V, {call, _, new_consumer, [Name, _Q]}) ->
     TrueMaster = trim(MasterQ, S),
     TC = #tc{name = Name, tout = TrueMaster},
     S#state{cs = [TC|S#state.cs], pcs = S#state.pcs -- [Name]};
-next_state(S,_V,{call, _, rm_consumer, [Name, _Q]}) ->
-    delete_client(Name, S#state{pcs=[Name|S#state.pcs]});
 next_state(S,_V,{call, _, replace_consumer, [Name, _Q]}) ->
     Client = get_client(Name, S),
     %% anything we didn't ack will be considered dropped by the queue
@@ -352,8 +362,9 @@ new_consumer(Name, Q) ->
     lager:info("registering ~p to ~p~n", [Name, Q]),
     riak_repl2_rtq:register(Name).
 
-rm_consumer(Name, _Q) ->
+reregister_consumer(Name, _Q) ->
     lager:info("unregistering ~p", [Name]),
+    riak_repl2_rtq:unregister(Name),
     riak_repl2_rtq:unregister(Name).
 
 replace_consumer(Name, _Q) ->
@@ -366,18 +377,18 @@ get_rtq_bytes(_Q) ->
 
 
 pull(Name, Q) ->
-    lager:info("~p pulling from ~p~n", [Name, Q]),
     Ref = make_ref(),
     Self = self(),
+
     F = fun(Item) ->
             Self ! {Ref, Item},
             receive
                 {Ref, ok} ->
                     ok
             after
-                5 ->
+                1000 ->
                     lager:info("No pull ack from ~p~n", [Name]),
-                    error 
+                    error
             end
     end,
     riak_repl2_rtq:pull(Name, F),
@@ -389,7 +400,7 @@ pull(Name, Q) ->
         {Ref, _Wut} ->
             none
     after
-        20 ->
+        1000 ->
             lager:info("queue empty: ~p~n", [Name]),
             none
     end.
@@ -403,6 +414,7 @@ delete_client(Name, S) ->
     S#state{cs=lists:keydelete(Name, #tc.name, S#state.cs)}.
 
 update_client(C, S) ->
+    %?debugFmt("client:~p, seq:~p~n", [C#tc.name, S#state.qseq]),
     S#state{cs=[C|lists:keydelete(C#tc.name, #tc.name, S#state.cs)]}.
 
 gen_seq(#tc{trec = []}) -> no_seq;
@@ -459,4 +471,3 @@ trim(Q, #state{max_bytes=Max}) ->
     NewQ.
 
 -endif.
-
