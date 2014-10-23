@@ -511,7 +511,7 @@ start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
     {ok, RawAddress} = inet_parse:address(IP),
     {ok, Pid} = ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
                                 [{ip, RawAddress}, {port, Port}],
-                                ?MODULE, SubProtocols),
+                                riak_core_service_conn, SubProtocols),
     lager:info("Service manager: listening on ~s:~p", [IP, Port]),
     {ok, Pid}.
 
