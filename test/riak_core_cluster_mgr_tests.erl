@@ -283,10 +283,7 @@ start_link_setup() ->
     start_link_setup(?MY_CLUSTER_ADDR).
 
 start_link_setup(ClusterAddr) ->
-    case os:getenv("ENABLE_LAGER") of
-        false -> error_logger:tty(false);
-        _ -> lager:start(), lager:set_loglevel(lager_console_backend, debug)
-    end,
+    Started = riak_repl_test_util:maybe_start_lager(),
     % core features that are needed
     {ok, Eventer} = riak_core_ring_events:start_link(),
     {ok, RingMgr} = riak_core_ring_manager:start_link(test),
@@ -311,7 +308,7 @@ start_link_setup(ClusterAddr) ->
     %% now start cluster manager
     {ok, Pid4 } = riak_core_cluster_mgr:start_link(),
     start_fake_remote_cluster_service(),
-    [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4].
+    {Started, [Leader, Eventer, RingMgr, Pid1, Pid2, Pid3, Pid4]}.
 
 watchit(Pid) ->
     proc_lib:spawn(?MODULE, watchit_loop, [Pid]).
@@ -332,7 +329,7 @@ watchit_loop(Pid, Mon) ->
             watchit_loop(Pid, Mon)
     end.
 
-cleanup(Pids) ->
+cleanup({Apps, Pids}) ->
     process_flag(trap_exit, true),
     stop_fake_remote_cluster_service(),
     riak_core_service_mgr:stop(),
@@ -346,6 +343,7 @@ cleanup(Pids) ->
     catch exit(riak_core_ring_events, kill),
     [catch exit(Pid, kill) || Pid <- Pids],
     meck:unload(),
+    ok = riak_repl_test_util:stop_apps(Apps),
     process_flag(trap_exit, false),
     ok.
 

@@ -6,6 +6,7 @@
 -export([wait_for_pid/1, wait_for_pid/2]).
 -export([maybe_unload_mecks/1]).
 -export([start_test_ring/0, stop_test_ring/0]).
+-export([maybe_start_lager/0, start_lager/0, stop_apps/1]).
 
 
 start_test_ring() ->
@@ -90,3 +91,31 @@ wait_for_pid(Pid, Timeout) ->
     after Timeout ->
         {error, timeout}
     end.
+
+%% @doc Check the enviroment variable "ENABLE_LAGER" and return any
+%% applications that were started if it was set. If it wasn't set, it
+%% returns an empty list.
+maybe_start_lager() ->
+    maybe_start_lager(os:getenv("ENABLE_LAGER")).
+
+maybe_start_lager(false) ->
+    [];
+
+maybe_start_lager(_) ->
+    start_lager().
+
+start_lager() ->
+    %error_logger:tty(false),
+    {ok, Started} = application:ensure_all_started(lager),
+    lager:set_loglevel(lager_console_backend, debug),
+    Started.
+
+%% @doc Stop the applications listsed. The list is assumed to be in the
+%% order they were started, like what is returned from
+%% `application:ensure_all_started/1'. The apps are stopped in the reverse
+%% order.
+stop_apps(Started) ->
+    lists:foreach(fun(App) ->
+        application:stop(App)
+    end, lists:reverse(Started)).
+

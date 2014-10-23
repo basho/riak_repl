@@ -50,20 +50,19 @@ service_test_() ->
      [
       {setup,
        fun() ->
-               case os:getenv("ENABLE_LAGER") of
-                    false -> error_logger:tty(false);
-                    _ -> lager:start(), lager:set_loglevel(lager_console_backend, debug)
-               end,
+               StartedApps = riak_repl_test_util:maybe_start_lager(),
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
                ok = application:start(ranch),
-               {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR)
+               {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR),
+               StartedApps
        end,
-       fun(_) ->
+       fun(Apps) ->
                process_flag(trap_exit, true),
                riak_core_ring_manager:stop(),
                catch exit(riak_core_ring_events, kill),
                application:stop(ranch),
+               ok = riak_repl_test_util:stop_apps(Apps),
                process_flag(trap_exit, false),
                ok
        end,
