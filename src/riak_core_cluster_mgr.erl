@@ -98,7 +98,7 @@
          terminate/2, code_change/3]).
 
 %% internal functions
--export([ctrlService/5, ctrlServiceProcess/5,
+-export([%ctrlService/5, ctrlServiceProcess/5,
          round_robin_balancer/1, cluster_mgr_sites_fun/0,
          get_my_members/1]).
 
@@ -145,7 +145,7 @@ register_restore_cluster_targets_fun(ReadClusterFun) ->
 register_save_cluster_members_fun(WriteClusterFun) ->
     gen_server:cast(?SERVER, {register_save_cluster_members_fun, WriteClusterFun}).
 
-%% @doc Specify how to reach a remote cluster, it's name is
+%% @doc Specify how to reach a remote cluster, its name is
 %% retrieved by asking it via the control channel.
 -spec(add_remote_cluster(ip_addr()) -> ok).
 add_remote_cluster({IP,Port}) ->
@@ -191,7 +191,8 @@ init(Defaults) ->
     case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
         false ->
             ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
-            ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
+            %ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
+            ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, riak_core_cluster_serv, start_link, []}},
             riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
         true ->
             ok
@@ -712,75 +713,6 @@ cluster_mgr_sites_fun() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Clusters = riak_repl_ring:get_clusters(Ring),
     [{?CLUSTER_NAME_LOCATOR_TYPE, Name} || {Name, _Addrs} <- Clusters].    
-
-%%-------------------------
-%% control channel services
-%%-------------------------
-
-ctrlService(_Socket, _Transport, {error, Reason}, _Args, _Props) ->
-    riak_repl_stats:server_connect_errors(),
-    lager:error("Failed to accept control channel connection: ~p", [Reason]);
-ctrlService(Socket, Transport, {ok, {cluster_mgr, MyVer, RemoteVer}}, _Args, Props) ->
-    {ok, ClientAddr} = Transport:peername(Socket),
-    RemoteClusterName = proplists:get_value(clustername, Props),
-    lager:debug("Cluster Manager: accepted connection from cluster at ~p named ~p",
-               [ClientAddr, RemoteClusterName]),
-    Pid = proc_lib:spawn_link(?MODULE,
-                              ctrlServiceProcess,
-                              [Socket, Transport, MyVer, RemoteVer, ClientAddr]),
-    Transport:controlling_process(Socket, Pid),
-    {ok, Pid}.
-
-read_ip_address(Socket, Transport, Remote) ->
-    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-        {ok, BinAddr} ->
-            MyAddr = binary_to_term(BinAddr),
-            {ok, MyAddr};
-        {error, closed} ->
-            {error, closed};
-        Error ->
-            lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
-                        [Remote, Error]),
-            Error
-    end.
-
-%% process instance for handling control channel requests from remote clusters.
-ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr) ->
-    case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
-        {ok, ?CTRL_ASK_NAME} ->
-            %% remote wants my name
-            MyName = riak_core_connection:symbolic_clustername(),
-            ok = Transport:send(Socket, term_to_binary(MyName)),
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
-        {ok, ?CTRL_ASK_MEMBERS} ->
-            %% remote wants list of member machines in my cluster
-            case read_ip_address(Socket, Transport, ClientAddr) of
-                {error, closed} ->
-                    {error, connection_closed};
-                {ok, MyAddr} ->
-                    BalancedMembers = gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity),
-                    ok = Transport:send(Socket, term_to_binary(BalancedMembers)),
-                    ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
-                Error ->
-                    Error
-            end;
-        {error, timeout} ->
-            %% timeouts are OK, I think.
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr);
-        {error, closed} ->
-            % nothing to do now but die quietly
-            {error, connection_closed};
-        {error, Reason} ->
-            lager:error("Cluster Manager: service ~p failed recv on control channel. Error = ~p",
-                        [self(), Reason]),
-            % nothing to do now but die
-            {error, Reason};
-        Other ->
-            lager:error("Cluster Manger: service ~p recv'd unknown message on cluster control channel: ~p",
-                        [self(), Other]),
-            % ignore and keep trying to be a nice service
-            ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, ClientAddr)
-    end.
 
 %% @doc If the current leader, connect to all clusters that have been
 %%      currently persisted in the ring.

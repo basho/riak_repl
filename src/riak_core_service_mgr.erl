@@ -30,7 +30,7 @@
 %% common, the connection fails. Minor versions do not need to match. On a
 %% success, the server sends the Major version, Client minor version, and
 %% Host minor version to the client. After that, the registered
-%% module:function/5 is called and control of the socket passed to it.
+%% `module:function/5' is called and control of the socket passed to it.
 
 
 -module(riak_core_service_mgr).
@@ -115,26 +115,26 @@ start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
 %% @doc Once a protocol specification is registered, it will be kept
 %% available by the Service Manager. Note that the callee is responsible
 %% for taking ownership of the socket via
-%% Transport:controlling_process(Socket, Pid).  Only the strategy of
-%% `round_robin' is supported; it's arg is ignored.
+%% `Transport:controlling_process(Socket, Pid)'.  Only the strategy of
+%% `round_robin' is supported; its arg is ignored.
 register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
     gen_server:cast(?SERVER, {register_service, HostProtocol, Strategy}).
 
-%% @doc Blocking version of register_service.
+%% @doc Blocking version of `register_service'.
 sync_register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
     gen_server:call(?SERVER, {register_service, HostProtocol, Strategy}).
 
-%% @doc Unregister the given protocol-id. Existing connections for this
+%% @doc Unregister the given protocol id. Existing connections for this
 %% protocol are not killed. New connections for this protocol will not be
 %% accepted until re-registered.
 unregister_service(ProtocolId) ->
     gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
 
-%% @doc Blocking version of unregister_service.
+%% @doc Blocking version of `unregister_service'.
 sync_unregister_service(ProtocolId) ->
     gen_server:call(?SERVER, {unregister_service, ProtocolId}).
 
@@ -144,7 +144,7 @@ is_registered(ProtocolId) ->
 
 %% @doc Register a callback function that will get called periodically or
 %% when the connection status of services changes. The function will
-%% receive a list of tuples: {<protocol-id>, <stats>} where stats
+%% receive a list of tuples: `{<protocol-id>, <stats>}' where stats
 %% holds the number of open connections that have been accepted  for that
 %% protocol type. This can be used to report load, in the form of
 %% connected-ness, for each protocol type, to remote clusters, e.g.,
@@ -375,7 +375,7 @@ start_negotiated_service(Socket, Transport,
     Transport:setopts(Socket, Options),
 
     %% call service body function for matching protocol. The callee should start
-    %% a process or gen_server or such, and return {ok, pid()}.
+    %% a process or gen_server or such, and return `{ok, pid()}'.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args, Props) of
         {ok, Pid} ->
             {ok,{ClientProto,_Client,_Host}} = NegotiatedProtocols,
@@ -503,15 +503,15 @@ normalize_ip(IP) when is_tuple(IP) ->
 %% @doc Start the connection dispatcher with a limit of MaxListeners
 %% listener connections and supported sub-protocols. When a connection
 %% request arrives, it is mapped via the associated Protocol atom to an
-%% acceptor function called as Module:Function(Listener, Socket, Transport, Args),
-%% which must create it's own process and return {ok, pid()}
+%% acceptor function called as `Module:Function(Listener, Socket, Transport, Args)',
+%% which must create its own process and return `{ok, pid()}'.
 
 -spec(start_dispatcher(ip_addr(), non_neg_integer(), [hostspec()]) -> {ok, pid()}).
 start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
     {ok, RawAddress} = inet_parse:address(IP),
     {ok, Pid} = ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
                                 [{ip, RawAddress}, {port, Port}],
-                                ?MODULE, SubProtocols),
+                                riak_core_service_conn, SubProtocols),
     lager:info("Service manager: listening on ~s:~p", [IP, Port]),
     {ok, Pid}.
 

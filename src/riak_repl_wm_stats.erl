@@ -83,7 +83,7 @@ produce_body(ReqData, Ctx) ->
 
 %% @spec pretty_print(webmachine:wrq(), context()) ->
 %%          {string(), webmachine:wrq(), context()}
-%% @doc Format the respons JSON object is a "pretty-printed" style.
+%% @doc Format the response JSON object in a "pretty-printed" style.
 pretty_print(RD1, C1=#ctx{}) ->
     {Json, RD2, C2} = produce_body(RD1, C1),
     {json_pp:print(binary_to_list(list_to_binary(Json))), RD2, C2}.

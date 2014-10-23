@@ -74,18 +74,20 @@ conection_test_() ->
      [
       {setup,
        fun() ->
+               Apps = riak_repl_test_util:maybe_start_lager(),
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
                ok = application:start(ranch),
                {ok, _} = riak_core_service_mgr:start_link(?TEST_ADDR),
-               ok
+               Apps
        end,
-       fun(_) ->
+       fun(Apps) ->
                process_flag(trap_exit, true),
                riak_core_service_mgr:stop(),
                riak_core_ring_manager:stop(),
                catch exit(riak_core_ring_events, kill),
                application:stop(ranch),
+               ok = riak_repl_test_util:stop_apps(Apps),
                process_flag(trap_exit, false),
                ok
        end,
@@ -140,7 +142,8 @@ conection_test_() ->
                            %% try to connect via a client that speaks 0.1 and 3.1. No Match with host!
                            ClientProtocol = {test1protoFailed, [{0,1},{3,1}]},
                            ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, failed_client_args}},
-                           riak_core_connection:connect(?TEST_ADDR, ClientSpec),
+                           Got = riak_core_connection:sync_connect(?TEST_ADDR, ClientSpec),
+                           ?assertEqual({error, protocol_version_not_supported}, Got),
 
                            timer:sleep(2000)
                    end}

@@ -311,17 +311,17 @@ showClusterConn({Remote,Pid}) ->
     %% try to get status from Pid of cluster control channel.
     %% if we haven't connected successfully yet, it will time out, which we will fail
     %% fast for since it's a local process, not a remote one.
-    Pid ! {self(), status},
-    receive
-        {Pid, connecting, SRemote} ->
-            io:format("~-20s ~-20s ~-15s (connecting to ~p)~n",
-                      [ConnName, "", PidStr, string_of_remote(SRemote)]);
+    try riak_core_cluster_conn:status(Pid, 2) of
         {Pid, status, {ClientAddr, _Transport, Name, Members}} ->
             IPs = [string_of_ipaddr(Addr) || Addr <- Members],
             CAddr = choose_best_addr(Remote, ClientAddr),
             io:format("~-20s ~-20s ~-15s ~p (via ~s)~n",
-                      [ConnName, Name, PidStr,IPs, CAddr])
-    after 2 ->
+                      [ConnName, Name, PidStr,IPs, CAddr]);
+        {_StateName, SRemote} ->
+            io:format("~-20s ~-20s ~-15s (connecting to ~p)~n",
+                      [ConnName, "", PidStr, string_of_remote(SRemote)])
+    catch
+        'EXIT':{timeout, _} ->
             io:format("~-20s ~-20s ~-15s (status timed out)~n",
                       [ConnName, "", PidStr])
     end.
