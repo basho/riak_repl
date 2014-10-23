@@ -76,13 +76,10 @@ eqc_test_() ->
      }}.
 
 setup() ->
-    error_logger:tty(false),
-    lager:start(),
-    ok.
+    riak_repl_test_util:start_lager().
 
-cleanup(_) ->
-    application:stop(lager),
-    ok.
+cleanup(Apps) ->
+    riak_repl_test_util:stop_apps(Apps).
 
 %% ====================================================================
 %% EQC Properties
