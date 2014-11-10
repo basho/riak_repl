@@ -93,11 +93,25 @@ Enabling fullsync to a sink first adds the sink (called remote in the code) to t
 
 ## Starting fullsync
 
-Starting a fullsync to a sink cluster calls riak_repl_fscoordinator_sup on the leader node to get the list of processes corresponding to each enabled fullsync (to a sink), which are its children (1) (2).  If it finds it, it async sends it the start_fullsync message (3)
+Starting a fullsync to a sink cluster calls riak_repl_fscoordinator_sup on the
+leader node to get the list of processes corresponding to each enabled fullsync
+(to a sink), which are its children (1) (2).  If it finds it, it async sends it
+the start_fullsync message (3)
 
-When the coordinator process receives the start_fullsync message, it starts sending `whereis` requests to the sink to locate partitions (4) (5). Partitions are chosen to obey the limits of source/sink workers per node and cluster at any given point (6). On the sink side, the riek_repl2_fscoordinator_serv process replies to these whereis requests.
+When the coordinator process receives the start_fullsync message, it starts
+sending `whereis` requests to the sink to locate partitions (4) (5). Partitions
+are chosen to obey the limits of source/sink workers per node and cluster at
+any given point (6). 
 
-It reserves slots for those partitions on the nodes they live in, obeying the configured max on sink processes. It may return the location of the partition if succesful or location_busy/location_down messages back (6).  The process keeps track of busy or unavailable nodes and tries not to hit them for a bit. Upon receiving a location message, a riak_repl2_fssource process is started on the node owning that partition that will connect to the sink node where that partition is located. A worker for either the keylisting or AAE strategy wil be created to do its thing.
+On the sink side, the riak_repl2_fscoordinator_serv process replies to these
+whereis requests. It reserves slots for those partitions on the nodes they live
+in, obeying the configured max on sink processes. It may return the location of
+the partition if succesful or location_busy/location_down messages back (6).
+The source side process keeps track of busy or unavailable nodes and tries not
+to hit them for a bit. Upon receiving a location message, a riak_repl2_fssource
+process is started on the node owning that partition that will connect to the
+sink node where that partition is located. A worker for either the keylisting
+or AAE strategy wil be created to do its thing.
 
 1. [riak_repl_console:fullsync/1][]
 2. [riak_repl2_fscoordinator_sup:started/0][]
