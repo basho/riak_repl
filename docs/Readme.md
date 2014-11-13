@@ -125,6 +125,81 @@ or AAE strategy wil be created to do its thing.
 
 ### Keylist fullsync
 
+Before v2, the terms 'source' and 'sink' were not used; client and server
+were. The client would run on what we now term the sink, and the server
+would run on the sink. Thus, we have the confusing names of the two modules
+used for fullsync keylist stategy: riak_repl_keylist_client and
+riak_repl_keylist_server. For consistency and clarity, the terms 'source'
+and 'sink' will be used.
+
+#### High Level
+
+1. For each partition, start a riak_repl_fullsync_helper.
+2. Each helper will fold over the keys in the given parition.
+3. During the fold, hash each object.
+4. Put the hashed object in a file.
+5. Sink sends their keylist file to the source.
+6. The two keylist files are compared and differences sent over.
+
+#### At least shorter than the code.
+
+Source: fssource
+1. fssource signaled that connection estblished to sink.
+2. Call [riak_repl_keylist_server:start_link/6][]
+3. Call [riak_repl_keylist_server:start_fullsync/2][]
+4. fssource waits for errors, or message from fssink 'fullsync_complete'.
+5. Once fullsync complete, stops, which stops the started keylist_server.
+
+Source: riak_repl_keylist_server:start_link/6
+1. Wait for start_fullsync/2 call, this will give the partition list. In v2, this is a list of 1.
+2. Create a file for the sink's keylist.
+3. Create a file for source's keylist.
+4. [riak_repl_fullsync_helper:start_link/1][].
+5. [riak_repl_fullsync_helper:make_keylist/3][].
+6. Send fullsync start with partition id to sink side over socket.
+7. Wait for partition id to be sent back from sink side.
+8. Wait for local keylist file to be filled.
+9. Request sink's keylist for the partition.
+10. On {kl_hunk, binary()} from sink, append given binary() to sink's keylist file.
+11. On kl_eof, continue to next step, otherwise keep waitng for hunks.
+12. [riak_repl_fullsynce_helper:start_link/1][].
+13. [riak_repl_fullsync_helper:diff_stream/5].
+14. For each diff message received, riak_repl_fullsync_worker:do_get/8. That reads the object using a local client, and sends it accross the wire.
+15. After getting diff_done, send diff_done to sink.
+
+Source riak_repl_fullsync_helper:make_keylist/3
+1. Fold over keys on given partition into given file.
+2. For each key, put a hash of the entire object into the file.
+3. Once fold is complete, sort file.
+4. Signal to owner fsm (given in the start_link function) that the keylist has been built.
+
+Source riak_repl_fullsync_helper:diff_stream/5
+1. Open an iterator for both the local keylist file and the remote keylist file.
+2. On differeing hash or missing hash of the sinks's file, send message to riak_repl_keylist_server giving the {bucket(), key()} of the object.
+3. Once all comparisons are done, send diff_done to riak_repl_keylist_server.
+4. Exit normal.
+
+Sink: fssink
+1. fssink singnaled that a connection as been established, and it is now in charge.
+2. [riak_repl_keylist_client:start_link/4][].
+3. any message from the socket other than a fullsync diff object is fowarded to the keylist_client.
+4. fullsync diff object messages are put using a raw riak_kv_put_fsm.
+5. Exits normally on socket error or close.
+
+Sink: riak_repl_keylist_client:start_link/4
+1. Wait for {start_fullsync, [PartitionId]} from socket.
+2. If vnode lock was not successful, exit abnormally, thus ending the sync.
+3. Claim a reservation for the partion.
+4. Send to the source the partition id.
+5. [riak_repl_fullsync_helper:start_link/1][].
+6. [riak_repl_fullsync_helper:make_keylist3][].
+7. Wait for local keylist hash file to be filled and a request for our keylist.
+8. Send out keylist is chunks, occasionally requesting an ack that chunks are being handled, until eof is reached.
+9. Inform source that the end of the file is reached.
+10. As {diff_ack, PartitionId} messages come in, reply with same on socket.
+11. When diff_done comes in, return to waiting; this will end up being exited when the source (which sent the diff_done) closes the connection.
+
+
 ### AAE fullsync
 
 
