@@ -213,3 +213,61 @@ Stopping a fullsync to a sink is similar to starting it, but we send the stop_fu
 1. [riak_repl_console:fullsync/1][]
 2. [riak_repl2_fscoordinator:stop_fullsync/1][]
 
+## Realtime replication to a sink management
+
+The core of realtime replication is the realtime queue. The Realtime queue
+is called rtq for short. It is started on application start, and thus
+always running.
+
+The supervisor path to the rtq is:
+
+    riak_repl_sup ->
+        riak_repl2_rt_sup ->
+            riak_repl2_rtsource_sup ->
+                riak_repl2_rtq
+
+The supervisor is a rest_for_one, with the rtq as the first in line. If the
+rtq goes down, so does rtq overload protection, and the realtime source
+connection supervisor.
+
+The realtime and fullsync requirements are basically the same: both source
+and sink clusters need names. The source cluster must be connected to
+the sink cluster. Realtime is first enabled then started.
+
+## What happens once realtime is enabled to a sink
+
+Once enabled, the riak_repl2_rt applies a ring transformation to add the
+remote given to the list of rt_enabled items in the ring dictionary. Adding
+a sink mutliple times results in a long no-op.
+
+After enabling the sink on the source, it can then be started. Trying to
+start realtime to a sink that has not been enabled results in a long no-op.
+Starting the realtime adds the remote to a list in the ring dictionary with
+the name 'rt_started'.
+
+Both the above ring transformations, assuming they changed something, get
+handled in the riak_repl_ring_handler module. The realtime postcommit hook
+is always installed, being a noop if it was already present.
+
+If any realtime connections need to be started, the ring handler registers
+a client to the rtq for the sink name, and calls the rtsource_conn_sup to
+'enable' the realtime connection. The rtsource_conn module uses the
+connection manager to start the connection.
+
+Once the rtsource_conn is connected, a helper is started using
+riak_repl2_rtsource_helper. The helper's job is to pull from the rtq
+and send the object across the wire. It is also in charge of sending
+heartbeats.
+
+1. [riak_repl_console:realtime/1][]
+2. [riak_repl2_rt:enable/1][]
+3. [riak_repl2_rt:start/1][]
+4. [riak_repl_ring_handler:handle_event/2][] - 2nd ring_update clause.
+5. [riak_repl2_rt:ensure_rt/2][]
+6. [riak_repl2_rtq:register/1][]
+7. [riak_repl2_rtsource_conn_sup:enable/1][]
+8. [riak_repl2_rtsource_conn:start_link/1][]
+9. [riak_repl2_rtsouce_conn:handle_call/3][] - connected clause
+10. [riak_repl2_rtsouce_helper:start_link/4][]
+11. [riak_repl2_rtq:pull/2][]
+
