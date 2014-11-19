@@ -1,3 +1,6 @@
+EXOMETER_PACKAGES = "(basic)"
+export EXOMETER_PACKAGES
+
 .PHONY: rel deps test
 
 all: deps compile
