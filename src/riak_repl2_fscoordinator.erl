@@ -660,7 +660,7 @@ handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Wait
             RetryLimit = app_helper:get_env(riak_repl, max_reserve_retries, ?DEFAULT_RESERVE_RETRIES),
             lager:info("Partition ~p is unavailable on cluster ~p", [Partition, State#state.other_cluster]),
             State2 = State#state{whereis_waiting = Waiting2},
-            {RetriedCount, State3} = increment_error_dict(PartitionInfo, State#state.reserve_retries, State2),
+            {RetriedCount, State3} = increment_error_dict(PartitionInfo, #state.reserve_retries, State2),
             State4 = case RetriedCount of
                 N when N > RetryLimit, is_integer(N) ->
                     lager:warning("Fullsync dropping partition ~p, ~p location_down failed retries", [PartitionInfo#partition_info.index, RetryLimit]),
