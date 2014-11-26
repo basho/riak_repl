@@ -642,7 +642,10 @@ handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = 
             Tref = PartitionInfo#partition_info.whereis_tref,
             erlang:cancel_timer(Tref),
             Dropped = [Partition | State#state.dropped],
-            State2 = State#state{whereis_waiting = Waiting2, dropped = Dropped},
+            #state{retry_exits = RetryExits, error_exits = ErrorExits} = State,
+            State2 = State#state{whereis_waiting = Waiting2, dropped = Dropped,
+                                retry_exits = RetryExits + 1,
+                                error_exits = ErrorExits + 1},
             start_up_reqs(State2)
     end;
 handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Waiting} = State) ->
@@ -660,10 +663,16 @@ handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Wait
                 N when N > RetryLimit, is_integer(N) ->
                     lager:warning("Fullsync dropping partition ~p, ~p location_down failed retries", [PartitionInfo#partition_info.index, RetryLimit]),
                     Dropped = [Partition | State#state.dropped],
-                    State3#state{dropped = Dropped};
+                    #state{retry_exits = RetryExits,
+                           error_exits = ErrorExits} = State,
+                    State3#state{dropped = Dropped,
+                                 error_exits = ErrorExits + 1,
+                                 retry_exits = RetryExits + 1};
                 _ ->
                     PQueue = queue:in(PartitionInfo, State3#state.partition_queue),
-                    State3#state{partition_queue = PQueue}
+                    #state{retry_exits = RetryExits} = State,
+                    State3#state{partition_queue = PQueue,
+                                retry_exits = RetryExits + 1}
             end,
             start_up_reqs(State4)
     end.
