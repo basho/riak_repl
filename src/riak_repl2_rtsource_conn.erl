@@ -360,8 +360,8 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
             no; % we're already connected to the ideal buddy
         false ->
             %% compute the addrs that are "better" than the currently connected addr
-            BetterAddrs = lists:takewhile(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
-                                          ShuffledAddrs),
+            BetterAddrs = lists:filter(fun(A) -> not same_ipaddr(ConnectedAddr, A) end,
+                                       ShuffledAddrs),
             %% remove those that are blacklisted anyway
             UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
             lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
