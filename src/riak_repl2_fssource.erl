@@ -101,14 +101,12 @@ init([Partition, IP, Owner]) ->
             case connect(IP, SupportedStrategy, Partition) of
                 {error, Reason} ->
                     {stop, Reason};
-                Result ->
-                    Result
+                {ok, State}->
+                    {ok, State#state{owner = Owner}}
             end;
         {error, Reason} ->
             %% the vnode is probably busy. Try again later.
-            {stop, Reason};
-        {ok, State}->
-            {ok, State#state{owner = Owner}}
+            {stop, Reason}
     end.
 
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
