@@ -3,8 +3,9 @@
 
 -behaviour(gen_server).
 %% API
--export([start_link/2, connected/6, connect_failed/3, start_fullsync/1,
-         stop_fullsync/1, cluster_name/1, legacy_status/2, fullsync_complete/1]).
+-export([start_link/2, start_link/3, connected/6, connect_failed/3,
+    start_fullsync/1, stop_fullsync/1, fullsync_complete/1,
+    cluster_name/1, legacy_status/2, soft_link/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -19,11 +20,15 @@
         connection_ref,
         fullsync_worker,
         work_dir,
-        strategy
+        strategy,
+        owner
     }).
 
 start_link(Partition, IP) ->
-    gen_server:start_link(?MODULE, [Partition, IP], []).
+    start_link(Partition, IP, undefined).
+
+start_link(Partition, IP, Owner) ->
+    gen_server:start_link(?MODULE, [Partition, IP, Owner], []).
 
 %% connection manager callbacks
 connected(Socket, Transport, Endpoint, Proto, Pid, Props) ->
@@ -51,9 +56,33 @@ cluster_name(Pid) ->
 legacy_status(Pid, Timeout) ->
     gen_server:call(Pid, legacy_status, Timeout).
 
+%% @doc Create a 'soft link' between the calling process and the fssource.
+%% A soft-link allows for a soft_exit message to be sent before a normal
+%% exit to any process that has created a soft link. Only one link is
+%% held at a time, and alink is in only one direction (the fssource
+%% reports to calling process).
+soft_link(Pid) ->
+    % not using default long timeout because this is primarily used by the
+    % fscoordinator, and we don't want to potentially block that for up to
+    % 2 minutes. 15 seconds is bad enough in a worst case scenario.
+    try gen_server:call(Pid, {soft_link, self()}, timer:seconds(15)) of
+        ok -> % older versions returned 'ok' for the catchall
+            false;
+        true ->
+            true
+    catch
+        _What:Reason ->
+            lager:debug("Could not create soft link to ~p from ~p due to ~p", [Pid, self(), Reason]),
+            {error, Reason}
+    end.
+
 %% gen server
 
 init([Partition, IP]) ->
+    init([Partition, IP, undefined]);
+
+init([Partition, IP, Owner]) ->
+
     RequestedStrategy = app_helper:get_env(riak_repl,
                                            fullsync_strategy,
                                            ?DEFAULT_FULLSYNC_STRATEGY),
@@ -72,8 +101,8 @@ init([Partition, IP]) ->
             case connect(IP, SupportedStrategy, Partition) of
                 {error, Reason} ->
                     {stop, Reason};
-                Result ->
-                    Result
+                {ok, State}->
+                    {ok, State#state{owner = Owner}}
             end;
         {error, Reason} ->
             %% the vnode is probably busy. Try again later.
@@ -149,9 +178,22 @@ handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket,
                                                strategy=Strategy}) ->
-    Res = case is_pid(FSW) andalso is_process_alive(FSW) of
-        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
-        false -> []
+    lager:debug("Sending status to ~p", [FSW]),
+    Res = case is_pid(FSW) of
+        true ->
+            % try/catch because there may be a message in the pid's
+            % mailbox that will cause it to exit before it gets to our
+            % status request message.
+            try gen_fsm:sync_send_all_state_event(FSW, status, infinity) of
+                SyncSendRes ->
+                    SyncSendRes
+            catch
+                What:Why ->
+                    lager:notice("Error getting fullsync worker ~p status: ~p:~p", [FSW, What, Why]),
+                    []
+            end;
+        false ->
+            []
     end,
     SocketStats = riak_core_tcp_mon:format_socket_stats(
         riak_core_tcp_mon:socket_status(Socket), []),
@@ -172,6 +214,10 @@ handle_call(cluster_name, _From, State) ->
             ClusterName
     end,
     {reply, Name, State};
+handle_call({soft_link, NewOwner}, _From, State) ->
+    lager:debug("Changing soft_link from ~p to ~p", [State#state.owner, NewOwner]),
+    State2 = State#state{owner = NewOwner},
+    {reply, true, State2};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
@@ -221,16 +267,20 @@ handle_info({Proto, Socket, Data},
             gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
     end;
+handle_info({soft_exit, Pid, Reason}, State = #state{fullsync_worker = Pid}) ->
+    lager:debug("Fullsync worker exited normally, but really wanted it to be ~p", [Reason]),
+    maybe_soft_exit(Reason, State);
 handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
-    %% check if process alive only if it's defined
-    case is_pid(FSW) andalso is_process_alive(FSW) of
+    %% try to exit the fullsync worker; if we're dying because it did,
+    %% don't worry about the error (cause it's already dead).
+    case is_pid(FSW) of
         false ->
             ok;
         true ->
-            gen_fsm:sync_send_all_state_event(FSW, stop)
+            catch gen_fsm:sync_send_all_state_event(FSW, stop) 
     end,
     case WorkDir of
         undefined -> ok;
@@ -306,3 +356,13 @@ connect(IP, Strategy, Partition) ->
             lager:warning("Error connecting to remote ~p for partition ~p", [IP, Partition]),
             {error, Reason}
     end.
+
+maybe_soft_exit(Reason, State) ->
+    case State#state.owner of
+        undefined ->
+            {stop, Reason, State};
+        Owner ->
+            Owner ! {soft_exit, self(), Reason},
+            {stop, normal, State}
+    end.
+
