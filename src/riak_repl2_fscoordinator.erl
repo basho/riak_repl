@@ -74,6 +74,7 @@
     fullsyncs_completed = 0,
     fullsync_start_time = undefined,
     last_fullsync_duration = undefined,
+    last_fullsync_completed = undefined,
     stat_cache = #stat_cache{}
 }).
 
@@ -249,6 +250,11 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
             undefined -> undefined;
             _N -> calendar:gregorian_seconds_to_datetime(State#state.fullsync_start_time)
         end,
+    FinishTime =
+        case State#state.last_fullsync_completed of
+            undefined -> undefined;
+            LastFSCompleted -> calendar:gregorian_seconds_to_datetime(LastFSCompleted)
+        end,
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
@@ -264,6 +270,7 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {fullsyncs_completed, State#state.fullsyncs_completed},
         {last_fullsync_started, StartTime},
         {last_fullsync_duration, State#state.last_fullsync_duration},
+        {last_fullsync_completed, FinishTime},
         {fullsync_suggested,
             nodeset_to_string_list(State#state.dirty_nodes)},
         {fullsync_suggested_during_fs,
@@ -922,7 +929,8 @@ maybe_complete_fullsync(Running, State) ->
             {noreply, State2#state{running_sources = Running,
                                    fullsyncs_completed = TotalFullsyncs,
                                    fullsync_start_time = undefined,
-                                   last_fullsync_duration=ElapsedSeconds
+                                   last_fullsync_duration=ElapsedSeconds,
+                                   last_fullsync_completed = Finish
                                   }};
         _ ->
             % there's something waiting for a response.
