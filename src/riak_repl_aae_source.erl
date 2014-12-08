@@ -120,7 +120,8 @@ handle_info({'DOWN', TreeMref, process, Pid, Why}, _StateName, State=#state{tree
     %% Local hashtree process went down. Stop exchange.
     lager:info("Monitored pid ~p, AAE Hashtree process went down because: ~p", [Pid, Why]),
     send_complete(State),
-    {stop, {aae_hashtree_went_down, Why}, State};
+    State#state.owner ! {soft_exit, self(), {aae_hastree_went_down, Why}},
+    {stop, normal, State};
 handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
     %% Something else exited. Stop exchange.
     lager:info("Something went down ~p", [Error]),
@@ -195,7 +196,8 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                 Error ->
                     lager:info("AAE source failed get_lock for partition ~p, got ~p",
                                [Partition, Error]),
-                    {stop, Error, State}
+                    State#state.owner ! {soft_exit, self(), Error},
+                    {stop, normal, State}
             end;
         {error, wrong_node} ->
             {stop, wrong_node, State0}
@@ -209,7 +211,8 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
             lager:info("Remote lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
-            {stop, {remote, Error}, State}
+            State#state.owner ! {soft_exit, self(), {remote, Error}},
+            {stop, normal, State}
     end.
 
 %% @doc Now that locks have been acquired, ask both the local and remote
