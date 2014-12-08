@@ -19,6 +19,7 @@ start_link() ->
 %% @doc supervisor callback.
 init([]) ->
     ClusterMgrDefaults = [fun riak_repl_app:cluster_mgr_member_fun/1,
+                          fun riak_repl_app:cluster_mgr_all_member_fun/1,
                           fun riak_repl_app:cluster_mgr_write_cluster_members_to_ring/2,
                           fun riak_repl_app:cluster_mgr_read_cluster_targets_from_ring/0],
     Processes =

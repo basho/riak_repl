@@ -175,7 +175,8 @@ postcondition(connected, connected, _S ,{call, ?MODULE, status, _}, R) ->
     ExpectedStatus = {fake_socket,
                       ranch_tcp,
                       "overtherainbow",
-                      [{clustername, "FARFARAWAY"}]},
+                      [{clustername, "FARFARAWAY"}],
+                      {1,0}},
     {_, status, Status} = R,
     ?P(Status =:= ExpectedStatus);
 postcondition(State, State, _S ,{call, ?MODULE, status, [Pid]}, R) ->
@@ -226,7 +227,8 @@ connected_to_remote(Pid) ->
              fake_socket,
              ranch_tcp,
              "overtherainbow",
-             [{clustername, "FARFARAWAY"}]},
+             [{clustername, "FARFARAWAY"}],
+             {1,0}},
     gen_fsm:send_event(Pid, Event).
 
 cluster_name(Pid) ->
