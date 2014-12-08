@@ -43,6 +43,11 @@
                   %% How many fullsync diff objects to send before needing an
                   %% ACK from the client. Setting this too high will clog your
                   %% TCP buffers.
-                  {diff_batch_size, 100}
+                  {diff_batch_size, 100},
+		  %% Exometer bootstrap
+		  {exometer_folsom_monitor,
+		   [{riak_core_connection_mgr_stats, riak_core_exo_monitor},
+		    {riak_repl_stats, riak_core_exo_monitor}
+		   ]}
                  ]}
 ]}.

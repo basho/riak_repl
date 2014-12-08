@@ -921,7 +921,7 @@ schedule_stat_refresh(StatCache) ->
 
 %% @private Exported just to be able to spawn with arguments more nicely.
 refresh_stats_worker(ReportTo, Sources) ->
-    lager:info("Gathering source data for ~p", [Sources]),
+    lager:debug("Gathering source data for ~p", [Sources]),
     SourceStats = gather_source_stats(Sources),
     Time = riak_core_util:moment(),
     Self = self(),
