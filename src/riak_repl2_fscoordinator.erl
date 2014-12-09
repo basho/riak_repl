@@ -195,7 +195,7 @@ node_dirty(Node) ->
         Leader ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             [riak_repl2_fscoordinator:node_dirty(Pid, Node) ||
-                {_, Pid} <- Fullsyncs]
+                {_, Pid} <- Fullsyncs, Pid =/= self()]
     end.
 
 node_dirty(Pid, Node) ->
