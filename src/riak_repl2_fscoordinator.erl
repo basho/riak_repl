@@ -1080,5 +1080,5 @@ check_nodes_for_rt_dirty(Ring) ->
     [ case rpc:call(Node, riak_repl_stats, is_rt_dirty,[]) of
             false -> ok;
             _ -> riak_repl2_fscoordinator:node_dirty(Node)
-        end || Node <- Owners ].
+        end || {_Part, Node} <- Owners ].
 
