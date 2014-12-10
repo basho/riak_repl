@@ -242,7 +242,8 @@ update_trees(start_exchange, State=#state{tree_pid=TreePid,
     {next_state, update_trees, State};
 
 update_trees({not_responsible, Partition, IndexN}, State = #state{owner=Owner}) ->
-    lager:debug("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
+    lager:debug("Skipping AAE fullsync tree update for vnode ~p because"
+                " it is not responsible for the preflist ~p", [Partition, IndexN]),
     gen_server:cast(Owner, not_responsible),
     {stop, normal, State};
 update_trees({tree_built, _, _}, State = #state{indexns=IndexNs}) ->
@@ -449,7 +450,7 @@ send_diffs(diff_done, State) ->
 %%%===================================================================
 finish_sending_differences(#exchange{bloom=undefined, count=DiffCnt},
                            #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
-    lager:info("No Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+    lager:info("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                [0, DiffCnt, Partition, EstimatedNrKeys]),
     gen_fsm:send_event(self(), diff_done);
 
@@ -457,7 +458,7 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                            #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
     case ebloom:elements(Bloom) of
         Count = 0 ->
-            lager:info("No Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+            lager:info("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                        [Count, DiffCnt, Partition, EstimatedNrKeys]),
             gen_fsm:send_event(self(), diff_done);
         Count ->
