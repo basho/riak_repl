@@ -221,32 +221,28 @@ prepare_exchange(start_exchange, State=#state{index=Partition}) ->
 %%      a timely manner, the exchange will timeout. Since the trees will
 %%      continue to finish the update even after the exchange times out,
 %%      a future exchange should eventually make progress.
-update_trees(init, State) ->
-    update_trees(start_exchange, State);
+update_trees(init, State=#state{indexns=IndexNs}) ->
+    update_trees({start_exchange, IndexNs}, State);
 update_trees(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
-update_trees(start_exchange, State=#state{tree_pid=TreePid,
-                                          index=Partition,
-                                          indexns=IndexNs}) ->
-    lists:foreach(fun(IndexN) ->
-                          update_request(TreePid, {Partition, undefined}, IndexN),
-                          case send_synchronous_msg(?MSG_UPDATE_TREE, IndexN, State) of
-                              ok ->
-                                  gen_fsm:send_event(self(), {tree_built, Partition, IndexN});
-                              not_responsible ->
-                                  gen_fsm:send_event(self(), {not_responsible, Partition, IndexN})
-                          end
-                  end, IndexNs),
-    {next_state, update_trees, State};
+update_trees({start_exchange, [IndexHead|IndexTail]}, State=#state{tree_pid=TreePid,
+                                                                   index=Partition,
+                                                                   owner=Owner}) ->
+    update_request(TreePid, {Partition, undefined}, IndexHead),
+    case send_synchronous_msg(?MSG_UPDATE_TREE, IndexHead, State) of
+        ok ->
+            gen_fsm:send_event(self(), {tree_built, Partition, IndexHead, IndexTail}),
+            {next_state, update_trees, State};
+        not_responsible ->
+            lager:debug("Skipping AAE fullsync tree update for vnode ~p because"
+                        " it is not responsible for the preflist ~p", [Partition, IndexHead]),
+            gen_server:cast(Owner, not_responsible),
+            {stop, normal, State}
+        end;
 
-update_trees({not_responsible, Partition, IndexN}, State = #state{owner=Owner}) ->
-    lager:debug("Skipping AAE fullsync tree update for vnode ~p because"
-                " it is not responsible for the preflist ~p", [Partition, IndexN]),
-    gen_server:cast(Owner, not_responsible),
-    {stop, normal, State};
-update_trees({tree_built, _, _}, State = #state{indexns=IndexNs}) ->
+update_trees({tree_built, _, _, IndexTail}, State = #state{indexns=IndexNs}) ->
     Built = State#state.built + 1,
     NeededBuilts = length(IndexNs) * 2, %% All local and remote
     case Built of
@@ -258,6 +254,7 @@ update_trees({tree_built, _, _}, State = #state{indexns=IndexNs}) ->
             lager:debug("Moving to key exchange state"),
             key_exchange(init, State#state{built=Built, estimated_nr_keys = EstimatedNrKeys});
         _ ->
+            gen_fsm:send_event(self(), {start_exchange, IndexTail}),
             {next_state, update_trees, State#state{built=Built}}
     end.
 
