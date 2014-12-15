@@ -59,11 +59,8 @@ register_stats() ->
 %% When the cache needs to get the latest values, it will call our
 %% `produce_stats()' function.
 get_stats() ->
-    case riak_core_stat_cache:get_stats(?APP) of
-        {ok, Stats, _TS} ->
-            Stats;
-        Error -> Error
-    end.
+    {ok, Stats, _TS} = riak_core_stat_cache:get_stats(?APP),
+    Stats.
 
 get_consolidated_stats() ->
     Strings = [format_stat(Stat) || Stat <- get_stats()],
