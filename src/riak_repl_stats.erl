@@ -151,11 +151,8 @@ rt_dirty() ->
 get_stats() ->
     case erlang:whereis(riak_repl_stats) of
         Pid when is_pid(Pid) ->
-            case riak_core_stat_cache:get_stats(?APP) of
-                {ok, Stats, _TS} ->
-                    Stats;
-                Error -> Error
-            end;
+            {ok, Stats, _TS} = riak_core_stat_cache:get_stats(?APP),
+            Stats;
         _ -> []
     end.
 
