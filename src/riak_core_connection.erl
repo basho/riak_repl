@@ -205,8 +205,8 @@ handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{so
                     {stop, Error, State};
                 {NewTransport, NewSocket} ->
                     FullProto = {State#state.protocol, State#state.protovers},
-                    NewTransport:send(Socket, erlang:term_to_binary(FullProto)),
-                    NewTransport:setopts(Socket, [{active, once}]),
+                    NewTransport:send(NewSocket, erlang:term_to_binary(FullProto)),
+                    NewTransport:setopts(NewSocket, [{active, once}]),
                     State2 = State#state{transport = NewTransport, socket = NewSocket, remote_capabilities = TheirCaps},
                     {next_state, wait_for_protocol, State2}
             end;
@@ -260,7 +260,6 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             {Transport, Socket};
         {true, true} ->
             lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
-            ok = ssl:start(),
             case riak_core_ssl_util:upgrade_client_to_ssl(Socket, riak_core) of
                 {ok, SSLSocket} ->
                     {ranch_ssl, SSLSocket};
@@ -270,4 +269,3 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
                     {error, Reason}
             end
       end.
-

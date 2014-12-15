@@ -362,7 +362,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 request_cluster_name(#state{mode=test}) ->
     ok;
 request_cluster_name(#state{socket=Socket, transport=Transport}) ->
-    _ = inet:setopts(Socket, [{active, once}]),
+    _ = Transport:setopts(Socket, [{active, once}]),
     Transport:send(Socket, ?CTRL_ASK_NAME).
 
 -spec request_member_ips(state()) -> ok | {error, term()}.
