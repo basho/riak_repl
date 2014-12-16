@@ -233,16 +233,25 @@ update_trees({start_exchange, [IndexHead|IndexTail]}, State=#state{tree_pid=Tree
     update_request(TreePid, {Partition, undefined}, IndexHead),
     case send_synchronous_msg(?MSG_UPDATE_TREE, IndexHead, State) of
         ok ->
-            gen_fsm:send_event(self(), {tree_built, Partition, IndexHead, IndexTail}),
+            gen_fsm:send_event(self(), tree_built),
+            case IndexTail of
+                [] -> ok;
+                _  -> gen_fsm:send_event(self(), {start_exchange, IndexTail})
+            end,
             {next_state, update_trees, State};
         not_responsible ->
             lager:debug("Skipping AAE fullsync tree update for vnode ~p because"
                         " it is not responsible for the preflist ~p", [Partition, IndexHead]),
             gen_server:cast(Owner, not_responsible),
             {stop, normal, State}
-        end;
+    end;
 
-update_trees({tree_built, _, _, IndexTail}, State = #state{indexns=IndexNs}) ->
+update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
+    lager:debug("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
+    gen_server:cast(Owner, not_responsible),
+    {stop, normal, State};
+
+update_trees(tree_built, State = #state{indexns=IndexNs}) ->
     Built = State#state.built + 1,
     NeededBuilts = length(IndexNs) * 2, %% All local and remote
     case Built of
@@ -254,7 +263,6 @@ update_trees({tree_built, _, _, IndexTail}, State = #state{indexns=IndexNs}) ->
             lager:debug("Moving to key exchange state"),
             key_exchange(init, State#state{built=Built, estimated_nr_keys = EstimatedNrKeys});
         _ ->
-            gen_fsm:send_event(self(), {start_exchange, IndexTail}),
             {next_state, update_trees, State#state{built=Built}}
     end.
 
@@ -641,7 +649,7 @@ update_request(Tree, {Index, _}, IndexN) ->
     as_event(fun() ->
                      case riak_kv_index_hashtree:update(IndexN, Tree) of
                          ok ->
-                             {tree_built, Index, IndexN};
+                             tree_built;
                          not_responsible ->
                              {not_responsible, Index, IndexN}
                      end
