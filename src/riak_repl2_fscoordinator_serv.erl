@@ -51,7 +51,7 @@ status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            {[], []};
+            [];
         _ ->
             case riak_repl2_fscoordinator_serv_sup:started() of
                 [] ->
