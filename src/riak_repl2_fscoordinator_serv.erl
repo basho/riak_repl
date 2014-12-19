@@ -48,18 +48,8 @@ start_link(Socket, Transport, Proto, Props) ->
 %% @doc Get the stats for every serv.
 %% @see status/1
 status() ->
-    LeaderNode = riak_repl2_leader:leader_node(),
-    case LeaderNode of
-        undefined ->
-            {[], []};
-        _ ->
-            case riak_repl2_fscoordinator_serv_sup:started() of
-                [] ->
-                    [];
-                Repls ->
-                    [status(Pid) || {_Remote, Pid} <- Repls]
-            end
-    end.
+    Repls = riak_repl2_fscoordinator_serv_sup:started(),
+    [status(Pid) || {_Remove, Pid} <- Repls].
 
 %% @doc Get the status for the given serv.
 -spec status(Pid :: pid()) -> [tuple()].
