@@ -825,8 +825,6 @@ start_fssource(PartitionVal, Ip, Port, State) ->
     Partition = PartitionVal#partition_info.index,
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
-    lager:info("Starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
-            Ip]),
     case riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}) of
         {ok, Pid} ->
             link(Pid),
