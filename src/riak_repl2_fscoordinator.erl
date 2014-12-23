@@ -543,10 +543,14 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}};
 
                 SoftRetryLimit < ErrorCount ->
-                    lager:info("Discaring partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
+                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
                     ErrorExits1 = State4#state.error_exits + 1,
                     Dropped = [Partition#partition_info.index | State4#state.dropped],
-                    {noreply, State4#state{error_exits = ErrorExits1, dropped = Dropped}};
+                    Purgatory = queue:filter(fun(P) -> P =/= Partition end,
+                                             State4#state.purgatory),
+                    {noreply, State4#state{error_exits = ErrorExits1,
+                                           purgatory = Purgatory,
+                                           dropped = Dropped}};
                 true ->
                     Purgatory = queue:in(Partition, State4#state.purgatory),
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}}
