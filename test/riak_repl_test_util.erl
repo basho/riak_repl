@@ -105,9 +105,9 @@ maybe_start_lager(_) ->
     start_lager().
 
 start_lager() ->
-    %error_logger:tty(false),
     {ok, Started} = application:ensure_all_started(lager),
-    lager:set_loglevel(lager_console_backend, debug),
+    % But keep it quiet, please
+    lager:set_loglevel(lager_console_backend, '=emergency'),
     Started.
 
 %% @doc Stop the applications listsed. The list is assumed to be in the
