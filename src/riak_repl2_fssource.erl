@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 %% API
 -export([start_link/2, start_link/3, connected/6, connect_failed/3,
-    start_fullsync/1, stop_fullsync/1, fullsync_complete/1,
+    start_fullsync/1, stop_fullsync/1, fullsync_complete/1, get_strategy/0,
     cluster_name/1, legacy_status/2, soft_link/1]).
 
 %% gen_server callbacks
@@ -83,9 +83,7 @@ init([Partition, IP]) ->
 
 init([Partition, IP, Owner]) ->
 
-    RequestedStrategy = app_helper:get_env(riak_repl,
-                                           fullsync_strategy,
-                                           ?DEFAULT_FULLSYNC_STRATEGY),
+    RequestedStrategy = get_strategy(),
 
     %% Determine what kind of fullsync worker strategy we want to start with,
     %% which could change if we talk to the sink and it can't speak AAE. If
@@ -298,11 +296,10 @@ code_change(_OldVsn, State, _Extra) ->
 %% mode of AAE, decide what strategy we are capable of offering.
 decide_our_caps(RequestedStrategy) ->
     SupportedStrategy =
-        case {riak_kv_entropy_manager:enabled(), RequestedStrategy} of
-            {false, _} -> keylist;
-            {true, aae} -> aae;
-            {true, keylist} -> keylist;
-            {true, _UnSupportedStrategy} -> RequestedStrategy
+        case RequestedStrategy of
+            aae -> aae;
+            keylist -> keylist;
+            _UnSupportedStrategy -> RequestedStrategy
         end,
     [{strategy, SupportedStrategy}].
 
@@ -366,3 +363,7 @@ maybe_soft_exit(Reason, State) ->
             {stop, normal, State}
     end.
 
+get_strategy() ->
+    app_helper:get_env(riak_repl,
+                       fullsync_strategy,
+                       ?DEFAULT_FULLSYNC_STRATEGY).

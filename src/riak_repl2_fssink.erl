@@ -236,13 +236,12 @@ decide_common_strategy(OurCaps, TheirCaps) ->
 %% Based on the agreed common protocol level and the supported
 %% mode of AAE, decide what strategy we are capable of offering.
 decide_our_caps(CommonMajor) ->
-    SupportedStrategy =
-        case {riak_kv_entropy_manager:enabled(), CommonMajor} of
-            {_,1} -> keylist;
-            {false,_} -> keylist;
-            {true,_} -> aae
-        end,
-    [{strategy, SupportedStrategy}].
+	SupportedStrategy =
+		case CommonMajor of
+			1 -> keylist;
+			_ -> aae
+		end,
+	[{strategy, SupportedStrategy}].
 
 %% Depending on the protocol version number, send our capabilities
 %% as a list of properties, in binary.

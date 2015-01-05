@@ -198,6 +198,12 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                 ok ->
                     prepare_exchange(start_exchange, State#state{local_lock=true});
                 Error ->
+                    case riak_kv_entropy_manager:enabled() of
+                        false ->
+                            riak_kv_index_hashtree:poke(TreePid);
+                        true ->
+                            ok
+                    end,
                     lager:info("AAE source failed get_lock for partition ~p, got ~p",
                                [Partition, Error]),
                     State#state.owner ! {soft_exit, self(), Error},
