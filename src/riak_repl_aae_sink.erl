@@ -108,8 +108,8 @@ handle_info({Error, Socket, Reason},
     lager:info("AAE sink connection to ~p closed unexpectedly: ~p",
                [State#state.clustername, {Socket, Error, Reason}]),
     {stop, {Socket, Error, Reason}, State};
-handle_info(_Info, State) ->
-    {noreply, State}.
+handle_info({hashtree_lock,_}, State) ->
+    send_reply(ok, State).
 
 terminate(_Reason, _State) ->
     ok.
@@ -129,6 +129,12 @@ process_msg(?MSG_INIT, Partition, State) ->
             monitor(process, TreePid),
             %% tell the reservation coordinator that we are taking this partition.
             riak_repl2_fs_node_reserver:claim_reservation(Partition),
+            case riak_kv_entropy_manager:enabled() of
+                false ->
+                    riak_kv_index_hashtree:poke(TreePid);
+               _ ->
+                    ok
+            end,
             send_reply(ok, State#state{partition=Partition, tree_pid=TreePid});
         {error, wrong_node} ->
             {stop, wrong_node, State}
@@ -157,12 +163,23 @@ process_msg(?MSG_UPDATE_TREE, IndexN, State=#state{tree_pid=TreePid}) ->
 %% replies: ok | not_built | already_locked
 process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
-    ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink),
-    send_reply(ResponseMsg, State);
+    case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
+        not_built ->
+            %% Wait for lock
+            {noreply, State};
+        Response ->
+            send_reply(Response, State)
+    end;
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
     riak_repl2_fssink:fullsync_complete(Owner),
+    case riak_kv_entropy_manager:enabled() of
+        false ->
+            riak_kv_index_hashtree:destroy(State#state.tree_pid);
+        _ ->
+            ok
+    end,
     {stop, normal, State}.
 
 %% Send a response back to the aae_source worker

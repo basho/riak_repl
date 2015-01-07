@@ -145,8 +145,9 @@ handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
     lager:error("AAE source ssl connection to ~p closed unexpectedly with: ~p",
                 [State#state.cluster, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State}.
+handle_info({hashtree_lock,_}, prepare_exchange, State) ->
+    gen_fsm:send_event(self(), start_exchange),
+    {next_state, prepare_exchange, State#state{local_lock=true}}.
 
 terminate(_Reason, _StateName, _State) ->
     ok.
@@ -187,31 +188,42 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
 
-    case riak_kv_vnode:hashtree_pid(Partition) of
-        {ok, TreePid} ->
-            TreeMref = monitor(process, TreePid),
-            State = State0#state{timeout=Timeout,
-                                 indexns=IndexNs,
-                                 tree_pid=TreePid,
-                                 tree_mref=TreeMref},
-            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
-                ok ->
-                    prepare_exchange(start_exchange, State#state{local_lock=true});
-                Error ->
-                    case riak_kv_entropy_manager:enabled() of
-                        false ->
-                            riak_kv_index_hashtree:poke(TreePid);
-                        true ->
-                            ok
-                    end,
-                    lager:info("AAE source failed get_lock for partition ~p, got ~p",
-                               [Partition, Error]),
-                    State#state.owner ! {soft_exit, self(), Error},
-                    {stop, normal, State}
-            end;
-        {error, wrong_node} ->
-            {stop, wrong_node, State0}
-    end;
+case riak_kv_vnode:hashtree_pid(Partition) of
+    {ok, TreePid} ->
+        TreeMref = monitor(process, TreePid),
+        State = State0#state{timeout=Timeout,
+                             indexns=IndexNs,
+                             tree_pid=TreePid,
+                             tree_mref=TreeMref},
+        case riak_kv_entropy_manager:enabled() of
+            false ->
+                riak_kv_index_hashtree:poke(TreePid),
+                case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
+                    ok ->
+                        prepare_exchange(start_exchange, State#state{local_lock=true});
+                    not_built ->
+                        {next_state, prepare_exchange, State};
+                    Error ->
+                        lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                                   [Partition, Error]),
+                        State#state.owner ! {soft_exit, self(), Error},
+                        {stop, normal, State}
+                end;
+            true ->
+                case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
+                    ok ->
+                        prepare_exchange(start_exchange, State#state{local_lock=true});
+                    Error ->
+                        lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                                   [Partition, Error]),
+                        State#state.owner ! {soft_exit, self(), Error},
+                        {stop, normal, State}
+                end
+        end;
+    {error, wrong_node} ->
+        {stop, wrong_node, State0}
+end;
+
 prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock
     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
@@ -305,6 +317,12 @@ key_exchange(finish_fullsync, State=#state{owner=Owner}) ->
     lager:debug("AAE fullsync source completed partition ~p",
                 [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
+    case riak_kv_entropy_manager:enabled() of
+        false ->
+            riak_kv_index_hashtree:destroy(State#state.tree_pid);
+        _ ->
+            ok
+    end,
     %% TODO: Why stay in key_exchange? Should we stop instead?
     {next_state, key_exchange, State};
 key_exchange(continue, State=#state{indexns=IndexNs}) ->
