@@ -399,88 +399,104 @@ schedule_heartbeat(State) ->
 %% ===================================================================
 -ifdef(TEST).
 
--define(SINK_PORT, 5007).
-
 riak_repl2_rtsource_conn_test_() ->
-    {spawn,
-     [
-      {setup,
-       fun setup/0,
-       fun cleanup/1,
-       [
-        fun cache_peername_test_case/0
-       ]
-      }]}.
+    {spawn, [{
+        setup,
+        fun setup/0,
+        fun cleanup/1,
+        {timeout, 120, fun cache_peername_test_case/0}
+    }]}.
 
 setup() ->
+    % ?debugMsg("enter setup()"),
+    % make sure there aren't leftovers around from prior tests
+    sanitize(),
+    % now set up the environment for this test
     process_flag(trap_exit, true),
-    riak_repl_test_util:stop_test_ring(),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
     riak_repl_test_util:abstract_stats(),
     riak_repl_test_util:abstract_stateful(),
+    % ?debugMsg("leave setup()"),
     ok.
 
 cleanup(_Ctx) ->
-    riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
-    riak_repl_test_util:kill_and_wait(riak_repl2_rtq),
-    riak_repl_test_util:kill_and_wait(riak_repl2_rt),
-    case whereis(fake_sink) of
-        undefined ->
-            ok;
-        SinkPid ->
-            SinkPid ! kill
-    end,
+    % ?debugFmt("enter cleanup(~p)", [_Ctx]),
+    R = sanitize(),
+    % ?debugFmt("leave cleanup(~p) -> ~p", [_Ctx, R]),
+    R.
+
+sanitize() ->
+    % ?debugMsg("enter sanitize()"),
+    rt_source_helpers:kill_fake_sink(),
+    riak_repl_test_util:kill_and_wait([
+        riak_repl2_rt,
+        riak_repl2_rtq,
+        riak_core_tcp_mon]),
+
     riak_repl_test_util:stop_test_ring(),
-    riak_repl_test_util:maybe_unload_mecks(
-      [riak_core_service_mgr,
-       riak_core_connection_mgr,
-       gen_tcp]),
+
+    riak_repl_test_util:maybe_unload_mecks([
+        riak_core_service_mgr,
+        riak_core_connection_mgr,
+        gen_tcp]),
     meck:unload(),
+    % ?debugMsg("leave sanitize()"),
     ok.
 
 %% test for https://github.com/basho/riak_repl/issues/247
 %% cache the peername so that when the local socket is closed
 %% peername will still be around for logging
 cache_peername_test_case() ->
-    setup_connection_for_peername(),
+    % ?debugMsg("enter cache_peername_test_case()"),
     {ok, _RTPid} = rt_source_helpers:start_rt(),
     {ok, _RTQPid} = rt_source_helpers:start_rtq(),
     {ok, _TCPMonPid} = rt_source_helpers:start_tcp_mon(),
-    {ok, _FakeSinkPid} = rt_source_helpers:start_fake_sink(),
+    {ok, _FsPid, FsPort} = rt_source_helpers:init_fake_sink(),
+    FsName = {"127.0.0.1", FsPort},
+    ok = setup_connection_for_peername(FsName),
 
-    connect({127,0,0,1, ?SINK_PORT}).
+    ?assertEqual(ok, connect(FsName)).
+    % ?debugMsg("leave cache_peername_test_case()").
 
 %% Set up the test
-setup_connection_for_peername() ->
+setup_connection_for_peername({RemoteHost, RemotePort} = RemoteName) ->
+    % ?debugFmt("enter setup_connection_for_peername(~p)", [RemoteName]),
+    % format the string we expect from peername(State) ...
+    {ok, HostIP} = inet:getaddr(RemoteHost, inet),
+    RemoteText = lists:flatten(io_lib:format("~B.~B.~B.~B:~B",
+                    tuple_to_list(HostIP) ++ [RemotePort])),
+    % ... and hook the function to check for it
     riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
-    meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
-        proc_lib:spawn_link(fun() ->
-            Version = stateful:version(),
-            {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
-            {ok, Socket} = gen_tcp:connect("127.0.0.1", ?SINK_PORT, [binary | TcpOpts]),
+    meck:expect(riak_core_connection_mgr, connect,
+        fun(_ServiceAndRemote, ClientSpec) ->
+            proc_lib:spawn_link(fun() ->
+                Version = stateful:version(),
+                {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
+                {ok, Socket} = gen_tcp:connect(RemoteHost, RemotePort, [binary | TcpOpts]),
 
-            ok = Module:connected(Socket, gen_tcp, {"127.0.0.1", ?SINK_PORT}, Version, Pid, []),
+                ok = Module:connected(Socket, gen_tcp, RemoteName, Version, Pid, []),
 
-            % simulate local socket problem
-            inet:close(Socket),
+                % simulate local socket problem
+                inet:close(Socket),
 
-            % get the State from the source connection.
-            {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
+                % get the State from the source connection.
+                {status,Pid,_,[_,_,_,_,[_,_,{data,[{_,State}]}]]} = sys:get_status(Pid),
 
-            % getting the peername from the socket should produce error string
-            ?assertEqual("error:einval", peername(inet, Socket)),
+                % getting the peername from the socket should produce error string
+                ?assertEqual("error:einval", peername(inet, Socket)),
 
-            % while getting the peername from the State should produce the cached string
-            ?assertEqual("127.0.0.1:5007", peername(State))
-
+                % while getting the peername from the State should produce the cached string
+                ?assertEqual(RemoteText, peername(State))
+            end),
+            {ok, make_ref()}
         end),
-
-        {ok, make_ref()}
-    end).
+    % ?debugFmt("leave setup_connection_for_peername(~p)", [RemoteName]),
+    ok.
 
 %% Connect to the 'fake' sink
 connect(RemoteName) ->
+    % ?debugFmt("enter connect(~p)", [RemoteName]),
 
     stateful:set(version, {realtime, {1,0}, {1,0}}),
     stateful:set(remote, RemoteName),
@@ -494,13 +510,6 @@ connect(RemoteName) ->
                   {bytes,0},
                   {max_bytes,104857600},
                   {consumers,[]},
-                  {overload_drops,0}], RTQStats),
-
-    receive
-        {sink_started, SinkPid} ->
-            {SourcePid, SinkPid}
-    after 1000 ->
-        {error, timeout}
-    end.
+                  {overload_drops,0}], RTQStats).
 
 -endif.

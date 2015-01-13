@@ -8,8 +8,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(SINK_PORT, 5007).
-
 %% ====================================================================
 %% helpful utility functions
 %% ====================================================================
@@ -32,7 +30,8 @@ ensure_registered(RemoteName, N) ->
     end.
 
 wait_for_valid_sink_history(Pid, Remote, MasterQueue) ->
-    NewQueue = [{Seq, Queued} || {Seq, RoutedRemotes, _Binary, Queued} <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
+    NewQueue = [{Seq, Queued} || {Seq, RoutedRemotes, _Binary, Queued}
+               <- MasterQueue, not lists:member(Remote, RoutedRemotes)],
     if
         length(NewQueue) > 0 ->
             gen_server:call(Pid, {block_until, length(NewQueue)}, 30000);
@@ -64,7 +63,9 @@ plant_bugs(Remotes, [{Remote, SrcState} | Tail]) ->
             plant_bugs(Remotes, Tail)
     end.
 
-abstract_connection_mgr() ->
+abstract_connection_mgr(RemotePort) when is_integer(RemotePort) ->
+    abstract_connection_mgr({"localhost", RemotePort});
+abstract_connection_mgr({RemoteHost, RemotePort} = RemoteName) ->
     riak_repl_test_util:reset_meck(riak_core_connection_mgr, [no_link, passthrough]),
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         proc_lib:spawn_link(fun() ->
@@ -72,9 +73,9 @@ abstract_connection_mgr() ->
             Version = stateful:version(),
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
              %% ?debugFmt("connection_mgr callback module: ~p", [Module]),
-            {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
+            {ok, Socket} = gen_tcp:connect(RemoteHost, RemotePort, [binary | TcpOpts]),
             %% ?debugFmt("connection_mgr calling connection callback for ~p", [Pid]),
-            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, Version, Pid, [])
+            ok = Module:connected(Socket, gen_tcp, RemoteName, Version, Pid, [])
         end),
         {ok, make_ref()}
     end).
@@ -98,11 +99,13 @@ start_tcp_mon() ->
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     riak_core_tcp_mon:start_link().
 
-start_fake_sink() ->
+-spec init_fake_sink() ->
+          {ok, FakeSinkPid :: pid(), ListeningPort :: inet:port_number()}
+        | {error, wait_for_sink_failed}.
+init_fake_sink() ->
     riak_repl_test_util:reset_meck(riak_core_service_mgr, [no_link, passthrough]),
     WhoToTell = self(),
     meck:expect(riak_core_service_mgr, sync_register_service, fun(HostSpec, _Strategy) ->
-
         %% riak_repl_test_util:kill_and_wait(fake_sink),
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArgs}} = HostSpec,
         sink_listener(TcpOpts, WhoToTell)
@@ -110,17 +113,27 @@ start_fake_sink() ->
     riak_repl2_rtsink_conn:sync_register_service(),
     wait_for_sink().
 
+kill_fake_sink() ->
+    case whereis(fake_sink) of
+        undefined ->
+            ok;
+        FsPid ->
+            FsPid ! kill
+    end.
+
 sink_listener(TcpOpts, WhoToTell) ->
-    %% ?debugMsg("sink_listener"),
+    % ?debugMsg("sink_listener"),
     TcpOpts2 = [binary, {reuseaddr, true} | TcpOpts],
     Pid = proc_lib:spawn_link(fun() ->
-        {ok, Listen} = gen_tcp:listen(?SINK_PORT, TcpOpts2),
+        {ok, Listen} = gen_tcp:listen(0, TcpOpts2),
+        % {ok, LName} = inet:sockname(Listen),
+        % ?debugFmt("fake sink listener: ~p", [LName]),
         proc_lib:spawn(?MODULE, sink_acceptor, [Listen, WhoToTell]),
         receive
             _ -> ok
         end
     end),
-    %% {ok, Listen} = gen_tcp:listen(?SINK_PORT, TcpOpts2),
+    %% {ok, Listen} = gen_tcp:listen(0, TcpOpts2),
     %% AcceptorPid = proc_lib:spawn(?MODULE, sink_acceptor, [Listen, WhoToTell]),
     %% sink_acceptor(Listen, WhoToTell),
     %% register(fake_sink, Pid),
@@ -130,10 +143,18 @@ sink_listener(TcpOpts, WhoToTell) ->
 wait_for_sink() ->
     receive
         {fake_sink_pid, Pid} ->
-            {ok, Pid}
+            % ?debugFmt("fake_sink started at ~p", [Pid]),
+            case gen_server:call(Pid, listen_port, 2000) of
+                {listen_port, Port} ->
+                    % ?debugFmt("fake_sink ~p listening on port ~B", [Pid, Port]),
+                    {ok, Pid, Port};
+                Reply ->
+                    % ?debugFmt("fake_sink ~p bad reply ~p", [Pid, Reply]),
+                    Reply
+            end
     after 30000 ->
-            %% ?debugMsg("wait_for_sink timed out"),
-            {error, wait_for_sink_failed}
+        % ?debugMsg("wait_for_sink timed out"),
+        {error, wait_for_sink_failed}
     end.
 
 %% wait_for_sink(0, Wait) ->
@@ -191,21 +212,34 @@ sink_acceptor(Listen, WhoToTell) ->
 fake_sink(undefined, Listen, Version, Bug, History) ->
     receive
         {start, WhoToTell} ->
-            %% ?debugMsg("registering fake_sink"),
+            % ?debugMsg("registering fake_sink"),
             register(fake_sink, self()),
+            % ?debugFmt("Sending fake_sink pid to ~p", [WhoToTell]),
             WhoToTell ! {fake_sink_pid, self()},
             fake_sink(undefined, Listen, Version, Bug, History);
         {status, WhoToTell} ->
             {ok, Socket} = gen_tcp:accept(Listen),
             inet:setopts(Socket, [{active, once}]),
-            %% ?debugFmt("Sending fake_sink status to ~p", [WhoToTell]),
+            % ?debugFmt("Sending fake_sink status to ~p", [WhoToTell]),
             WhoToTell ! {sink_started, self()},
             Version1 = stateful:version(),
             fake_sink(Socket, Listen, Version1, Bug, History);
         {'$gen_call', From, history} ->
             gen_server:reply(From, History),
             fake_sink(undefined, Listen, Version, Bug, History);
+        {'$gen_call', From, listen_port} ->
+            {ok, Port} = inet:port(Listen),
+            % ?debugFmt("Sending fake_sink port to ~p", [From]),
+            gen_server:reply(From, {listen_port, Port}),
+            fake_sink(undefined, Listen, Version, Bug, History);
+        {'$gen_call', From, listen_name} ->
+            {ok, Name} = inet:sockname(Listen),
+            % ?debugFmt("Sending fake_sink name to ~p", [From]),
+            gen_server:reply(From, {listen_name, Name}),
+            fake_sink(undefined, Listen, Version, Bug, History);
         kill ->
+            % {ok, Name} = inet:sockname(Listen),
+            % ?debugFmt("killing fake_sink ~p at ~p", [self(), Name]),
             gen_tcp:close(Listen),
             ok
     end;
@@ -220,6 +254,7 @@ fake_sink(Socket, Listen, Version, Bug, History) ->
         %%     WhoToTell ! {fake_sink_pid, self()},
         %%     fake_sink(Socket1, Version, Bug, History);
         {status, WhoToTell} ->
+            % ?debugFmt("Sending fake_sink pid to ~p", [WhoToTell]),
             WhoToTell ! {sink_started, self()},
             Version1 = stateful:version(),
             fake_sink(Socket, Listen, Version1, Bug, History);
@@ -227,6 +262,9 @@ fake_sink(Socket, Listen, Version, Bug, History) ->
             %% ?debugMsg("\nfake_sink stop\n"),
             fake_sink(undefined, Listen, undefined, undefined, History);
         kill ->
+            % {ok, LName} = inet:sockname(Listen),
+            % {ok, SName} = inet:sockname(Socket),
+            % ?debugFmt("killing fake_sink ~p at ~p (~p)", [self(), LName, SName]),
             gen_tcp:close(Socket),
             gen_tcp:close(Listen),
             ok;
