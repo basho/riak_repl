@@ -459,12 +459,11 @@ exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
         {ok, Hello} ->
             %% read their hello
             case binary_to_term(Hello) of
-                {?CTRL_HELLO, TheirRev, TheirCaps} ->
+                {?CTRL_HELLO, _CTRL_REV, TheirCaps} ->
                     Ack = term_to_binary({?CTRL_ACK, ?CTRL_REV, MyCaps}),
                     Transport:send(Socket, Ack),
                     %% make some props to hand dispatched service
-                    Props = [{local_revision, ?CTRL_REV}, {remote_revision, TheirRev} | TheirCaps],
-                    {ok,Props};
+                    {ok, TheirCaps};
                 Msg ->
                     %% tell other side we are failing them
                     Error = {error, bad_handshake},

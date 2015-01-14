@@ -15,7 +15,7 @@
 -export([code_change/4, terminate/3]).
 
 -record(state, {
-    transport, transport_msgs, socket, remote_rev, remote_caps, init_args
+    transport, transport_msgs, socket, remote_caps, init_args
 }).
 
 %% ===============
@@ -81,11 +81,10 @@ handle_event(_Req, StateName, State) ->
 
 handle_info({TransOk, Socket, Data}, wait_for_hello, State = #state{socket = Socket, transport_msgs = {TransOk, _, _}}) when is_binary(Data) ->
     case binary_to_term(Data) of
-        {?CTRL_HELLO, TheirRev, ThierCaps} ->
+        {?CTRL_HELLO, _CTRL_REV, ThierCaps} ->
             SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
             MyName = riak_core_connection:symbolic_clustername(),
             MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
-
             Ack = term_to_binary({?CTRL_ACK, ?CTRL_REV, MyCaps}),
             (State#state.transport):send(Socket, Ack),
             case try_ssl(Socket, State#state.transport, MyCaps, ThierCaps) of
@@ -94,7 +93,7 @@ handle_info({TransOk, Socket, Data}, wait_for_hello, State = #state{socket = Soc
                 {NewTransport, NewSocket} ->
                     NewTransport:setopts(NewSocket, [{active, once}]),
                     TransMsgs = NewTransport:messages(),
-                    State2 = State#state{transport = NewTransport, transport_msgs = TransMsgs, socket = NewSocket, remote_caps = ThierCaps, remote_rev = TheirRev},
+                    State2 = State#state{transport = NewTransport, transport_msgs = TransMsgs, socket = NewSocket, remote_caps = ThierCaps},
                     {next_state, wait_for_protocol_versions, State2}
             end;
         _Else ->
