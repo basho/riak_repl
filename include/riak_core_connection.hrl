@@ -22,7 +22,7 @@
 
 %% handshake messages to safely initiate a connection. Let's not accept
 %% a connection to a telnet session by accident!
--define(CTRL_REV, {1,1}).
+-define(CTRL_REV, {1,0}).
 -define(CTRL_HELLO, <<"riak-ctrl:hello">>).
 -define(CTRL_TELL_IP_ADDR, <<"riak-ctrl:ip_addr">>).
 -define(CTRL_ACK, <<"riak-ctrl:ack">>).
