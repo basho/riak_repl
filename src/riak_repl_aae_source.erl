@@ -53,6 +53,7 @@
                 local_lock = false :: boolean(),
                 owner       :: pid(),
                 proto       :: term(),
+                tag = all   :: hashtree:tag(),
                 exchange    :: exchange()
                }).
 
@@ -73,7 +74,12 @@
 -spec start_link(term(), term(), term(), term(), index(), pid(), term())
                 -> {ok,pid()} | ignore | {error, term()}.
 start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto) ->
-    gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto], []).
+    start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto, all).
+
+-spec start_link(term(), term(), term(), term(), index(), pid(), term(), hashtree:tag())
+                -> {ok,pid()} | ignore | {error, term()}.
+start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto, Tag) ->
+    gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto, Tag], []).
 
 start_exchange(AAESource) ->
     lager:debug("Send start_exchange to AAE fullsync sink worker"),
@@ -86,7 +92,7 @@ cancel_fullsync(Pid) ->
 %%% gen_fsm callbacks
 %%%===================================================================
 
-init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
+init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto, Tag]) ->
     lager:debug("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
@@ -100,7 +106,8 @@ init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
                    built=0,
                    owner=OwnerPid,
                    wire_ver=Ver,
-                   proto=ClientVer},
+                   proto=ClientVer,
+                   tag=Tag},
     {ok, prepare_exchange, State}.
 
 handle_event(_Event, StateName, State) ->
@@ -316,7 +323,8 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                               index=Partition,
                                               tree_pid=TreePid,
                                               exchange=Exchange,
-                                              indexns=[IndexN|_IndexNs]}) ->
+                                              indexns=[IndexN|_IndexNs],
+                                              tag=ExchangeTag}) ->
     lager:debug("Starting fullsync key exchange with ~p for ~p/~p",
                [Cluster, Partition, IndexN]),
 
@@ -338,15 +346,15 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                          {'$aae_src', ready, SourcePid} ->
                              ok
                      end;
-                (get_bucket, {L, B}) ->
-                     wait_get_bucket(L, B, IndexN, State);
-                (key_hashes, Segment) ->
+                (get_bucket, {L, B, Tag}) when Tag =:= ExchangeTag ->
+                    wait_get_bucket(L, B, IndexN, State);
+                (key_hashes, {Segment, Tag}) when Tag =:= ExchangeTag ->
                      wait_get_segment(Segment, IndexN, State);
-                (start_exchange_level, {Level, Buckets}) ->
-                     _ = [async_get_bucket(Level, B, IndexN, State) || B <- Buckets],
+                (start_exchange_level, {Level, Buckets, Tag}) when Tag =:= ExchangeTag ->
+                     _ = [async_get_bucket(Level, B, IndexN, State, Tag) || B <- Buckets],
                      ok;
-                (start_exchange_segments, Segments) ->
-                     _ = [async_get_segment(Segment, IndexN, State) || Segment <- Segments],
+                (start_exchange_segments, {Segments, Tag}) when Tag =:= ExchangeTag ->
+                     _ = [async_get_segment(Segment, IndexN, State, Tag) || Segment <- Segments],
                      ok;
                 (final, _) ->
                      %% give ourself control of the socket again
@@ -375,7 +383,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     lager:debug("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
                        StageStart=os:timestamp(),
-                       Exchange2 = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, Exchange, TreePid),
+                       Exchange2 = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, Exchange, TreePid, ExchangeTag),
                        lager:debug("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                                    [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
                        gen_fsm:send_event(SourcePid, {'$aae_src', done, Exchange2})
@@ -386,15 +394,19 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-async_get_bucket(Level, Bucket, IndexN, State) ->
-    send_asynchronous_msg(?MSG_GET_AAE_BUCKET, {Level,Bucket,IndexN}, State).
+async_get_bucket(Level, Bucket, IndexN, State, all) ->
+    send_asynchronous_msg(?MSG_GET_AAE_BUCKET, {Level,Bucket,IndexN}, State);
+async_get_bucket(Level, Bucket, IndexN, State, Tag) ->
+    send_asynchronous_msg(?MSG_GET_AAE_BUCKET, {Level,Bucket,IndexN,Tag}, State).
 
 wait_get_bucket(_Level, _Bucket, _IndexN, State) ->
     Reply = get_reply(State),
     Reply.
 
-async_get_segment(Segment, IndexN, State) ->
-    send_asynchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State).
+async_get_segment(Segment, IndexN, State, all) ->
+    send_asynchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN}, State);
+async_get_segment(Segment, IndexN, State, Tag) ->
+    send_asynchronous_msg(?MSG_GET_AAE_SEGMENT, {Segment,IndexN,Tag}, State).
 
 wait_get_segment(_Segment, _IndexN, State) ->
     Reply = get_reply(State),

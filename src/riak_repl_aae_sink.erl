@@ -134,12 +134,20 @@ process_msg(?MSG_INIT, Partition, State) ->
             {stop, wrong_node, State}
     end;
 
+process_msg(?MSG_GET_AAE_BUCKET, {Level,BucketNum,IndexN,Tag}, State=#state{tree_pid=TreePid}) ->
+    ResponseMsg = riak_kv_index_hashtree:exchange_bucket(IndexN, Level, BucketNum, TreePid, Tag),
+    send_reply(ResponseMsg, State);
+
 process_msg(?MSG_GET_AAE_BUCKET, {Level,BucketNum,IndexN}, State=#state{tree_pid=TreePid}) ->
-    ResponseMsg = riak_kv_index_hashtree:exchange_bucket(IndexN, Level, BucketNum, TreePid),
+    ResponseMsg = riak_kv_index_hashtree:exchange_bucket(IndexN, Level, BucketNum, TreePid, all),
+    send_reply(ResponseMsg, State);
+
+process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN, Tag}, State=#state{tree_pid=TreePid}) ->
+    ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid, Tag),
     send_reply(ResponseMsg, State);
 
 process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=TreePid}) ->
-    ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid),
+    ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid, all),
     send_reply(ResponseMsg, State);
 
 %% no reply
