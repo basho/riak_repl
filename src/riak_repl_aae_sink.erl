@@ -131,7 +131,7 @@ process_msg(?MSG_INIT, Partition, State) ->
             riak_repl2_fs_node_reserver:claim_reservation(Partition),
             case riak_kv_entropy_manager:enabled() of
                 false ->
-                    riak_kv_index_hashtree:poke(TreePid);
+                    riak_kv_index_hashtree:build(TreePid);
                _ ->
                     ok
             end,
@@ -164,7 +164,7 @@ process_msg(?MSG_UPDATE_TREE, IndexN, State=#state{tree_pid=TreePid}) ->
 process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
     case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
-        not_built ->
+        building ->
             %% Wait for lock
             {noreply, State};
         Response ->

@@ -197,11 +197,11 @@ case riak_kv_vnode:hashtree_pid(Partition) of
                              tree_mref=TreeMref},
         case riak_kv_entropy_manager:enabled() of
             false ->
-                riak_kv_index_hashtree:poke(TreePid),
+                riak_kv_index_hashtree:build(TreePid),
                 case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
                     ok ->
                         prepare_exchange(start_exchange, State#state{local_lock=true});
-                    not_built ->
+                    building ->
                         {next_state, prepare_exchange, State};
                     Error ->
                         lager:info("AAE source failed get_lock for partition ~p, got ~p",
