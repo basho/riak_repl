@@ -8,7 +8,6 @@
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(SINK_PORT, 5007).
 -define(P(EXPR), PPP = (EXPR), case PPP of true -> ok; _ -> io:format(user, "PPP ~p at line ~p\n", [PPP, ?LINE]) end, PPP).
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) ->
@@ -27,7 +26,13 @@
 %% Helper Funcs
 %% ===================================================================
 
+-record(ctx, {
+    fs_pid,
+    fs_port
+}).
+
 setup() ->
+    % ?debugMsg("enter setup()"),
     application:load(sasl),
     application:set_env(sasl, sasl_error_logger, {file, "rt_source_eqc_sasl.log"}),
     error_logger:tty(false),
@@ -37,7 +42,6 @@ setup() ->
     riak_repl_test_util:abstract_gen_tcp(),
     riak_repl_test_util:abstract_stats(),
     riak_repl_test_util:abstract_stateful(),
-    rt_source_helpers:abstract_connection_mgr(),
     kill_rtq(),
     {ok, _RTPid} = rt_source_helpers:start_rt(),
     {ok, _RTQPid} = rt_source_helpers:start_rtq(),
@@ -46,20 +50,21 @@ setup() ->
     %% {ok, _Pid2} = riak_core_connection_mgr:start_link(),
     %% {ok, _Pid3} = riak_core_cluster_conn_sup:start_link(),
     %% {ok, _Pid4 } = riak_core_cluster_mgr:start_link(),
-    {ok, _FakeSinkPid} = rt_source_helpers:start_fake_sink().
+    {ok, FsPid, FsPort} = rt_source_helpers:init_fake_sink(),
+    ok = rt_source_helpers:abstract_connection_mgr(FsPort),
+    R = #ctx{fs_pid = FsPid, fs_port = FsPort},
+    % ?debugFmt("leave setup() -> ~p", [R]),
+    R.
 
-cleanup(_) ->
+cleanup(_Ctx) ->
+    % ?debugFmt("enter cleanup(~p)", [_Ctx]),
+    rt_source_helpers:kill_fake_sink(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     riak_repl2_rtq:stop(),
     riak_repl_test_util:kill_and_wait(riak_repl2_rt),
     riak_repl_test_util:stop_test_ring(),
-    case whereis(fake_sink) of
-        undefined ->
-            ok;
-        SinkPid ->
-            SinkPid ! kill
-    end,
     meck:unload(),
+    % ?debugMsg("leave cleanup(~p)", [_Ctx]),
     ok.
 
 prop_test_() ->
@@ -521,7 +526,7 @@ fix_routed_meta(Meta, AdditionalRemotes) ->
 %% ====================================================================
 
 connect_to_v1(RemoteName, MasterQueue) ->
-    %% ?debugMsg("connect_to_v1"),
+    %% ?debugFmt("connect_to_v1: ~p", [RemoteName]),
     stateful:set(version, {realtime, {1,0}, {1,0}}),
     connect(RemoteName, MasterQueue).
 
@@ -531,12 +536,13 @@ connect_to_v2(RemoteName, MasterQueue) ->
     connect(RemoteName, MasterQueue).
 
 connect(RemoteName, MasterQueue) ->
+    %% ?debugFmt("connect: ~p", [RemoteName]),
     stateful:set(remote, RemoteName),
     %% ?debugMsg("Starting rtsource link"),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link(RemoteName),
     %% ?debugFmt("rtsource pid: ~p", [SourcePid]),
     %% ?debugMsg("Waiting for sink_started"),
-    _ =  wait_for_rtsource_helper(SourcePid),
+    _ = wait_for_rtsource_helper(SourcePid),
     FakeSink = whereis(fake_sink),
     %% ?debugFmt("fake_sink pid: ~p", [FakeSink]),
     FakeSink ! {status, self()},

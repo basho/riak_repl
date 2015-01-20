@@ -378,7 +378,7 @@ connect_from_v2(Remote) ->
 disconnect({_Remote, State}) ->
     {Source, Sink} = State#src_state.pids,
     riak_repl_test_util:kill_and_wait(Source),
-    riak_repl_test_util:wait_for_pid(Sink),
+    riak_repl_test_util:wait_until_down(Sink),
     {Source, Sink}.
 
 push_object({_Remote, #src_state{version = 2} = SrcState}, RiakObj, AlreadyRouted) ->
