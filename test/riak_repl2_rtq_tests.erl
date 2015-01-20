@@ -74,7 +74,7 @@ overload_protection_start_test_() ->
             {ok, Rtq1} = riak_repl2_rtq:start_link(),
             unlink(Rtq1),
             exit(Rtq1, kill),
-            riak_repl_test_util:wait_for_pid(Rtq1),
+            riak_repl_test_util:wait_until_down(Rtq1),
             Got = riak_repl2_rtq:start_link(),
             ?assertMatch({ok, _Pid}, Got),
             riak_repl2_rtq:stop(),
@@ -96,7 +96,7 @@ overload_protection_start_test_() ->
             {ok, Pid1} = Got1,
             unlink(Pid1),
             exit(Pid1, kill),
-            riak_repl_test_util:wait_for_pid(Pid1),
+            riak_repl_test_util:wait_until_down(Pid1),
             Got2 = riak_repl2_rtq_overload_counter:start_link([{report_interval, 20}]),
             ?assertMatch({ok, _Pid}, Got2),
             riak_repl2_rtq_overload_counter:stop()
