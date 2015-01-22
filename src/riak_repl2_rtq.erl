@@ -100,7 +100,7 @@ start_link() ->
 -type start_option() :: overload_threshold_option() | overload_recover_option().
 -type start_options() :: [start_option()].
 %% @doc Start linked, registers to module name, with given options. This makes
-%% testing some options a bit easier as it removes a dependence on `app_helper'.
+%% testing some options a bit easier as it removes a dependance on app_helper.
 -spec start_link(Options :: start_options()) -> {'ok', pid()}.
 start_link(Options) ->
     case ets:info(?overload_ets) of
