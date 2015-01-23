@@ -123,7 +123,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% replies: ok
 process_msg(?MSG_INIT, Partition, State) ->
-    case riak_kv_vnode:hashtree_pid(Partition) of
+    case riak_kv_vnode:hashtree_pid(Partition, riak_kv_entropy_manager:enabled()) of
         {ok, TreePid} ->
             %% monitor the tree and crash if the tree goes away
             monitor(process, TreePid),

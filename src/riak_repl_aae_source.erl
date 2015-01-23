@@ -188,7 +188,7 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
 
-case riak_kv_vnode:hashtree_pid(Partition) of
+case riak_kv_vnode:hashtree_pid(Partition, riak_kv_entropy_manager:enabled()) of
     {ok, TreePid} ->
         TreeMref = monitor(process, TreePid),
         State = State0#state{timeout=Timeout,
