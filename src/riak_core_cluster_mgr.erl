@@ -70,6 +70,7 @@
                 leader_node = undefined :: undefined | node(),
                 gc_interval = infinity,
                 member_fun = fun(_Addr) -> [] end,             % return members of local cluster
+                all_member_fun = fun(_Addr) -> [] end,             % return members of local cluster
                 restore_targets_fun = fun() -> [] end,         % returns persisted cluster targets
                 save_members_fun = fun(_C,_M) -> ok end,       % persists remote cluster members
                 balancer_fun = fun(Addrs) -> Addrs end,        % registered balancer function
@@ -77,11 +78,12 @@
                }).
 
 -export([start_link/0,
-         start_link/3,
+         start_link/4,
          set_leader/2,
          get_leader/0,
          get_is_leader/0,
          register_member_fun/1,
+         register_all_member_fun/1,
          register_restore_cluster_targets_fun/1,
          register_save_cluster_members_fun/1,
          add_remote_cluster/1, remove_remote_cluster/1,
@@ -90,7 +92,8 @@
          get_ipaddrs_of_cluster/1,
          set_gc_interval/1,
          stop/0,
-         connect_to_clusters/0
+         connect_to_clusters/0,
+         shuffle_remote_ipaddrs/1
          ]).
 
 %% gen_server callbacks
@@ -100,7 +103,7 @@
 %% internal functions
 -export([%ctrlService/5, ctrlServiceProcess/5,
          round_robin_balancer/1, cluster_mgr_sites_fun/0,
-         get_my_members/1]).
+         get_my_members/1, get_all_members/1]).
 
 -export([ensure_valid_ip_addresses/1]).
 
@@ -111,8 +114,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-start_link(DefaultLocator, DefaultSave, DefaultRestore) ->
-    Args = [DefaultLocator, DefaultSave, DefaultRestore],
+start_link(DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore) ->
+    Args = [DefaultLocator, DefaultAllLocator, DefaultSave, DefaultRestore],
     Options = [],
     gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options).
 
@@ -138,6 +141,12 @@ get_is_leader() ->
 -spec register_member_fun(MemberFun :: fun((ip_addr()) -> [{string(),pos_integer()}])) -> 'ok'.
 register_member_fun(MemberFun) ->
     gen_server:cast(?SERVER, {register_member_fun, MemberFun}).
+
+%% @doc Register a function that will get called to get out local riak node
+%% member's IP addrs. MemberFun(ip_addr()) -> [{node(),{IP,Port}}] were IP is a string
+-spec register_all_member_fun(MemberFun :: fun((ip_addr()) -> [{atom(),{string(),pos_integer()}}])) -> 'ok'.
+register_all_member_fun(MemberFun) ->
+    gen_server:cast(?SERVER, {register_all_member_fun, MemberFun}).
 
 register_restore_cluster_targets_fun(ReadClusterFun) ->
     gen_server:cast(?SERVER, {register_restore_cluster_targets_fun, ReadClusterFun}).
@@ -168,9 +177,17 @@ get_connections() ->
 get_my_members(MyAddr) ->
     gen_server:call(?SERVER, {get_my_members, MyAddr}, infinity).
 
+get_all_members(MyAddr) ->
+    gen_server:call(?SERVER, {get_all_members, MyAddr}, infinity).
+
 %% @doc Return a list of the known IP addresses of all nodes in the remote cluster.
 get_ipaddrs_of_cluster(ClusterName) ->
-        gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity).
+    case gen_server:call(?SERVER, {get_known_ipaddrs_of_cluster, {name,ClusterName}}, infinity) of
+        {ok, Reply} ->
+            shuffle_remote_ipaddrs(Reply);
+        Reply ->
+            Reply
+    end.
 
 %% @doc stops the local server.
 -spec stop() -> 'ok'.
@@ -190,7 +207,7 @@ init(Defaults) ->
     %% start our cluster_mgr service if not already started.
     case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
         false ->
-            ServiceProto = {?CLUSTER_PROTO_ID, [{1,0}]},
+            ServiceProto = {?CLUSTER_PROTO_ID, [{1,1}, {1,0}]},
             %ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, ?MODULE, ctrlService, []}},
             ServiceSpec = {ServiceProto, {?CTRL_OPTIONS, riak_core_cluster_serv, start_link, []}},
             riak_core_service_mgr:sync_register_service(ServiceSpec, {round_robin,?MAX_CONS});
@@ -226,7 +243,18 @@ handle_call(get_is_leader, _From, State) ->
 handle_call({get_my_members, MyAddr}, _From, State) ->
     %% This doesn't need to call the leader.
     MemberFun = State#state.member_fun,
-    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr)],
+    MyMembers = [{string_of_ip(IP),Port} || {IP,Port} <- MemberFun(MyAddr), is_integer(Port)],
+    {reply, MyMembers, State};
+
+handle_call({get_all_members, MyAddr}, _From, State) ->
+    %% This doesn't need to call the leader.
+    AllMemberFun = State#state.all_member_fun,
+    MyMembers = lists:map(fun({Node,{IP,Port}}) when is_integer(Port) ->
+                                  {Node,{string_of_ip(IP),Port}};
+                             ({Node,_}) ->
+                                  {Node, unreachable}
+                          end,
+                          AllMemberFun(MyAddr)),
     {reply, MyMembers, State};
 
 handle_call(leader_node, _From, State) ->
@@ -309,6 +337,9 @@ handle_cast({set_gc_interval, Interval}, State) ->
 handle_cast({register_member_fun, Fun}, State) ->
     {noreply, State#state{member_fun=Fun}};
 
+handle_cast({register_all_member_fun, Fun}, State) ->
+    {noreply, State#state{all_member_fun=Fun}};
+
 handle_cast({register_save_cluster_members_fun, Fun}, State) ->
     {noreply, State#state{save_members_fun=Fun}};
 
@@ -347,9 +378,6 @@ handle_cast({remove_remote_cluster, Cluster}, State) ->
     {noreply, State2};
 
 %% The client connection recived (or polled for) an update from the remote cluster.
-%% Note that here, the Members are sorted in least connected order. Preserve that.
-%% TODO: we really want to keep all nodes we have every seen, except remove nodes
-%% that explicitly leave the cluster or show up in other clusters.
 handle_cast({cluster_updated, "undefined", NewName, Members, Addr,
              {cluster_by_addr, _CAddr}=Remote}, State) ->
     %% replace connection by address with connection by clustername if that would be safe.
@@ -422,9 +450,10 @@ register_defaults(Defaults, State) ->
     case Defaults of
         [] ->
             State;
-        [MembersFun, SaveFun, RestoreFun] ->
+        [MembersFun, AllMembersFun, SaveFun, RestoreFun] ->
             lager:debug("Registering default cluster manager functions."),
             State#state{member_fun=MembersFun,
+                        all_member_fun=AllMembersFun,
                         save_members_fun=SaveFun,
                         restore_targets_fun=RestoreFun}
     end.
@@ -521,8 +550,8 @@ save_cluster(NewName, OldMembers, ReturnedMembers, State) ->
                                   [NewName, Members]);
                 _ ->
                     persist_members_to_ring(State, NewName, Members),
-                    lager:info("Cluster Manager: updated ~p with members: ~p",
-                               [NewName, Members])
+                    lager:info("Cluster Manager: updated ~p with members: ~p OldMembers ~p",
+                               [NewName, Members, OldMembers])
             end
     end,
     %% clear out these IPs from other clusters
@@ -726,4 +755,35 @@ connect_to_persisted_clusters(State) ->
             connect_to_targets(ClusterTargets);
         _ ->
             ok
+    end.
+
+shuffle_with_seed(List, Seed={_,_,_}) ->
+    _ = random:seed(Seed),
+    [E || {E, _} <- lists:keysort(2, [{Elm, random:uniform()} || Elm <- List])];
+shuffle_with_seed(List, Seed) ->
+    <<_:10,S1:50,S2:50,S3:50>> = crypto:hash(sha, term_to_binary(Seed)),
+    shuffle_with_seed(List, {S1,S2,S3}).
+
+
+shuffle_remote_ipaddrs([]) ->
+  {ok, []};
+shuffle_remote_ipaddrs(RemoteUnsorted) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    SortedNodes = lists:sort(riak_core_ring:all_members(MyRing)),
+    NodesTagged = lists:zip(lists:seq(1, length(SortedNodes)), SortedNodes),
+    case lists:keyfind(node(), 2, NodesTagged) of
+        {MyPos, _} ->
+            OurClusterName = riak_core_connection:symbolic_clustername(),
+            RemoteAddrs = shuffle_with_seed(lists:sort(RemoteUnsorted), [OurClusterName]),
+
+            %% MyPos is the position if *this* node in the sorted list of
+            %% all nodes in my ring.  Now choose the node at the corresponding
+            %% index in RemoteAddrs as out "buddy"
+            SplitPos = ((MyPos-1) rem length(RemoteAddrs)),
+            case lists:split(SplitPos,RemoteAddrs) of
+                {BeforeBuddy,[Buddy|AfterBuddy]} ->
+                    {ok, [Buddy | shuffle_with_seed(AfterBuddy ++ BeforeBuddy, node())]}
+            end;
+        false ->
+            {ok, shuffle_with_seed(lists:sort(RemoteUnsorted), node())}
     end.
