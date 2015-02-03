@@ -147,10 +147,22 @@ handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
     {stop, {ssl_error, Socket, Reason}, State};
 handle_info({hashtree_lock,_}, prepare_exchange, State) ->
     gen_fsm:send_event(self(), start_exchange),
-    {next_state, prepare_exchange, State#state{local_lock=true}}.
+    {next_state, prepare_exchange, State#state{local_lock=true}};
+handle_info({hashtree_build_fail = Error,Index}, _StateName, State) ->
+    lager:info("AAE source failed get_lock for partition ~p, got ~p",
+               [Index, Error]),
+    State#state.owner ! {soft_exit, self(), Error},
+    {stop, normal, State};
+handle_info(_Info, StateName, State) ->
+    {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, _State) ->
-    ok.
+terminate(_Reason, _StateName, State) ->
+    case riak_kv_entropy_manager:enabled() of
+        false ->
+            riak_kv_index_hashtree:nonblocking_destroy(State#state.tree_pid);
+        _ ->
+            ok
+    end.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
@@ -165,6 +177,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%      timeout if locks cannot be acquired in a timely manner.
 prepare_exchange(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    maybe_destroy_hashtree(State),
     send_complete(State),
     {stop, normal, State};
 prepare_exchange(start_exchange, State0=#state{transport=Transport,
@@ -188,41 +201,41 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     %% List of IndexNs to iterate over.
     IndexNs = riak_kv_util:responsible_preflists(Partition),
 
-case riak_kv_vnode:hashtree_pid(Partition, riak_kv_entropy_manager:enabled()) of
-    {ok, TreePid} ->
-        TreeMref = monitor(process, TreePid),
-        State = State0#state{timeout=Timeout,
-                             indexns=IndexNs,
-                             tree_pid=TreePid,
-                             tree_mref=TreeMref},
-        case riak_kv_entropy_manager:enabled() of
-            false ->
-                riak_kv_index_hashtree:build(TreePid),
-                case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
-                    ok ->
-                        prepare_exchange(start_exchange, State#state{local_lock=true});
-                    building ->
-                        {next_state, prepare_exchange, State};
-                    Error ->
-                        lager:info("AAE source failed get_lock for partition ~p, got ~p",
-                                   [Partition, Error]),
-                        State#state.owner ! {soft_exit, self(), Error},
-                        {stop, normal, State}
-                end;
-            true ->
-                case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
-                    ok ->
-                        prepare_exchange(start_exchange, State#state{local_lock=true});
-                    Error ->
-                        lager:info("AAE source failed get_lock for partition ~p, got ~p",
-                                   [Partition, Error]),
-                        State#state.owner ! {soft_exit, self(), Error},
-                        {stop, normal, State}
-                end
-        end;
-    {error, wrong_node} ->
-        {stop, wrong_node, State0}
-end;
+    case riak_kv_vnode:hashtree_pid(Partition, riak_kv_entropy_manager:enabled()) of
+        {ok, TreePid} ->
+            TreeMref = monitor(process, TreePid),
+            State = State0#state{timeout=Timeout,
+                                 indexns=IndexNs,
+                                 tree_pid=TreePid,
+                                 tree_mref=TreeMref},
+            case riak_kv_entropy_manager:enabled() of
+                false ->
+                    riak_kv_index_hashtree:build(TreePid),
+                    case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
+                        ok ->
+                            prepare_exchange(start_exchange, State#state{local_lock=true});
+                        not_built ->
+                            {next_state, prepare_exchange, State};
+                        Error ->
+                            lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                                       [Partition, Error]),
+                            State#state.owner ! {soft_exit, self(), Error},
+                            {stop, normal, State}
+                    end;
+                true ->
+                    case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
+                        ok ->
+                            prepare_exchange(start_exchange, State#state{local_lock=true});
+                        Error ->
+                            lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                                       [Partition, Error]),
+                            State#state.owner ! {soft_exit, self(), Error},
+                            {stop, normal, State}
+                    end
+            end;
+        {error, wrong_node} ->
+            {stop, wrong_node, State0}
+    end;
 
 prepare_exchange(start_exchange, State=#state{index=Partition}) ->
     %% try to get the remote lock
@@ -246,6 +259,7 @@ update_trees(init, State=#state{indexns=IndexNs}) ->
     update_trees({start_exchange, IndexNs}, State);
 update_trees(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    maybe_destroy_hashtree(State),
     send_complete(State),
     {stop, normal, State};
 update_trees({start_exchange, [IndexHead|IndexTail]}, State=#state{tree_pid=TreePid,
@@ -310,6 +324,7 @@ key_exchange(init, State) ->
     key_exchange(start_key_exchange, State2);
 key_exchange(cancel_fullsync, State) ->
     lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    maybe_destroy_hashtree(State),
     send_complete(State),
     {stop, normal, State};
 key_exchange(finish_fullsync, State=#state{owner=Owner}) ->
@@ -317,12 +332,8 @@ key_exchange(finish_fullsync, State=#state{owner=Owner}) ->
     lager:debug("AAE fullsync source completed partition ~p",
                 [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
-    case riak_kv_entropy_manager:enabled() of
-        false ->
-            riak_kv_index_hashtree:destroy(State#state.tree_pid);
-        _ ->
-            ok
-    end,
+    maybe_destroy_hashtree(State),
+
     %% TODO: Why stay in key_exchange? Should we stop instead?
     {next_state, key_exchange, State};
 key_exchange(continue, State=#state{indexns=IndexNs}) ->
@@ -693,6 +704,16 @@ as_event(F) ->
 
 send_complete(State) ->
     send_asynchronous_msg(?MSG_COMPLETE, State).
+
+%% @private
+%% Destroy hashtree if no one will use it.
+maybe_destroy_hashtree(State) ->
+    case riak_kv_entropy_manager:enabled() of
+        false ->
+            riak_kv_index_hashtree:destroy(State#state.tree_pid);
+        _ ->
+            ok
+    end.
 
 %%------------
 %% Synchronous messaging with the AAE fullsync "sink" on the remote cluster

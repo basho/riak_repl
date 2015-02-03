@@ -109,7 +109,14 @@ handle_info({Error, Socket, Reason},
                [State#state.clustername, {Socket, Error, Reason}]),
     {stop, {Socket, Error, Reason}, State};
 handle_info({hashtree_lock,_}, State) ->
-    send_reply(ok, State).
+    send_reply(ok, State);
+handle_info({hashtree_build_fail = Error,Index}, State) ->
+    lager:info("AAE source failed get_lock for partition ~p, got ~p",
+               [Index, Error]),
+    State#state.owner ! {soft_exit, self(), Error},
+    {stop, normal, State};
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 terminate(_Reason, _State) ->
     ok.
@@ -164,7 +171,7 @@ process_msg(?MSG_UPDATE_TREE, IndexN, State=#state{tree_pid=TreePid}) ->
 process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
     case riak_kv_index_hashtree:wait_for_lock(TreePid, fullsync_source) of
-        building ->
+        not_built ->
             %% Wait for lock
             {noreply, State};
         Response ->
