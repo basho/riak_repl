@@ -216,8 +216,8 @@ handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{so
                     {stop, Error, State};
                 {NewTransport, NewSocket} ->
                     FullProto = {State#state.protocol, State#state.protovers},
-                    NewTransport:send(Socket, erlang:term_to_binary(FullProto)),
-                    NewTransport:setopts(Socket, [{active, once}]),
+                    NewTransport:send(NewSocket, erlang:term_to_binary(FullProto)),
+                    NewTransport:setopts(NewSocket, [{active, once}]),
                     State2 = State#state{transport = NewTransport,
                                          socket = NewSocket,
                                          remote_capabilities = TheirCaps},
