@@ -249,7 +249,7 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
 
 handle_info({_LikelyClose, Socket}, _StateName, State = #state{socket = Socket}) ->
     lager:debug("Socket closed"),
-    {stop, normal, State}.
+    {stop, socket_closed, State}.
 
 terminate(_Why, _StateName, _State) ->
     ok.
