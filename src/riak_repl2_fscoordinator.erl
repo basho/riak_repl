@@ -78,6 +78,7 @@
     fullsyncs_completed = 0,
     fullsync_start_time = undefined,
     last_fullsync_duration = undefined,
+    last_fullsync_completed = undefined,
     stat_cache = #stat_cache{}
 }).
 
@@ -260,6 +261,11 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
             undefined -> undefined;
             _N -> calendar:gregorian_seconds_to_datetime(State#state.fullsync_start_time)
         end,
+    FinishTime =
+        case State#state.last_fullsync_completed of
+            undefined -> undefined;
+            LastFSCompleted -> calendar:gregorian_seconds_to_datetime(LastFSCompleted)
+        end,
     SelfStats = [
         {cluster, State#state.other_cluster},
         {queued, queue:len(State#state.partition_queue)},
@@ -277,6 +283,7 @@ handle_call(status, _From, State = #state{socket=Socket}) ->
         {fullsyncs_completed, State#state.fullsyncs_completed},
         {last_fullsync_started, StartTime},
         {last_fullsync_duration, State#state.last_fullsync_duration},
+        {last_fullsync_completed, FinishTime},
         {fullsync_suggested,
             nodeset_to_string_list(State#state.dirty_nodes)},
         {fullsync_suggested_during_fs,
@@ -536,10 +543,14 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}};
 
                 SoftRetryLimit < ErrorCount ->
-                    lager:info("Discaring partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
+                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
                     ErrorExits1 = State4#state.error_exits + 1,
                     Dropped = [Partition#partition_info.index | State4#state.dropped],
-                    {noreply, State4#state{error_exits = ErrorExits1, dropped = Dropped}};
+                    Purgatory = queue:filter(fun(P) -> P =/= Partition end,
+                                             State4#state.purgatory),
+                    {noreply, State4#state{error_exits = ErrorExits1,
+                                           purgatory = Purgatory,
+                                           dropped = Dropped}};
                 true ->
                     Purgatory = queue:in(Partition, State4#state.purgatory),
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}}
@@ -825,8 +836,6 @@ start_fssource(PartitionVal, Ip, Port, State) ->
     Partition = PartitionVal#partition_info.index,
     #state{owners = Owners} = State,
     LocalNode = proplists:get_value(Partition, Owners),
-    lager:info("Starting fssource for ~p on ~p to ~p", [Partition, LocalNode,
-            Ip]),
     case riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}) of
         {ok, Pid} ->
             link(Pid),
@@ -978,7 +987,8 @@ maybe_complete_fullsync(Running, State) ->
             {noreply, State2#state{running_sources = Running,
                                    fullsyncs_completed = TotalFullsyncs,
                                    fullsync_start_time = undefined,
-                                   last_fullsync_duration=ElapsedSeconds
+                                   last_fullsync_duration=ElapsedSeconds,
+                                   last_fullsync_completed = Finish
                                   }};
         _ ->
             % there's something waiting for a response.

@@ -28,6 +28,7 @@
 -define(CTRL_ACK, <<"riak-ctrl:ack">>).
 -define(CTRL_ASK_NAME, <<"riak-ctrl:ask_name">>).
 -define(CTRL_ASK_MEMBERS, <<"riak-ctrl:ask_members">>).
+-define(CTRL_ALL_MEMBERS, <<"riak-ctrl:all_members">>).
 
 
 -define(CONNECTION_SETUP_TIMEOUT, 10000).

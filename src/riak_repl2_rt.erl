@@ -79,7 +79,8 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     Status = riak_repl2_rtq:status(),
     CStatus = proplists:get_value(consumers, Status, []),
     Enabled = lists:sort([Remote || {Remote, _Stats} <- CStatus]),
-    Started = lists:sort([Remote || {Remote, _Pid}  <- riak_repl2_rtsource_conn_sup:enabled()]),
+    Connections = riak_repl2_rtsource_conn_sup:enabled(),
+    Started = lists:sort([Remote || {Remote, _Pid}  <- Connections]),
 
     ToEnable  = WantEnabled -- Enabled,
     ToDisable = Enabled -- WantEnabled,
@@ -96,6 +97,16 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             application:set_env(riak_repl, rtenabled, true)
     end,
 
+    %% For each connection to validate, call maybe_rebalance_delayed to handle 
+    %% the potential need to rebalance connections.
+    ToValidate = Started -- ToStop,
+    _ = [case lists:keyfind(Remote, 1, Connections) of
+             {_, PID} ->
+                 riak_repl2_rtsource_conn:maybe_rebalance_delayed(PID);
+             false ->
+                 ok
+         end || Remote <- ToValidate ],
+
     case ToEnable ++ ToDisable ++ ToStart ++ ToStop of
         [] ->
             [];
@@ -110,9 +121,9 @@ ensure_rt(WantEnabled0, WantStarted0) ->
             %% Stop running sources, re-register to get rid of pending
             %% deliver functions
             _ = [begin
-                 _ = riak_repl2_rtsource_conn_sup:disable(Remote),
-                 riak_repl2_rtq:register(Remote)
-             end || Remote <- ToStop],
+                     _ = riak_repl2_rtsource_conn_sup:disable(Remote),
+                     riak_repl2_rtq:register(Remote)
+                 end || Remote <- ToStop],
 
             %% Unregister disabled sources, freeing up the queue
             _ = [riak_repl2_rtq:unregister(Remote) || Remote <- ToDisable],
@@ -124,9 +135,11 @@ ensure_rt(WantEnabled0, WantStarted0) ->
     end.
 
 register_remote_locator() ->
-    Locator = fun(Name, _Policy) ->
-            riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
-    end,
+    Locator = fun(_, {use_only, Addrs}) ->
+                       {ok, Addrs};
+                 (Name, _Policy) ->
+                       riak_core_cluster_mgr:get_ipaddrs_of_cluster(Name)
+              end,
     ok = riak_core_connection_mgr:register_locator(rt_repl, Locator).
 
 %% Register an active realtime sink (supervised under ranch)
@@ -149,12 +162,13 @@ postcommit(RObj) ->
             Objects = Objects0 ++ [RObj],
             Meta = set_bucket_meta(RObj),
 
-            BinObjs = case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
-                false ->
-                    riak_repl_util:to_wire(w1, Objects);
-                true ->
-                    riak_repl_util:to_wire(w2, Objects)
-            end,
+            BinObjs =
+                case orddict:fetch(?BT_META_TYPED_BUCKET, Meta) of
+                    false ->
+                        riak_repl_util:to_wire(w1, Objects);
+                    true ->
+                        riak_repl_util:to_wire(w2, Objects)
+                end,
             %% try the proxy first, avoids race conditions with unregister()
             %% during shutdown
             case whereis(riak_repl2_rtq_proxy) of
@@ -170,7 +184,7 @@ postcommit(RObj) ->
 
 %% gen_server callbacks
 init([]) ->
-     {ok, #state{}}.
+    {ok, #state{}}.
 
 handle_call(status, _From, State = #state{sinks = SinkPids}) ->
     Timeout = app_helper:get_env(riak_repl, status_timeout, 5000),
