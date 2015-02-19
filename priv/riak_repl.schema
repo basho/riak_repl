@@ -104,7 +104,7 @@
                                 " intervals or use 'never'");
         Global == per_sink ->
              [{list_to_atom(SinkName), Value} || {["mdc", "fullsync", "interval", SinkName], Value} <- Sinks ];
-        true -> 
+        true ->
              cuttlefish:invalid("Cannot set both mdc.fullsync.interval and"
                                 " sink-specific intervals")
      end
