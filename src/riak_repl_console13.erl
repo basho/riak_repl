@@ -18,6 +18,8 @@
 register() ->
     ok = register_commands(),
     ok = register_usage(),
+    %% TODO: add max_fs* settings
+    %% ok = register_configs(),
     ok.
 
 register_commands() ->
@@ -82,7 +84,28 @@ register_commands() ->
                           [{remote, [{datatype, string}]}],
                           [{all, [{longname, "all"},
                                   {shortname, "a"}]}],
-                          fun fullsync_stop/2).
+                          fun fullsync_stop/2),
+    ok = register_command(["proxy-get", "enable"],
+                          [{remote, [{datatype, string}]}],
+                          [], fun proxy_get_enable/2),
+    ok = register_command(["proxy-get", "disable"],
+                          [{remote, [{datatype, string}]}],
+                          [], fun proxy_get_disable/2),
+    ok = register_command(["proxy-get", "redirect", "cluster-id"],
+                          [],
+                          [], fun proxy_get_redirect_cluster_id/2),
+    ok = register_command(["proxy-get", "redirect", "show"],
+                          [{from, [{datatype, string}]}],
+                          [], fun proxy_get_redirect_show/2),
+    ok = register_command(["proxy-get", "redirect", "add"],
+                          [{from, [{datatype, string}]},
+                           {to, [{datatype, string}]}],
+                          [], fun proxy_get_redirect_add/2),
+    ok = register_command(["proxy-get", "redirect", "delete"],
+                          [{from, [{datatype, string}]},
+                           {to, [{datatype, string}]}],
+                          [], fun proxy_get_redirect_delete/2),
+    ok.
 
 
 register_usage(Cmd, Usage) ->
@@ -123,8 +146,15 @@ register_usage() ->
     ok = register_usage(["fullsync", "enable"], fullsync_enable_disable_usage()),
     ok = register_usage(["fullsync", "disable"], fullsync_enable_disable_usage()),
     ok = register_usage(["fullsync", "start"], fullsync_start_stop_usage()),
-    ok = register_usage(["fullsync", "stop"], fullsync_start_stop_usage()).
-
+    ok = register_usage(["fullsync", "stop"], fullsync_start_stop_usage()),
+    ok = register_usage(["proxy-get"], proxy_get_usage()),
+    ok = register_usage(["proxy-get", "enable"], proxy_get_enable_disable_usage()),
+    ok = register_usage(["proxy-get", "disable"], proxy_get_usage()),
+    ok = register_usage(["proxy-get", "redirect"], proxy_get_usage()),
+    ok = register_usage(["proxy-get", "redirect", "show"], fun proxy_get_redirect_show_usage/0),
+    ok = register_usage(["proxy-get", "redirect", "add"], fun proxy_get_redirect_add_delete_usage/0),
+    ok = register_usage(["proxy-get", "redirect", "delete"], fun proxy_get_redirect_add_delete_usage/0),
+    ok = register_usage(["proxy-get", "redirect", "cluster-id"], proxy_get_redirect_usage()).
 
 
 -spec commands_usage() -> string().
@@ -194,6 +224,44 @@ fullsync_start_stop_usage() ->
     "  the specified sink CLUSTERNAME will be affected. When --all is given,\n"
     "  all realtime replication to all sinks will be started or stopped.".
 
+proxy_get_usage() ->
+    "proxy-get SUBCOMMAND ...\n\n"
+     "  Manipulate proxy-get functionality. Proxy-get allows sink clusters\n"
+     "  to actively fetch remote objects over a realtime replication\n"
+     "  connection. Currently, this is only used by Riak CS.\n\n"
+     "  Sub-commands:\n"
+     "    enable     Enable proxy-get on the source\n"
+     "    disable    Disable proxy-get on the source\n"
+     "    redirect   Manipulation proxy-get redirection".
+
+proxy_get_enable_disable_usage() ->
+    "proxy-get ( enable | disable ) remote=CLUSTERNAME\n\n"
+    "  Enables or disables proxy-get requests from sink CLUSTERNAME to this\n"
+    "  source cluster.".
+
+proxy_get_redirect_usage() ->
+    "proxy-get redirect SUBCOMMAND ...\n\n"
+    "  Manipulate proxy-get redirection functionality. Redirection allows\n"
+    "  existing proxy-get connections to be redirected to new source\n"
+    "  clusters so that the original source cluster can be decommissioned.\n\n"
+    "  Sub-commands:\n"
+    "    add          Add a proxy-get redirection\n"
+    "    delete       Delete an existing proxy-get redirection\n"
+    "    show         Show a proxy-get redirection\n"
+    "    cluster-id   Display the local cluster's identifier".
+
+proxy_get_redirect_show_usage() ->
+    "proxy-get redirect show from=SOURCE\n\n"
+    "  Show an existing proxy-get redirection. SOURCE must correspond to\n"
+    "  the result from the `" ++ script_name() ++ "proxy-get redirect cluster-id` command.".
+
+proxy_get_redirect_add_delete_usage() ->
+    "proxy-get redirect ( add | delete ) from=SOURCE to=DESTINATION\n\n"
+    "  Add or delete a proxy-get redirection. Arguments SOURCE and\n"
+    "  DESTINATION must correspond to the result from the `" ++ script_name() ++ "\n"
+    "  proxy-get redirect cluster-id` command.".
+
+
 upgrade(["clustername", [$-|_]|_]=Args) ->
     %% Don't upgrade a call that includes a flag
     Args;
@@ -228,6 +296,52 @@ upgrade(["disconnect", Arg|Rest]=Args) ->
             upgrade_warning(Args, "Use `disconnect remote=~s`", [Arg]),
             ["disconnect", "remote="++Arg|Rest]
     end;
+upgrade(["realtime", Command, Arg|Rest]=Args) when Command == "enable";
+                                                   Command == "disable";
+                                                   Command == "start";
+                                                   Command == "stop" ->
+    case string:words(Arg, "=") of
+        2 -> Args;
+        1 ->
+            upgrade_warning(Args, "Use `realtime ~s remote=~s`", [Command, Arg]),
+            ["realtime", Command, "remote="++Arg|Rest]
+    end;
+upgrade(["realtime", Command]=Args) when Command == "start";
+                                    Command == "stop" ->
+    upgrade_warning(Args, "Use `realtime ~s --all`", [Command]),
+    ["realtime", Command, "--all"];
+upgrade(["realtime", "cascades", "always"]=Args) ->
+    upgrade_warning(Args, "Use `realtime cascades enable`", []),
+    ["realtime", "cascades", "enable"];
+upgrade(["realtime", "cascades", "never"]=Args) ->
+    upgrade_warning(Args, "Use `realtime cascades disable`", []),
+    ["realtime", "cascades", "disable"];
+upgrade(["fullsync", Command, Arg|Rest]=Args) when Command == "enable";
+                                                   Command == "disable";
+                                                   Command == "start";
+                                                   Command == "stop" ->
+    case string:words(Arg, "=") of
+        2 -> Args;
+        1 ->
+            upgrade_warning(Args, "Use `fullsync ~s remote=~s`", [Command, Arg]),
+            ["fullsync", Command, "remote="++Arg|Rest]
+    end;
+upgrade(["fullsync", Command]=Args) when Command == "start";
+                                    Command == "stop" ->
+    upgrade_warning(Args, "Use `fullsync ~s --all`", [Command]),
+    ["fullsync", Command, "--all"];
+upgrade(["fullsync", Key]=Args) when Key == "max_fssource_node";
+                                Key == "max_fssource_cluster";
+                                Key == "max_fssink_node" ->
+    TKey = config_key_translation(Key),
+    upgrade_warning(Args, "Use `show ~s`", [TKey]),
+    ["show", TKey];
+upgrade(["fullsync", Key, Value]=Args) when Key == "max_fssource_node";
+                                Key == "max_fssource_cluster";
+                                Key == "max_fssink_node" ->
+    TKey = config_key_translation(Key),
+    upgrade_warning(Args, "Use `show ~s`", [TKey]),
+    ["set", TKey++"="++Value];
 upgrade(Args) ->
     Args.
 
@@ -235,6 +349,11 @@ upgrade(Args) ->
 %% command.
 upgrade_warning(Args, Fmt, FArgs) ->
     put(upgrade_warning, {string:join(Args, " "), io_lib:format(Fmt, FArgs)}).
+
+config_key_translation("max_fssource_node")    -> "mdc.fullsync.source.max_workers_per_node";
+config_key_translation("max_fssource_cluster") -> "mdc.fullsync.source.max_workers_per_cluster";
+config_key_translation("max_fssink_node")      -> "mdc.fullsync.sink.max_workers_per_node".
+
 
 output(CmdOut) ->
     case get(upgrade_warning) of
@@ -619,4 +738,82 @@ fullsync_stop([], [{all,_}]) ->
                                                             Fullsyncs],
     text("Fullsync replication stopped to all connected clusters.");
 fullsync_stop(_, _) ->
+    usage.
+
+%%--------------------------
+%% Command: proxy-get enable
+%%--------------------------
+
+proxy_get_enable([{remote, Remote}], []) ->
+    ?LOG_USER_CMD("Enable Riak CS Proxy GET block provider for ~p",[Remote]),
+    riak_core_ring_manager:ring_trans(fun
+                                          riak_repl_ring:pg_enable_trans/2, Remote),
+    text(io_lib:format("Proxy-get to cluster ~s has been enabled.", [Remote]));
+proxy_get_enable(_, _) ->
+    usage.
+
+
+%%--------------------------
+%% Command: proxy-get disable
+%%--------------------------
+
+proxy_get_disable([{remote, Remote}], []) ->
+    ?LOG_USER_CMD("Disable Riak CS Proxy GET block provider for ~p",[Remote]),
+    riak_core_ring_manager:ring_trans(fun
+                                          riak_repl_ring:pg_disable_trans/2, Remote),
+    text(io_lib:format("Proxy-get to cluster ~s has been disabled.", [Remote]));
+proxy_get_disable(_, _) ->
+    usage.
+
+%%--------------------------
+%% Command: proxy-get redirect cluster-id
+%%--------------------------
+
+proxy_get_redirect_cluster_id([], []) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ClusterId = lists:flatten(
+                  io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+    text(io:format("local cluster id: ~p~n", [ClusterId]));
+proxy_get_redirect_cluster_id(_, _) ->
+    usage.
+
+%%--------------------------
+%% Command: proxy-get redirect show
+%%--------------------------
+
+proxy_get_redirect_show([{from, FromClusterId}], []) ->
+    case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, FromClusterId) of
+        undefined ->
+            text(io_lib:format("No mapping for ~p~n", [FromClusterId]));
+        ToClusterId ->
+            text(io_lib:format("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId]))
+    end;
+proxy_get_redirect_show(_, _) ->
+    usage.
+
+%%--------------------------
+%% Command: proxy-get redirect add
+%%--------------------------
+
+proxy_get_redirect_add([{to, _}=To, {from, _}=From], []) ->
+    proxy_get_redirect_add([From, To], []);
+proxy_get_redirect_add([{from, FromClusterId}, {to, ToClusterId}], []) ->
+    lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
+    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>},
+                           FromClusterId, ToClusterId),
+    text(io_lib:format("Redirected proxy-get from cluster ~s to cluster ~s~n",
+                       [FromClusterId, ToClusterId]));
+proxy_get_redirect_add(_, _) ->
+    usage.
+
+
+%%--------------------------
+%% Command: proxy-get redirect delete
+%%--------------------------
+
+proxy_get_redirect_delete([{from, FromClusterId}], []) ->
+    lager:info("Deleting redirect to ~p", [FromClusterId]),
+    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId),
+    text(io_lib:format("Deleted proxy-get redirect from cluster ~s~n", [FromClusterId]));
+proxy_get_redirect_delete(_, _) ->
     usage.

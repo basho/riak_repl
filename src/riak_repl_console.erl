@@ -22,14 +22,14 @@
          max_fssource_cluster/1,
          max_fssink_node/1,
          %% realtime_cascades/1,
-         cascades/1,
+         %% cascades/1,
          show_nat_map/1,
          add_nat_map/1,
-         del_nat_map/1,
-         add_block_provider_redirect/1,
-         show_block_provider_redirect/1,
-         show_local_cluster_id/1,
-         delete_block_provider_redirect/1
+         del_nat_map/1 %,
+         %% add_block_provider_redirect/1,
+         %% show_block_provider_redirect/1,
+         %% show_local_cluster_id/1,
+         %% delete_block_provider_redirect/1
         ]).
 
 -export([get_ring/0, maybe_set_ring/2]).
@@ -628,8 +628,8 @@ modes(NewModes) ->
 %%             io:format("Realtime cascades are disabled.~n")
 %%     end.
 
-cascades(Val) ->
-    realtime_cascades(Val).
+%% cascades(Val) ->
+%%     realtime_cascades(Val).
 
 %% For each of these "max" parameter changes, we need to make an rpc multi-call to every node
 %% so that all nodes have the new value in their application environment. That way, whoever
@@ -725,28 +725,28 @@ del_nat_map([External, Internal]) ->
 %%     of this writing we had no reliable way to map a clustername to an id
 %%     over disterlang. When this API becomes available, this feature may use
 %%     it.
-add_block_provider_redirect([FromClusterId, ToClusterId]) ->
-    lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
-    riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>},
-                           FromClusterId, ToClusterId).
+%% add_block_provider_redirect([FromClusterId, ToClusterId]) ->
+%%     lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
+%%     riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>},
+%%                            FromClusterId, ToClusterId).
 
-show_block_provider_redirect([FromClusterId]) ->
-    case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, FromClusterId) of
-        undefined ->
-            io:format("No mapping for ~p~n", [FromClusterId]);
-        ToClusterId ->
-            io:format("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId])
-    end.
+%% show_block_provider_redirect([FromClusterId]) ->
+%%     case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, FromClusterId) of
+%%         undefined ->
+%%             io:format("No mapping for ~p~n", [FromClusterId]);
+%%         ToClusterId ->
+%%             io:format("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId])
+%%     end.
 
-delete_block_provider_redirect([FromClusterId]) ->
-    lager:info("Deleting redirect to ~p", [FromClusterId]),
-    riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
+%% delete_block_provider_redirect([FromClusterId]) ->
+%%     lager:info("Deleting redirect to ~p", [FromClusterId]),
+%%     riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
 
-show_local_cluster_id([]) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    ClusterId = lists:flatten(
-                  io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
-    io:format("local cluster id: ~p~n", [ClusterId]).
+%% show_local_cluster_id([]) ->
+%%     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+%%     ClusterId = lists:flatten(
+%%                   io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
+%%     io:format("local cluster id: ~p~n", [ClusterId]).
 
 %% helper functions
 
