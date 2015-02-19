@@ -365,7 +365,13 @@ output(CmdOut) ->
     end.
 
 error_msg(Fmt, Args) ->
-    [alert(text(io_lib:format(Fmt, Args)))].
+    [alert(text_msg(Fmt, Args))].
+
+text_msg(Str) ->
+    text_msg(Str, []).
+
+text_msg(Fmt, Args) ->
+    text(io_lib:format(Fmt, Args)).
 
 %%-----------------------
 %% Command: clusterstats
@@ -385,7 +391,7 @@ clusterstats(_, Flags) ->
                              throw(badflags)
                      end,
         %% TODO: make this output better
-        output(text(io_lib:format("~p~n", [CMStats ++ CConnStats])))
+        output(text_msg("~p~n", [CMStats ++ CConnStats]))
     catch
         throw:badflags -> usage
     end.
@@ -440,11 +446,11 @@ cluster_mgr_stats() ->
 %% Command: clustername
 %%-----------------------
 clustername([], []) ->
-    output(text(io_lib:format("Cluster name: ~s~n", [riak_core_connection:symbolic_clustername()])));
+    output(text_msg("Cluster name: ~s~n", [riak_core_connection:symbolic_clustername()]));
 clustername([], [{name, ClusterName}]) ->
     riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
                                       ClusterName),
-    output(text(io_lib:format("Cluster name was set to: ~s~n", [ClusterName]))).
+    output(text_msg("Cluster name was set to: ~s~n", [ClusterName])).
 
 %%-----------------------
 %% Command: clusters
@@ -529,10 +535,10 @@ connect([{address, {IP, Port}}], []) ->
             %% but we still want to be able to print to stderr. This
             %% will require a clique enhancement.
             error_msg("Error: Unable to establish connections until local cluster is named.~n"
-                       "First use ~s clustername --name NAME ~n", [script_name()]);
+                      "First use ~s clustername --name NAME ~n", [script_name()]);
         _Name ->
             riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
-            [text(io_lib:format("Connecting to remote cluster at ~p:~p.", [IP, Port]))]
+            [text_msg("Connecting to remote cluster at ~p:~p.", [IP, Port])]
     end;
 connect(_, _) ->
     usage.
@@ -544,11 +550,11 @@ connect(_, _) ->
 disconnect([{remote, {IP, Port}}], []) ->
     ?LOG_USER_CMD("Disconnect from cluster at ~p:~p", [IP, Port]),
     riak_core_cluster_mgr:remove_remote_cluster({IP, Port}),
-    [text(io_lib:format("Disconnecting from cluster at ~p:~p~n", [IP, Port]))];
+    [text_msg("Disconnecting from cluster at ~p:~p~n", [IP, Port])];
 disconnect([{remote, Name}], []) ->
     ?LOG_USER_CMD("Disconnect from cluster ~p", [Name]),
     riak_core_cluster_mgr:remove_remote_cluster(Name),
-    [text(io_lib:format("Disconnecting from cluster ~p~n", [Name]))];
+    [text_msg("Disconnecting from cluster ~p~n", [Name])];
 disconnect(_, _) ->
     usage.
 
@@ -561,9 +567,9 @@ realtime_enable([{remote, Remote}], []) ->
     ?LOG_USER_CMD("Enable Realtime Replication to cluster ~p", [Remote]),
     case riak_repl2_rt:enable(Remote) of
         not_changed ->
-            [alert(text(io_lib:format("Realtime replication to cluster ~p already enabled!~n", [Remote])))];
+            [error_msg("Realtime replication to cluster ~p already enabled!~n", [Remote])];
         {ok, _} ->
-            [text(io_lib:format("Realtime replication to cluster ~p enabled.~n", [Remote]))]
+            [text_msg("Realtime replication to cluster ~p enabled.~n", [Remote])]
     end;
 realtime_enable(_, _) ->
     usage.
@@ -577,7 +583,7 @@ realtime_disable([{remote, Remote}], []) ->
         not_changed ->
             error_msg("Realtime replication to cluster ~p already disabled!~n", [Remote]);
         {ok, _} ->
-            [text(io_lib:format("Realtime replication to cluster ~p disabled.~n", [Remote]))]
+            [text_msg("Realtime replication to cluster ~p disabled.~n", [Remote])]
     end;
 realtime_disable(_, _) ->
     usage.
@@ -591,7 +597,7 @@ realtime_start([{remote, Remote}], []) ->
         not_changed ->
             error_msg("Realtime replication to cluster ~p is already started or not enabled!~n", [Remote]);
         {ok, _} ->
-            [text(io_lib:format("Realtime replication to cluster ~p started.~n", [Remote]))]
+            [text_msg("Realtime replication to cluster ~p started.~n", [Remote])]
     end;
 realtime_start([], [{all, _}]) ->
     ?LOG_USER_CMD("Start Realtime Replication to all connected clusters", []),
@@ -609,7 +615,7 @@ realtime_stop([{remote, Remote}], []) ->
         not_changed ->
             error_msg("Realtime replication to cluster ~p is already stopped or not enabled!~n", [Remote]);
         {ok, _} ->
-            [text(io_lib:format("Realtime replication to cluster ~p stopped.~n", [Remote]))]
+            [text_msg("Realtime replication to cluster ~p stopped.~n", [Remote])]
     end;
 realtime_stop([], [{all, _}]) ->
     ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters", []),
@@ -625,7 +631,7 @@ realtime_cascades_enable([], []) ->
     ?LOG_USER_CMD("Enable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:rt_cascades_trans/2,
                                       always),
-    text(io_lib:format("Realtime cascades enabled.~n"));
+    text_msg("Realtime cascades enabled.~n");
 realtime_cascades_enable(_,_) ->
     usage.
 
@@ -637,7 +643,7 @@ realtime_cascades_disable([], []) ->
     ?LOG_USER_CMD("Disable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:rt_cascades_trans/2,
                                       never),
-    text(io_lib:format("Realtime cascades disabled.~n"));
+    text_msg("Realtime cascades disabled.~n");
 realtime_cascades_disable(_,_) ->
     usage.
 
@@ -648,9 +654,9 @@ realtime_cascades_disable(_,_) ->
 realtime_cascades_show([], []) ->
     case app_helper:get_env(riak_repl, realtime_cascades, always) of
         always ->
-            text(io_lib:format("Realtime cascades are enabled.~n"));
+            text_msg("Realtime cascades are enabled.~n");
         never ->
-            text(io_lib:format("Realtime cascades are disabled.~n"))
+            text_msg("Realtime cascades are disabled.~n")
     end;
 realtime_cascades_show(_, _) ->
     usage.
@@ -666,7 +672,7 @@ fullsync_enable([{remote, Remote}], []) ->
     riak_core_ring_manager:ring_trans(fun
                                           riak_repl_ring:fs_enable_trans/2, Remote),
     _ = riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
-    text(io_lib:format("Fullsync replication to cluster ~p enabled.", [Remote]));
+    text_msg("Fullsync replication to cluster ~p enabled.", [Remote]);
 fullsync_enable(_, _) ->
     usage.
 
@@ -680,7 +686,7 @@ fullsync_disable([{remote, Remote}], []) ->
     riak_core_ring_manager:ring_trans(fun
                                           riak_repl_ring:fs_disable_trans/2, Remote),
     _ = riak_repl2_fscoordinator_sup:stop_coord(Leader, Remote),
-    text(io_lib:format("Fullsync replication to cluster ~p disabled.", [Remote]));
+    text_msg("Fullsync replication to cluster ~p disabled.", [Remote]);
 fullsync_disable(_, _) ->
     usage.
 
@@ -702,7 +708,7 @@ fullsync_start([{remote, Remote}], []) ->
                       "Use 'fullsync enable ~p' before start~n", [Remote, Remote]);
         Pid ->
             riak_repl2_fscoordinator:start_fullsync(Pid),
-            text(io_lib:format("Fullsync replication to cluster ~p started.", [Remote]))
+            text_msg("Fullsync replication to cluster ~p started.", [Remote])
     end;
 fullsync_start([], [{all,_}]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
@@ -728,7 +734,7 @@ fullsync_stop([{remote, Remote}], []) ->
             error_msg("Fullsync is not enabled for cluster ~p.", [Remote]);
         Pid ->
             riak_repl2_fscoordinator:stop_fullsync(Pid),
-            text(io_lib:format("Fullsync stopped for cluster ~p.", [Remote]))
+            text_msg("Fullsync stopped for cluster ~p.", [Remote])
     end;
 fullsync_stop([], [{all,_}]) ->
     Leader = riak_core_cluster_mgr:get_leader(),
@@ -748,7 +754,7 @@ proxy_get_enable([{remote, Remote}], []) ->
     ?LOG_USER_CMD("Enable Riak CS Proxy GET block provider for ~p",[Remote]),
     riak_core_ring_manager:ring_trans(fun
                                           riak_repl_ring:pg_enable_trans/2, Remote),
-    text(io_lib:format("Proxy-get to cluster ~s has been enabled.", [Remote]));
+    text_msg("Proxy-get to cluster ~s has been enabled.", [Remote]);
 proxy_get_enable(_, _) ->
     usage.
 
@@ -761,7 +767,7 @@ proxy_get_disable([{remote, Remote}], []) ->
     ?LOG_USER_CMD("Disable Riak CS Proxy GET block provider for ~p",[Remote]),
     riak_core_ring_manager:ring_trans(fun
                                           riak_repl_ring:pg_disable_trans/2, Remote),
-    text(io_lib:format("Proxy-get to cluster ~s has been disabled.", [Remote]));
+    text_msg("Proxy-get to cluster ~s has been disabled.", [Remote]);
 proxy_get_disable(_, _) ->
     usage.
 
@@ -773,7 +779,7 @@ proxy_get_redirect_cluster_id([], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
                   io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
-    text(io:format("local cluster id: ~p~n", [ClusterId]));
+    text_msg("local cluster id: ~p~n", [ClusterId]);
 proxy_get_redirect_cluster_id(_, _) ->
     usage.
 
@@ -784,9 +790,9 @@ proxy_get_redirect_cluster_id(_, _) ->
 proxy_get_redirect_show([{from, FromClusterId}], []) ->
     case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, FromClusterId) of
         undefined ->
-            text(io_lib:format("No mapping for ~p~n", [FromClusterId]));
+            text_msg("No mapping for ~p~n", [FromClusterId]);
         ToClusterId ->
-            text(io_lib:format("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId]))
+            text_msg("Cluster id ~p redirecting to cluster id ~p~n", [FromClusterId, ToClusterId])
     end;
 proxy_get_redirect_show(_, _) ->
     usage.
@@ -801,8 +807,8 @@ proxy_get_redirect_add([{from, FromClusterId}, {to, ToClusterId}], []) ->
     lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
     riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>},
                            FromClusterId, ToClusterId),
-    text(io_lib:format("Redirected proxy-get from cluster ~s to cluster ~s~n",
-                       [FromClusterId, ToClusterId]));
+    text_msg("Redirected proxy-get from cluster ~s to cluster ~s~n",
+             [FromClusterId, ToClusterId]);
 proxy_get_redirect_add(_, _) ->
     usage.
 
@@ -814,6 +820,6 @@ proxy_get_redirect_add(_, _) ->
 proxy_get_redirect_delete([{from, FromClusterId}], []) ->
     lager:info("Deleting redirect to ~p", [FromClusterId]),
     riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId),
-    text(io_lib:format("Deleted proxy-get redirect from cluster ~s~n", [FromClusterId]));
+    text_msg("Deleted proxy-get redirect from cluster ~s~n", [FromClusterId]);
 proxy_get_redirect_delete(_, _) ->
     usage.
