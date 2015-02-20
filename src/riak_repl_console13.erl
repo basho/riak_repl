@@ -843,37 +843,26 @@ proxy_get_redirect_delete(_, _) ->
 %%--------------------------
 %% Command: set FULLSYNC_CONFIG_KEY=VALUE
 %%--------------------------
-set_fullsync_limit(["mdc", "fullsync", "source", "max_workers_per_node"],
-                   Value, _Flags) ->
+set_fullsync_limit(["mdc", "fullsync"|Key], Value, _Flags) ->
+    %% NB: All config settings are done cluster-wide, there's not
+    %% flags for specific nodes like in handoff.
+    AppEnvKey = max_fs_config_key(Key),
+    Message = max_fs_message(AppEnvKey),
     riak_core_util:rpc_every_member(lager, log,
                                     [notice, [{pid, self()}],
-                                     "Locally set max number of Fullsync source workers to ~p", [Value]],
+                                     "[user] Locally set max number of fullsync workers ~s to ~p",
+                                     [Message, Value]],
                                     ?CONSOLE_RPC_TIMEOUT),
     riak_core_util:rpc_every_member(application, set_env,
-                                    [riak_repl, max_fsssource_node, Value],
+                                    [riak_repl, max_fssource_node, Value],
                                     ?CONSOLE_RPC_TIMEOUT),
-    io:format("Set max number of fullsync workers per source node to ~p~n", [Value]);
+    io:format("Set max number of fullsync workers ~s to ~p~n", [Message, Value]).
 
-set_fullsync_limit(["mdc", "fullsync", "source", "max_workers_per_cluster"],
-                   Value, _Flags) ->
-    riak_core_util:rpc_every_member(lager, log,
-                                    [notice, [{pid, self()}],
-                                     "Locally set max number of Fullsync workers "
-                                     "for Source cluster to ~p", [Value]], ?CONSOLE_RPC_TIMEOUT),
-    riak_core_util:rpc_every_member(application, set_env,
-                                    [riak_repl, max_fsssource_cluster, Value],
-                                    ?CONSOLE_RPC_TIMEOUT),
-    io:format("Set max number of fullsync workers for source"
-              " cluster to ~p~n", [Value]);
+max_fs_message(max_fssource_node)    -> "per source node";
+max_fs_message(max_fssource_cluster) -> "for source cluster";
+max_fs_message(max_fssink_node)      -> "per sink node".
 
-set_fullsync_limit(["mdc", "fullsync", "sink", "max_workers_per_node"],
-                   Value, _Flags) ->
-    riak_core_util:rpc_every_member(lager, log,
-                                    [notice, [{pid, self()}],
-                                     "Locally set max number of Fullsync sink workers to ~p", [Value]],
-                                    ?CONSOLE_RPC_TIMEOUT),
-    riak_core_util:rpc_every_member(application, set_env,
-                                    [riak_repl, max_fssink_node, Value],
-                                    ?CONSOLE_RPC_TIMEOUT),
-    io:format("Set max number of fullsync workers per sink node to ~p~n", [Value]).
+max_fs_config_key(["source", "max_workers_per_node"]) -> max_fssource_node;
+max_fs_config_key(["source", "max_workers_per_cluster"]) -> max_fssource_cluster;
+max_fs_config_key(["sink", "max_workers_per_node"]) -> max_fssink_node.
 
