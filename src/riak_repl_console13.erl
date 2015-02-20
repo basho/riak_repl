@@ -18,8 +18,7 @@
 register() ->
     ok = register_commands(),
     ok = register_usage(),
-    %% TODO: add max_fs* settings
-    %% ok = register_configs(),
+    ok = register_configs(),
     ok.
 
 register_commands() ->
@@ -156,6 +155,18 @@ register_usage() ->
     ok = register_usage(["proxy-get", "redirect", "delete"], fun proxy_get_redirect_add_delete_usage/0),
     ok = register_usage(["proxy-get", "redirect", "cluster-id"], proxy_get_redirect_usage()).
 
+
+register_configs() ->
+    %% "mdc.fullsync.source.max_workers_per_node"
+    %% "mdc.fullsync.source.max_workers_per_cluster"
+    %% "mdc.fullsync.sink.max_workers_per_node"
+    Keys = ["mdc.fullsync.source.max_workers_per_node",
+            "mdc.fullsync.source.max_workers_per_cluster",
+            "mdc.fullsync.sink.max_workers_per_node"],
+    [ ok = clique:register_config(cuttlefish_variable:parse(Key),
+                                  fun set_fullsync_limit/3) || Key <- Keys ],
+    ok = clique:register_config_whitelist(Keys),
+    ok.
 
 -spec commands_usage() -> string().
 commands_usage() ->
@@ -828,3 +839,41 @@ proxy_get_redirect_delete([{from, FromClusterId}], []) ->
     text_out("Deleted proxy-get redirect from cluster ~s~n", [FromClusterId]);
 proxy_get_redirect_delete(_, _) ->
     usage.
+
+%%--------------------------
+%% Command: set FULLSYNC_CONFIG_KEY=VALUE
+%%--------------------------
+set_fullsync_limit(["mdc", "fullsync", "source", "max_workers_per_node"],
+                   Value, _Flags) ->
+    riak_core_util:rpc_every_member(lager, log,
+                                    [notice, [{pid, self()}],
+                                     "Locally set max number of Fullsync source workers to ~p", [Value]],
+                                    ?CONSOLE_RPC_TIMEOUT),
+    riak_core_util:rpc_every_member(application, set_env,
+                                    [riak_repl, max_fsssource_node, Value],
+                                    ?CONSOLE_RPC_TIMEOUT),
+    io:format("Set max number of fullsync workers per source node to ~p~n", [Value]);
+
+set_fullsync_limit(["mdc", "fullsync", "source", "max_workers_per_cluster"],
+                   Value, _Flags) ->
+    riak_core_util:rpc_every_member(lager, log,
+                                    [notice, [{pid, self()}],
+                                     "Locally set max number of Fullsync workers "
+                                     "for Source cluster to ~p", [Value]], ?CONSOLE_RPC_TIMEOUT),
+    riak_core_util:rpc_every_member(application, set_env,
+                                    [riak_repl, max_fsssource_cluster, Value],
+                                    ?CONSOLE_RPC_TIMEOUT),
+    io:format("Set max number of fullsync workers for source"
+              " cluster to ~p~n", [Value]);
+
+set_fullsync_limit(["mdc", "fullsync", "sink", "max_workers_per_node"],
+                   Value, _Flags) ->
+    riak_core_util:rpc_every_member(lager, log,
+                                    [notice, [{pid, self()}],
+                                     "Locally set max number of Fullsync sink workers to ~p", [Value]],
+                                    ?CONSOLE_RPC_TIMEOUT),
+    riak_core_util:rpc_every_member(application, set_env,
+                                    [riak_repl, max_fssink_node, Value],
+                                    ?CONSOLE_RPC_TIMEOUT),
+    io:format("Set max number of fullsync workers per sink node to ~p~n", [Value]).
+
