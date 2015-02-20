@@ -354,7 +354,6 @@ config_key_translation("max_fssource_node")    -> "mdc.fullsync.source.max_worke
 config_key_translation("max_fssource_cluster") -> "mdc.fullsync.source.max_workers_per_cluster";
 config_key_translation("max_fssink_node")      -> "mdc.fullsync.sink.max_workers_per_node".
 
-
 output(CmdOut) ->
     case get(upgrade_warning) of
         undefined -> CmdOut;
@@ -363,10 +362,6 @@ output(CmdOut) ->
             [error_msg("The command form `~s` is deprecated. ~s~n", [Arguments, Message]),
              CmdOut]
     end.
-
-
-%% error_out(Str) ->
-%%     error_out(Str, []).
 
 error_out(Fmt, Args) ->
     output(error_msg(Fmt, Args)).
@@ -379,9 +374,6 @@ text_out(Str) ->
 
 text_out(Str, Args) ->
     output(text_msg(Str, Args)).
-
-text_msg(Str) ->
-    text_msg(Str, []).
 
 text_msg(Fmt, Args) ->
     [text(io_lib:format(Fmt, Args))].
