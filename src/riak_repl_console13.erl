@@ -331,14 +331,14 @@ upgrade(["fullsync", Command]=Args) when Command == "start";
     upgrade_warning(Args, "Use `fullsync ~s --all`", [Command]),
     ["fullsync", Command, "--all"];
 upgrade(["fullsync", Key]=Args) when Key == "max_fssource_node";
-                                Key == "max_fssource_cluster";
-                                Key == "max_fssink_node" ->
+                                     Key == "max_fssource_cluster";
+                                     Key == "max_fssink_node" ->
     TKey = config_key_translation(Key),
     upgrade_warning(Args, "Use `show ~s`", [TKey]),
     ["show", TKey];
 upgrade(["fullsync", Key, Value]=Args) when Key == "max_fssource_node";
-                                Key == "max_fssource_cluster";
-                                Key == "max_fssink_node" ->
+                                            Key == "max_fssource_cluster";
+                                            Key == "max_fssink_node" ->
     TKey = config_key_translation(Key),
     upgrade_warning(Args, "Use `show ~s`", [TKey]),
     ["set", TKey++"="++Value];
