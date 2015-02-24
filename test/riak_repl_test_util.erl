@@ -1,13 +1,16 @@
 -module(riak_repl_test_util).
 
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+
 -export([reset_meck/1, reset_meck/2]).
 -export([abstract_gen_tcp/0, abstract_stats/0, abstract_stateful/0]).
 -export([kill_and_wait/1, kill_and_wait/2]).
--export([wait_for_pid/1, wait_for_pid/2]).
+-export([wait_until_down/1, wait_until_down/2]).
 -export([maybe_unload_mecks/1]).
 -export([start_test_ring/0, stop_test_ring/0]).
 -export([maybe_start_lager/0, start_lager/0, stop_apps/1]).
-
 
 start_test_ring() ->
     stop_test_ring(),
@@ -66,11 +69,17 @@ reset_meck(Mod, Opts) ->
     end,
     meck:new(Mod, Opts).
 
-kill_and_wait(Victem) ->
-    kill_and_wait(Victem, stupify).
+kill_and_wait(Victims) ->
+    kill_and_wait(Victims, stupify).
 
 kill_and_wait(undefined, _Cause) ->
     ok;
+
+kill_and_wait([], _Cause) ->
+    ok;
+kill_and_wait([Atom | Rest], Cause) ->
+    kill_and_wait(Atom, Cause),
+    kill_and_wait(Rest, Cause);
 
 kill_and_wait(Atom, Cause) when is_atom(Atom) ->
     kill_and_wait(whereis(Atom), Cause);
@@ -78,12 +87,12 @@ kill_and_wait(Atom, Cause) when is_atom(Atom) ->
 kill_and_wait(Pid, Cause) when is_pid(Pid) ->
     unlink(Pid),
     exit(Pid, Cause),
-    wait_for_pid(Pid).
+    wait_until_down(Pid).
 
-wait_for_pid(Pid) ->
-    wait_for_pid(Pid, infinity).
+wait_until_down(Pid) ->
+    wait_until_down(Pid, infinity).
 
-wait_for_pid(Pid, Timeout) ->
+wait_until_down(Pid, Timeout) ->
     Mon = erlang:monitor(process, Pid),
     receive
         {'DOWN', Mon, process, Pid, _Why} ->
@@ -105,9 +114,9 @@ maybe_start_lager(_) ->
     start_lager().
 
 start_lager() ->
-    %error_logger:tty(false),
     {ok, Started} = application:ensure_all_started(lager),
-    lager:set_loglevel(lager_console_backend, debug),
+    % But keep it quiet, please
+    lager:set_loglevel(lager_console_backend, '=emergency'),
     Started.
 
 %% @doc Stop the applications listsed. The list is assumed to be in the
@@ -119,3 +128,4 @@ stop_apps(Started) ->
         application:stop(App)
     end, lists:reverse(Started)).
 
+-endif. % TEST

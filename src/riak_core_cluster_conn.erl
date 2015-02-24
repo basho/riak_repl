@@ -75,19 +75,21 @@
 
 -type remote() :: {cluster_by_name, clustername()} | {cluster_by_addr, ip_addr()}.
 -type peer_address() :: {string(), pos_integer()}.
+-type node_address() :: {atom(), peer_address()}.
 -type ranch_transport_messages() :: {atom(), atom(), atom()}.
 -record(state, {mode :: atom(),
                 remote :: remote(),
                 socket :: port(),
                 name :: clustername(),
                 previous_name="undefined" :: clustername(),
-                members=[] :: [peer_address()],
+                members=[] :: [peer_address() | node_address()],
                 connection_ref :: reference(),
                 connection_timeout :: timeout(),
                 transport :: atom(),
                 address :: peer_address(),
                 connection_props :: proplists:proplist(),
-                transport_msgs :: ranch_transport_messages()}).
+                transport_msgs :: ranch_transport_messages(),
+                proto_version :: {non_neg_integer(), non_neg_integer()} }).
 -type state() :: #state{}.
 
 %%%===================================================================
@@ -121,14 +123,17 @@ status(Ref, Timeout) ->
 connected(Socket,
           Transport,
           Addr,
-          {?REMOTE_CLUSTER_PROTO_ID, _MyVer, _RemoteVer},
+          {?REMOTE_CLUSTER_PROTO_ID,
+           _MyVer    ={CommonMajor,LocalMinor},
+           _RemoteVer={CommonMajor,RemoteMinor}},
           {_Remote, Client},
           Props) ->
     %% give control over the socket to the `Client' process.
     %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
     gen_fsm:send_event(Client,
-                       {connected_to_remote, Socket, Transport, Addr, Props}).
+                       {connected_to_remote, Socket, Transport, Addr, Props,
+                        {CommonMajor, min(LocalMinor,RemoteMinor)}}).
 
 -spec connect_failed({term(), term()}, {error, term()}, {_, atom() | pid() | port() | {atom(), _} | {via, _, _}}) -> ok.
 connect_failed({_Proto, _Vers}, {error, _}=Error, {_Remote, Client}) ->
@@ -189,7 +194,7 @@ connecting({connect_failed, Error}, State=#state{remote=Remote}) ->
     %% This is fatal! We are being supervised by conn_sup and if we
     %% die, it will restart us.
     {stop, Error, State};
-connecting({connected_to_remote, Socket, Transport, Addr, Props}, State) ->
+connecting({connected_to_remote, Socket, Transport, Addr, Props, ProtoVersion}, State) ->
     RemoteName = proplists:get_value(clustername, Props),
     _ = lager:debug("Cluster Manager control channel client connected to"
                     " remote ~p at ~p named ~p",
@@ -202,7 +207,9 @@ connecting({connected_to_remote, Socket, Transport, Addr, Props}, State) ->
                            transport=Transport,
                            address=Addr,
                            connection_props=Props,
-                           transport_msgs = TransportMsgs},
+                           transport_msgs = TransportMsgs,
+                           proto_version=ProtoVersion
+                          },
     _ = request_cluster_name(UpdState),
     {next_state, waiting_for_cluster_name, UpdState, ?CONNECTION_SETUP_TIMEOUT};
 connecting(poll_cluster, State) ->
@@ -240,17 +247,56 @@ waiting_for_cluster_name(_, _From, _State) ->
     {reply, ok, waiting_for_cluster_name, _State}.
 
 %% Async message handling for the `waiting_for_cluster_members' state
-waiting_for_cluster_members({cluster_members, Members}, State) ->
+waiting_for_cluster_members({cluster_members, NewMembers}, State = #state{ proto_version={1,0} }) ->
     #state{address=Addr,
            name=Name,
            previous_name=PreviousName,
+           members=OldMembers,
            remote=Remote} = State,
-    %% This is the first time we're updating the cluster manager
-    %% with the name of this cluster, so it's old name is undefined.
+    %% this is 1.0 code. NewMembers is list of {IP,Port}
+
+    SortedNew = ordsets:from_list(NewMembers),
+    Members =
+        NewMembers ++ lists:filter(fun(Mem) ->
+                                           not ordsets:is_element(Mem, SortedNew)
+                                   end,
+                                   OldMembers),
+
     ClusterUpdatedMsg = {cluster_updated,
                          PreviousName,
                          Name,
                          Members,
+                         Addr,
+                         Remote},
+    gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdatedMsg),
+    {next_state, connected, State#state{members=Members}};
+waiting_for_cluster_members({all_cluster_members, NewMembers}, State) ->
+    #state{address=Addr,
+           name=Name,
+           previous_name=PreviousName,
+           members=OldMembers,
+           remote=Remote} = State,
+
+    %% this is 1.1+ code. Members is list of {node,{IP,Port}}
+
+    Members =
+        lists:foldl(fun(Elm={_Node,{_Ip,Port}}, Acc) when is_integer(Port) ->
+                            [Elm|Acc];
+                       ({Node,_}, Acc) ->
+                            case lists:keyfind(Node, 1, OldMembers) of
+                                Elm={Node,{_IP,Port}} when is_integer(Port) ->
+                                    [Elm|Acc];
+                                _ ->
+                                    Acc
+                            end
+                    end,
+                    [],
+                    NewMembers ),
+
+    ClusterUpdatedMsg = {cluster_updated,
+                         PreviousName,
+                         Name,
+                         [Member || {_Node,Member} <- Members],
                          Addr,
                          Remote},
     gen_server:cast(?CLUSTER_MANAGER_SERVER, ClusterUpdatedMsg),
@@ -261,8 +307,11 @@ waiting_for_cluster_members(_, _State) ->
 %% Sync message handling for the `waiting_for_cluster_members' state
 waiting_for_cluster_members(status, _From, State) ->
     {reply, {waiting_for_cluster_members, State#state.name}, waiting_for_cluster_members, State};
-waiting_for_cluster_members(_, _From, _State) ->
-    {reply, ok, waiting_for_cluster_members, _State}.
+waiting_for_cluster_members(Other, _From, State) ->
+    _ = lager:error("cluster_conn: client got unexpected "
+                    "msg from remote: ~p, ~p",
+                    [State#state.remote, Other]),
+    {reply, ok, waiting_for_cluster_members, State}.
 
 %% Async message handling for the `connected' state
 connected(poll_cluster, State) ->
@@ -307,9 +356,16 @@ handle_info({TransOK, Socket, Name},
     {next_state, waiting_for_cluster_name, State};
 handle_info({TransOK, Socket, Members},
             waiting_for_cluster_members,
-            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
+            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}, proto_version={1,0}}) ->
     Transport = State#state.transport,
     gen_fsm:send_event(self(), {cluster_members, binary_to_term(Members)}),
+    _ = Transport:setopts(Socket, [{active, once}]),
+    {next_state, waiting_for_cluster_members, State};
+handle_info({TransOK, Socket, Members},
+            waiting_for_cluster_members,
+            State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
+    Transport = State#state.transport,
+    gen_fsm:send_event(self(), {all_cluster_members, binary_to_term(Members)}),
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_members, State};
 handle_info({TransOK, Socket, Data},
@@ -362,14 +418,21 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 request_cluster_name(#state{mode=test}) ->
     ok;
 request_cluster_name(#state{socket=Socket, transport=Transport}) ->
-    _ = inet:setopts(Socket, [{active, once}]),
+    _ = Transport:setopts(Socket, [{active, once}]),
     Transport:send(Socket, ?CTRL_ASK_NAME).
 
 -spec request_member_ips(state()) -> ok | {error, term()}.
 request_member_ips(#state{mode=test}) ->
     ok;
-request_member_ips(#state{socket=Socket, transport=Transport}) ->
+request_member_ips(#state{socket=Socket, transport=Transport, proto_version={1,0}}) ->
     Transport:send(Socket, ?CTRL_ASK_MEMBERS),
+    %% get the IP we think we've connected to
+    {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
+    %% make it a string
+    PeerIPStr = inet_parse:ntoa(PeerIP),
+    Transport:send(Socket, term_to_binary({PeerIPStr, PeerPort}));
+request_member_ips(#state{socket=Socket, transport=Transport, proto_version={1,1}}) ->
+    Transport:send(Socket, ?CTRL_ALL_MEMBERS),
     %% get the IP we think we've connected to
     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
     %% make it a string
@@ -383,7 +446,7 @@ initiate_connection(State=#state{remote=Remote}) ->
     %% `riak_core_connection_mgr::connect/4' is incorrect.
     {ok, Ref} = riak_core_connection_mgr:connect(
                   Remote,
-                  {{?REMOTE_CLUSTER_PROTO_ID, [{1,0}]},
+                  {{?REMOTE_CLUSTER_PROTO_ID, [{1,1},{1,0}]},
                    {?CTRL_OPTIONS, ?MODULE, {Remote, self()}}},
                   default),
     State#state{connection_ref=Ref}.

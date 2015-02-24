@@ -113,6 +113,7 @@
          reset_backoff/0,
          get_request_states/0,
          get_connection_errors/1,
+         filter_blacklisted_ipaddrs/1,
          stop/0
          ]).
 
@@ -204,6 +205,10 @@ get_request_states() ->
 get_connection_errors(Addr) ->
     gen_server:call(?SERVER, {get_connection_errors, Addr}).
 
+%% @doc Remove the blacklisted addresses from given list
+filter_blacklisted_ipaddrs(Addrs) ->
+    gen_server:call(?SERVER, {filter_blacklisted_ipaddrs, Addrs}).
+
 %% doc Stop the server and sever all connections.
 stop() ->
     gen_server:call(?SERVER, stop).
@@ -287,6 +292,10 @@ handle_call({get_connection_errors, Addr}, _From, State = #state{endpoints=Endpo
             {reply, [], State}
     end;
 
+handle_call({filter_blacklisted_ipaddrs, Addrs}, _From, State=#state{ endpoints=Eps }) ->
+    Answer = filter_blacklisted_endpoints(Addrs, Eps),
+    {reply, Answer, State};
+
 handle_call(_Unhandled, _From, State) ->
     lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
     {reply, {error, unhandled}, State}.
@@ -326,7 +335,7 @@ handle_info({backoff_timer, Addr}, State = #state{endpoints = EPs}) ->
             {noreply, State#state{endpoints = orddict:store(Addr,EP2,EPs)}};
         error ->
             %% TODO: Should never happen because the Addr came from the EP list.
-            {norepy, State}
+            {noreply, State}
     end;
 handle_info({retry_req, Ref}, State = #state{pending = Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
@@ -649,7 +658,8 @@ filter_blacklisted_endpoints(EpAddrs, AllEps) ->
                                 {ok, EP} ->
                                     EP#ep.is_black_listed == false;
                                 error ->
-                                    false
+                                    %% If we don't know this endpoint, it is not blacklisted.
+                                    true
                             end
                     end),
     lists:filter(PredicateFun, EpAddrs).
