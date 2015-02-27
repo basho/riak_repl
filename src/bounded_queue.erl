@@ -36,10 +36,16 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-ifdef(namespaced_types).
+-type bounded_queue_queue() :: queue:queue().
+-else.
+-type bounded_queue_queue() :: queue().
+-endif.
+
 -record(bq, {
           m=0 :: non_neg_integer(),  %% maximum size of queue, in bytes.
           s=0 :: non_neg_integer(),  %% current size of queue, in bytes.
-          q=queue:new() :: queue(),  %% underlying queue.
+          q=queue:new() :: bounded_queue_queue(),  %% underlying queue.
           d=0 :: non_neg_integer()}  %% dropped item count
        ).
 
