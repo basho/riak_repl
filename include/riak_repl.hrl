@@ -57,7 +57,14 @@
 -type(repl_np_pairs() :: [repl_np_pair()]).
 -type(repl_node_sites() :: {node(), [{repl_sitename(), pid()}]}).
 -type(ring() :: tuple()).
--type(repl_config() :: dict()|undefined).
+
+-ifdef(namespaced_types).
+-type riak_repl_dict() :: dict:dict().
+-else.
+-type riak_repl_dict() :: dict().
+-endif.
+
+-type(repl_config() :: riak_repl_dict()|undefined).
 %% wire_version() is an atom that defines which wire format a binary
 %% encoding of one of more riak objects is packaged into. For details of
 %% the to_wire() and from_wire() operations, see riak_repl_util.erl.

@@ -60,7 +60,7 @@ ensure_config(Ring) ->
             Ring
     end.
 
--spec(get_repl_config/1 :: (ring()) -> dict()|undefined).
+-spec(get_repl_config/1 :: (ring()) -> riak_repl_dict()|undefined).
 %% @doc Get the replication config dictionary from Ring.
 get_repl_config(Ring) ->
     case riak_core_ring:get_meta(?MODULE, Ring) of
@@ -68,7 +68,7 @@ get_repl_config(Ring) ->
         undefined -> initial_config()
     end.
 
--spec(set_repl_config/2 :: (ring(), dict()) -> ring()).
+-spec(set_repl_config/2 :: (ring(), riak_repl_dict()) -> ring()).
 %% @doc Set the replication config dictionary in Ring.
 set_repl_config(Ring, RC) ->
     riak_core_ring:update_meta(?MODULE, RC, Ring).
