@@ -104,6 +104,19 @@ register_commands() ->
                           [{from, [{datatype, string}]},
                            {to, [{datatype, string}]}],
                           [], fun proxy_get_redirect_delete/2),
+    ok = register_command(["nat-map", "show"],
+                          [], [],
+                          fun nat_map_show/2),
+    ok = register_command(["nat-map", "add"],
+                          [{external, [{datatype, [ip, string]}]},
+                           {internal, [{datatype, string}]}],
+                          [],
+                          fun nat_map_add/2),
+    ok = register_command(["nat-map", "delete"],
+                          [{external, [{datatype, [ip, string]}]},
+                           {internal, [{datatype, string}]}],
+                          [],
+                          fun nat_map_delete/2),
     ok.
 
 
@@ -153,7 +166,10 @@ register_usage() ->
     ok = register_usage(["proxy-get", "redirect", "show"], fun proxy_get_redirect_show_usage/0),
     ok = register_usage(["proxy-get", "redirect", "add"], fun proxy_get_redirect_add_delete_usage/0),
     ok = register_usage(["proxy-get", "redirect", "delete"], fun proxy_get_redirect_add_delete_usage/0),
-    ok = register_usage(["proxy-get", "redirect", "cluster-id"], proxy_get_redirect_usage()).
+    ok = register_usage(["proxy-get", "redirect", "cluster-id"], proxy_get_redirect_usage()),
+    ok = register_usage(["nat-map"], nat_map_usage()),
+    ok = register_usage(["nat-map", "add"], nat_map_add_del_usage()),
+    ok = register_usage(["nat-map", "delete"], nat_map_add_del_usage()).
 
 
 register_configs() ->
@@ -272,6 +288,20 @@ proxy_get_redirect_add_delete_usage() ->
     "  DESTINATION must correspond to the result from the `" ++ script_name() ++ "\n"
     "  proxy-get redirect cluster-id` command.".
 
+nat_map_usage() ->
+    "nat-map SUBCOMMAND\n\n"
+    "  Manipulate NAT mappings. NAT mappings allow replication connections\n"
+    "  to traverse firewalls between private networks on previously\n"
+    "  configured ports.\n\n"
+    "  Sub-commands:\n"
+    "    add         Add a NAT mapping\n"
+    "    delete      Delete a NAT mapping\n"
+    "    show        Display the NAT mapping table".
+
+nat_map_add_del_usage() ->
+    "nat-map ( add | delete ) external=EXTERNAL_IF internal=INTERNAL_IP\n\n"
+    "  Add or delete a NAT mapping from the given external IP to the given internal"
+    "  IP. An optional external port can be supplied.".
 
 upgrade(["clustername", [$-|_]|_]=Args) ->
     %% Don't upgrade a call that includes a flag
@@ -353,6 +383,29 @@ upgrade(["fullsync", Key, Value]=Args) when Key == "max_fssource_node";
     TKey = config_key_translation(Key),
     upgrade_warning(Args, "Use `show ~s`", [TKey]),
     ["set", TKey++"="++Value];
+upgrade(["nat-map", Command, External0, Internal0]=Args0) when Command == "add";
+                                                              Command == "delete" ->
+
+    {External, EChanged} = case string:words(External0, "=") of
+                               2 -> {"external="++External0, true};
+                               _ -> {External0, false}
+                           end,
+    {Internal, IChanged} = case string:words(Internal0, "=") of
+                               2 -> {"internal="++Internal0, true};
+                               _ -> {Internal0, false}
+                           end,
+    Args = [Command, External, Internal],
+    if EChanged orelse IChanged ->
+            upgrade_warning(Args0, "Use `nat-map ~s ~s ~s`", Args),
+            ok;
+       true ->
+            ok
+    end,
+    ["nat-map"|Args];
+upgrade(["nat-map", "del"|Rest]) ->
+    %% TODO: should we include this warning or just silently pass through?
+    %% upgrade_warning(Args, "Use `nat-map delete ~s`", [string:join(" ", Rest)]),
+    upgrade(["nat-map", "delete"|Rest]);
 upgrade(Args) ->
     Args.
 
@@ -841,6 +894,109 @@ proxy_get_redirect_delete(_, _) ->
     usage.
 
 %%--------------------------
+%% Command: nat-map show
+%%--------------------------
+nat_map_show([], []) ->
+    Ring = riak_repl_console:get_ring(),
+    Headers = [{internal, "Internal"},
+               {external, "External"}],
+    Rows = [ format_nat_map(Int, Ext) ||
+               {Int, Ext} <- riak_repl_ring:get_nat_map(Ring)],
+    output([text("NAT mappings:\n"), table([Headers|Rows])]);
+nat_map_show(_,_) ->
+    usage.
+
+format_nat_map(Int, Ext) ->
+    [{internal, io_lib:format("~s", [print_ip_and_maybe_port(Int)])},
+     {external, io_lib:format("~s", [print_ip_and_maybe_port(Ext)])}].
+
+print_ip_and_maybe_port({IP, Port}) when is_tuple(IP) ->
+    [inet_parse:ntoa(IP), $:, integer_to_list(Port)];
+print_ip_and_maybe_port({Host, Port}) when is_list(Host) ->
+    [Host, $:, integer_to_list(Port)];
+print_ip_and_maybe_port(IP) when is_tuple(IP) ->
+    inet_parse:ntoa(IP);
+print_ip_and_maybe_port(Host) when is_list(Host) ->
+    Host.
+
+%%--------------------------
+%% Command: nat-map add external=IP:PORT internal=IP
+%%--------------------------
+nat_map_add([{external, Ext0}, {internal, Int0}], []) ->
+    %% We rely on cuttlefish to parse the IP for the most
+    %% part. However, it leaves addreses as strings so we still need
+    %% to try parsing them.
+    Ext = parse_ip(Ext0, false),
+    Int = parse_ip(Int0, true),
+    case collect_bad_ips([Ext, Int]) of
+        [] ->
+            ?LOG_USER_CMD("Add a NAT map from External IP ~p to Internal IP ~p", [Ext, Int]),
+            riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_nat_map/2, {Ext, Int}),
+            text_out("Added a NAT map from External IP ~p to Internal IP ~p~n", [Ext, Int]);
+       Errors ->
+            error_out("Invalid IPs given: ~s~n", [string:join(", ", Errors)])
+    end;
+nat_map_add([{internal,_}, {external,_}]=Args, []) ->
+    nat_map_add(lists:sort(Args), []);
+nat_map_add(_,_) ->
+    usage.
+
+parse_ip({Addr, Port}, HostnameAllowed) when is_list(Addr), is_integer(Port) ->
+    case parse_ip(Addr, HostnameAllowed) of
+        {error,_}=E -> E;
+        IP ->
+            {IP, Port}
+    end;
+parse_ip(Addr, true) when is_list(Addr) ->
+    case parse_ip(Addr, false) of
+        {error,_}=E ->
+            case inet_gethost_native:gethostbyname(Addr) of
+                {ok, HostAddr} -> HostAddr;
+                _ -> E
+            end;
+        IP -> IP
+    end;
+parse_ip(Addr, false) when is_list(Addr) ->
+    case inet_parse:ipv4strict_address(Addr) of
+        {ok, IP} -> IP;
+        _ ->
+            {error, {bad_ip, Addr}}
+    end.
+
+collect_bad_ips(List) ->
+    [ case BadIP of
+          {IP, Port} -> string:join(":", [IP, Port]);
+          _ -> BadIP
+      end || {error, {bad_ip, BadIP}} <- List].
+
+%%--------------------------
+%% Command: nat-map delete external=IP:PORT internal=IP
+%%--------------------------
+
+nat_map_delete([{external, Ext0}, {internal, Int0}], []) ->
+    %% We rely on cuttlefish to parse the IP for the most
+    %% part. However, it leaves addreses as strings so we still need
+    %% to try parsing them.
+    %% We rely on cuttlefish to parse the IP for the most
+    %% part. However, it leaves addreses as strings so we still need
+    %% to try parsing them.
+    Ext = parse_ip(Ext0, false),
+    Int = parse_ip(Int0, true),
+    case collect_bad_ips([Ext, Int]) of
+        [] ->
+            ?LOG_USER_CMD("Delete a NAT map from External IP ~p to Internal IP ~p", [Ext, Int]),
+            riak_core_ring_manager:ring_trans(fun riak_repl_ring:del_nat_map/2, {Ext, Int}),
+            text_out("Deleted a NAT map from External IP ~p to Internal IP ~p~n", [Ext, Int]);
+        Errors ->
+            error_out("Invalid IPs given: ~s~n", [string:join(", ", Errors)])
+    end;
+nat_map_delete([{internal,_}, {external,_}]=Args, []) ->
+    nat_map_delete(lists:sort(Args), []);
+nat_map_delete(_,_) ->
+    usage.
+
+
+%%--------------------------
 %% Command: set FULLSYNC_CONFIG_KEY=VALUE
 %%--------------------------
 set_fullsync_limit(["mdc", "fullsync"|Key], Value, _Flags) ->
@@ -862,7 +1018,8 @@ max_fs_message(max_fssource_node)    -> "per source node";
 max_fs_message(max_fssource_cluster) -> "for source cluster";
 max_fs_message(max_fssink_node)      -> "per sink node".
 
-max_fs_config_key(["source", "max_workers_per_node"]) -> max_fssource_node;
+
+max_fs_config_key(["source", "max_workers_per_node"])    -> max_fssource_node;
 max_fs_config_key(["source", "max_workers_per_cluster"]) -> max_fssource_cluster;
-max_fs_config_key(["sink", "max_workers_per_node"]) -> max_fssink_node.
+max_fs_config_key(["sink", "max_workers_per_node"])      -> max_fssink_node.
 
