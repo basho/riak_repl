@@ -13,7 +13,7 @@
          pause_fullsync/1, resume_fullsync/1]).
 
 -import(riak_repl_console,
-        [script_name/0, register_usage/2, get_ring/0,
+        [register_usage/2, get_ring/0,
          maybe_set_ring/2]).
 
 -define(USAGE,

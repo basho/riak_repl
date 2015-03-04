@@ -58,7 +58,9 @@ register_usage(Cmd, Usage) ->
                        UsageStr = if is_function(Usage) -> Usage();
                                      true -> Usage
                                   end,
-                       [script_name(), " ", UsageStr]
+                       ScriptName = script_name(),
+                       erase(script_name),
+                       [ScriptName, " ", UsageStr]
                end,
     clique:register_usage(["riak-repl"|Cmd], UsageFun).
 
