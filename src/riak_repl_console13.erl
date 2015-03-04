@@ -2,7 +2,7 @@
 %% 'mode_repl13'.
 -module(riak_repl_console13).
 -include("riak_repl.hrl").
--export([register/0, commands_usage/0, upgrade/1]).
+-export([register_cli/0, commands_usage/0, upgrade/1]).
 
 -import(riak_repl_console, [register_command/4, script_name/0]).
 
@@ -14,8 +14,8 @@
 %% Interface
 %%-----------------------
 
--spec register() -> ok.
-register() ->
+-spec register_cli() -> ok.
+register_cli() ->
     ok = register_commands(),
     ok = register_usage(),
     ok = register_configs(),
@@ -999,6 +999,14 @@ nat_map_delete(_,_) ->
 %%--------------------------
 %% Command: set FULLSYNC_CONFIG_KEY=VALUE
 %%--------------------------
+
+%% For each of these "max" parameter changes, we need to make an rpc
+%% multi-call to every node so that all nodes have the new value in
+%% their application environment. That way, whoever becomes the
+%% fullsync coordinator will have the correct values. TODO: what
+%% happens when a machine bounces and becomes leader? It won't know
+%% the new value. Seems like we need a central place to hold these
+%% configuration values.
 set_fullsync_limit(["mdc", "fullsync"|Key], Value, _Flags) ->
     %% NB: All config settings are done cluster-wide, there's not
     %% flags for specific nodes like in handoff.
