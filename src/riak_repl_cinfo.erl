@@ -24,4 +24,4 @@ cluster_info_generator_funs() ->
     ].
 
 status(CPid) -> % CPid is the data collector's pid.
-    cluster_info:format(CPid, "~p\n", [riak_repl_console:status(quiet)]).
+    cluster_info:format(CPid, "~p\n", [riak_repl_console:status()]).

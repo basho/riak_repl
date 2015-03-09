@@ -16,8 +16,11 @@
          register_usage/2]).
 
 %% Stats functions
+-export([status/0]). % NB: Used by riak_repl_cinfo
+
 -export([client_stats_rpc/0,
          server_stats_rpc/0]).
+
 -export([extract_rt_fs_send_recv_kbps/1]).
 
 -export([rt_remotes_status/0,
@@ -31,7 +34,7 @@
          coordinator_srv_stats/0]).
 
 %% Modes functions
--export([modes/1, set_modes/1, get_modes/0]).
+-export([set_modes/1, get_modes/0]).
 
 %% Ring utilities
 -export([get_ring/0, maybe_set_ring/2]).
@@ -39,7 +42,45 @@
 
 -spec register_cli() -> ok.
 register_cli() ->
-    riak_repl_console13:register_cli().
+    ok = riak_repl_console13:register_cli(),
+    ok = register_commands(),
+    ok = register_usage().
+
+register_commands() ->
+    ok = register_command(["status"], [], [], fun status/2),
+    ok = register_command(["modes", "show"], [], [], fun modes_show/2),
+    ok = register_command(["modes", "set"],
+                          [{mode_repl12, [{longname, "v2"},
+                                          {datatype, flag}]},
+                           {mode_repl13, [{longname, "v3"},
+                                          {datatype, flag}]}],
+                          [],
+                          fun modes_set/2).
+
+register_usage() ->
+    ok = register_usage([], fun repl_usage/0),
+    ok = register_usage(["modes"], modes_usage()),
+    ok.
+
+repl_usage() ->
+    EnabledModes = get_modes(),
+    ModeHelp = [{mode_repl13, riak_repl_console13:commands_usage()},
+                {mode_repl12, riak_repl_console12:commands_usage()}],
+    ModesCommands = [ Commands || {Mode, Commands} <- ModeHelp,
+                                  lists:member(Mode, EnabledModes) ],
+    ["COMMAND [...]\n\n",
+     "  Commands:\n",
+     "    modes                       Show or set replication modes\n",
+     "    status                      Display status and metrics\n\n",
+     ModesCommands].
+
+modes_usage() ->
+    "modes ( show | set [ v2=(on|off) ] [ v3=(on|off) ] )\n\n"
+    "  Manipulate active replication modes.\n\n"
+    "  Subcommands:\n"
+    "    show       Shows the active replication modes.\n"
+    "    set        Toggles active replication modes.\n\n"
+    "  When setting modes, omitting the mode name is the same as `off`. New clusters should use `mode_repl13` (Version 3) exclusively. Version 2 replication will be removed in a future release.".
 
 -spec script_name() -> string().
 script_name() ->
@@ -84,27 +125,26 @@ command([Script|Args]) ->
             OkOrError
     end.
 
-set_modes(Modes) ->
-    Ring = get_ring(),
-    NewRing = riak_repl_ring:set_modes(Ring, Modes),
-    ok = maybe_set_ring(Ring, NewRing).
+%%-----------------------
+%% Command: status
+%%-----------------------
 
-get_modes() ->
-    Ring = get_ring(),
-    riak_repl_ring:get_modes(Ring).
+status([], []) ->
+    All = status(),
+    clique_status:list(lists:filtermap(fun format_counter_stat/1, All));
+status(_,_) ->
+    usage.
 
-
-status([]) ->
-    status2(true);
-status(quiet) ->
-    status2(false).
-
-status2(Verbose) ->
+status() ->
+    %% NB: We export this for compatibility with previous components,
+    %% but all formatting for output is now done when preparing return
+    %% values for clique.
     Config = get_config(),
+    Ring = get_ring(),
     Stats1 = riak_repl_stats:get_stats(),
-    RTRemotesStatus = rt_remotes_status(),
-    FSRemotesStatus = fs_remotes_status(),
-    PGRemotesStatus = pg_remotes_status(),
+    RTRemotesStatus = rt_remotes_status(Ring),
+    FSRemotesStatus = fs_remotes_status(Ring),
+    PGRemotesStatus = pg_remotes_status(Ring),
     LeaderStats = leader_stats(),
     ClientStats = client_stats(),
     ServerStats = server_stats(),
@@ -119,27 +159,26 @@ status2(Verbose) ->
         Stats1++LeaderStats++ClientStats++ServerStats++
         CoordStats++CoordSrvStats++CMgrStats++RTQStats++PGStats,
     SendRecvKbps = extract_rt_fs_send_recv_kbps(Most),
-    All = Most ++ SendRecvKbps,
-    if Verbose ->
-            format_counter_stats(All);
-       true ->
-            All
-    end.
+    Most ++ SendRecvKbps.
 
-pg_remotes_status() ->
-    Ring = get_ring(),
+
+pg_remotes_status(Ring) ->
     Enabled = string:join(riak_repl_ring:pg_enabled(Ring),", "),
     [{proxy_get_enabled, Enabled}].
 
 rt_remotes_status() ->
-    Ring = get_ring(),
+    rt_remotes_status(get_ring()).
+
+rt_remotes_status(Ring) ->
     Enabled = string:join(riak_repl_ring:rt_enabled(Ring),", "),
     Started = string:join(riak_repl_ring:rt_started(Ring),", "),
     [{realtime_enabled, Enabled},
      {realtime_started, Started}].
 
 fs_remotes_status() ->
-    Ring = get_ring(),
+    fs_remotes_status(get_ring()).
+
+fs_remotes_status(Ring) ->
     Sinks = riak_repl_ring:fs_enabled(Ring),
     RunningSinks = [Sink || Sink <- Sinks, cluster_fs_running(Sink)],
     [{fullsync_enabled, string:join(Sinks, ", ")},
@@ -149,18 +188,6 @@ cluster_fs_running(Sink) ->
     ClusterCoord = riak_repl2_fscoordinator_sup:coord_for_cluster(Sink),
     riak_repl2_fscoordinator:is_running(ClusterCoord).
 
-modes([]) ->
-    CurrentModes = get_modes(),
-    io:format("Current replication modes: ~p~n",[CurrentModes]),
-    ok;
-modes(NewModes) ->
-    ?LOG_USER_CMD("Set replication mode(s) to ~p",[NewModes]),
-    Modes = [ list_to_atom(Mode) || Mode <- NewModes],
-    set_modes(Modes),
-    modes([]).
-
-%% helper functions
-
 extract_rt_fs_send_recv_kbps(Most) ->
     RTSendKbps = sum_rt_send_kbps(Most),
     RTRecvKbps = sum_rt_recv_kbps(Most),
@@ -169,32 +196,66 @@ extract_rt_fs_send_recv_kbps(Most) ->
     [{realtime_send_kbps, RTSendKbps}, {realtime_recv_kbps, RTRecvKbps},
      {fullsync_send_kbps, FSSendKbps}, {fullsync_recv_kbps, FSRecvKbps}].
 
-
-format_counter_stats([]) -> ok;
-format_counter_stats([{K,V}|T]) when is_list(K) ->
-    io:format("~s: ~p~n", [K,V]),
-    format_counter_stats(T);
-%%format_counter_stats([{K,V}|T]) when K == fullsync_coordinator ->
-%%    io:format("V = ~p",[V]),
-%%    case V of
-%%        [] -> io:format("~s: {}~n",[K]);
-%%        Val -> io:format("~s: ~s",[K,Val])
-%%    end,
-%%    format_counter_stats(T);
-format_counter_stats([{K,V}|T]) when K == client_rx_kbps;
+%% Filters and formats stats for output.
+format_counter_stat({K,V}) when K == client_rx_kbps;
                                      K == client_tx_kbps;
                                      K == server_rx_kbps;
                                      K == server_tx_kbps ->
-    io:format("~s: ~w~n", [K,V]),
-    format_counter_stats(T);
-format_counter_stats([{K,V}|T]) ->
-    io:format("~p: ~p~n", [K,V]),
-    format_counter_stats(T);
-format_counter_stats([{_K,_IPAddr,_V}|T]) ->
-    %% Don't include per-IP stats in this output
-    %% io:format("~p(~p): ~p~n", [K,IPAddr,V]),
-    format_counter_stats(T).
+    {true, io_lib:format("~s: ~w~n", [K,V])};
+format_counter_stat({K,V}) ->
+    {true, io_lib:format("~p: ~p~n", [K,V])};
+format_counter_stat(_) ->
+    %% NB: this covers the {_K,_IPAddr,_V} clause in the previous
+    %% version.
+    false.
 
+%%-----------------------
+%% Command: modes show
+%%-----------------------
+
+modes_show([], []) ->
+    CurrentModes = get_modes(),
+    [clique_status:text(io_lib:format("Currently enabled replication modes: ~s~n",
+                                      [modes_to_string(CurrentModes)]))];
+modes_show(_, _) ->
+    usage.
+
+%%-----------------------
+%% Command: modes set [v2=on|off] [v3=on|off]
+%%-----------------------
+
+modes_set([_|_]=InModes, []) ->
+    InvalidModes = [ I || {I,_} <- InModes,
+                          not lists:keymember(I, 1, ?REPL_MODES) ],
+    if InvalidModes == [] ->
+            NewModes = [ M || {M, true} <- InModes ],
+            ?LOG_USER_CMD("Set replication mode(s) to ~p",[NewModes]),
+            set_modes(NewModes),
+            [clique_status:text(io_lib:format("Set enabled replication modes to: ~s",
+                                              [modes_to_string(NewModes)]))];
+       true ->
+            [clique_status:alert(clique_status:text(io_lib:format("Invalid modes requested: ~p~n", [InvalidModes]))),
+             usage]
+    end;
+modes_set(_,_) ->
+    usage.
+
+modes_to_string(Modes) ->
+    string:join([ mode_to_string(Mode) || Mode <- Modes ], ", ").
+
+mode_to_string(mode_repl12) -> "v2";
+mode_to_string(mode_repl13) -> "v3".
+
+set_modes(Modes) ->
+    Ring = get_ring(),
+    NewRing = riak_repl_ring:set_modes(Ring, Modes),
+    ok = maybe_set_ring(Ring, NewRing).
+
+get_modes() ->
+    Ring = get_ring(),
+    riak_repl_ring:get_modes(Ring).
+
+%% helper functions
 maybe_set_ring(_R, _R) -> ok;
 maybe_set_ring(_R1, R2) ->
     RC = riak_repl_ring:get_repl_config(R2),
@@ -215,24 +276,22 @@ get_config() ->
         undefined ->
             [];
         Repl ->
-            case dict:find(sites, Repl) of
-                error ->
-                    [];
-                {ok, Sites} ->
-                    lists:flatten([format_site(S) || S <- Sites])
-            end ++
-                case dict:find(listeners, Repl) of
-                    error ->
-                        [];
-                    {ok, Listeners} ->
-                        lists:flatten([format_listener(L) || L <- Listeners])
-                end ++
-                case dict:find(natlisteners, Repl) of
-                    error ->
-                        [];
-                    {ok, NatListeners} ->
-                        lists:flatten([format_nat_listener(L) || L <- NatListeners])
-                end
+            lists:foldr(
+              fun({Key, Formatter}, Acc) ->
+                      format_config(Repl, Key, Formatter) ++ Acc
+              end,
+              [],
+              [{sites, fun format_site/1},
+               {listeners, fun format_listener/1},
+               {natlisteners, fun format_nat_listener/1}])
+    end.
+
+format_config(Repl, Key, Formatter) ->
+    case dict:find(Key, Repl) of
+        error ->
+            [];
+        {ok, List} ->
+            lists:flatmap(Formatter, List)
     end.
 
 format_site(S) ->
@@ -289,7 +348,7 @@ client_stats() ->
     case erlang:whereis(riak_repl_leader_gs) of
         Pid when is_pid(Pid) ->
             %% NOTE: rpc:multicall to all clients removed
-            riak_repl_console:client_stats_rpc();
+            ?MODULE:client_stats_rpc();
         _ -> []
     end.
 
