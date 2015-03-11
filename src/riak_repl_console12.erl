@@ -77,9 +77,8 @@ commands_usage() ->
 
 %% @doc Registers usage output with Clique.
 register_usage() ->
-    _ = [ begin
-              register_usage([Cmd], [UsageStr, "\n\n", ?V2REPLDEP, "\n\n"])
-          end || {Cmd, UsageStr} <- ?USAGE ],
+    _ = [ true = register_usage([Cmd], [UsageStr, "\n\n", ?V2REPLDEP, "\n\n"]) ||
+            {Cmd, UsageStr} <- ?USAGE ],
     ok.
 
 add_listener(Params) ->

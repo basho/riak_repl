@@ -22,101 +22,101 @@ register_cli() ->
     ok.
 
 register_commands() ->
-    ok = register_command(["clusterstats"], [],
-                          [{host, [{longname, "host"},
-                                   {datatype, ip}]},
-                           {protocol, [{longname, "protocol"},
-                                       {datatype, atom}]}],
-                          fun clusterstats/2),
-    ok = register_command(["clustername"], [],
-                          [{name, [{shortname, "n"},
-                                   {longname, "name"},
-                                   {datatype, string}]}],
-                          fun clustername/2),
-    ok = register_command(["clusters"], [], [], fun clusters/2),
-    ok = register_command(["connections"], [], [], fun connections/2),
-    ok = register_command(["connect"], [{address, [{datatype, ip}]}], [],
-                          fun connect/2),
-    ok = register_command(["disconnect"], [{remote, [{datatype, [ip, string]}]}], [],
-                          fun disconnect/2),
-    ok = register_command(["realtime", "enable"],
-                          [{remote, [{datatype, string}]}],
-                          [],
-                          fun realtime_enable/2),
-    ok = register_command(["realtime", "disable"],
-                          [{remote, [{datatype, string}]}],
-                          [],
-                          fun realtime_disable/2),
-    ok = register_command(["realtime", "start"],
-                          [{remote, [{datatype, string}]}],
-                          [{all, [{longname, "all"},
-                                  {shortname, "a"}]}],
-                          fun realtime_start/2),
-    ok = register_command(["realtime", "stop"],
-                          [{remote, [{datatype, string}]}],
-                          [{all, [{longname, "all"},
-                                  {shortname, "a"}]}],
-                          fun realtime_stop/2),
-    ok = register_command(["realtime", "cascades", "enable"],
-                          [],[],
-                          fun realtime_cascades_enable/2),
-    ok = register_command(["realtime", "cascades", "disable"],
-                          [],[],
-                          fun realtime_cascades_disable/2),
-    ok = register_command(["realtime", "cascades", "show"],
-                          [],[],
-                         fun realtime_cascades_show/2),
-    ok = register_command(["fullsync", "enable"],
-                          [{remote, [{datatype, string}]}],
-                          [],
-                          fun fullsync_enable/2),
-    ok = register_command(["fullsync", "disable"],
-                          [{remote, [{datatype, string}]}],
-                          [],
-                          fun fullsync_disable/2),
-    ok = register_command(["fullsync", "start"],
-                          [{remote, [{datatype, string}]}],
-                          [{all, [{longname, "all"},
-                                  {shortname, "a"}]}],
-                          fun fullsync_start/2),
-    ok = register_command(["fullsync", "stop"],
-                          [{remote, [{datatype, string}]}],
-                          [{all, [{longname, "all"},
-                                  {shortname, "a"}]}],
-                          fun fullsync_stop/2),
-    ok = register_command(["proxy-get", "enable"],
-                          [{remote, [{datatype, string}]}],
-                          [], fun proxy_get_enable/2),
-    ok = register_command(["proxy-get", "disable"],
-                          [{remote, [{datatype, string}]}],
-                          [], fun proxy_get_disable/2),
-    ok = register_command(["proxy-get", "redirect", "cluster-id"],
-                          [],
-                          [], fun proxy_get_redirect_cluster_id/2),
-    ok = register_command(["proxy-get", "redirect", "show"],
-                          [{from, [{datatype, string}]}],
-                          [], fun proxy_get_redirect_show/2),
-    ok = register_command(["proxy-get", "redirect", "add"],
-                          [{from, [{datatype, string}]},
-                           {to, [{datatype, string}]}],
-                          [], fun proxy_get_redirect_add/2),
-    ok = register_command(["proxy-get", "redirect", "delete"],
-                          [{from, [{datatype, string}]},
-                           {to, [{datatype, string}]}],
-                          [], fun proxy_get_redirect_delete/2),
-    ok = register_command(["nat-map", "show"],
-                          [], [],
-                          fun nat_map_show/2),
-    ok = register_command(["nat-map", "add"],
-                          [{external, [{datatype, [ip, string]}]},
-                           {internal, [{datatype, string}]}],
-                          [],
-                          fun nat_map_add/2),
-    ok = register_command(["nat-map", "delete"],
-                          [{external, [{datatype, [ip, string]}]},
-                           {internal, [{datatype, string}]}],
-                          [],
-                          fun nat_map_delete/2),
+    true = register_command(["clusterstats"], [],
+                            [{host, [{longname, "host"},
+                                     {datatype, ip}]},
+                             {protocol, [{longname, "protocol"},
+                                         {datatype, atom}]}],
+                            fun clusterstats/2),
+    true = register_command(["clustername"], [],
+                            [{name, [{shortname, "n"},
+                                     {longname, "name"},
+                                     {datatype, string}]}],
+                            fun clustername/2),
+    true = register_command(["clusters"], [], [], fun clusters/2),
+    true = register_command(["connections"], [], [], fun connections/2),
+    true = register_command(["connect"], [{address, [{datatype, ip}]}], [],
+                            fun connect/2),
+    true = register_command(["disconnect"], [{remote, [{datatype, [ip, string]}]}], [],
+                            fun disconnect/2),
+    true = register_command(["realtime", "enable"],
+                            [{remote, [{datatype, string}]}],
+                            [],
+                            fun realtime_enable/2),
+    true = register_command(["realtime", "disable"],
+                            [{remote, [{datatype, string}]}],
+                            [],
+                            fun realtime_disable/2),
+    true = register_command(["realtime", "start"],
+                            [{remote, [{datatype, string}]}],
+                            [{all, [{longname, "all"},
+                                    {shortname, "a"}]}],
+                            fun realtime_start/2),
+    true = register_command(["realtime", "stop"],
+                            [{remote, [{datatype, string}]}],
+                            [{all, [{longname, "all"},
+                                    {shortname, "a"}]}],
+                            fun realtime_stop/2),
+    true = register_command(["realtime", "cascades", "enable"],
+                            [],[],
+                            fun realtime_cascades_enable/2),
+    true = register_command(["realtime", "cascades", "disable"],
+                            [],[],
+                            fun realtime_cascades_disable/2),
+    true = register_command(["realtime", "cascades", "show"],
+                            [],[],
+                            fun realtime_cascades_show/2),
+    true = register_command(["fullsync", "enable"],
+                            [{remote, [{datatype, string}]}],
+                            [],
+                            fun fullsync_enable/2),
+    true = register_command(["fullsync", "disable"],
+                            [{remote, [{datatype, string}]}],
+                            [],
+                            fun fullsync_disable/2),
+    true = register_command(["fullsync", "start"],
+                            [{remote, [{datatype, string}]}],
+                            [{all, [{longname, "all"},
+                                    {shortname, "a"}]}],
+                            fun fullsync_start/2),
+    true = register_command(["fullsync", "stop"],
+                            [{remote, [{datatype, string}]}],
+                            [{all, [{longname, "all"},
+                                    {shortname, "a"}]}],
+                            fun fullsync_stop/2),
+    true = register_command(["proxy-get", "enable"],
+                            [{remote, [{datatype, string}]}],
+                            [], fun proxy_get_enable/2),
+    true = register_command(["proxy-get", "disable"],
+                            [{remote, [{datatype, string}]}],
+                            [], fun proxy_get_disable/2),
+    true = register_command(["proxy-get", "redirect", "cluster-id"],
+                            [],
+                            [], fun proxy_get_redirect_cluster_id/2),
+    true = register_command(["proxy-get", "redirect", "show"],
+                            [{from, [{datatype, string}]}],
+                            [], fun proxy_get_redirect_show/2),
+    true = register_command(["proxy-get", "redirect", "add"],
+                            [{from, [{datatype, string}]},
+                             {to, [{datatype, string}]}],
+                            [], fun proxy_get_redirect_add/2),
+    true = register_command(["proxy-get", "redirect", "delete"],
+                            [{from, [{datatype, string}]},
+                             {to, [{datatype, string}]}],
+                            [], fun proxy_get_redirect_delete/2),
+    true = register_command(["nat-map", "show"],
+                            [], [],
+                            fun nat_map_show/2),
+    true = register_command(["nat-map", "add"],
+                            [{external, [{datatype, [ip, string]}]},
+                             {internal, [{datatype, string}]}],
+                            [],
+                            fun nat_map_add/2),
+    true = register_command(["nat-map", "delete"],
+                            [{external, [{datatype, [ip, string]}]},
+                             {internal, [{datatype, string}]}],
+                            [],
+                            fun nat_map_delete/2),
     ok.
 
 
@@ -124,52 +124,53 @@ register_usage(Cmd, Usage) ->
     riak_repl_console:register_usage(Cmd, Usage).
 
 register_usage() ->
-    ok = register_usage(["clusterstats"],
+    true = register_usage(["clusterstats"],
                         "clusterstats [ --protocol=PROTO | --host=IP:PORT ]\n\n"
                         "  Displays cluster statistics, optionally filtered by a protocol or host connection.\n\n"
                         "  Options:\n"
                         "    --protocol=PROTO    Filters to a protocol where PROTO is one of:\n"
                         "                        rt_repl, proxy_get, identity\n"
                         "    --host=IP:PORT      Filters to a specific host, identified by IP and PORT"),
-    ok = register_usage(["clustername"],
+    true = register_usage(["clustername"],
                         "clustername [ (-n | --name) NAME ]\n\n"
                         "  Shows or sets the symbolic clustername. Supplying the `-n` option sets the name.\n\n"
                         "  Options:\n"
                         "    -n NAME, --name NAME   Sets the symbolic name to NAME"),
-    ok = register_usage(["clusters"],
+    true = register_usage(["clusters"],
                         "clusters\n\n"
                         "  Displays information about known clusters."),
-    ok = register_usage(["connections"],
+    true = register_usage(["connections"],
                         "connections\n\n"
                         "  Displays a list of current replication connections."),
-    ok = register_usage(["connect"],
+    true = register_usage(["connect"],
                         "connect address=IP:PORT\n\n"
                         "  Connects to a remote cluster."),
-    ok = register_usage(["disconnect"],
+    true = register_usage(["disconnect"],
                         "disconnect remote=(IP:PORT | NAME)\n\n"
                         "  Disconnects from a connected remote cluster."),
-    ok = register_usage(["realtime"], realtime_usage()),
-    ok = register_usage(["realtime", "enable"], realtime_enable_disable_usage()),
-    ok = register_usage(["realtime", "disable"], realtime_enable_disable_usage()),
-    ok = register_usage(["realtime", "start"], realtime_start_stop_usage()),
-    ok = register_usage(["realtime", "stop"], realtime_start_stop_usage()),
-    ok = register_usage(["realtime", "cascades"], realtime_cascades_usage()),
-    ok = register_usage(["fullsync"], fullsync_usage()),
-    ok = register_usage(["fullsync", "enable"], fullsync_enable_disable_usage()),
-    ok = register_usage(["fullsync", "disable"], fullsync_enable_disable_usage()),
-    ok = register_usage(["fullsync", "start"], fullsync_start_stop_usage()),
-    ok = register_usage(["fullsync", "stop"], fullsync_start_stop_usage()),
-    ok = register_usage(["proxy-get"], proxy_get_usage()),
-    ok = register_usage(["proxy-get", "enable"], proxy_get_enable_disable_usage()),
-    ok = register_usage(["proxy-get", "disable"], proxy_get_usage()),
-    ok = register_usage(["proxy-get", "redirect"], proxy_get_usage()),
-    ok = register_usage(["proxy-get", "redirect", "show"], fun proxy_get_redirect_show_usage/0),
-    ok = register_usage(["proxy-get", "redirect", "add"], fun proxy_get_redirect_add_delete_usage/0),
-    ok = register_usage(["proxy-get", "redirect", "delete"], fun proxy_get_redirect_add_delete_usage/0),
-    ok = register_usage(["proxy-get", "redirect", "cluster-id"], proxy_get_redirect_usage()),
-    ok = register_usage(["nat-map"], nat_map_usage()),
-    ok = register_usage(["nat-map", "add"], nat_map_add_del_usage()),
-    ok = register_usage(["nat-map", "delete"], nat_map_add_del_usage()).
+    true = register_usage(["realtime"], realtime_usage()),
+    true = register_usage(["realtime", "enable"], realtime_enable_disable_usage()),
+    true = register_usage(["realtime", "disable"], realtime_enable_disable_usage()),
+    true = register_usage(["realtime", "start"], realtime_start_stop_usage()),
+    true = register_usage(["realtime", "stop"], realtime_start_stop_usage()),
+    true = register_usage(["realtime", "cascades"], realtime_cascades_usage()),
+    true = register_usage(["fullsync"], fullsync_usage()),
+    true = register_usage(["fullsync", "enable"], fullsync_enable_disable_usage()),
+    true = register_usage(["fullsync", "disable"], fullsync_enable_disable_usage()),
+    true = register_usage(["fullsync", "start"], fullsync_start_stop_usage()),
+    true = register_usage(["fullsync", "stop"], fullsync_start_stop_usage()),
+    true = register_usage(["proxy-get"], proxy_get_usage()),
+    true = register_usage(["proxy-get", "enable"], proxy_get_enable_disable_usage()),
+    true = register_usage(["proxy-get", "disable"], proxy_get_usage()),
+    true = register_usage(["proxy-get", "redirect"], proxy_get_usage()),
+    true = register_usage(["proxy-get", "redirect", "show"], fun proxy_get_redirect_show_usage/0),
+    true = register_usage(["proxy-get", "redirect", "add"], fun proxy_get_redirect_add_delete_usage/0),
+    true = register_usage(["proxy-get", "redirect", "delete"], fun proxy_get_redirect_add_delete_usage/0),
+    true = register_usage(["proxy-get", "redirect", "cluster-id"], proxy_get_redirect_usage()),
+    true = register_usage(["nat-map"], nat_map_usage()),
+    true = register_usage(["nat-map", "add"], nat_map_add_del_usage()),
+    true = register_usage(["nat-map", "delete"], nat_map_add_del_usage()),
+    ok.
 
 
 register_configs() ->
@@ -179,8 +180,8 @@ register_configs() ->
     Keys = ["mdc.fullsync.source.max_workers_per_node",
             "mdc.fullsync.source.max_workers_per_cluster",
             "mdc.fullsync.sink.max_workers_per_node"],
-    [ ok = clique:register_config(cuttlefish_variable:parse(Key),
-                                  fun set_fullsync_limit/3) || Key <- Keys ],
+    [true, true, true] = [ clique:register_config(cuttlefish_variable:tokenize(Key),
+                                                fun set_fullsync_limit/3) || Key <- Keys ],
     ok = clique:register_config_whitelist(Keys),
     ok.
 
@@ -313,7 +314,7 @@ upgrade(["clusterstats", [$-|_]|_]=Args) ->
     %% Don't upgrade a call that includes a flag
     Args;
 upgrade(["clusterstats", Arg]=Args) ->
-    case string:words(Arg, ":") of
+    case string:words(Arg, $:) of
         1 ->
             upgrade_warning(Args, "Use `clusterstats --protocol ~s`", [Arg]),
             ["clusterstats", "--protocol", Arg];
@@ -323,7 +324,7 @@ upgrade(["clusterstats", Arg]=Args) ->
         _ -> Args
     end;
 upgrade(["connect", Arg|Rest]=Args) ->
-    case string:words(Arg, "=") of
+    case string:words(Arg, $=) of
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `connect address=~s`", [Arg]),
@@ -331,7 +332,7 @@ upgrade(["connect", Arg|Rest]=Args) ->
         _ -> Args
     end;
 upgrade(["disconnect", Arg|Rest]=Args) ->
-    case string:words(Arg, "=") of
+    case string:words(Arg, $=) of
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `disconnect remote=~s`", [Arg]),
@@ -341,7 +342,7 @@ upgrade(["realtime", Command, Arg|Rest]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
                                                    Command == "stop" ->
-    case string:words(Arg, "=") of
+    case string:words(Arg, $=) of
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `realtime ~s remote=~s`", [Command, Arg]),
@@ -361,7 +362,7 @@ upgrade(["fullsync", Command, Arg|Rest]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
                                                    Command == "stop" ->
-    case string:words(Arg, "=") of
+    case string:words(Arg, $=) of
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `fullsync ~s remote=~s`", [Command, Arg]),
@@ -386,11 +387,11 @@ upgrade(["fullsync", Key, Value]=Args) when Key == "max_fssource_node";
 upgrade(["nat-map", Command, External0, Internal0]=Args0) when Command == "add";
                                                               Command == "delete" ->
 
-    {External, EChanged} = case string:words(External0, "=") of
+    {External, EChanged} = case string:words(External0, $=) of
                                2 -> {"external="++External0, true};
                                _ -> {External0, false}
                            end,
-    {Internal, IChanged} = case string:words(Internal0, "=") of
+    {Internal, IChanged} = case string:words(Internal0, $=) of
                                2 -> {"internal="++Internal0, true};
                                _ -> {Internal0, false}
                            end,
@@ -934,7 +935,7 @@ nat_map_add([{external, Ext0}, {internal, Int0}], []) ->
             riak_core_ring_manager:ring_trans(fun riak_repl_ring:add_nat_map/2, {Ext, Int}),
             text_out("Added a NAT map from External IP ~p to Internal IP ~p~n", [Ext, Int]);
        Errors ->
-            error_out("Invalid IPs given: ~s~n", [string:join(", ", Errors)])
+            error_out("Invalid IPs given: ~s~n", [string:join(Errors, ", ")])
     end;
 nat_map_add([{internal,_}, {external,_}]=Args, []) ->
     nat_map_add(lists:sort(Args), []);
@@ -965,7 +966,7 @@ parse_ip(Addr, false) when is_list(Addr) ->
 
 collect_bad_ips(List) ->
     [ case BadIP of
-          {IP, Port} -> string:join(":", [IP, Port]);
+          {IP, Port} -> string:join([IP, Port], ":");
           _ -> BadIP
       end || {error, {bad_ip, BadIP}} <- List].
 
@@ -988,7 +989,7 @@ nat_map_delete([{external, Ext0}, {internal, Int0}], []) ->
             riak_core_ring_manager:ring_trans(fun riak_repl_ring:del_nat_map/2, {Ext, Int}),
             text_out("Deleted a NAT map from External IP ~p to Internal IP ~p~n", [Ext, Int]);
         Errors ->
-            error_out("Invalid IPs given: ~s~n", [string:join(", ", Errors)])
+            error_out("Invalid IPs given: ~s~n", [string:join(Errors, ", ")])
     end;
 nat_map_delete([{internal,_}, {external,_}]=Args, []) ->
     nat_map_delete(lists:sort(Args), []);

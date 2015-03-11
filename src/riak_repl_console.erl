@@ -31,7 +31,8 @@
          client_stats/0,
          server_stats/0,
          coordinator_stats/0,
-         coordinator_srv_stats/0]).
+         coordinator_srv_stats/0,
+         cluster_mgr_stats/0]).
 
 %% Modes functions
 -export([set_modes/1, get_modes/0]).
@@ -47,19 +48,20 @@ register_cli() ->
     ok = register_usage().
 
 register_commands() ->
-    ok = register_command(["status"], [], [], fun status/2),
-    ok = register_command(["modes", "show"], [], [], fun modes_show/2),
-    ok = register_command(["modes", "set"],
-                          [{mode_repl12, [{longname, "v2"},
-                                          {datatype, flag}]},
-                           {mode_repl13, [{longname, "v3"},
-                                          {datatype, flag}]}],
-                          [],
-                          fun modes_set/2).
+    true = register_command(["status"], [], [], fun status/2),
+    true = register_command(["modes", "show"], [], [], fun modes_show/2),
+    true = register_command(["modes", "set"],
+                            [{mode_repl12, [{longname, "v2"},
+                                            {datatype, flag}]},
+                             {mode_repl13, [{longname, "v3"},
+                                            {datatype, flag}]}],
+                            [],
+                            fun modes_set/2),
+    ok.
 
 register_usage() ->
-    ok = register_usage([], fun repl_usage/0),
-    ok = register_usage(["modes"], modes_usage()),
+    true = register_usage([], fun repl_usage/0),
+    true = register_usage(["modes"], modes_usage()),
     ok.
 
 repl_usage() ->
@@ -72,7 +74,7 @@ repl_usage() ->
      "  Commands:\n",
      "    modes                       Show or set replication modes\n",
      "    status                      Display status and metrics\n\n",
-     ModesCommands].
+     string:join(ModesCommands,"\n\n")].
 
 modes_usage() ->
     "modes ( show | set [ v2=(on|off) ] [ v3=(on|off) ] )\n\n"
@@ -89,11 +91,11 @@ script_name() ->
         Script    -> Script
     end.
 
--spec register_command([string()], list(), list(), fun()) -> ok.
+-spec register_command([string()], [{atom(),[{_,_}]}], [{atom(),[{_,_}]}], fun()) -> true.
 register_command(Cmd, Keys, Flags, Fun) ->
     clique:register_command(["riak-repl"|Cmd], Keys, Flags, Fun).
 
--spec register_usage([string()], iolist() | fun(() -> iolist())) -> ok.
+-spec register_usage([string()], iolist() | fun(() -> iolist())) -> true.
 register_usage(Cmd, Usage) ->
     UsageFun = fun() ->
                        UsageStr = if is_function(Usage) -> Usage();
@@ -103,7 +105,8 @@ register_usage(Cmd, Usage) ->
                        erase(script_name),
                        [ScriptName, " ", UsageStr]
                end,
-    clique:register_usage(["riak-repl"|Cmd], UsageFun).
+    %% TODO: specs are wrong on clique:register_usage/2
+    clique_usage:register(["riak-repl"|Cmd], UsageFun).
 
 %% @doc Entry-point for all riak-repl commands.
 -spec command([string()]) -> ok | error.
@@ -234,7 +237,7 @@ modes_set([_|_]=InModes, []) ->
             [clique_status:text(io_lib:format("Set enabled replication modes to: ~s",
                                               [modes_to_string(NewModes)]))];
        true ->
-            [clique_status:alert(clique_status:text(io_lib:format("Invalid modes requested: ~p~n", [InvalidModes]))),
+            [clique_status:alert([clique_status:text(io_lib:format("Invalid modes requested: ~p~n", [InvalidModes]))]),
              usage]
     end;
 modes_set(_,_) ->
