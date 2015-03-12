@@ -40,6 +40,12 @@
 %% Ring utilities
 -export([get_ring/0, maybe_set_ring/2]).
 
+%% Clique output utilities
+-export([upgrade_warning/3,
+         output/1,
+         text_out/1,
+         text_out/2,
+         error_out/2]).
 
 -spec register_cli() -> ok.
 register_cli() ->
@@ -122,11 +128,31 @@ command([Script|Args]) ->
         %% printed), try to "upgrade" the arguments to clique-style,
         %% then invoke clique.
         nomatch ->
-            NewCmd = riak_repl_console13:upgrade(Args),
+            NewCmd = upgrade(riak_repl_console13:upgrade(Args)),
             clique:run(["riak-repl"|NewCmd]);
         OkOrError ->
             OkOrError
     end.
+
+upgrade(["modes"|[_|_]=Modes]=Args) ->
+    case upgrade_modes(Modes) of
+        Modes ->
+            Args;
+        NewModes ->
+            upgrade_warning(Args, "Use `modes set ~s`", [string:join(NewModes, " ")]),
+            ["modes", "set"|NewModes]
+    end;
+upgrade(Args) ->
+    Args.
+
+upgrade_modes(Modes) ->
+    lists:filtermap(fun upgrade_mode/1, Modes).
+
+upgrade_mode("mode_repl13") -> {true, "v3=on"};
+upgrade_mode("mode_repl12") -> {true, "v2=on"};
+upgrade_mode("v3="++_=Mode) -> {true, Mode};
+upgrade_mode("v2="++_=Mode) -> {true, Mode};
+upgrade_mode(_) -> false.
 
 %%-----------------------
 %% Command: status
@@ -589,3 +615,33 @@ simple_parse(Str) ->
     {ok, AbsForm} = erl_parse:parse_exprs(Tokens),
     {value, Value, _Bs} = erl_eval:exprs(AbsForm, erl_eval:new_bindings()),
     Value.
+
+
+%% @doc Registers a warning about using a deprecated form of a
+%% command.
+upgrade_warning(Args, Fmt, FArgs) ->
+    put(upgrade_warning, {string:join(Args, " "), io_lib:format(Fmt, FArgs)}).
+
+output(CmdOut) ->
+    case get(upgrade_warning) of
+        undefined -> CmdOut;
+        {Arguments, Message} ->
+            erase(upgrade_warning),
+            [error_msg("The command form `~s` is deprecated. ~s~n", [Arguments, Message]),
+             CmdOut]
+    end.
+
+error_out(Fmt, Args) ->
+    output(error_msg(Fmt, Args)).
+
+error_msg(Fmt, Args) ->
+    [clique_status:alert(text_msg(Fmt, Args))].
+
+text_out(Str) ->
+    text_out(Str, []).
+
+text_out(Str, Args) ->
+    output(text_msg(Str, Args)).
+
+text_msg(Fmt, Args) ->
+    [clique_status:text(io_lib:format(Fmt, Args))].

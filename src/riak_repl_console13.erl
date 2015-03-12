@@ -4,11 +4,19 @@
 -include("riak_repl.hrl").
 -export([register_cli/0, commands_usage/0, upgrade/1]).
 
--import(riak_repl_console, [register_command/4, script_name/0]).
-
--import(clique_status, [text/1, alert/1, table/1]).
+-import(clique_status, [text/1, table/1]).
 
 -export([cluster_mgr_stats/0]).
+
+-import(riak_repl_console,
+        [register_command/4,
+         script_name/0,
+         get_ring/0,
+         output/1,
+         text_out/1,
+         text_out/2,
+         error_out/2,
+         upgrade_warning/3]).
 
 %%-----------------------
 %% Interface
@@ -410,38 +418,9 @@ upgrade(["nat-map", "del"|Rest]) ->
 upgrade(Args) ->
     Args.
 
-%% @doc Registers a warning about using a deprecated form of a
-%% command.
-upgrade_warning(Args, Fmt, FArgs) ->
-    put(upgrade_warning, {string:join(Args, " "), io_lib:format(Fmt, FArgs)}).
-
 config_key_translation("max_fssource_node")    -> "mdc.fullsync.source.max_workers_per_node";
 config_key_translation("max_fssource_cluster") -> "mdc.fullsync.source.max_workers_per_cluster";
 config_key_translation("max_fssink_node")      -> "mdc.fullsync.sink.max_workers_per_node".
-
-output(CmdOut) ->
-    case get(upgrade_warning) of
-        undefined -> CmdOut;
-        {Arguments, Message} ->
-            erase(upgrade_warning),
-            [error_msg("The command form `~s` is deprecated. ~s~n", [Arguments, Message]),
-             CmdOut]
-    end.
-
-error_out(Fmt, Args) ->
-    output(error_msg(Fmt, Args)).
-
-error_msg(Fmt, Args) ->
-    [alert(text_msg(Fmt, Args))].
-
-text_out(Str) ->
-    text_out(Str, []).
-
-text_out(Str, Args) ->
-    output(text_msg(Str, Args)).
-
-text_msg(Fmt, Args) ->
-    [text(io_lib:format(Fmt, Args))].
 
 %%-----------------------
 %% Command: clusterstats
@@ -527,11 +506,11 @@ clustername([], [{name, ClusterName}]) ->
 %%-----------------------
 clusters([],[]) ->
     {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
-    output(text([ begin
-                      {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
-                      IPs = [string_of_ipaddr(Addr) || Addr <- Members],
-                      io_lib:format("~s: ~p~n", [ClusterName, IPs])
-                  end || ClusterName <- Clusters])).
+    output(text([begin
+                     {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
+                     IPs = [string_of_ipaddr(Addr) || Addr <- Members],
+                     io_lib:format("~s: ~p~n", [ClusterName, IPs])
+                 end || ClusterName <- Clusters])).
 
 %%-----------------------
 %% Command: connections
@@ -605,7 +584,7 @@ connect([{address, {IP, Port}}], []) ->
             %% but we still want to be able to print to stderr. This
             %% will require a clique enhancement.
             error_out("Error: Unable to establish connections until local cluster is named.~n"
-                      "First use ~s clustername --name NAME ~n", [script_name()]);
+                                        "First use ~s clustername --name NAME ~n", [script_name()]);
         _Name ->
             riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
             text_out("Connecting to remote cluster at ~p:~p.", [IP, Port])
@@ -898,7 +877,7 @@ proxy_get_redirect_delete(_, _) ->
 %% Command: nat-map show
 %%--------------------------
 nat_map_show([], []) ->
-    Ring = riak_repl_console:get_ring(),
+    Ring = get_ring(),
     Headers = [{internal, "Internal"},
                {external, "External"}],
     Rows = [ format_nat_map(Int, Ext) ||
