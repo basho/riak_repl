@@ -110,6 +110,9 @@ start(_Type, _StartArgs) ->
             ok = riak_repl2_fscoordinator_serv:sync_register_service(),
             ok = riak_repl2_pg_block_requester:sync_register_service(),
 
+            %% register console commands
+            ok = riak_repl_console:register_cli(),
+
             %% Don't announce service is available until we've
             %% registered all listeners.
             riak_core_node_watcher:service_up(riak_repl, Pid),

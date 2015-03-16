@@ -50,6 +50,7 @@
 -spec register_cli() -> ok.
 register_cli() ->
     ok = riak_repl_console13:register_cli(),
+    ok = riak_repl_console12:register_usage(),
     ok = register_commands(),
     ok = register_usage().
 
@@ -88,7 +89,9 @@ modes_usage() ->
     "  Subcommands:\n"
     "    show       Shows the active replication modes.\n"
     "    set        Toggles active replication modes.\n\n"
-    "  When setting modes, omitting the mode name is the same as `off`. New clusters should use `mode_repl13` (Version 3) exclusively. Version 2 replication will be removed in a future release.".
+    "  When setting modes, omitting the mode name is the same as `off`. New\n"
+    "  clusters should use `v3` (previously `mode_repl13`) exclusively. `v2`\n"
+    "  (previously `mode_repl12`) replication will be removed in a future release.".
 
 -spec script_name() -> string().
 script_name() ->
@@ -129,11 +132,17 @@ command([Script|Args]) ->
         %% then invoke clique.
         nomatch ->
             NewCmd = upgrade(riak_repl_console13:upgrade(Args)),
-            clique:run(["riak-repl"|NewCmd]);
+            Cmd = ["riak-repl" | NewCmd],
+            lager:debug("Running riak-repl command: Script: ~p Args: ~p UpgCmd: ~p RunCmd: ~p", [Script, Args, NewCmd, Cmd]),
+            clique:run(Cmd);
         OkOrError ->
             OkOrError
     end.
 
+upgrade(["modes", "show"]=Args) ->
+    Args;
+upgrade(["modes", "set"|_Rest]=Args) ->
+    Args;
 upgrade(["modes"|[_|_]=Modes]=Args) ->
     case upgrade_modes(Modes) of
         Modes ->
@@ -160,7 +169,7 @@ upgrade_mode(_) -> false.
 
 status([], []) ->
     All = status(),
-    clique_status:list(lists:filtermap(fun format_counter_stat/1, All));
+    [clique_status:list(lists:filtermap(fun format_counter_stat/1, All))];
 status(_,_) ->
     usage.
 
@@ -260,11 +269,9 @@ modes_set([_|_]=InModes, []) ->
             NewModes = [ M || {M, true} <- InModes ],
             ?LOG_USER_CMD("Set replication mode(s) to ~p",[NewModes]),
             set_modes(NewModes),
-            [clique_status:text(io_lib:format("Set enabled replication modes to: ~s",
-                                              [modes_to_string(NewModes)]))];
+            text_out("Set enabled replication modes to: ~s",[modes_to_string(NewModes)]);
        true ->
-            [clique_status:alert([clique_status:text(io_lib:format("Invalid modes requested: ~p~n", [InvalidModes]))]),
-             usage]
+            error_out("Invalid modes requested: ~p~n", [InvalidModes])
     end;
 modes_set(_,_) ->
     usage.
@@ -622,13 +629,13 @@ simple_parse(Str) ->
 upgrade_warning(Args, Fmt, FArgs) ->
     put(upgrade_warning, {string:join(Args, " "), io_lib:format(Fmt, FArgs)}).
 
+-spec output(clique_status:status()) -> clique_status:status().
 output(CmdOut) ->
     case get(upgrade_warning) of
         undefined -> CmdOut;
         {Arguments, Message} ->
             erase(upgrade_warning),
-            [error_msg("The command form `~s` is deprecated. ~s~n", [Arguments, Message]),
-             CmdOut]
+            error_msg("The command form `~s` is deprecated. ~s~n", [Arguments, Message]) ++ CmdOut
     end.
 
 error_out(Fmt, Args) ->

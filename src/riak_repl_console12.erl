@@ -33,6 +33,8 @@
 %% last thing on the line is `-h' or `--help', `nomatch' is returned
 %% so that usage can be printed.
 -spec dispatch([string()]) ->  ok | error | nomatch.
+dispatch([]) ->
+    nomatch;
 dispatch(Cmd) ->
     case lists:last(Cmd) of
         "--help" -> nomatch;

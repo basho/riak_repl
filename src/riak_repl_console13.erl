@@ -36,16 +36,22 @@ register_commands() ->
                              {protocol, [{longname, "protocol"},
                                          {datatype, atom}]}],
                             fun clusterstats/2),
-    true = register_command(["clustername"], [],
-                            [{name, [{shortname, "n"},
-                                     {longname, "name"},
+    true = register_command(["clustername", "show"],
+                            [],[],
+                            fun clustername_show/2),
+    true = register_command(["clustername", "set"],
+                            [{name, [{longname, "name"},
                                      {datatype, string}]}],
-                            fun clustername/2),
+                            [],
+                            fun clustername_set/2),
     true = register_command(["clusters"], [], [], fun clusters/2),
     true = register_command(["connections"], [], [], fun connections/2),
     true = register_command(["connect"], [{address, [{datatype, ip}]}], [],
                             fun connect/2),
-    true = register_command(["disconnect"], [{remote, [{datatype, [ip, string]}]}], [],
+    %% TODO: disconnect should allow a clustername instead of IP, but
+    %% the "list of datatypes" thing is not part of
+    %% cuttlefish_datatypes, but of cuttlefish_generator.
+    true = register_command(["disconnect"], [{remote, [{datatype, ip}]}], [],
                             fun disconnect/2),
     true = register_command(["realtime", "enable"],
                             [{remote, [{datatype, string}]}],
@@ -115,13 +121,16 @@ register_commands() ->
     true = register_command(["nat-map", "show"],
                             [], [],
                             fun nat_map_show/2),
+    %% TODO: nat-map add|delete should allow a hostname instead of IP,
+    %% but the "list of datatypes" thing is not part of
+    %% cuttlefish_datatypes, but of cuttlefish_generator.
     true = register_command(["nat-map", "add"],
-                            [{external, [{datatype, [ip, string]}]},
+                            [{external, [{datatype, ip}]},
                              {internal, [{datatype, string}]}],
                             [],
                             fun nat_map_add/2),
     true = register_command(["nat-map", "delete"],
-                            [{external, [{datatype, [ip, string]}]},
+                            [{external, [{datatype, ip}]},
                              {internal, [{datatype, string}]}],
                             [],
                             fun nat_map_delete/2),
@@ -133,29 +142,27 @@ register_usage(Cmd, Usage) ->
 
 register_usage() ->
     true = register_usage(["clusterstats"],
-                        "clusterstats [ --protocol=PROTO | --host=IP:PORT ]\n\n"
-                        "  Displays cluster statistics, optionally filtered by a protocol or host connection.\n\n"
-                        "  Options:\n"
-                        "    --protocol=PROTO    Filters to a protocol where PROTO is one of:\n"
-                        "                        rt_repl, proxy_get, identity\n"
-                        "    --host=IP:PORT      Filters to a specific host, identified by IP and PORT"),
+                          "clusterstats [ --protocol=PROTO | --host=IP:PORT ]\n\n"
+                          "  Displays cluster statistics, optionally filtered by a protocol or host connection.\n\n"
+                          "  Options:\n"
+                          "    --protocol=PROTO    Filters to a protocol where PROTO is one of:\n"
+                          "                        rt_repl, proxy_get, identity\n"
+                          "    --host=IP:PORT      Filters to a specific host, identified by IP and PORT"),
     true = register_usage(["clustername"],
-                        "clustername [ (-n | --name) NAME ]\n\n"
-                        "  Shows or sets the symbolic clustername. Supplying the `-n` option sets the name.\n\n"
-                        "  Options:\n"
-                        "    -n NAME, --name NAME   Sets the symbolic name to NAME"),
+                          "clustername ( show | set name=NAME )\n\n"
+                          "  Shows or sets the symbolic clustername."),
     true = register_usage(["clusters"],
-                        "clusters\n\n"
-                        "  Displays information about known clusters."),
+                          "clusters\n\n"
+                          "  Displays information about known clusters."),
     true = register_usage(["connections"],
-                        "connections\n\n"
-                        "  Displays a list of current replication connections."),
+                          "connections\n\n"
+                          "  Displays a list of current replication connections."),
     true = register_usage(["connect"],
-                        "connect address=IP:PORT\n\n"
-                        "  Connects to a remote cluster."),
+                          "connect address=IP:PORT\n\n"
+                          "  Connects to a remote cluster."),
     true = register_usage(["disconnect"],
-                        "disconnect remote=(IP:PORT | NAME)\n\n"
-                        "  Disconnects from a connected remote cluster."),
+                          "disconnect remote=(IP:PORT | NAME)\n\n"
+                          "  Disconnects from a connected remote cluster."),
     true = register_usage(["realtime"], realtime_usage()),
     true = register_usage(["realtime", "enable"], realtime_enable_disable_usage()),
     true = register_usage(["realtime", "disable"], realtime_enable_disable_usage()),
@@ -169,8 +176,8 @@ register_usage() ->
     true = register_usage(["fullsync", "stop"], fullsync_start_stop_usage()),
     true = register_usage(["proxy-get"], proxy_get_usage()),
     true = register_usage(["proxy-get", "enable"], proxy_get_enable_disable_usage()),
-    true = register_usage(["proxy-get", "disable"], proxy_get_usage()),
-    true = register_usage(["proxy-get", "redirect"], proxy_get_usage()),
+    true = register_usage(["proxy-get", "disable"], proxy_get_enable_disable_usage()),
+    true = register_usage(["proxy-get", "redirect"], proxy_get_redirect_usage()),
     true = register_usage(["proxy-get", "redirect", "show"], fun proxy_get_redirect_show_usage/0),
     true = register_usage(["proxy-get", "redirect", "add"], fun proxy_get_redirect_add_delete_usage/0),
     true = register_usage(["proxy-get", "redirect", "delete"], fun proxy_get_redirect_add_delete_usage/0),
@@ -189,7 +196,7 @@ register_configs() ->
             "mdc.fullsync.source.max_workers_per_cluster",
             "mdc.fullsync.sink.max_workers_per_node"],
     [true, true, true] = [ clique:register_config(cuttlefish_variable:tokenize(Key),
-                                                fun set_fullsync_limit/3) || Key <- Keys ],
+                                                  fun set_fullsync_limit/3) || Key <- Keys ],
     ok = clique:register_config_whitelist(Keys),
     ok.
 
@@ -312,12 +319,12 @@ nat_map_add_del_usage() ->
     "  Add or delete a NAT mapping from the given external IP to the given internal"
     "  IP. An optional external port can be supplied.".
 
-upgrade(["clustername", [$-|_]|_]=Args) ->
-    %% Don't upgrade a call that includes a flag
+upgrade(["clustername", Cmd|_]=Args) when Cmd == "show"; Cmd == "set" ->
+    %% Don't upgrade a call that includes a command
     Args;
 upgrade(["clustername", Arg]=Args) ->
-    upgrade_warning(Args, "Use `clustername --name ~s`", [Arg]),
-    ["clustername", "-n", Arg];
+    upgrade_warning(Args, "Use `clustername set name=~s`", [Arg]),
+    ["clustername", "set", "name="++Arg];
 upgrade(["clusterstats", [$-|_]|_]=Args) ->
     %% Don't upgrade a call that includes a flag
     Args;
@@ -346,6 +353,11 @@ upgrade(["disconnect", Arg|Rest]=Args) ->
             upgrade_warning(Args, "Use `disconnect remote=~s`", [Arg]),
             ["disconnect", "remote="++Arg|Rest]
     end;
+upgrade(["realtime", Command, [$-|_]|_Rest]=Args) when Command == "enable";
+                                                   Command == "disable";
+                                                   Command == "start";
+                                                   Command == "stop" ->
+    Args;
 upgrade(["realtime", Command, Arg|Rest]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
@@ -357,7 +369,7 @@ upgrade(["realtime", Command, Arg|Rest]=Args) when Command == "enable";
             ["realtime", Command, "remote="++Arg|Rest]
     end;
 upgrade(["realtime", Command]=Args) when Command == "start";
-                                    Command == "stop" ->
+                                         Command == "stop" ->
     upgrade_warning(Args, "Use `realtime ~s --all`", [Command]),
     ["realtime", Command, "--all"];
 upgrade(["realtime", "cascades", "always"]=Args) ->
@@ -366,6 +378,11 @@ upgrade(["realtime", "cascades", "always"]=Args) ->
 upgrade(["realtime", "cascades", "never"]=Args) ->
     upgrade_warning(Args, "Use `realtime cascades disable`", []),
     ["realtime", "cascades", "disable"];
+upgrade(["fullsync", Command, "--all"|_Rest]=Args) when Command == "enable";
+                                                       Command == "disable";
+                                                       Command == "start";
+                                                       Command == "stop" ->
+    Args;
 upgrade(["fullsync", Command, Arg|Rest]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
@@ -377,7 +394,7 @@ upgrade(["fullsync", Command, Arg|Rest]=Args) when Command == "enable";
             ["fullsync", Command, "remote="++Arg|Rest]
     end;
 upgrade(["fullsync", Command]=Args) when Command == "start";
-                                    Command == "stop" ->
+                                         Command == "stop" ->
     upgrade_warning(Args, "Use `fullsync ~s --all`", [Command]),
     ["fullsync", Command, "--all"];
 upgrade(["fullsync", Key]=Args) when Key == "max_fssource_node";
@@ -390,18 +407,18 @@ upgrade(["fullsync", Key, Value]=Args) when Key == "max_fssource_node";
                                             Key == "max_fssource_cluster";
                                             Key == "max_fssink_node" ->
     TKey = config_key_translation(Key),
-    upgrade_warning(Args, "Use `show ~s`", [TKey]),
+    upgrade_warning(Args, "Use `set ~s`", [TKey]),
     ["set", TKey++"="++Value];
 upgrade(["nat-map", Command, External0, Internal0]=Args0) when Command == "add";
-                                                              Command == "delete" ->
+                                                               Command == "delete" ->
 
     {External, EChanged} = case string:words(External0, $=) of
-                               2 -> {"external="++External0, true};
-                               _ -> {External0, false}
+                               2 -> {External0, false};
+                               _ -> {"external="++External0, true}
                            end,
     {Internal, IChanged} = case string:words(Internal0, $=) of
-                               2 -> {"internal="++Internal0, true};
-                               _ -> {Internal0, false}
+                               2 -> {Internal0, false};
+                               _ -> {"internal="++Internal0, true}
                            end,
     Args = [Command, External, Internal],
     if EChanged orelse IChanged ->
@@ -492,25 +509,39 @@ cluster_mgr_stats() ->
 %%     end.
 
 %%-----------------------
-%% Command: clustername
+%% Command: clustername show
 %%-----------------------
-clustername([], []) ->
+clustername_show([], []) ->
     text_out("Cluster name: ~s~n", [riak_core_connection:symbolic_clustername()]);
-clustername([], [{name, ClusterName}]) ->
+clustername_show(_,_) ->
+    usage.
+
+%%-----------------------
+%% Command: clustername set
+%%-----------------------
+clustername_set([{name, ClusterName}], []) ->
     riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
                                       ClusterName),
-    text_out("Cluster name was set to: ~s~n", [ClusterName]).
+    text_out("Cluster name was set to: ~s", [ClusterName]);
+clustername_set(_,_) ->
+    usage.
 
 %%-----------------------
 %% Command: clusters
 %%-----------------------
 clusters([],[]) ->
-    {ok, Clusters} = riak_core_cluster_mgr:get_known_clusters(),
-    output(text([begin
-                     {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
-                     IPs = [string_of_ipaddr(Addr) || Addr <- Members],
-                     io_lib:format("~s: ~p~n", [ClusterName, IPs])
-                 end || ClusterName <- Clusters])).
+    case riak_core_cluster_mgr:get_known_clusters() of
+        {ok, []} ->
+            text_out("There are no known remote clusters.");
+        {ok, Clusters} ->
+            text_out([begin
+                          {ok,Members} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(ClusterName),
+                          IPs = [string_of_ipaddr(Addr) || Addr <- Members],
+                          io_lib:format("~s: ~p~n", [ClusterName, IPs])
+                      end || ClusterName <- Clusters])
+    end;
+clusters(_,_) ->
+    usage.
 
 %%-----------------------
 %% Command: connections
@@ -518,14 +549,13 @@ clusters([],[]) ->
 connections([], []) ->
     %% get cluster manager's outbound connections to other "remote" clusters,
     %% which for now, are all the "sinks".
-    {ok, Conns} = riak_core_cluster_mgr:get_connections(),
-    Headers = [{connection, "Connection"},
-               {cluster_name, "Cluster Name"},
-               {pid, "Ctrl-Pid"},
-               {members, "Members"},
-               {status, "Status"}],
-    Rows = [format_cluster_conn(Conn) || Conn <- Conns],
-    output(table([Headers|Rows])).
+    case riak_core_cluster_mgr:get_connections() of
+        {ok, []} ->
+            text_out("There are no connected sink clusters.");
+        {ok, Conns} ->
+            Rows = [format_cluster_conn(Conn) || Conn <- Conns],
+            output([table(Rows)])
+    end.
 
 string_of_ipaddr({IP, Port}) ->
     lists:flatten(io_lib:format("~s:~p", [IP, Port])).
@@ -544,11 +574,11 @@ string_of_remote({cluster_by_name, ClusterName}) ->
 %% Remote :: {ip,port} | ClusterName
 format_cluster_conn({Remote,Pid}) ->
     {ClusterName, MemberList, Status} = get_cluster_conn_status(Remote, Pid),
-    [{connection, string_of_remote(Remote)},
-     {cluster_name, ClusterName},
-     {pid, io_lib:format("~p", [Pid])},
-     {members, format_cluster_conn_members(MemberList)},
-     {status, format_cluster_conn_status(Status)}].
+    [{"Connection", string_of_remote(Remote)},
+     {"Cluster Name", ClusterName},
+     {"Ctrl-Pid", io_lib:format("~p", [Pid])},
+     {"Members", format_cluster_conn_members(MemberList)},
+     {"Status", format_cluster_conn_status(Status)}].
 
 get_cluster_conn_status(Remote, Pid) ->
     %% try to get status from Pid of cluster control channel.  if we
@@ -584,7 +614,7 @@ connect([{address, {IP, Port}}], []) ->
             %% but we still want to be able to print to stderr. This
             %% will require a clique enhancement.
             error_out("Error: Unable to establish connections until local cluster is named.~n"
-                                        "First use ~s clustername --name NAME ~n", [script_name()]);
+                      "First use ~s clustername set name=NAME", [script_name()]);
         _Name ->
             riak_core_cluster_mgr:add_remote_cluster({IP, Port}),
             text_out("Connecting to remote cluster at ~p:~p.", [IP, Port])
@@ -617,7 +647,9 @@ realtime_enable([{remote, Remote}], []) ->
     case riak_repl2_rt:enable(Remote) of
         not_changed ->
             error_out("Realtime replication to cluster ~p already enabled!~n", [Remote]);
-        {ok, _} ->
+        {not_changed, _} ->
+            error_out("Realtime replication to cluster ~p already enabled!~n", [Remote]);
+        ok ->
             text_out("Realtime replication to cluster ~p enabled.~n", [Remote])
     end;
 realtime_enable(_, _) ->
@@ -631,7 +663,9 @@ realtime_disable([{remote, Remote}], []) ->
     case riak_repl2_rt:disable(Remote) of
         not_changed ->
             error_out("Realtime replication to cluster ~p already disabled!~n", [Remote]);
-        {ok, _} ->
+        {not_changed, _} ->
+            error_out("Realtime replication to cluster ~p already disabled!~n", [Remote]);
+        ok ->
             text_out("Realtime replication to cluster ~p disabled.~n", [Remote])
     end;
 realtime_disable(_, _) ->
@@ -645,13 +679,19 @@ realtime_start([{remote, Remote}], []) ->
     case riak_repl2_rt:start(Remote) of
         not_changed ->
             error_out("Realtime replication to cluster ~p is already started or not enabled!~n", [Remote]);
-        {ok, _} ->
+        {not_changed, _} ->
+            error_out("Realtime replication to cluster ~p is already started or not enabled!~n", [Remote]);
+        ok ->
             text_out("Realtime replication to cluster ~p started.~n", [Remote])
     end;
 realtime_start([], [{all, _}]) ->
     ?LOG_USER_CMD("Start Realtime Replication to all connected clusters", []),
-    Remotes = riak_repl2_rt:enabled(),
-    [ realtime_start([{remote, Remote}], []) || Remote <- Remotes ];
+    case riak_repl2_rt:enabled() of
+        [] ->
+            error_out("No remote clusters have realtime replication enabled.", []);
+        Remotes ->
+            lists:flatten([ realtime_start([{remote, Remote}], []) || Remote <- Remotes ])
+    end;
 realtime_start(_, _) ->
     usage.
 
@@ -663,13 +703,19 @@ realtime_stop([{remote, Remote}], []) ->
     case riak_repl2_rt:stop(Remote) of
         not_changed ->
             error_out("Realtime replication to cluster ~p is already stopped or not enabled!~n", [Remote]);
-        {ok, _} ->
+        {not_changed, _} ->
+            error_out("Realtime replication to cluster ~p is already stopped or not enabled!~n", [Remote]);
+        ok ->
             text_out("Realtime replication to cluster ~p stopped.~n", [Remote])
     end;
 realtime_stop([], [{all, _}]) ->
     ?LOG_USER_CMD("Stop Realtime Replication to all connected clusters", []),
-    Remotes = riak_repl2_rt:enabled(),
-    [ realtime_stop([{remote, Remote}], []) || Remote <- Remotes ];
+    case riak_repl2_rt:enabled() of
+        [] ->
+            error_out("No remote clusters have realtime replication enabled.", []);
+        Remotes ->
+            lists:flatten([ realtime_stop([{remote, Remote}], []) || Remote <- Remotes ])
+    end;
 realtime_stop(_, _) ->
     usage.
 
@@ -687,7 +733,6 @@ realtime_cascades_enable(_,_) ->
 %%--------------------------
 %% Command: realtime cascades disable
 %%--------------------------
-
 realtime_cascades_disable([], []) ->
     ?LOG_USER_CMD("Disable Realtime Replication cascading", []),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:rt_cascades_trans/2,
@@ -699,7 +744,6 @@ realtime_cascades_disable(_,_) ->
 %%--------------------------
 %% Command: realtime cascades show
 %%--------------------------
-
 realtime_cascades_show([], []) ->
     case app_helper:get_env(riak_repl, realtime_cascades, always) of
         always ->
@@ -714,12 +758,10 @@ realtime_cascades_show(_, _) ->
 %%--------------------------
 %% Command: fullsync enable
 %%--------------------------
-
 fullsync_enable([{remote, Remote}], []) ->
     Leader = riak_core_cluster_mgr:get_leader(),
     ?LOG_USER_CMD("Enable Fullsync Replication to cluster ~p", [Remote]),
-    riak_core_ring_manager:ring_trans(fun
-                                          riak_repl_ring:fs_enable_trans/2, Remote),
+    riak_core_ring_manager:ring_trans(fun riak_repl_ring:fs_enable_trans/2, Remote),
     _ = riak_repl2_fscoordinator_sup:start_coord(Leader, Remote),
     text_out("Fullsync replication to cluster ~p enabled.", [Remote]);
 fullsync_enable(_, _) ->
@@ -765,7 +807,7 @@ fullsync_start([], [{all,_}]) ->
     ?LOG_USER_CMD("Start Fullsync Replication to all connected clusters",[]),
     _ = [riak_repl2_fscoordinator:start_fullsync(Pid) || {_, Pid} <-
                                                              Fullsyncs],
-    text("Fullsync replication started to all connected clusters.");
+    text_out("Fullsync replication started to all connected clusters.");
 fullsync_start(_, _) ->
     usage.
 
@@ -791,7 +833,7 @@ fullsync_stop([], [{all,_}]) ->
     ?LOG_USER_CMD("Stop Fullsync Replication to all connected clusters",[]),
     _ = [riak_repl2_fscoordinator:stop_fullsync(Pid) || {_, Pid} <-
                                                             Fullsyncs],
-    text("Fullsync replication stopped to all connected clusters.");
+    text_out("Fullsync replication stopped to all connected clusters.");
 fullsync_stop(_, _) ->
     usage.
 
@@ -828,7 +870,7 @@ proxy_get_redirect_cluster_id([], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
                   io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
-    text_out("local cluster id: ~p~n", [ClusterId]);
+    text_out("Local cluster id: ~p", [ClusterId]);
 proxy_get_redirect_cluster_id(_, _) ->
     usage.
 
@@ -878,17 +920,20 @@ proxy_get_redirect_delete(_, _) ->
 %%--------------------------
 nat_map_show([], []) ->
     Ring = get_ring(),
-    Headers = [{internal, "Internal"},
-               {external, "External"}],
-    Rows = [ format_nat_map(Int, Ext) ||
-               {Int, Ext} <- riak_repl_ring:get_nat_map(Ring)],
-    output([text("NAT mappings:\n"), table([Headers|Rows])]);
+    case riak_repl_ring:get_nat_map(Ring) of
+        [] ->
+            text_out("No NAT mappings registered.\n");
+        Pairs ->
+            %% Headers = [{internal, "Internal"}, {external, "External"}],
+            Rows = [ format_nat_map(Int, Ext) || {Int, Ext} <- Pairs ],
+            output([text("NAT mappings:\n"), table(Rows)])
+    end;
 nat_map_show(_,_) ->
     usage.
 
 format_nat_map(Int, Ext) ->
-    [{internal, io_lib:format("~s", [print_ip_and_maybe_port(Int)])},
-     {external, io_lib:format("~s", [print_ip_and_maybe_port(Ext)])}].
+    [{"Internal", io_lib:format("~s", [print_ip_and_maybe_port(Int)])},
+     {"External", io_lib:format("~s", [print_ip_and_maybe_port(Ext)])}].
 
 print_ip_and_maybe_port({IP, Port}) when is_tuple(IP) ->
     [inet_parse:ntoa(IP), $:, integer_to_list(Port)];
@@ -987,7 +1032,7 @@ nat_map_delete(_,_) ->
 %% happens when a machine bounces and becomes leader? It won't know
 %% the new value. Seems like we need a central place to hold these
 %% configuration values.
-set_fullsync_limit(["mdc", "fullsync"|Key], Value, _Flags) ->
+set_fullsync_limit(["mdc", "fullsync"|Key]=Config, Value, _Flags) ->
     %% NB: All config settings are done cluster-wide, there's not
     %% flags for specific nodes like in handoff.
     AppEnvKey = max_fs_config_key(Key),
@@ -998,9 +1043,10 @@ set_fullsync_limit(["mdc", "fullsync"|Key], Value, _Flags) ->
                                      [Message, Value]],
                                     ?CONSOLE_RPC_TIMEOUT),
     riak_core_util:rpc_every_member(application, set_env,
-                                    [riak_repl, max_fssource_node, Value],
+                                    [riak_repl, AppEnvKey, Value],
                                     ?CONSOLE_RPC_TIMEOUT),
-    io:format("Set max number of fullsync workers ~s to ~p~n", [Message, Value]).
+    Output = text_out("Set max number of fullsync workers ~s to ~p~n", [Message, Value]),
+    clique:print(Output, ["set", cuttlefish_variable:format(Config)]).
 
 max_fs_message(max_fssource_node)    -> "per source node";
 max_fs_message(max_fssource_cluster) -> "for source cluster";
