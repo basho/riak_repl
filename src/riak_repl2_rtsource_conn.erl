@@ -480,6 +480,11 @@ schedule_heartbeat(State = #state{hb_interval_tref = undefined,
     TRef = erlang:send_after(timer:seconds(HBInterval), self(), send_heartbeat),
     State#state{hb_interval_tref = TRef};
 
+schedule_heartbeat(State = #state{hb_interval_tref = _TRef,
+                                  hb_interval = HBInterval}) when is_integer(HBInterval) ->
+    lager:warning("hb_interval_tref is not undefined when attempting to schedule new heartbeat."),
+    State;
+
 schedule_heartbeat(State) ->
     lager:warning("Heartbeat is misconfigured and is not a valid integer."),
     State.
