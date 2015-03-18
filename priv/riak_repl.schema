@@ -60,7 +60,7 @@
 ]}.
 
 %% @doc Whether to initiate a fullsync on initial connection from a
-%% sink cluster.
+%% source cluster.
 {mapping, "mdc.fullsync.start_on_connect", "riak_repl.fullsync_on_connect", [
     {datatype, flag},
     {default, on}
@@ -110,11 +110,12 @@
      end
  end}.
 
-%% @doc By default, fullsync replication will try to coordinate with
-%% other Riak subsystems that may be contending for the same
-%% resources. This will help to prevent system response degradation
-%% under times of heavy load from multiple background tasks. To
-%% disable background coordination, set this parameter to off.
+%% @doc By default, fullsync replication will not try to coordinate
+%% with other Riak subsystems that may be contending for the same
+%% resources. Enabling this can help to prevent system response
+%% degradation under times of heavy load from multiple background
+%% tasks. To disable background coordination, set this parameter to
+%% off.
 {mapping, "mdc.fullsync.background_manager", "riak_repl.fullsync_use_background_manager", [
     {datatype, flag},
     {default, off},
@@ -131,7 +132,7 @@
 ]}.
 
 %% @doc The maximum size the realtime replication queue can grow to
-%% before new objects are dropped.
+%% before old objects are dropped.
 {mapping, "mdc.realtime.queue_max_bytes", "riak_repl.rtq_max_bytes", [
     {datatype, bytesize},
     {default, "100MB"}
