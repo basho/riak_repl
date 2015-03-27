@@ -338,27 +338,27 @@ upgrade(["clusterstats", Arg]=Args) ->
             ["clusterstats", "--host", Arg];
         _ -> Args
     end;
-upgrade(["connect", Arg|Rest]=Args) ->
+upgrade(["connect", Arg]=Args) ->
     case string:words(Arg, $=) of
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `connect address=~s`", [Arg]),
-            ["connect", "address="++Arg|Rest];
+            ["connect", "address="++Arg];
         _ -> Args
     end;
-upgrade(["disconnect", Arg|Rest]=Args) ->
+upgrade(["disconnect", Arg]=Args) ->
     case string:words(Arg, $=) of
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `disconnect remote=~s`", [Arg]),
-            ["disconnect", "remote="++Arg|Rest]
+            ["disconnect", "remote="++Arg]
     end;
 upgrade(["realtime", Command, [$-|_]|_Rest]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
                                                    Command == "stop" ->
     Args;
-upgrade(["realtime", Command, Arg|Rest]=Args) when Command == "enable";
+upgrade(["realtime", Command, Arg]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
                                                    Command == "stop" ->
@@ -366,7 +366,7 @@ upgrade(["realtime", Command, Arg|Rest]=Args) when Command == "enable";
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `realtime ~s remote=~s`", [Command, Arg]),
-            ["realtime", Command, "remote="++Arg|Rest]
+            ["realtime", Command, "remote="++Arg]
     end;
 upgrade(["realtime", Command]=Args) when Command == "start";
                                          Command == "stop" ->
@@ -383,7 +383,7 @@ upgrade(["fullsync", Command, "--all"|_Rest]=Args) when Command == "enable";
                                                        Command == "start";
                                                        Command == "stop" ->
     Args;
-upgrade(["fullsync", Command, Arg|Rest]=Args) when Command == "enable";
+upgrade(["fullsync", Command, Arg]=Args) when Command == "enable";
                                                    Command == "disable";
                                                    Command == "start";
                                                    Command == "stop" ->
@@ -391,7 +391,7 @@ upgrade(["fullsync", Command, Arg|Rest]=Args) when Command == "enable";
         2 -> Args;
         1 ->
             upgrade_warning(Args, "Use `fullsync ~s remote=~s`", [Command, Arg]),
-            ["fullsync", Command, "remote="++Arg|Rest]
+            ["fullsync", Command, "remote="++Arg]
     end;
 upgrade(["fullsync", Command]=Args) when Command == "start";
                                          Command == "stop" ->
