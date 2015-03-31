@@ -888,8 +888,8 @@ encode_obj_msg(V, {Cmd, RObj}, T) ->
 %% A wrapper around to_wire which leaves the object unencoded when using the w0 wire protocol.
 encode_obj(w0, RObj) ->
     RObj;
-encode_obj(_W, RObj) ->
-    to_wire(w1, RObj).
+encode_obj(W, RObj) ->
+    to_wire(W, RObj).
 
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
 %%      possible type, bucket and key for reconstruction on the other end. BinObj should be
