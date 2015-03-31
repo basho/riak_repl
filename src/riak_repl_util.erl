@@ -867,13 +867,7 @@ encode_obj_msg(V, {Cmd, RObj}) ->
     encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj)).
 
 encode_obj_msg(V, {Cmd, RObj}, undefined) ->
-    case V of
-        w0 ->
-            term_to_binary({Cmd, RObj});
-        _W ->
-            BObj = riak_repl_util:to_wire(w1,RObj),
-            term_to_binary({Cmd, BObj})
-    end;
+    term_to_binary({Cmd, encode_obj(V, RObj)});
 encode_obj_msg(V, {Cmd, RObj}, T) ->
     BTHash = case riak_repl_bucket_type_util:property_hash(T) of
                  undefined ->
@@ -881,14 +875,13 @@ encode_obj_msg(V, {Cmd, RObj}, T) ->
                  Hash ->
                      Hash
              end,
-    case V of
-        w0 ->
-            term_to_binary({Cmd, {BTHash, RObj}});
+    term_to_binary({Cmd, {BTHash, encode_obj(V, RObj)}}).
 
-        _W ->
-            BObj = riak_repl_util:to_wire(w1,RObj),
-            term_to_binary({Cmd, {BTHash, BObj}})
-    end.
+%% A wrapper around to_wire which leaves the object unencoded when using the w0 wire protocol.
+encode_obj(w0, RObj) ->
+    RObj;
+encode_obj(_W, RObj) ->
+    to_wire(w1, RObj).
 
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
 %%      possible type, bucket and key for reconstruction on the other end. BinObj should be
