@@ -888,9 +888,12 @@ decode_obj_msg(Data) ->
     Msg = binary_to_term(Data),
     case Msg of
         {fs_diff_obj, BObj} when is_binary(BObj) ->
-            RObj = riak_repl_util:from_wire(BObj),
+            RObj = from_wire(BObj),
             {fs_diff_obj, RObj};
-        {fs_diff_obj, _RObj} ->
+        {fs_diff_obj, {BTHash, BObj}} when is_binary(BObj) ->
+            RObj = from_wire(BObj),
+            {fs_diff_obj, {BTHash, RObj}};
+        {fs_diff_obj, _} ->
             Msg;
         Other ->
             Other
