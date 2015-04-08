@@ -148,7 +148,7 @@ handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     %% aae strategy will not receive messages here
     Transport:setopts(Socket, [{active, once}]),
-    case decode_obj_msg(Data) of
+    case riak_repl_util:decode_obj_msg(Data) of
         {fs_diff_obj, RObj} ->
             riak_repl_util:do_repl_put(RObj);
         Other ->
@@ -184,18 +184,6 @@ handle_info(init_ack, State=#state{socket=Socket,
     end;
 handle_info(_Msg, State) ->
     {noreply, State}.
-
-decode_obj_msg(Data) ->
-    Msg = binary_to_term(Data),
-    case Msg of
-        {fs_diff_obj, BObj} when is_binary(BObj) ->
-            RObj = riak_repl_util:from_wire(BObj),
-            {fs_diff_obj, RObj};
-        {fs_diff_obj, _RObj} ->
-            Msg;
-        Other ->
-            Other
-    end.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strategy}) ->
     %% TODO: define a fullsync worker behavior and call it's stop function
