@@ -55,7 +55,6 @@
          sockname/2,
          deduce_wire_version_from_proto/1,
          encode_obj_msg/2,
-         decode_obj_msg/1,
          make_pg_proxy_name/1,
          make_pg_name/1,
          mode_12_enabled/1,
@@ -868,7 +867,13 @@ encode_obj_msg(V, {Cmd, RObj}) ->
     encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj)).
 
 encode_obj_msg(V, {Cmd, RObj}, undefined) ->
-    term_to_binary({Cmd, encode_obj(V, RObj)});
+    case V of
+        w0 ->
+            term_to_binary({Cmd, RObj});
+        _W ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({Cmd, BObj})
+    end;
 encode_obj_msg(V, {Cmd, RObj}, T) ->
     BTHash = case riak_repl_bucket_type_util:property_hash(T) of
                  undefined ->
@@ -876,27 +881,13 @@ encode_obj_msg(V, {Cmd, RObj}, T) ->
                  Hash ->
                      Hash
              end,
-    term_to_binary({Cmd, {BTHash, encode_obj(V, RObj)}}).
+    case V of
+        w0 ->
+            term_to_binary({Cmd, {BTHash, RObj}});
 
-%% A wrapper around to_wire which leaves the object unencoded when using the w0 wire protocol.
-encode_obj(w0, RObj) ->
-    RObj;
-encode_obj(W, RObj) ->
-    to_wire(W, RObj).
-
-decode_obj_msg(Data) ->
-    Msg = binary_to_term(Data),
-    case Msg of
-        {fs_diff_obj, BObj} when is_binary(BObj) ->
-            RObj = from_wire(BObj),
-            {fs_diff_obj, RObj};
-        {fs_diff_obj, {BTHash, BObj}} when is_binary(BObj) ->
-            RObj = from_wire(BObj),
-            {fs_diff_obj, {BTHash, RObj}};
-        {fs_diff_obj, _} ->
-            Msg;
-        Other ->
-            Other
+        _W ->
+            BObj = riak_repl_util:to_wire(w1,RObj),
+            term_to_binary({Cmd, {BTHash, BObj}})
     end.
 
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
