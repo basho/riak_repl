@@ -276,7 +276,11 @@ wait_keylist({kl_hunk, Hunk}, State) ->
     kl_hunk(Hunk, State);
 %% the client has finished sending the keylist
 wait_keylist(kl_eof, State) ->
-    kl_eof(State).
+    kl_eof(State);
+wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
+    lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
+        [State#state.sitename, Partition]),
+    {next_state, wait_for_partition, State}.
 
 wait_keylist(Command, _From, State) when Command == cancel_fullsync ->
     log_stop(Command, State),
@@ -294,11 +298,7 @@ wait_keylist({kl_hunk, Hunk}, _From, State) ->
     kl_hunk(Hunk, State);
 %% the client has finished sending the keylist
 wait_keylist(kl_eof, _From, State) ->
-    kl_eof(State);
-wait_keylist({skip_partition, Partition}, _From, #state{partition=Partition} = State) ->
-    lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
-        [State#state.sitename, Partition]),
-    {next_state, wait_for_partition, State}.
+    kl_eof(State).
 
 %% ----------------------------------- non bloom-fold -----------------------
 %% diff_keylist states
