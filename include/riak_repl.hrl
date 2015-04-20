@@ -1,5 +1,25 @@
-%% Riak EnterpriseDS
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
+-include_lib("otp_compat/include/otp_compat.hrl").
+
 -define(REPL_FSM_TIMEOUT, 15000).
 -define(REPL_QUEUE_TIMEOUT, 1000).
 -define(REPL_MERK_TIMEOUT, infinity).
@@ -58,13 +78,7 @@
 -type(repl_node_sites() :: {node(), [{repl_sitename(), pid()}]}).
 -type(ring() :: tuple()).
 
--ifdef(namespaced_types).
--type riak_repl_dict() :: dict:dict().
--else.
--type riak_repl_dict() :: dict().
--endif.
-
--type(repl_config() :: riak_repl_dict()|undefined).
+-type(repl_config() :: dict_t()|undefined).
 %% wire_version() is an atom that defines which wire format a binary
 %% encoding of one of more riak objects is packaged into. For details of
 %% the to_wire() and from_wire() operations, see riak_repl_util.erl.
@@ -93,7 +107,7 @@
           my_pi           :: #peer_info{},    %% local peer_info
           client          :: tuple(),         %% riak local_client
           partitions = [] :: list(),          %% list of local partitions
-          work_dir        :: string()         %% working directory 
+          work_dir        :: string()         %% working directory
          }).
 
 -record(repl_listener, {
@@ -104,7 +118,7 @@
 -record(repl_site, {
           name  :: repl_sitename(),   %% site name
           addrs=[] :: repl_addrlist(),%% list of ip/ports to connect to
-          last_sync=?NEVER_SYNCED :: tuple()  
+          last_sync=?NEVER_SYNCED :: tuple()
          }).
 
 -record(nat_listener, {

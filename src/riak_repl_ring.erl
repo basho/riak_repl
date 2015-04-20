@@ -1,8 +1,25 @@
-%% Riak EnterpriseDS
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
 -module(riak_repl_ring).
 -author('Andy Gross <andy@andygross.org>').
--include("riak_repl.hrl").
 
 -export([ensure_config/1,
          initial_config/0,
@@ -48,6 +65,8 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+-include_lib("otp_compat/include/otp_compat.hrl").
+-include("riak_repl.hrl").
 
 -spec(ensure_config/1 :: (ring()) -> ring()).
 %% @doc Ensure that Ring has replication config entry in the ring metadata dict.
@@ -60,7 +79,7 @@ ensure_config(Ring) ->
             Ring
     end.
 
--spec(get_repl_config/1 :: (ring()) -> riak_repl_dict()|undefined).
+-spec(get_repl_config/1 :: (ring()) -> dict_t()|undefined).
 %% @doc Get the replication config dictionary from Ring.
 get_repl_config(Ring) ->
     case riak_core_ring:get_meta(?MODULE, Ring) of
@@ -68,7 +87,7 @@ get_repl_config(Ring) ->
         undefined -> initial_config()
     end.
 
--spec(set_repl_config/2 :: (ring(), riak_repl_dict()) -> ring()).
+-spec(set_repl_config/2 :: (ring(), dict_t()) -> ring()).
 %% @doc Set the replication config dictionary in Ring.
 set_repl_config(Ring, RC) ->
     riak_core_ring:update_meta(?MODULE, RC, Ring).
@@ -450,13 +469,13 @@ get_list(ListName, Ring) ->
     end.
 
 %% set the "mode" for realtime repl behavior
-%% possible values are 
+%% possible values are
 %% v1, v2, v3
 set_modes(Ring, NewModes) ->
     % it doesn't make sense to have a mode_repl13_migrating to represent
     % node shutdown repl migration hook since the mode is stored in the
     % repl ring
-    ModeCheck = lists:all(fun (Mode) -> 
+    ModeCheck = lists:all(fun (Mode) ->
                             proplists:is_defined(Mode,
                             ?REPL_MODES) end,
                             NewModes)
