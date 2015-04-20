@@ -503,8 +503,11 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
                                     %% we don't care about the reply
                                     gen_fsm:send_event(Self,
                                                        {Ref, diff_exchanged});
-                                {'DOWN', MonRef, process, VNodePid, Reason}
-                                        when Reason /= normal ->
+                                {'DOWN', MonRef, process, VNodePid, normal} ->
+                                    lager:warning("VNode ~p exited before fold for partition ~p",
+                                        [VNodePid, Partition]),
+                                    exit({bloom_fold, vnode_exited_before_fold});
+                                {'DOWN', MonRef, process, VNodePid, Reason} ->
                                     lager:warning("Fold of ~p exited with ~p",
                                                   [Partition, Reason]),
                                     exit({bloom_fold, Reason})
