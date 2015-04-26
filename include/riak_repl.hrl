@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
--include_lib("otp_compat/include/otp_compat.hrl").
+-include_lib("otp_compat/include/ns_types.hrl").
 
 -define(REPL_FSM_TIMEOUT, 15000).
 -define(REPL_QUEUE_TIMEOUT, 1000).
