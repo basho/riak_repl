@@ -56,7 +56,6 @@
     socket,
     transport,
     largest_n,
-    owners = [],
     connection_ref,
     partition_queue = queue:new(),
     retries = dict:new(),
@@ -361,7 +360,6 @@ handle_cast(start_fullsync,  State) ->
             Partitions = sort_partitions(Ring),
             State2 = State#state{
                 largest_n = N,
-                owners = riak_core_ring:all_owners(Ring),
                 partition_queue = queue:from_list(Partitions),
                 retries = dict:new(),
                 reserve_retries = dict:new(),
@@ -389,7 +387,6 @@ handle_cast(stop_fullsync, State) ->
                 <- State#state.running_sources],
     State2 = State#state{
         largest_n = undefined,
-        owners = [],
         partition_queue = queue:new(),
         retries = dict:new(),
         reserve_retries = dict:new(),
@@ -770,26 +767,26 @@ send_next_whereis_req(State) ->
 % two specs:  is the local node available, and does our cache of remote nodes
 % say the remote node is available.
 determine_best_partition(State) ->
-    #state{partition_queue = Queue, busy_nodes = Busies, owners = Owners, whereis_waiting = Waiting} = State,
+    #state{partition_queue = Queue, busy_nodes = Busies, whereis_waiting = Waiting} = State,
     SeedPart = queue:out(Queue),
     lager:debug("Starting partition search"),
-    determine_best_partition(SeedPart, Busies, Owners, Waiting, queue:new()).
+    determine_best_partition(SeedPart, Busies, Waiting, queue:new()).
 
-determine_best_partition({empty, _Q}, _Business, _Owners, _Waiting, AccQ) ->
+determine_best_partition({empty, _Q}, _Business, _Waiting, AccQ) ->
     lager:debug("No partition in the queue that will not exceed a limit; will try again later."),
     % there is no best partition, try again later
     {undefined, AccQ};
 
-determine_best_partition({{value, Part}, Queue}, Busies, Owners, Waiting, AccQ) ->
-    case node_available(Part, Owners, Waiting) of
+determine_best_partition({{value, Part}, Queue}, Busies, Waiting, AccQ) ->
+    case node_available(Part, Waiting) of
         false ->
-            determine_best_partition(queue:out(Queue), Busies, Owners, Waiting, queue:in(Part, AccQ));
+            determine_best_partition(queue:out(Queue), Busies, Waiting, queue:in(Part, AccQ));
         skip ->
-            determine_best_partition(queue:out(Queue), Busies, Owners, Waiting, AccQ);
+            determine_best_partition(queue:out(Queue), Busies, Waiting, AccQ);
         true ->
             case remote_node_available(Part, Busies) of
                 false ->
-                    determine_best_partition(queue:out(Queue), Busies, Owners, Waiting, queue:in(Part, AccQ));
+                    determine_best_partition(queue:out(Queue), Busies, Waiting, queue:in(Part, AccQ));
                 true ->
                     {Part, queue:join(Queue, AccQ)}
             end
@@ -801,8 +798,10 @@ below_max_sources(State) ->
     Max = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
     ( length(State#state.running_sources) + length(State#state.whereis_waiting) ) < Max.
 
-node_available(PartitionInfo, Owners, Waiting) ->
+node_available(PartitionInfo, Waiting) ->
     Partition = PartitionInfo#partition_info.index,
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Owners = riak_core_ring:all_owners(Ring),
     LocalNode = proplists:get_value(Partition, Owners),
     Max = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
     try riak_repl2_fssource_sup:enabled(LocalNode) of
@@ -834,8 +833,8 @@ remote_node_available(Partition, Busies) ->
 
 start_fssource(PartitionVal, Ip, Port, State) ->
     Partition = PartitionVal#partition_info.index,
-    #state{owners = Owners} = State,
-    LocalNode = proplists:get_value(Partition, Owners),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    LocalNode = riak_core_ring:index_owner(Ring, Partition),
     case riak_repl2_fssource_sup:enable(LocalNode, Partition, {Ip, Port}) of
         {ok, Pid} ->
             link(Pid),
