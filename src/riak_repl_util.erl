@@ -51,6 +51,7 @@
          remove_unwanted_stats/1,
          format_ip_and_port/2,
          safe_pid_to_list/1,
+         safe_get_msg_q_len/1,
          peername/2,
          sockname/2,
          deduce_wire_version_from_proto/1,
@@ -824,6 +825,13 @@ safe_pid_to_list(Pid) when is_pid(Pid) ->
     erlang:pid_to_list(Pid);
 safe_pid_to_list(NotAPid) ->
     NotAPid.
+
+safe_get_msg_q_len(Pid) when is_pid(Pid) ->
+    ProcInfo = erlang:process_info(Pid),
+    proplists:get_value(message_queue_len, ProcInfo);
+safe_get_msg_q_len(Other) ->
+    Other.
+
 
 peername(Socket, Transport) ->
     case Transport:peername(Socket) of
