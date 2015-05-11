@@ -117,7 +117,7 @@ prop_main(DecisionTableVersion) ->
                         rt -> riak_repl_cs:send_realtime(Object, fake_client)
                     end,
                 Verify = do_send(FSorRT, Object, DecisionTable),
-                ?debugVal({Verify, Impl, DecisionTableVersion}),
+                %% ?debugVal({Verify, Impl, DecisionTableVersion}),
                 Verify =:= Impl
             end).
 

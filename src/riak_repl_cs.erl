@@ -23,7 +23,10 @@
 -spec send(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
 send(Object, _RiakClient) ->
-    bool_to_ok_or_cancel(not skip_common_object(Object)).
+    bool_to_ok_or_cancel(replicate_object(
+                           riak_object:bucket(Object),
+                           riak_kv_util:is_x_deleted(Object),
+                           fullsync)).
 
 -spec recv(riak_object:riak_object()) -> ok | cancel.
 recv(_Object) ->
@@ -36,93 +39,26 @@ recv(_Object) ->
 -spec send_realtime(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
 send_realtime(Object, _RiakClient) ->
-    Skip = skip_common_object(Object) orelse
-           skip_block_object(Object),
-    bool_to_ok_or_cancel(not Skip).
+    bool_to_ok_or_cancel(replicate_object(
+                           riak_object:bucket(Object),
+                           riak_kv_util:is_x_deleted(Object),
+                           realtime)).
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
--spec skip_common_object(riak_object:riak_object()) -> boolean().
-skip_common_object(Object) ->
-    riak_kv_util:is_x_deleted(Object) orelse
-    skip_common_bucket(riak_object:bucket(Object)).
+replicate_object(_, true, _) -> false;
+replicate_object(?STORAGE_BUCKET, _, _) -> false;
+replicate_object(?ACCESS_BUCKET, _, _) -> false;
+replicate_object(?USER_BUCKET, _, _) ->
+    app_helper:get_env(riak_repl, replicate_cs_user_objects, true);
+replicate_object(?BUCKETS_BUCKET, _, _) ->
+    app_helper:get_env(riak_repl, replicate_cs_buckets_objects, true);
+replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, _, fullsync) -> true;
+replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, _, realtime) -> false;
+replicate_object(_, _, _) -> true.
 
--spec skip_common_bucket(binary()) -> boolean().
-skip_common_bucket(Bucket) ->
-    storage_bucket(Bucket) orelse
-    access_bucket(Bucket) orelse
-    skip_user_bucket(Bucket) orelse
-    skip_buckets_bucket(Bucket).
-
--spec skip_block_object(riak_object:riak_object()) -> boolean().
-skip_block_object(Object) ->
-    Bucket = riak_object:bucket(Object),
-    block_bucket(Bucket).
-
--spec block_bucket(binary()) -> boolean().
-block_bucket(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>) ->
-    true;
-block_bucket(_Bucket) ->
-    false.
-
--spec storage_bucket(binary()) -> boolean().
-storage_bucket(?STORAGE_BUCKET) ->
-    true;
-storage_bucket(_Bucket) ->
-    false.
-
--spec access_bucket(binary()) -> boolean().
-access_bucket(?ACCESS_BUCKET) ->
-    true;
-access_bucket(_Bucket) ->
-    false.
-
--spec skip_user_bucket(binary()) -> boolean().
-skip_user_bucket(Bucket) ->
-    ReplicateUsers = app_helper:get_env(riak_repl, replicate_cs_user_objects,
-                       true),
-    handle_should_replicate_users_bucket(ReplicateUsers, Bucket).
-
--spec handle_should_replicate_users_bucket(boolean(), binary()) ->
-    boolean().
-handle_should_replicate_users_bucket(true, _Bucket) ->
-    %% if we _should_ replicate user objects (the true pattern above),
-    %% then we don't need to even check if this is a user object
-    false;
-handle_should_replicate_users_bucket(false, Bucket) ->
-    user_bucket(Bucket).
-
--spec skip_buckets_bucket(binary()) -> boolean().
-skip_buckets_bucket(Bucket) ->
-    ReplicateBuckets = app_helper:get_env(riak_repl, replicate_cs_bucket_objects,
-                       true),
-    handle_should_replicate_buckets_bucket(ReplicateBuckets, Bucket).
-
--spec handle_should_replicate_buckets_bucket(boolean(), binary()) ->
-    boolean().
-handle_should_replicate_buckets_bucket(true, _Bucket) ->
-    %% if we _should_ replicate bucket objects (the true pattern above),
-    %% then we don't need to even check if this is a bucket object
-    false;
-handle_should_replicate_buckets_bucket(false, Bucket) ->
-    buckets_bucket(Bucket).
-
-%% @private
-%% @doc Should this bucket name be treated as being the users bucket
-%% for the sake of replication.
--spec user_bucket(binary()) -> boolean().
-user_bucket(?USER_BUCKET) ->
-    true;
-user_bucket(_Bucket) ->
-    false.
-
--spec buckets_bucket(binary()) -> boolean().
-buckets_bucket(?BUCKETS_BUCKET) ->
-    true;
-buckets_bucket(_Bucket) ->
-    false.
 
 -spec bool_to_ok_or_cancel(boolean()) -> ok | cancel.
 bool_to_ok_or_cancel(true) ->
