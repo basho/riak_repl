@@ -119,6 +119,7 @@ fs_or_rt() -> oneof([fs, rt]).
 
 prop_main(DecisionTableVersion) ->
     ok = application:unset_env(riak_repl, replicate_block_tombstone),
+    ok = application:unset_env(riak_repl, replicate_blocks),
     DecisionTable = case DecisionTableVersion of
                         v1 ->
                             %% Default behaviour in Riak EE 1.4~2.1.1

@@ -1,5 +1,19 @@
-%% Copyright (c) 2012 Basho Technologies, Inc.
+%% Copyright (c) 2012-2015 Basho Technologies, Inc.
 %% This repl hook skips Riak CS block buckets
+
+%% @doc Handle filters on replicating Riak CS specific data. See also
+%% test/riak_repl_cs_eqc.erl to know which is replicated or not, in
+%% fullsync or realtime.
+%%
+%% For blocks, all tombstones are replicated by default, which is
+%% exception for tombstones. This is to reclaim data space faster.  CS
+%% wants to delete blocks as fast as possible, because keys of blocks
+%% consumes memory space, disk space and disk IO. Deletion conflict in
+%% cross-replicated configuration won't be any problem because they
+%% are just deletion.
+%%
+%% You should not replicate neither in fullsync or realtime as there
+%% are a race condition related to CS garbage collection.
 
 -module(riak_repl_cs).
 
@@ -16,10 +30,10 @@
 -define(STORAGE_BUCKET, <<"moss.storage">>).
 -define(BUCKETS_BUCKET, <<"moss.buckets">>).
 
-%% For fullsync, we don't want to ever replicate tombstones or blocks or
-%% storage or access.
-%% Depending on app.config, we may or may not want to replicate
-%% user and bucket objects.
+%% For fullsync, we don't want to ever replicate tombstones or blocks
+%% or storage or access.  Depending on app.config, we may or may not
+%% want to replicate user and bucket objects. An exceptionis
+%% tombstones of blocks.
 -spec send(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
 send(Object, _RiakClient) ->
@@ -32,10 +46,10 @@ send(Object, _RiakClient) ->
 recv(_Object) ->
     ok.
 
-%% For realtime, we don't want to ever replicate tombstones or
-%% storage or access.
-%% Depending on app.config, we may or may not want to replicate
-%% user and bucket objects.
+%% For realtime, we don't want to ever replicate tombstones or storage
+%% or access. Depending on app.config, we may or may not want to
+%% replicate user and bucket objects. An exception is tombstones of
+%% blocks.
 -spec send_realtime(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
 send_realtime(Object, _RiakClient) ->
@@ -48,6 +62,7 @@ send_realtime(Object, _RiakClient) ->
 %%% Internal functions
 %%%===================================================================
 
+-spec replicate_object(binary(), boolean(), fullsync|realtime) -> boolean().
 replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, IsTombstone, FSorRT) ->
     case {IsTombstone, FSorRT} of
         {false, fullsync} ->
@@ -63,7 +78,7 @@ replicate_object(?ACCESS_BUCKET, _, _) -> false;
 replicate_object(?USER_BUCKET, _, _) ->
     app_helper:get_env(riak_repl, replicate_cs_user_objects, true);
 replicate_object(?BUCKETS_BUCKET, _, _) ->
-    app_helper:get_env(riak_repl, replicate_cs_buckets_objects, true);
+    app_helper:get_env(riak_repl, replicate_cs_bucket_objects, true);
 replicate_object(_, _, _) -> true.
 
 
@@ -78,7 +93,14 @@ bool_to_ok_or_cancel(false) ->
 %% ===================================================================
 -ifdef(TEST).
 
+reset_app_env() ->
+    ok = application:unset_env(riak_repl, replicate_block_tombstone),
+    ok = application:unset_env(riak_repl, replicate_blocks),
+    ok = application:unset_env(riak_repl, replicate_cs_bucket_objects),
+    ok = application:unset_env(riak_repl, replicate_cs_user_objects).
+
 do_repl_blocks_fullsync_test() ->
+    reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"0b:foo">>,
@@ -86,6 +108,7 @@ do_repl_blocks_fullsync_test() ->
     ?assert(ok_or_cancel_to_bool(send(Object, Client))).
 
 dont_repl_blocks_realtime_test() ->
+    reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"0b:foo">>,
@@ -93,6 +116,7 @@ dont_repl_blocks_realtime_test() ->
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 dont_repl_access_objects_fullsync_test() ->
+    reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"moss.access">>,
@@ -100,6 +124,7 @@ dont_repl_access_objects_fullsync_test() ->
     ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
 
 dont_repl_access_objects_realtime_test() ->
+    reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"moss.access">>,
@@ -107,6 +132,7 @@ dont_repl_access_objects_realtime_test() ->
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 dont_repl_storage_objects_fullsync_test() ->
+    reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"moss.storage">>,
@@ -114,6 +140,7 @@ dont_repl_storage_objects_fullsync_test() ->
     ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
 
 dont_repl_storage_objects_realtime_test() ->
+    reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"moss.storage">>,
@@ -121,6 +148,8 @@ dont_repl_storage_objects_realtime_test() ->
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 dont_repl_tombstoned_object_fullsync_test() ->
+    reset_app_env(),
+    ok = application:set_env(riak_repl, replicate_block_tombstone, false),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"anything">>,
@@ -131,6 +160,8 @@ dont_repl_tombstoned_object_fullsync_test() ->
     ?assertNot(ok_or_cancel_to_bool(send(Object3, Client))).
 
 dont_repl_tombstoned_object_realtime_test() ->
+    reset_app_env(),
+    ok = application:set_env(riak_repl, replicate_block_tombstone, false),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"anything">>,
@@ -141,6 +172,7 @@ dont_repl_tombstoned_object_realtime_test() ->
     ?assertNot(ok_or_cancel_to_bool(send(Object3, Client))).
 
 do_repl_user_object_fullsync_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_user_objects, true),
     %% the riak client isn't even used
     Client = fake_client,
@@ -149,6 +181,7 @@ do_repl_user_object_fullsync_test() ->
     ?assert(ok_or_cancel_to_bool(send(Object, Client))).
 
 dont_repl_user_object_fullsync_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_user_objects, false),
     %% the riak client isn't even used
     Client = fake_client,
@@ -157,6 +190,7 @@ dont_repl_user_object_fullsync_test() ->
     ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
 
 do_repl_user_object_realtime_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_user_objects, true),
     %% the riak client isn't even used
     Client = fake_client,
@@ -165,6 +199,7 @@ do_repl_user_object_realtime_test() ->
     ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 dont_repl_user_object_realtime_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_user_objects, false),
     %% the riak client isn't even used
     Client = fake_client,
@@ -173,6 +208,7 @@ dont_repl_user_object_realtime_test() ->
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 do_repl_bucket_object_fullsync_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_bucket_objects, true),
     %% the riak client isn't even used
     Client = fake_client,
@@ -181,6 +217,7 @@ do_repl_bucket_object_fullsync_test() ->
     ?assert(ok_or_cancel_to_bool(send(Object, Client))).
 
 dont_repl_bucket_object_fullsync_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_bucket_objects, false),
     %% the riak client isn't even used
     Client = fake_client,
@@ -189,6 +226,7 @@ dont_repl_bucket_object_fullsync_test() ->
     ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
 
 do_repl_bucket_object_realtime_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_bucket_objects, true),
     %% the riak client isn't even used
     Client = fake_client,
@@ -197,6 +235,7 @@ do_repl_bucket_object_realtime_test() ->
     ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 dont_repl_bucket_object_realtime_test() ->
+    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_bucket_objects, false),
     %% the riak client isn't even used
     Client = fake_client,
@@ -206,24 +245,28 @@ dont_repl_bucket_object_realtime_test() ->
 
 
 do_repl_gc_object_realtime_test() ->
+    reset_app_env(),
     Client = fake_client,
     Bucket = <<"riak-cs-gc">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
     ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 do_repl_gc_object_fullsync_test() ->
+    reset_app_env(),
     Client = fake_client,
     Bucket = <<"riak-cs-gc">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
     ?assert(ok_or_cancel_to_bool(send(Object, Client))).
 
 do_repl_mb_weight_realtime_test() ->
+    reset_app_env(),
     Client = fake_client,
     Bucket = <<"riak-cs-multibag">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
     ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 do_repl_mb_weight_fullsync_test() ->
+    reset_app_env(),
     Client = fake_client,
     Bucket = <<"riak-cs-multibag">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
