@@ -261,6 +261,32 @@ dont_repl_bucket_object_realtime_test() ->
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
+
+do_repl_gc_object_realtime_test() ->
+    Client = fake_client,
+    Bucket = <<"riak-cs-gc">>,
+    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
+
+do_repl_gc_object_fullsync_test() ->
+    Client = fake_client,
+    Bucket = <<"riak-cs-gc">>,
+    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send(Object, Client))).
+
+do_repl_mb_weight_realtime_test() ->
+    Client = fake_client,
+    Bucket = <<"riak-cs-multibag">>,
+    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
+
+do_repl_mb_weight_fullsync_test() ->
+    Client = fake_client,
+    Bucket = <<"riak-cs-multibag">>,
+    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send(Object, Client))).
+
+
 %% ===================================================================
 %% EUnit helpers
 %% ===================================================================
