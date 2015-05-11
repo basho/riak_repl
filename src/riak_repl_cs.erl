@@ -48,6 +48,13 @@ send_realtime(Object, _RiakClient) ->
 %%% Internal functions
 %%%===================================================================
 
+replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, IsTombstone, FSorRT) ->
+    case {IsTombstone, FSorRT} of
+        {false, fullsync} -> true;
+        {false, realtime} -> false;
+        {true, _} ->
+            app_helper:get_env(riak_repl, replicate_block_tombstone, true)
+    end;
 replicate_object(_, true, _) -> false;
 replicate_object(?STORAGE_BUCKET, _, _) -> false;
 replicate_object(?ACCESS_BUCKET, _, _) -> false;
@@ -55,8 +62,6 @@ replicate_object(?USER_BUCKET, _, _) ->
     app_helper:get_env(riak_repl, replicate_cs_user_objects, true);
 replicate_object(?BUCKETS_BUCKET, _, _) ->
     app_helper:get_env(riak_repl, replicate_cs_buckets_objects, true);
-replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, _, fullsync) -> true;
-replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, _, realtime) -> false;
 replicate_object(_, _, _) -> true.
 
 

@@ -93,17 +93,20 @@ riak_object() ->
          end).
 
 eqc_test_() ->
-    [ % run qc tests
-      {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main(v1)))))}
-    ].
+    {inorder,
+     [ % run qc tests
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main(v1))))),
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main(v2)))))
+     ]}.
 
 fs_or_rt() -> oneof([fs, rt]).
 
 prop_main(DecisionTableVersion) ->
+    ok = application:unset_env(riak_repl, replicate_block_tombstone),
     DecisionTable = case DecisionTableVersion of
                         v1 ->
                             %% Default behaviour in Riak EE 1.4~2.1.1
-                            ok = application:set_env(riak_repl, replicate_block_tomstone, false),
+                            ok = application:set_env(riak_repl, replicate_block_tombstone, false),
                             decision_table();
                         v2 ->
                             %% New behaviour since Riak EE 2.1.2?
