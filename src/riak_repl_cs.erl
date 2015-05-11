@@ -99,55 +99,34 @@ reset_app_env() ->
     ok = application:unset_env(riak_repl, replicate_cs_bucket_objects),
     ok = application:unset_env(riak_repl, replicate_cs_user_objects).
 
-do_repl_blocks_fullsync_test() ->
+repl_blocks_test() ->
     reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"0b:foo">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send(Object, Client))).
-
-dont_repl_blocks_realtime_test() ->
-    reset_app_env(),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"0b:foo">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send(Object, Client))),
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
-dont_repl_access_objects_fullsync_test() ->
+dont_repl_access_objects_test() ->
     reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"moss.access">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
-
-dont_repl_access_objects_realtime_test() ->
-    reset_app_env(),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.access">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))),
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
-dont_repl_storage_objects_fullsync_test() ->
+dont_repl_storage_objects_test() ->
     reset_app_env(),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"moss.storage">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
-
-dont_repl_storage_objects_realtime_test() ->
-    reset_app_env(),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.storage">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))),
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
-dont_repl_tombstoned_object_fullsync_test() ->
+dont_repl_tombstoned_object_test() ->
     reset_app_env(),
     ok = application:set_env(riak_repl, replicate_block_tombstone, false),
     %% the riak client isn't even used
@@ -157,119 +136,50 @@ dont_repl_tombstoned_object_fullsync_test() ->
     M = dict:from_list([{<<"X-Riak-Deleted">>, true}]),
     Object2 = riak_object:update_metadata(Object, M),
     Object3 = riak_object:apply_updates(Object2),
-    ?assertNot(ok_or_cancel_to_bool(send(Object3, Client))).
+    ?assertNot(ok_or_cancel_to_bool(send(Object3, Client))),
+    ?assertNot(ok_or_cancel_to_bool(send_realtime(Object3, Client))).
 
-dont_repl_tombstoned_object_realtime_test() ->
+repl_user_object_test() ->
     reset_app_env(),
-    ok = application:set_env(riak_repl, replicate_block_tombstone, false),
     %% the riak client isn't even used
     Client = fake_client,
-    Bucket = <<"anything">>,
+    Bucket = <<"moss.users">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    M = dict:from_list([{<<"X-Riak-Deleted">>, true}]),
-    Object2 = riak_object:update_metadata(Object, M),
-    Object3 = riak_object:apply_updates(Object2),
-    ?assertNot(ok_or_cancel_to_bool(send(Object3, Client))).
-
-do_repl_user_object_fullsync_test() ->
-    reset_app_env(),
     application:set_env(riak_repl, replicate_cs_user_objects, true),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.users">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send(Object, Client))).
-
-dont_repl_user_object_fullsync_test() ->
-    reset_app_env(),
+    ?assert(ok_or_cancel_to_bool(send(Object, Client))),
+    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))),
     application:set_env(riak_repl, replicate_cs_user_objects, false),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.users">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
-
-do_repl_user_object_realtime_test() ->
-    reset_app_env(),
-    application:set_env(riak_repl, replicate_cs_user_objects, true),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.users">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
-
-dont_repl_user_object_realtime_test() ->
-    reset_app_env(),
-    application:set_env(riak_repl, replicate_cs_user_objects, false),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.users">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))),
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
-do_repl_bucket_object_fullsync_test() ->
+repl_bucket_object_test() ->
     reset_app_env(),
+    %% the riak client isn't even used
+    Client = fake_client,
+    Bucket = <<"moss.buckets">>,
+    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
     application:set_env(riak_repl, replicate_cs_bucket_objects, true),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.buckets">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send(Object, Client))).
-
-dont_repl_bucket_object_fullsync_test() ->
-    reset_app_env(),
+    ?assert(ok_or_cancel_to_bool(send(Object, Client))),
+    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))),
     application:set_env(riak_repl, replicate_cs_bucket_objects, false),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.buckets">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))).
-
-do_repl_bucket_object_realtime_test() ->
-    reset_app_env(),
-    application:set_env(riak_repl, replicate_cs_bucket_objects, true),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.buckets">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
-
-dont_repl_bucket_object_realtime_test() ->
-    reset_app_env(),
-    application:set_env(riak_repl, replicate_cs_bucket_objects, false),
-    %% the riak client isn't even used
-    Client = fake_client,
-    Bucket = <<"moss.buckets">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assertNot(ok_or_cancel_to_bool(send(Object, Client))),
     ?assertNot(ok_or_cancel_to_bool(send_realtime(Object, Client))).
 
 
-do_repl_gc_object_realtime_test() ->
+do_repl_gc_object_test() ->
     reset_app_env(),
     Client = fake_client,
     Bucket = <<"riak-cs-gc">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
-
-do_repl_gc_object_fullsync_test() ->
-    reset_app_env(),
-    Client = fake_client,
-    Bucket = <<"riak-cs-gc">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))),
     ?assert(ok_or_cancel_to_bool(send(Object, Client))).
 
-do_repl_mb_weight_realtime_test() ->
+do_repl_mb_weight_test() ->
     reset_app_env(),
     Client = fake_client,
     Bucket = <<"riak-cs-multibag">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
-    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))).
-
-do_repl_mb_weight_fullsync_test() ->
-    reset_app_env(),
-    Client = fake_client,
-    Bucket = <<"riak-cs-multibag">>,
-    Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
+    ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))),
     ?assert(ok_or_cancel_to_bool(send(Object, Client))).
 
 
