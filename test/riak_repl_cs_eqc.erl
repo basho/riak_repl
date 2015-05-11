@@ -44,6 +44,20 @@ decision_table_v2() ->
      {tss,       cancel, cancel}, %% Tombstones in short
      {other,     ok,     ok}].
 
+decision_table_v2_blockrt() ->
+    %% type, rt, fs
+    [{buckets,   ok,     ok}, %% Configurable, but default
+     {users,     ok,     ok}, %% Configurable, but default
+     {blocks,    ok,     ok},
+     {block_ts,  ok,     ok},
+     {manifests, ok,     ok},
+     {gc,        ok,     ok}, %% riak-cs-gc
+     {access,    cancel, cancel},
+     {storage,   cancel, cancel},
+     {mb,        ok,     ok}, %% Multibag
+     {tss,       cancel, cancel}, %% Tombstones in short
+     {other,     ok,     ok}].
+
 bucket_name_to_type(<<"0b:", _/binary>>, true) -> block_ts;
 bucket_name_to_type(<<"0b:", _/binary>>, false) -> blocks;
 bucket_name_to_type(_, true) -> tss;
@@ -93,10 +107,12 @@ riak_object() ->
          end).
 
 eqc_test_() ->
+    NumTests = 1024,
     {inorder,
      [ % run qc tests
-       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main(v1))))),
-       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main(v2)))))
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v1))))),
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v2))))),
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v2_blockrt)))))
      ]}.
 
 fs_or_rt() -> oneof([fs, rt]).
@@ -110,7 +126,11 @@ prop_main(DecisionTableVersion) ->
                             decision_table();
                         v2 ->
                             %% New behaviour since Riak EE 2.1.2?
-                            decision_table_v2()
+                            decision_table_v2();
+                        v2_blockrt ->
+                            %% Replicate blocks in realtime, off by default
+                            ok = application:set_env(riak_repl, replicate_blocks, true),
+                            decision_table_v2_blockrt()
                     end,
     ?FORALL({Object, FSorRT}, {riak_object(), fs_or_rt()},
             begin

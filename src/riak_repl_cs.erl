@@ -50,8 +50,10 @@ send_realtime(Object, _RiakClient) ->
 
 replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, IsTombstone, FSorRT) ->
     case {IsTombstone, FSorRT} of
-        {false, fullsync} -> true;
-        {false, realtime} -> false;
+        {false, fullsync} ->
+            true;
+        {false, realtime} ->
+            app_helper:get_env(riak_repl, replicate_blocks, false);
         {true, _} ->
             app_helper:get_env(riak_repl, replicate_block_tombstone, true)
     end;
