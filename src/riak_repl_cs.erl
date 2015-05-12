@@ -6,11 +6,12 @@
 %% fullsync or realtime.
 %%
 %% For blocks, all tombstones are replicated by default, which is
-%% exception for tombstones. This is to reclaim data space faster.  CS
+%% exception for tombstones. This is to reclaim data space faster. CS
 %% wants to delete blocks as fast as possible, because keys of blocks
 %% consumes memory space, disk space and disk IO. Deletion conflict in
 %% cross-replicated configuration won't be any problem because they
-%% are just deletion.
+%% are just deletion, and blocks are to be written just once, no
+%% update.
 %%
 %% You should not replicate blocks neither in fullsync or realtime as
 %% there are a race condition related to CS garbage collection.
@@ -35,10 +36,6 @@
 -define(CONFIG_REPL_USERS, replicate_cs_user_objects).
 -define(CONFIG_REPL_BUCKETS, replicate_cs_bucket_objects).
 
-%% For fullsync, we don't want to ever replicate tombstones or blocks
-%% or storage or access.  Depending on app.config, we may or may not
-%% want to replicate user and bucket objects. An exception is
-%% tombstones of blocks.
 -spec send(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
 send(Object, _RiakClient) ->
@@ -51,10 +48,6 @@ send(Object, _RiakClient) ->
 recv(_Object) ->
     ok.
 
-%% For realtime, we don't want to ever replicate tombstones or storage
-%% or access. Depending on app.config, we may or may not want to
-%% replicate user and bucket objects. An exception is tombstones of
-%% blocks.
 -spec send_realtime(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
 send_realtime(Object, _RiakClient) ->
@@ -67,6 +60,8 @@ send_realtime(Object, _RiakClient) ->
 %%% Internal functions
 %%%===================================================================
 
+%% @doc decides replicate or not, according to the combination of
+%% bucket name, whether tombstone or not, and fullsync or realtime.
 -spec replicate_object(binary(), boolean(), fullsync|realtime) -> boolean().
 replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, IsTombstone, FSorRT) ->
     case {IsTombstone, FSorRT} of
@@ -102,7 +97,7 @@ reset_app_env() ->
     ok = application:unset_env(riak_repl, ?CONFIG_REPL_BLOCKS),
     ok = application:unset_env(riak_repl, ?CONFIG_REPL_BLOCK_TOMBSTONE),
     ok = application:unset_env(riak_repl, ?CONFIG_REPL_USERS),
-    ok = application:unset_env(riak_repl, ?CONFIG_REPL_BLOCKS).
+    ok = application:unset_env(riak_repl, ?CONFIG_REPL_BUCKETS).
 
 repl_blocks_test() ->
     reset_app_env(),
@@ -177,7 +172,16 @@ do_repl_gc_object_test() ->
     Bucket = <<"riak-cs-gc">>,
     Object = riak_object:new(Bucket, <<"key">>, <<"val">>),
     ?assert(ok_or_cancel_to_bool(send_realtime(Object, Client))),
-    ?assert(ok_or_cancel_to_bool(send(Object, Client))).
+    ?assert(ok_or_cancel_to_bool(send(Object, Client))),
+    %% Tombstoned gc objects are NOT replicated. The property is very
+    %% important to avoid block leak. See also:
+    %% https://github.com/basho/riak_cs/blob/develop/src/riak_cs_gc_worker.erl#L251-L257
+    M = dict:from_list([{<<"X-Riak-Deleted">>, true}]),
+    Object2 = riak_object:update_metadata(Object, M),
+    Object3 = riak_object:apply_updates(Object2),
+    ?assertNot(ok_or_cancel_to_bool(send_realtime(Object3, Client))),
+    ?assertNot(ok_or_cancel_to_bool(send(Object3, Client))).
+
 
 do_repl_mb_weight_test() ->
     reset_app_env(),

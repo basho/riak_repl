@@ -58,9 +58,9 @@ decision_table_v2_blockrt() ->
      {tss,       cancel, cancel}, %% Tombstones in short
      {other,     ok,     ok}].
 
-bucket_name_to_type(<<"0b:", _/binary>>, true) -> block_ts;
+bucket_name_to_type(<<"0b:", _/binary>>, true) -> block_ts; %% Block tombstones
 bucket_name_to_type(<<"0b:", _/binary>>, false) -> blocks;
-bucket_name_to_type(_, true) -> tss;
+bucket_name_to_type(_, true) -> tss; %% Tombstones
 bucket_name_to_type(<<"moss.buckets">>, _) -> buckets;
 bucket_name_to_type(<<"moss.users">>, _) -> users;
 bucket_name_to_type(<<"0o:", _/binary>>, _) -> manifests;
