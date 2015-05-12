@@ -118,21 +118,26 @@ eqc_test_() ->
 fs_or_rt() -> oneof([fs, rt]).
 
 prop_main(DecisionTableVersion) ->
-    ok = application:unset_env(riak_repl, replicate_block_tombstone),
-    ok = application:unset_env(riak_repl, replicate_blocks),
-    DecisionTable = case DecisionTableVersion of
-                        v1 ->
-                            %% Default behaviour in Riak EE 1.4~2.1.1
-                            ok = application:set_env(riak_repl, replicate_block_tombstone, false),
-                            decision_table();
-                        v2 ->
-                            %% New behaviour since Riak EE 2.1.2?
-                            decision_table_v2();
-                        v2_blockrt ->
-                            %% Replicate blocks in realtime, off by default
-                            ok = application:set_env(riak_repl, replicate_blocks, true),
-                            decision_table_v2_blockrt()
-                    end,
+    ok = application:unset_env(riak_repl, replicate_cs_block_tombstone),
+    ok = application:unset_env(riak_repl, replicate_cs_blocks_realtime),
+    DecisionTable
+        = case DecisionTableVersion of
+              v1 ->
+                  %% Default behaviour in Riak EE 1.4~2.1.1
+                  ok = application:set_env(riak_repl,
+                                           replicate_cs_block_tombstone,
+                                           false),
+                  decision_table();
+              v2 ->
+                  %% New behaviour since Riak EE 2.1.2?
+                  decision_table_v2();
+              v2_blockrt ->
+                  %% Replicate blocks in realtime, off by default
+                  ok = application:set_env(riak_repl,
+                                           replicate_cs_blocks_realtime,
+                                           true),
+                  decision_table_v2_blockrt()
+          end,
     ?FORALL({Object, FSorRT}, {riak_object(), fs_or_rt()},
             begin
                 Impl =

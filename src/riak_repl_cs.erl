@@ -1,5 +1,5 @@
 %% Copyright (c) 2012-2015 Basho Technologies, Inc.
-%% This repl hook skips Riak CS block buckets
+%% This repl hook skips some objects in Riak CS
 
 %% @doc Handle filters on replicating Riak CS specific data. See also
 %% test/riak_repl_cs_eqc.erl to know which is replicated or not, in
@@ -12,8 +12,8 @@
 %% cross-replicated configuration won't be any problem because they
 %% are just deletion.
 %%
-%% You should not replicate neither in fullsync or realtime as there
-%% are a race condition related to CS garbage collection.
+%% You should not replicate blocks neither in fullsync or realtime as
+%% there are a race condition related to CS garbage collection.
 
 -module(riak_repl_cs).
 
@@ -30,9 +30,14 @@
 -define(STORAGE_BUCKET, <<"moss.storage">>).
 -define(BUCKETS_BUCKET, <<"moss.buckets">>).
 
+-define(CONFIG_REPL_BLOCKS, replicate_cs_blocks_realtime).
+-define(CONFIG_REPL_BLOCK_TOMBSTONE, replicate_cs_block_tombstone).
+-define(CONFIG_REPL_USERS, replicate_cs_user_objects).
+-define(CONFIG_REPL_BUCKETS, replicate_cs_bucket_objects).
+
 %% For fullsync, we don't want to ever replicate tombstones or blocks
 %% or storage or access.  Depending on app.config, we may or may not
-%% want to replicate user and bucket objects. An exceptionis
+%% want to replicate user and bucket objects. An exception is
 %% tombstones of blocks.
 -spec send(riak_object:riak_object(), riak_client:riak_client()) ->
     ok | cancel.
@@ -68,17 +73,17 @@ replicate_object(<<?BLOCK_BUCKET_PREFIX, _Rest/binary>>, IsTombstone, FSorRT) ->
         {false, fullsync} ->
             true;
         {false, realtime} ->
-            app_helper:get_env(riak_repl, replicate_blocks, false);
+            app_helper:get_env(riak_repl, ?CONFIG_REPL_BLOCKS, false);
         {true, _} ->
-            app_helper:get_env(riak_repl, replicate_block_tombstone, true)
+            app_helper:get_env(riak_repl, ?CONFIG_REPL_BLOCK_TOMBSTONE, true)
     end;
 replicate_object(_, true, _) -> false;
 replicate_object(?STORAGE_BUCKET, _, _) -> false;
 replicate_object(?ACCESS_BUCKET, _, _) -> false;
 replicate_object(?USER_BUCKET, _, _) ->
-    app_helper:get_env(riak_repl, replicate_cs_user_objects, true);
+    app_helper:get_env(riak_repl, ?CONFIG_REPL_USERS, true);
 replicate_object(?BUCKETS_BUCKET, _, _) ->
-    app_helper:get_env(riak_repl, replicate_cs_bucket_objects, true);
+    app_helper:get_env(riak_repl, ?CONFIG_REPL_BUCKETS, true);
 replicate_object(_, _, _) -> true.
 
 
@@ -94,10 +99,10 @@ bool_to_ok_or_cancel(false) ->
 -ifdef(TEST).
 
 reset_app_env() ->
-    ok = application:unset_env(riak_repl, replicate_block_tombstone),
-    ok = application:unset_env(riak_repl, replicate_blocks),
-    ok = application:unset_env(riak_repl, replicate_cs_bucket_objects),
-    ok = application:unset_env(riak_repl, replicate_cs_user_objects).
+    ok = application:unset_env(riak_repl, ?CONFIG_REPL_BLOCKS),
+    ok = application:unset_env(riak_repl, ?CONFIG_REPL_BLOCK_TOMBSTONE),
+    ok = application:unset_env(riak_repl, ?CONFIG_REPL_USERS),
+    ok = application:unset_env(riak_repl, ?CONFIG_REPL_BLOCKS).
 
 repl_blocks_test() ->
     reset_app_env(),
