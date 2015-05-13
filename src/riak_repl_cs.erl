@@ -128,7 +128,7 @@ dont_repl_storage_objects_test() ->
 
 dont_repl_tombstoned_object_test() ->
     reset_app_env(),
-    ok = application:set_env(riak_repl, replicate_block_tombstone, false),
+    ok = application:set_env(riak_repl, replicate_cs_block_tombstone, false),
     %% the riak client isn't even used
     Client = fake_client,
     Bucket = <<"anything">>,

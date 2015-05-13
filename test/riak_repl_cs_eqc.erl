@@ -80,7 +80,8 @@ do_send(RTorFS, Object, DecisionTable) ->
         fs -> FS
     end.
 
-cs_bucket() ->
+%% Bucket names in Riak, used by CS
+raw_cs_bucket() ->
     oneof([<<"moss.buckets">>,
            <<"moss.users">>,
            <<"0b:deadbeef">>,
@@ -89,11 +90,14 @@ cs_bucket() ->
            <<"moss.access">>,
            <<"moss.storage">>,
            <<"riak-cs-multibag">>,
+           %% And this binary() is default fallback, although this is
+           %% not supposed to happen in CS use cases. But just in
+           %% case.
            binary()]).
 
 riak_object() ->
     ?LET({Bucket, Key, HasTombstone},
-         {cs_bucket(), non_empty(binary()), bool()},
+         {raw_cs_bucket(), non_empty(binary()), bool()},
          begin
              Object = riak_object:new(Bucket, Key, <<"val">>),
              case HasTombstone of
