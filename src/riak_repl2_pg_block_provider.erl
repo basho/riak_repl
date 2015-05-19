@@ -109,7 +109,7 @@ handle_cast(_Msg, State) ->
 handle_info(keepalive, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(stay_awake),
     Transport:send(Socket, Data),
-    State2 = keepalive_timer(State),
+    State2 = keepalive_timer(State#state{keepalive_timer = undefined}),
     {noreply, State2};
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
@@ -130,9 +130,7 @@ handle_info({Proto, Socket, Data},
         when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
-    %% restart the timer after each message has been processed
-    State = keepalive_timer(State0),
-    handle_msg(Msg, State);
+    handle_msg(Msg, State0);
 handle_info(_Msg, State) ->
     {noreply, State}.
 
@@ -161,7 +159,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 keepalive_timer(State = #state{keepalive_timer = undefined}) ->
-    NewRef = erlang:send_after(?KEEPALIVE, keepalive, self()),
+    NewRef = erlang:send_after(?KEEPALIVE, self(), keepalive),
     State#state{keepalive_timer = NewRef};
 
 keepalive_timer(State) ->
