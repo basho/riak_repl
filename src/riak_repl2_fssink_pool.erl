@@ -2,7 +2,7 @@
 %% fullsyncs are running.
 
 -module(riak_repl2_fssink_pool).
--export([start_link/0, status/0, bin_put/1]).
+-export([start_link/0, status/0, put/1, bin_put/1]).
 
 start_link() ->
     MinPool = app_helper:get_env(riak_repl, fssink_min_workers, 5),
@@ -20,6 +20,12 @@ status() ->
      {worker_queue_len, WorkerQueueLen},
      {overflow, Overflow},
      {num_monitors, NumMonitors}].
+
+%% @doc Send an object or BT hash / object pair to the worker pool to
+%% run a put against. No guarantees of completion.
+put(Obj) ->
+    Pid = poolboy:checkout(?MODULE, true, infinity),
+    riak_repl_fullsync_worker:do_put(Pid, Obj, ?MODULE).
 
 %% @doc Send a replication wire-encoded binary to the worker pool
 %% for running a put against.  No guarantees of completion.
