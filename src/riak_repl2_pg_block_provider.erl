@@ -27,7 +27,6 @@
           connection_ref,
           worker,
           client,
-          keepalive_timer,
           proxy_gets_provided = 0
         }).
 
@@ -83,8 +82,8 @@ handle_call({connected, Socket, Transport, _Endpoint, _Proto, Props}, _From,
                   other_cluster=Cluster,
                   client=Client
     },
-    State3 = keepalive_timer(State2),
-    {reply, ok, State3};
+    _ = keepalive_timer(),
+    {reply, ok, State2};
 handle_call(status, _From, State=#state{socket=Socket,
                                         proxy_gets_provided=PGCount}) ->
     SocketStats = riak_core_tcp_mon:socket_status(Socket),
@@ -109,8 +108,8 @@ handle_cast(_Msg, State) ->
 handle_info(keepalive, State=#state{socket=Socket, transport=Transport}) ->
     Data = term_to_binary(stay_awake),
     Transport:send(Socket, Data),
-    State2 = keepalive_timer(State#state{keepalive_timer = undefined}),
-    {noreply, State2};
+    _ = keepalive_timer(),
+    {noreply, State};
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
     lager:info("Connection for proxy_get ~p closed", [State#state.other_cluster]),
     {stop, socket_closed, State};
@@ -158,11 +157,5 @@ terminate(_Reason, #state{}) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-keepalive_timer(State = #state{keepalive_timer = undefined}) ->
-    NewRef = erlang:send_after(?KEEPALIVE, self(), keepalive),
-    State#state{keepalive_timer = NewRef};
-
-keepalive_timer(State) ->
-    Ref = State#state.keepalive_timer,
-    _ = erlang:cancel_timer(Ref),
-    keepalive_timer(State#state{keepalive_timer = undefined}).
+keepalive_timer() ->
+    erlang:send_after(?KEEPALIVE, self(), keepalive).
