@@ -83,7 +83,7 @@ handle_info({Proto, _Socket, Data}, State=#state{transport=Transport,
         [MsgType|<<>>] ->
             process_msg(MsgType, State);
         [MsgType|MsgData] ->
-            process_msg(MsgType, binary_to_term(MsgData), State)
+            process_msg(MsgType, riak_repl_util:decode_obj_msg(MsgData), State)
     end;
 
 handle_info({'DOWN', _, _, _, _}, State) ->
@@ -143,10 +143,10 @@ process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=Tre
     send_reply(ResponseMsg, State);
 
 %% no reply
-process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
+process_msg(?MSG_PUT_OBJ, {fs_diff_obj, Obj}, State) ->
     %% may block on worker pool, ok return means work was submitted
     %% to pool, not that put FSM completed successfully.
-    ok = riak_repl2_fssink_pool:bin_put(BObj),
+    ok = riak_repl2_fssink_pool:put(Obj),
     {noreply, State};
 
 %% replies: ok | not_responsible
