@@ -35,7 +35,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %% Test API
--export([current_state/1]).
+-export([current_state/1,
+         current_members/1]).
 
 %% For testing, we need to have two different cluster manager services running
 %% on the same node, which is normally not done. The remote cluster service is
@@ -339,6 +340,9 @@ handle_event(_Event, StateName, State) ->
 handle_sync_event(current_state, _From, StateName, State) ->
     Reply = {StateName, State},
     {reply, Reply, StateName, State};
+handle_sync_event(current_members, _From, StateName, #state{ members = Members } = State) ->
+    Reply = {current_members, Members},
+    {reply, Reply, StateName, State};
 handle_sync_event(force_stop, _From, _StateName, State) ->
     ok = lager:debug("Stopping because I was asked nicely to."),
     {stop, normal, ok, State};
@@ -461,5 +465,9 @@ initiate_connection(State=#state{remote=Remote}) ->
 -spec current_state(pid()) -> {atom(), #state{}} | {error, term()}.
 current_state(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, current_state).
+
+-spec current_members(pid()) -> {atom(), [peer_address() | node_address()]} | {error, term()}.
+current_members(Pid) ->
+    gen_fsm:sync_send_all_state_event(Pid, current_members).
 
 -endif.
