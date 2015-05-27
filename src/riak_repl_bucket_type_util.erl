@@ -14,7 +14,7 @@
 
 -define(DEFAULT_BUCKET_TYPE, <<"default">>).
 
--define(DEFAULT_HASH_BUCKET_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
+-define(DEFAULT_HASH_BUCKET_PROPS, [consistent, datatype, n_val, write_once]).
 
 -spec bucket_props_match(proplists:proplist()) -> boolean().
 bucket_props_match(Props) ->
