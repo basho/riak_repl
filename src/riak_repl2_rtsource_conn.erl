@@ -73,7 +73,7 @@
 %% prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
 
 
--define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
+-define(CLIENT_SPEC, {{realtime,[{3,1}, {2,0}, {1,5}]},
                       {?TCP_OPTIONS, ?MODULE, self()}}).
 
 -record(state, {remote,    % remote name

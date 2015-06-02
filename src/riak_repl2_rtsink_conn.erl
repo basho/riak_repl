@@ -56,13 +56,12 @@
                 cont = <<>>,      %% Continuation from previous TCP buffer
                 bt_drops,         %% drops due to bucket type mis-matches
                 bt_interval,      %% how often (in ms) to report bt_drops
-                bt_timer          %% timer reference for interval   
+                bt_timer          %% timer reference for interval
                }).
 
 %% Register with service manager
 sync_register_service() ->
-    %% version {3,0} supports typed bucket replication
-    ProtoPrefs = {realtime,[{3,0}, {2,0}, {1,4}, {1,1}, {1,0}]},
+    ProtoPrefs = {realtime,[{3,1}, {2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],

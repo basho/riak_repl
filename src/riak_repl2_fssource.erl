@@ -346,7 +346,8 @@ connect(IP, Strategy, Partition) ->
     %% 1,1 support for binary object
     %% 2,0 support for AAE fullsync + binary objects
     %% 3,0 support for typed buckets
-    ClientSpec = {{fullsync,[{3,0}, {2,0}, {1,1}]}, {TcpOptions, ?MODULE, self()}},
+    %% 3,1 support for write once
+    ClientSpec = {{fullsync,[{3,1}, {2,0}, {1,1}]}, {TcpOptions, ?MODULE, self()}},
 
     case riak_core_connection_mgr:connect({identity, IP}, ClientSpec) of
         {ok, Ref} ->

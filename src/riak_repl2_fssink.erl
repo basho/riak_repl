@@ -15,6 +15,8 @@
 %% 1,0 and up supports keylist strategy
 %% 1,1 and up supports binary object
 %% 2,0 and up supports AAE strategy
+%% 3,0 and up supports typed buckets
+%% 3,1 and up supports the write once bucket property
 %%
 %% For keylist, the "old" tcp_server is used. That module is capable of handling multiple
 %% sequential partitions, but we only use it to sync a single partition and then we stop it.
@@ -65,7 +67,8 @@ sync_register_service() ->
     %% 1,1 and up supports binary object
     %% 2,0 and up supports AAE strategy
     %% 3,0 and up supports Typed Buckets
-    ProtoPrefs = {fullsync,[{1,1}, {2,0}, {3,0}]},
+    %% 3,1 and up supports the write once bucket property
+    ProtoPrefs = {fullsync,[{1,1}, {2,0}, {3,1}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 4},
                   {active, false},
