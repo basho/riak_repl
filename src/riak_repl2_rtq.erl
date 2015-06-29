@@ -33,6 +33,7 @@
          ack_sync/2,
          status/0,
          dumpq/0,
+         summarize/0,
          is_empty/1,
          all_queues_empty/0,
          shutdown/0,
@@ -233,6 +234,12 @@ status() ->
 dumpq() ->
     gen_server:call(?SERVER, dumpq, infinity).
 
+%% @doc Return summary data for the objects currently in the queue.
+%% The return value is a list of tuples of the form {SequenceNum, Size}.
+-spec summarize() -> [{integer(), string(), integer()}].
+summarize() ->
+  gen_server:call(?SERVER, summarize, infinity).
+
 %% @doc Signal that this node is doing down, and so a proxy process needs to
 %% start to avoid dropping, or aborting unacked results.
 -spec shutdown() -> 'ok'.
@@ -333,6 +340,12 @@ handle_call({set_max_bytes, MaxBytes}, _From, State) ->
     {reply, ok, trim_q(State#state{max_bytes = MaxBytes})};
 handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
     {reply, ets:tab2list(QTab), State};
+
+handle_call(summarize, _From, State = #state{qtab = QTab}) ->
+    Fun = fun({Seq, _NumItems, Bin, _Meta}, Acc) ->
+              Acc ++ [{Seq, size(Bin)}]
+          end,
+    {reply, ets:foldl(Fun, [], QTab), State};
 
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
     {reply, ok, pull(Name, DeliverFun, State)};
