@@ -78,13 +78,14 @@ summarize_test_() ->
      fun(_QPid) -> [
           {"one entry in the queue",
            fun() ->
-               Data = push_random(),
-               ExpectedSize = size(Data),
+               Objects = [push_object(<<"BucketsOfRain">>, O) || O <- [<<"obj1">>, <<"obj2">>]],
+               ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
+               ExpectedSummary = [
+                   {riak_object:key(O), riak_object:approximate_size(ObjFmt, O)}
+                   || O <- Objects
+               ],
                Summary = riak_repl2_rtq:summarize(),
-               lists:foreach(
-                 fun({_Seq, Size}) -> ?assertEqual(ExpectedSize, Size) end,
-                 Summary
-               )
+               ?assertEqual(ExpectedSummary, Summary)
            end}
          ]
      end
@@ -246,6 +247,12 @@ start_rtq() ->
 kill_rtq(QPid) ->
     ?unset_env,
     riak_repl_test_util:kill_and_wait(QPid).
+
+push_object(Bucket, Key) ->
+    RandomData = crypto:rand_bytes(1024 * 1024),
+    Obj = riak_object:new(Bucket, Key, RandomData),
+    riak_repl2_rtq:push(1, Obj),
+    Obj.
 
 push_random() ->
     push_random(5).

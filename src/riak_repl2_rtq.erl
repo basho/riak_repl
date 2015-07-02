@@ -342,9 +342,10 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
     {reply, ets:tab2list(QTab), State};
 
 handle_call(summarize, _From, State = #state{qtab = QTab}) ->
-    Fun = fun({Seq, _NumItems, Bin, _Meta}, Acc) ->
-              Acc ++ [{Seq, size(Bin)}]
-          end,
+    Fun = fun({_Seq, _NumItems, Bin, _Meta}, Acc) ->
+      Obj = riak_repl_util:from_wire(Bin),
+      Acc ++ [summarize_object(Obj)]
+    end,
     {reply, ets:foldl(Fun, [], QTab), State};
 
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
@@ -724,3 +725,7 @@ minseq(QTab, QSeq) ->
         MinSeq ->
             MinSeq - 1
     end.
+
+summarize_object(Obj) ->
+  ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
+  {riak_object:key(Obj), riak_object:approximate_size(ObjFmt, Obj)}.
