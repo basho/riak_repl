@@ -88,6 +88,7 @@
            }).
 
 -type name() :: term().
+-type seq() :: non_neg_integer().
 
 %% API
 %% @doc Start linked, registered to module name.
@@ -238,13 +239,15 @@ dumpq() ->
 
 %% @doc Return summary data for the objects currently in the queue.
 %% The return value is a list of tuples of the form {SequenceNum, Key, Size}.
--spec summarize() -> [{integer(), string(), integer()}].
+-spec summarize() -> [{seq(), riak_object:key(), non_neg_integer()}].
 summarize() ->
-  gen_server:call(?SERVER, summarize, infinity).
+    gen_server:call(?SERVER, summarize, infinity).
 
 %% @doc If an object with the given Seq number is currently in the queue,
 %% evict it and return ok.
-evict(Seq) -> gen_server:call(?SERVER, {evict, Seq}, infinity).
+-spec evict(Seq :: seq()) -> 'ok'.
+evict(Seq) ->
+    gen_server:call(?SERVER, {evict, Seq}, infinity).
 
 %% @doc If an object with the given Seq number is currently in the queue and it
 %% also matches the given Key, then evict it and return ok. This is a safer
@@ -254,7 +257,10 @@ evict(Seq) -> gen_server:call(?SERVER, {evict, Seq}, infinity).
 %% given `Seq' number, then {not_found, Seq} is returned, whereas if the
 %% object with the given `Seq' number is present but does not match the
 %% provided `Key', then {wrong_key, Seq, Key} is returned.
-evict(Seq, Key) -> gen_server:call(?SERVER, {evict, Seq, Key}, infinity).
+-spec evict(Seq :: seq(), Key :: riak_object:key()) ->
+    'ok' | {'not_found', integer()} | {'wrong_key', integer(), riak_object:key()}.
+evict(Seq, Key) ->
+    gen_server:call(?SERVER, {evict, Seq, Key}, infinity).
 
 %% @doc Signal that this node is doing down, and so a proxy process needs to
 %% start to avoid dropping, or aborting unacked results.
@@ -359,9 +365,9 @@ handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
 
 handle_call(summarize, _From, State = #state{qtab = QTab}) ->
     Fun = fun({Seq, _NumItems, Bin, _Meta}, Acc) ->
-      Obj = riak_repl_util:from_wire(Bin),
-      {Key, Size} = summarize_object(Obj),
-      Acc ++ [{Seq, Key, Size}]
+        Obj = riak_repl_util:from_wire(Bin),
+        {Key, Size} = summarize_object(Obj),
+        Acc ++ [{Seq, Key, Size}]
     end,
     {reply, ets:foldl(Fun, [], QTab), State};
 

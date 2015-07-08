@@ -2,12 +2,12 @@
 -compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 
--define(set_env, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).
--define(unset_env, application:unset_env(riak_repl, rtq_max_bytes)).
+-define(setup_env, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).
+-define(clean_env, application:unset_env(riak_repl, rtq_max_bytes)).
 
 rtq_trim_test() ->
     %% make sure the queue is 10mb
-    ?set_env,
+    ?setup_env,
     {ok, Pid} = riak_repl2_rtq:start_test(),
     try
         gen_server:call(Pid, {register, rtq_test}),
@@ -22,7 +22,7 @@ rtq_trim_test() ->
         %% the queue is now empty
         ?assert(gen_server:call(Pid, {is_empty, rtq_test}))
     after
-        ?unset_env,
+        ?clean_env,
         exit(Pid, kill)
     end.
 
@@ -48,12 +48,12 @@ accumulate(Pid, Acc, C) ->
 
 status_test_() ->
     {setup, fun() ->
-        ?set_env,
+        ?setup_env,
         {ok, QPid} = riak_repl2_rtq:start_link(),
         QPid
     end,
     fun(QPid) ->
-        ?unset_env,
+        ?clean_env,
         riak_repl_test_util:kill_and_wait(QPid)
     end,
     fun(_QPid) -> [
@@ -275,7 +275,7 @@ overload_test_() ->
     ]}.
 
 start_rtq() ->
-    ?set_env,
+    ?setup_env,
     %% application:start(lager),
     %% lager:set_loglevel(lager_console_backend, debug),
     {ok, Pid} = riak_repl2_rtq:start_link(),
@@ -283,7 +283,7 @@ start_rtq() ->
     Pid.
 
 kill_rtq(QPid) ->
-    ?unset_env,
+    ?clean_env,
     riak_repl_test_util:kill_and_wait(QPid).
 
 object_format() -> riak_core_capability:get({riak_kv, object_format}, v0).
