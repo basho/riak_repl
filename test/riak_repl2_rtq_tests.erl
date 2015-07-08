@@ -76,20 +76,58 @@ summarize_test_() ->
      fun start_rtq/0,
      fun kill_rtq/1,
      fun(_QPid) -> [
-          {"one entry in the queue",
+          {"includes sequence number, object ID, and size",
            fun() ->
-               Objects = [push_object(<<"BucketsOfRain">>, O) || O <- [<<"obj1">>, <<"obj2">>]],
-               ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
-               ExpectedSummary = [
-                   {riak_object:key(O), riak_object:approximate_size(ObjFmt, O)}
-                   || O <- Objects
-               ],
-               Summary = riak_repl2_rtq:summarize(),
-               ?assertEqual(ExpectedSummary, Summary)
-           end}
+               Objects = push_objects(<<"BucketsOfRain">>, [<<"obj1">>, <<"obj2">>]),
+               Summarized = riak_repl2_rtq:summarize(),
+               Zipped = lists:zip(Objects, Summarized),
+               lists:foreach(
+                 fun({Obj, Summary}) ->
+                     {Seq, _, _} = Summary,
+                     ExpectedSummary = {Seq, riak_object:key(Obj), get_approximate_size(Obj)},
+                     ?assertMatch(ExpectedSummary, Summary)
+                 end,
+                 Zipped)
+           end
+          }
          ]
      end
 }.
+
+evict_test_() ->
+    {foreach,
+     fun start_rtq/0,
+     fun kill_rtq/1,
+     [
+      fun(_QPid) ->
+          {"evicts object by sequence if present",
+           fun() ->
+               Objects = push_objects(<<"TwoPeasInABucket">>, [<<"obj1">>, <<"obj2">>]),
+               [KeyToEvict, RemainingKey] = [riak_object:key(O) || O <- Objects],
+               [{SeqToEvict, KeyToEvict, _}, {RemainingSeq, RemainingKey, _}] = riak_repl2_rtq:summarize(),
+               ok = riak_repl2_rtq:evict(SeqToEvict),
+               ?assertMatch([{RemainingSeq, RemainingKey, _}], riak_repl2_rtq:summarize()),
+               ok = riak_repl2_rtq:evict(RemainingSeq + 1),
+               ?assertMatch([{RemainingSeq, RemainingKey, _}], riak_repl2_rtq:summarize())
+           end
+          }
+      end,
+      fun(_QPid) ->
+          {"evicts object by sequence if present and key matches",
+           fun() ->
+               Objects = push_objects(<<"TwoPeasInABucket">>, [<<"obj1">>, <<"obj2">>]),
+               [KeyToEvict, RemainingKey] = [riak_object:key(O) || O <- Objects],
+               [{SeqToEvict, KeyToEvict, _}, {RemainingSeq, RemainingKey, _}] = riak_repl2_rtq:summarize(),
+               ?assertMatch({wrong_key, _, _}, riak_repl2_rtq:evict(SeqToEvict, RemainingKey)),
+               ?assertMatch({not_found, _}, riak_repl2_rtq:evict(RemainingSeq + 1, RemainingKey)),
+               ?assertEqual(2, length(riak_repl2_rtq:summarize())),
+               ok = riak_repl2_rtq:evict(SeqToEvict, KeyToEvict),
+               ?assertMatch([{RemainingSeq, RemainingKey, _}], riak_repl2_rtq:summarize())
+           end
+          }
+      end
+     ]
+    }.
 
 overload_protection_start_test_() ->
     [
@@ -247,6 +285,12 @@ start_rtq() ->
 kill_rtq(QPid) ->
     ?unset_env,
     riak_repl_test_util:kill_and_wait(QPid).
+
+object_format() -> riak_core_capability:get({riak_kv, object_format}, v0).
+
+get_approximate_size(O) -> riak_object:approximate_size(object_format(), O).
+
+push_objects(Bucket, Keys) -> [push_object(Bucket, O) || O <- Keys].
 
 push_object(Bucket, Key) ->
     RandomData = crypto:rand_bytes(1024 * 1024),
