@@ -2,12 +2,12 @@
 -compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 
--define(setup_env, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).
--define(clean_env, application:unset_env(riak_repl, rtq_max_bytes)).
+-define(SETUP_ENV, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).
+-define(CLEAN_ENV, application:unset_env(riak_repl, rtq_max_bytes)).
 
 rtq_trim_test() ->
     %% make sure the queue is 10mb
-    ?setup_env,
+    ?SETUP_ENV,
     {ok, Pid} = riak_repl2_rtq:start_test(),
     try
         gen_server:call(Pid, {register, rtq_test}),
@@ -22,7 +22,7 @@ rtq_trim_test() ->
         %% the queue is now empty
         ?assert(gen_server:call(Pid, {is_empty, rtq_test}))
     after
-        ?clean_env,
+        ?CLEAN_ENV,
         exit(Pid, kill)
     end.
 
@@ -48,12 +48,12 @@ accumulate(Pid, Acc, C) ->
 
 status_test_() ->
     {setup, fun() ->
-        ?setup_env,
+        ?SETUP_ENV,
         {ok, QPid} = riak_repl2_rtq:start_link(),
         QPid
     end,
     fun(QPid) ->
-        ?clean_env,
+        ?CLEAN_ENV,
         riak_repl_test_util:kill_and_wait(QPid)
     end,
     fun(_QPid) -> [
@@ -275,15 +275,13 @@ overload_test_() ->
     ]}.
 
 start_rtq() ->
-    ?setup_env,
-    %% application:start(lager),
-    %% lager:set_loglevel(lager_console_backend, debug),
+    ?SETUP_ENV,
     {ok, Pid} = riak_repl2_rtq:start_link(),
     gen_server:call(Pid, {register, rtq_test}),
     Pid.
 
 kill_rtq(QPid) ->
-    ?clean_env,
+    ?CLEAN_ENV,
     riak_repl_test_util:kill_and_wait(QPid).
 
 object_format() -> riak_core_capability:get({riak_kv, object_format}, v0).
@@ -297,14 +295,6 @@ push_object(Bucket, Key) ->
     Obj = riak_object:new(Bucket, Key, RandomData),
     riak_repl2_rtq:push(1, Obj),
     Obj.
-
-push_random() ->
-    push_random(5).
-
-push_random(Num) ->
-    RandomData = crypto:rand_bytes(1024 * 1024),
-    [riak_repl2_rtq:push(1, RandomData) || _ <- lists:seq(1, Num)],
-    RandomData.
 
 pull(N) ->
     lists:foldl(fun(_Nth, _LastSeq) ->
