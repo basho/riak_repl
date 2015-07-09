@@ -2,9 +2,12 @@
 -compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
 
+-define(SETUP_ENV, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).
+-define(CLEAN_ENV, application:unset_env(riak_repl, rtq_max_bytes)).
+
 rtq_trim_test() ->
     %% make sure the queue is 10mb
-    application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024),
+    ?SETUP_ENV,
     {ok, Pid} = riak_repl2_rtq:start_test(),
     try
         gen_server:call(Pid, {register, rtq_test}),
@@ -19,7 +22,7 @@ rtq_trim_test() ->
         %% the queue is now empty
         ?assert(gen_server:call(Pid, {is_empty, rtq_test}))
     after
-        application:unset_env(riak_repl, rtq_max_bytes),
+        ?CLEAN_ENV,
         exit(Pid, kill)
     end.
 
@@ -45,12 +48,12 @@ accumulate(Pid, Acc, C) ->
 
 status_test_() ->
     {setup, fun() ->
-        application:set_env(riak_repl, rtq_max_bytes, 10 * 1024 * 1024),
+        ?SETUP_ENV,
         {ok, QPid} = riak_repl2_rtq:start_link(),
         QPid
     end,
     fun(QPid) ->
-        application:unset_env(riak_repl, rtq_max_bytes),
+        ?CLEAN_ENV,
         riak_repl_test_util:kill_and_wait(QPid)
     end,
     fun(_QPid) -> [
@@ -67,6 +70,64 @@ status_test_() ->
         end}
 
     ] end}.
+
+summarize_test_() ->
+    {setup,
+     fun start_rtq/0,
+     fun kill_rtq/1,
+     fun(_QPid) -> [
+          {"includes sequence number, object ID, and size",
+           fun() ->
+               Objects = push_objects(<<"BucketsOfRain">>, [<<"obj1">>, <<"obj2">>]),
+               Summarized = riak_repl2_rtq:summarize(),
+               Zipped = lists:zip(Objects, Summarized),
+               lists:foreach(
+                 fun({Obj, Summary}) ->
+                     {Seq, _, _} = Summary,
+                     ExpectedSummary = {Seq, riak_object:key(Obj), get_approximate_size(Obj)},
+                     ?assertMatch(ExpectedSummary, Summary)
+                 end,
+                 Zipped)
+           end
+          }
+         ]
+     end
+}.
+
+evict_test_() ->
+    {foreach,
+     fun start_rtq/0,
+     fun kill_rtq/1,
+     [
+      fun(_QPid) ->
+          {"evicts object by sequence if present",
+           fun() ->
+               Objects = push_objects(<<"TwoPeasInABucket">>, [<<"obj1">>, <<"obj2">>]),
+               [KeyToEvict, RemainingKey] = [riak_object:key(O) || O <- Objects],
+               [{SeqToEvict, KeyToEvict, _}, {RemainingSeq, RemainingKey, _}] = riak_repl2_rtq:summarize(),
+               ok = riak_repl2_rtq:evict(SeqToEvict),
+               ?assertMatch([{RemainingSeq, RemainingKey, _}], riak_repl2_rtq:summarize()),
+               ok = riak_repl2_rtq:evict(RemainingSeq + 1),
+               ?assertMatch([{RemainingSeq, RemainingKey, _}], riak_repl2_rtq:summarize())
+           end
+          }
+      end,
+      fun(_QPid) ->
+          {"evicts object by sequence if present and key matches",
+           fun() ->
+               Objects = push_objects(<<"TwoPeasInABucket">>, [<<"obj1">>, <<"obj2">>]),
+               [KeyToEvict, RemainingKey] = [riak_object:key(O) || O <- Objects],
+               [{SeqToEvict, KeyToEvict, _}, {RemainingSeq, RemainingKey, _}] = riak_repl2_rtq:summarize(),
+               ?assertMatch({wrong_key, _, _}, riak_repl2_rtq:evict(SeqToEvict, RemainingKey)),
+               ?assertMatch({not_found, _}, riak_repl2_rtq:evict(RemainingSeq + 1, RemainingKey)),
+               ?assertEqual(2, length(riak_repl2_rtq:summarize())),
+               ok = riak_repl2_rtq:evict(SeqToEvict, KeyToEvict),
+               ?assertMatch([{RemainingSeq, RemainingKey, _}], riak_repl2_rtq:summarize())
+           end
+          }
+      end
+     ]
+    }.
 
 overload_protection_start_test_() ->
     [
@@ -212,6 +273,28 @@ overload_test_() ->
         end
 
     ]}.
+
+start_rtq() ->
+    ?SETUP_ENV,
+    {ok, Pid} = riak_repl2_rtq:start_link(),
+    gen_server:call(Pid, {register, rtq_test}),
+    Pid.
+
+kill_rtq(QPid) ->
+    ?CLEAN_ENV,
+    riak_repl_test_util:kill_and_wait(QPid).
+
+object_format() -> riak_core_capability:get({riak_kv, object_format}, v0).
+
+get_approximate_size(O) -> riak_object:approximate_size(object_format(), O).
+
+push_objects(Bucket, Keys) -> [push_object(Bucket, O) || O <- Keys].
+
+push_object(Bucket, Key) ->
+    RandomData = crypto:rand_bytes(1024 * 1024),
+    Obj = riak_object:new(Bucket, Key, RandomData),
+    riak_repl2_rtq:push(1, Obj),
+    Obj.
 
 pull(N) ->
     lists:foldl(fun(_Nth, _LastSeq) ->

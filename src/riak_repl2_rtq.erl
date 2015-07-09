@@ -33,6 +33,9 @@
          ack_sync/2,
          status/0,
          dumpq/0,
+         summarize/0,
+         evict/1,
+         evict/2,
          is_empty/1,
          all_queues_empty/0,
          shutdown/0,
@@ -85,6 +88,7 @@
            }).
 
 -type name() :: term().
+-type seq() :: non_neg_integer().
 
 %% API
 %% @doc Start linked, registered to module name.
@@ -233,6 +237,31 @@ status() ->
 dumpq() ->
     gen_server:call(?SERVER, dumpq, infinity).
 
+%% @doc Return summary data for the objects currently in the queue.
+%% The return value is a list of tuples of the form {SequenceNum, Key, Size}.
+-spec summarize() -> [{seq(), riak_object:key(), non_neg_integer()}].
+summarize() ->
+    gen_server:call(?SERVER, summarize, infinity).
+
+%% @doc If an object with the given Seq number is currently in the queue,
+%% evict it and return ok.
+-spec evict(Seq :: seq()) -> 'ok'.
+evict(Seq) ->
+    gen_server:call(?SERVER, {evict, Seq}, infinity).
+
+%% @doc If an object with the given Seq number is currently in the queue and it
+%% also matches the given Key, then evict it and return ok. This is a safer
+%% alternative to evict/1 since `Seq' numbers can potentially be recycled.
+%% It also provides a more meaningful return value in the case that the object
+%% was not present. Specifically, if there is no object in the queue with the
+%% given `Seq' number, then {not_found, Seq} is returned, whereas if the
+%% object with the given `Seq' number is present but does not match the
+%% provided `Key', then {wrong_key, Seq, Key} is returned.
+-spec evict(Seq :: seq(), Key :: riak_object:key()) ->
+    'ok' | {'not_found', integer()} | {'wrong_key', integer(), riak_object:key()}.
+evict(Seq, Key) ->
+    gen_server:call(?SERVER, {evict, Seq, Key}, infinity).
+
 %% @doc Signal that this node is doing down, and so a proxy process needs to
 %% start to avoid dropping, or aborting unacked results.
 -spec shutdown() -> 'ok'.
@@ -333,6 +362,32 @@ handle_call({set_max_bytes, MaxBytes}, _From, State) ->
     {reply, ok, trim_q(State#state{max_bytes = MaxBytes})};
 handle_call(dumpq, _From, State = #state{qtab = QTab}) ->
     {reply, ets:tab2list(QTab), State};
+
+handle_call(summarize, _From, State = #state{qtab = QTab}) ->
+    Fun = fun({Seq, _NumItems, Bin, _Meta}, Acc) ->
+        Obj = riak_repl_util:from_wire(Bin),
+        {Key, Size} = summarize_object(Obj),
+        Acc ++ [{Seq, Key, Size}]
+    end,
+    {reply, ets:foldl(Fun, [], QTab), State};
+
+handle_call({evict, Seq}, _From, State = #state{qtab = QTab}) ->
+    ets:delete(QTab, Seq),
+    {reply, ok, State};
+handle_call({evict, Seq, Key}, _From, State = #state{qtab = QTab}) ->
+    case ets:lookup(QTab, Seq) of
+        [{Seq, _, Bin, _}] ->
+            Obj = riak_repl_util:from_wire(Bin),
+            case Key =:= riak_object:key(Obj) of
+                true ->
+                    ets:delete(QTab, Seq),
+                    {reply, ok, State};
+                false ->
+                    {reply, {wrong_key, Seq, Key}, State}
+            end;
+        _ ->
+            {reply, {not_found, Seq}, State}
+    end;
 
 handle_call({pull_with_ack, Name, DeliverFun}, _From, State) ->
     {reply, ok, pull(Name, DeliverFun, State)};
@@ -711,3 +766,7 @@ minseq(QTab, QSeq) ->
         MinSeq ->
             MinSeq - 1
     end.
+
+summarize_object(Obj) ->
+  ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
+  {riak_object:key(Obj), riak_object:approximate_size(ObjFmt, Obj)}.
