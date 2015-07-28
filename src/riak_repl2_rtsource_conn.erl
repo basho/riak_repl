@@ -388,10 +388,10 @@ reconnect(State=#state{remote=Remote}, BetterAddrs) ->
     case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, {use_only, BetterAddrs}) of
         {ok, Ref} ->
             lager:debug("connecting ref ~p", [Ref]),
-            {noreply, State#state{ connection_ref = Ref}};
+            State#state{ connection_ref = Ref};
         {error, Reason}->
             lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
-            {noreply, State}
+            State
     end.
 
 
