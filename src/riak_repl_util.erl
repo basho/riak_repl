@@ -55,7 +55,7 @@
          sockname/2,
          deduce_wire_version_from_proto/1,
          encode_obj_msg/2,
-         decode_obj_msg/1,
+         decode_bin_obj/1,
          make_pg_proxy_name/1,
          make_pg_name/1,
          mode_12_enabled/1,
@@ -884,20 +884,8 @@ encode_obj(w0, RObj) ->
 encode_obj(W, RObj) ->
     to_wire(W, RObj).
 
-decode_obj_msg(Data) ->
-    Msg = binary_to_term(Data),
-    case Msg of
-        {fs_diff_obj, BObj} when is_binary(BObj) ->
-            RObj = from_wire(BObj),
-            {fs_diff_obj, RObj};
-        {fs_diff_obj, {BTHash, BObj}} when is_binary(BObj) ->
-            RObj = from_wire(BObj),
-            {fs_diff_obj, {BTHash, RObj}};
-        {fs_diff_obj, _} ->
-            Msg;
-        Other ->
-            Other
-    end.
+decode_bin_obj({BTHash, BinObj}) -> {BTHash, from_wire(BinObj)};
+decode_bin_obj(BinObj) -> from_wire(BinObj).
 
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
 %%      possible type, bucket and key for reconstruction on the other end. BinObj should be
