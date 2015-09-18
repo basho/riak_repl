@@ -79,7 +79,7 @@ produce_body(ReqData, Ctx) ->
     Body = mochijson2:encode({struct,
                               Stats
                               }),
-    riak_kv_wm_utils:log_http_access(success, RD, unknown),
+    riak_kv_wm_utils:log_http_access(success, ReqData, unknown),
     {Body, ReqData, Ctx}.
 
 %% @spec pretty_print(webmachine:wrq(), context()) ->
