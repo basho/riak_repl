@@ -35,7 +35,7 @@ decision_table_v2() ->
     [{buckets,   ok,     ok}, %% Configurable, but default
      {users,     ok,     ok}, %% Configurable, but default
      {blocks,    cancel, ok},
-     {block_ts,  ok,     ok},
+     {block_ts,  ok,     cancel},
      {manifests, ok,     ok},
      {gc,        ok,     ok}, %% riak-cs-gc
      {access,    cancel, cancel},
@@ -49,7 +49,21 @@ decision_table_v2_blockrt() ->
     [{buckets,   ok,     ok}, %% Configurable, but default
      {users,     ok,     ok}, %% Configurable, but default
      {blocks,    ok,     ok},
-     {block_ts,  ok,     ok},
+     {block_ts,  ok,     cancel},
+     {manifests, ok,     ok},
+     {gc,        ok,     ok}, %% riak-cs-gc
+     {access,    cancel, cancel},
+     {storage,   cancel, cancel},
+     {mb,        ok,     ok}, %% Multibag
+     {tss,       cancel, cancel}, %% Tombstones in short
+     {other,     ok,     ok}].
+
+decision_table_v2_no_blockts_rt() ->
+    %% type, rt, fs
+    [{buckets,   ok,     ok}, %% Configurable, but default
+     {users,     ok,     ok}, %% Configurable, but default
+     {blocks,    cancel, ok},
+     {block_ts,  cancel, cancel},
      {manifests, ok,     ok},
      {gc,        ok,     ok}, %% riak-cs-gc
      {access,    cancel, cancel},
@@ -116,20 +130,22 @@ eqc_test_() ->
      [ % run qc tests
        ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v1))))),
        ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v2))))),
-       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v2_blockrt)))))
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v2_blockrt))))),
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(NumTests, ?QC_OUT(prop_main(v2_no_blockts_rt)))))
      ]}.
 
 fs_or_rt() -> oneof([fs, rt]).
 
 prop_main(DecisionTableVersion) ->
-    ok = application:unset_env(riak_repl, replicate_cs_block_tombstone),
+    ok = application:unset_env(riak_repl, replicate_cs_block_tombstone_realtime),
+    ok = application:unset_env(riak_repl, replicate_cs_block_tombstone_fullsync),
     ok = application:unset_env(riak_repl, replicate_cs_blocks_realtime),
     DecisionTable
         = case DecisionTableVersion of
               v1 ->
                   %% Default behaviour in Riak EE 1.4~2.1.1
                   ok = application:set_env(riak_repl,
-                                           replicate_cs_block_tombstone,
+                                           replicate_cs_block_tombstone_realtime,
                                            false),
                   decision_table();
               v2 ->
@@ -140,7 +156,13 @@ prop_main(DecisionTableVersion) ->
                   ok = application:set_env(riak_repl,
                                            replicate_cs_blocks_realtime,
                                            true),
-                  decision_table_v2_blockrt()
+                  decision_table_v2_blockrt();
+              v2_no_blockts_rt ->
+                  %% Prevent block tombstone propagation in realtime, on by default
+                  ok = application:set_env(riak_repl,
+                                           replicate_cs_block_tombstone_realtime,
+                                           false),
+                  decision_table_v2_no_blockts_rt()
           end,
     ?FORALL({Object, FSorRT}, {riak_object(), fs_or_rt()},
             begin
