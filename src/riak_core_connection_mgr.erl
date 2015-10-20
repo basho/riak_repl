@@ -588,12 +588,13 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
 -spec fail_endpoint(ip_addr(), term(), proto_id(), #state{}) -> #state{}.
 fail_endpoint(Addr, Reason, ProtocolId, State) ->
     %% update the stats module
-    Stat = {conn_error, reason_to_atom(Reason)},
+    Err = reason_to_atom(Reason),
+    Stat = {conn_error, Err},
     riak_core_connection_mgr_stats:update(Stat, Addr, ProtocolId),
     %% update the endpoint
     Fun = fun(EP=#ep{backoff_delay = Backoff, failures = Failures}) ->
                   erlang:send_after(Backoff, self(), {backoff_timer, Addr}),
-                  EP#ep{failures = orddict:update_counter(Reason, 1, Failures),
+                  EP#ep{failures = orddict:update_counter(Err, 1, Failures),
                         nb_failures = EP#ep.nb_failures + 1,
                         backoff_delay = increase_backoff(Backoff),
                         last_fail_time = os:timestamp(),
