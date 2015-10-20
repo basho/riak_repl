@@ -584,9 +584,11 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
 %% our book keeping for that endpoint. Black-list it, and
 %% adjust a backoff timer so that we wait a while before
 %% trying this endpoint again.
+
+-spec fail_endpoint(ip_addr(), term(), proto_id(), #state{}) -> #state{}.
 fail_endpoint(Addr, Reason, ProtocolId, State) ->
     %% update the stats module
-    Stat = {conn_error, Reason},
+    Stat = {conn_error, reason_to_atom(Reason)},
     riak_core_connection_mgr_stats:update(Stat, Addr, ProtocolId),
     %% update the endpoint
     Fun = fun(EP=#ep{backoff_delay = Backoff, failures = Failures}) ->
@@ -599,6 +601,18 @@ fail_endpoint(Addr, Reason, ProtocolId, State) ->
                         is_black_listed = true}
           end,
     update_endpoint(Addr, Fun, State).
+
+%% Attempt to extract atom from an error reason.
+
+-spec reason_to_atom(term()) -> atom().
+reason_to_atom({{Err, _Val}, _Stack}) when is_atom(Err) ->
+    Err;
+reason_to_atom({Err, _Stack}) when is_atom(Err) ->
+    Err;
+reason_to_atom(Reason) when is_atom(Reason) ->
+    Reason;
+reason_to_atom(_Reason) ->
+    unknown_reason.
 
 connect_endpoint(Addr, State) ->
     update_endpoint(Addr, fun(EP) ->
