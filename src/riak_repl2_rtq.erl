@@ -453,12 +453,8 @@ terminate(Reason, #state{cs = Cs}) ->
     %% when started from tests, we may not be registered
     catch(erlang:unregister(?SERVER)),
     flush_pending_pushes(),
-    _ = [case DeliverFun of
-         undefined ->
-             ok;
-         _ ->
-            catch(DeliverFun({error, {terminate, Reason}}))
-     end || #c{deliver = DeliverFun} <- Cs],
+    _ = [deliver_error(DeliverFun, {terminate, Reason}) ||
+	    #c{deliver = DeliverFun} <- Cs],
     ok.
 
 %% @private
@@ -551,8 +547,8 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                 {value, C, Cs2} ->
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
                 false ->
-                    lager:info("not_registered"),
-                    DeliverFun({error, not_registered})
+                    lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
+                    deliver_error(DeliverFun, not_registered)
             end,
     State#state{cs = UpdCs}.
 
@@ -624,6 +620,13 @@ deliver_item(C, DeliverFun, {Seq,_NumItem, _Bin, _Meta} = QEntry) ->
             %% do not advance head so it will be delivered again
             C#c{errs = C#c.errs + 1, deliver = undefined}
     end.
+
+%% Deliver an error if a delivery function is registered.
+deliver_error(DeliverFun, Reason) when is_function(DeliverFun)->
+    catch DeliverFun({error, Reason}),
+    ok;
+deliver_error(_NotAFun, _Reason) ->
+    ok.
 
 % if nothing has been delivered, the sink assumes nothing was skipped
 % fulfill that expectation.
