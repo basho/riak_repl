@@ -498,8 +498,8 @@ unregister_q(Name, State = #state{qtab = QTab, cs = Cs}) ->
             case C#c.deliver of
                 undefined ->
                     ok;
-                Deliver ->
-                    Deliver({error, unregistered})
+                DeliverFun ->
+                    deliver_error(DeliverFun, {error, unregistered})
             end,
             MinSeq = case Cs2 of
                          [] ->
