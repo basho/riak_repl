@@ -828,11 +828,10 @@ safe_pid_to_list(NotAPid) ->
     NotAPid.
 
 safe_get_msg_q_len(Pid) when is_pid(Pid) ->
-    ProcInfo = erlang:process_info(Pid),
-    proplists:get_value(message_queue_len, ProcInfo);
+    {message_queue_len, Len} = erlang:process_info(Pid, message_queue_len),
+    Len;
 safe_get_msg_q_len(Other) ->
     Other.
-
 
 peername(Socket, Transport) ->
     case Transport:peername(Socket) of
