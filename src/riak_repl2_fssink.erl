@@ -258,5 +258,3 @@ maybe_exchange_caps(_, Caps, Socket, Transport) ->
         {Error, Socket, Reason} ->
             throw({Error, Reason})
     end.
-
-

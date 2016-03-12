@@ -76,7 +76,8 @@
 %% Defines for Wire format encode/decode
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
--define(W2_VER, 2). %% first non-just-term-to-binary wire format
+-define(W2_VER, 2). %% Support bucket types
+-define(W3_VER, 3). %% Dedicated to timeseries data
 -define(BAD_SOCKET_NUM, -1).
 
 make_peer_info() ->
@@ -112,6 +113,9 @@ get_partitions(Ring) ->
     lists:sort([P || {P, _} <-
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
+%% XXX: need to figure out why this is a list
+do_repl_put([{ts, PartitionId, ObjectList}]) ->
+    riak_kv_w1c_worker:ts_batch_put_encoded(ObjectList, PartitionId);
 do_repl_put({RemoteTypeHash, Object}) ->
     Bucket = riak_object:bucket(Object),
     Type = riak_object:type(Object),
@@ -944,7 +948,24 @@ to_wire(w2, Objects) when is_list(Objects) ->
 to_wire(w2, Object) when not is_binary(Object) ->
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    to_wire(w2, B, K, Object).
+    to_wire(w2, B, K, Object);
+to_wire(w3, {_Bucket, {PartIdx, Values}}) when is_list(Values) ->
+    new_w3(PartIdx, Values);
+to_wire(w3, {_Bucket, {PartIdx, Val}}) ->
+    new_w3(PartIdx, [Val]).
+
+%% w3_encode_value({{_Bucket, _LocalKey}=Meta, MsgPackRObj}) ->
+%%     MetaBin = term_to_binary(Meta),
+%%     <<MetaBin/binary, MsgPackRObj/binary>>.
+
+new_w3(PartitionIdx, Objects) ->
+    PLen = byte_size(PartitionIdx),
+    BinObj = term_to_binary(Objects),
+    term_to_binary([<<?MAGIC:8/integer, ?W3_VER:8/integer,
+      PLen:32/integer, PartitionIdx:PLen/binary,
+      BinObj/binary>>]).
+
+
 
 %% When the wire format is known and objects are packed in a list of binaries
 from_wire(w0, BinObjList) ->
@@ -959,6 +980,11 @@ from_wire(w2, BinObjList) ->
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
+%% @doc Convert from wire version w3, dedicated to timeseries
+from_wire(<<?MAGIC:8/integer, ?W3_VER:8/integer,
+            PLen:32/integer, P:PLen/binary,
+            BinObj/binary>>) ->
+    [{ts, P, binary_to_term(BinObj)}];
 %% @doc Convert from wire version w2, which has bucket type information
 from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer,
             TLen:32/integer, T:TLen/binary,
