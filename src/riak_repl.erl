@@ -16,12 +16,19 @@ start() ->
     application:start(riak_repl).
 
 %% @spec stop() -> ok
-stop() -> 
+stop() ->
     application:stop(riak_repl).
 
 install_hook() ->
     riak_kv_hooks:add_conditional_postcommit({?MODULE, conditional_hook}),
     riak_core_bucket:append_bucket_defaults([{repl, true}]),
+    maybe_install_ts_hook(app_helper:get_env(riak_repl, ts_realtime, false)),
+    ok.
+
+maybe_install_ts_hook(true) ->
+    riak_kv_hooks:add_timeseries_postcommit({riak_repl2_ts, postcommit}),
+    ok;
+maybe_install_ts_hook(false) ->
     ok.
 
 uninstall_hook() ->
@@ -49,11 +56,11 @@ fixup(_Bucket, BucketProps) ->
             lager:debug("Hooks for repl modes = ~p", [riak_repl_util:get_hooks_for_modes()]),
             UpdPostcommit = CleanPostcommit ++ riak_repl_util:get_hooks_for_modes(),
 
-            {ok, lists:keystore(postcommit, 1, BucketProps, 
+            {ok, lists:keystore(postcommit, 1, BucketProps,
                     {postcommit, UpdPostcommit})};
         _ ->
             %% Update the bucket properties
-            UpdBucketProps = lists:keystore(postcommit, 1, BucketProps, 
+            UpdBucketProps = lists:keystore(postcommit, 1, BucketProps,
                 {postcommit, CleanPostcommit}),
             {ok, UpdBucketProps}
     end.
@@ -97,4 +104,3 @@ strip_postcommit_test_() ->
 
 
 -endif.
-

@@ -949,9 +949,9 @@ to_wire(w2, Object) when not is_binary(Object) ->
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
     to_wire(w2, B, K, Object);
-to_wire(w3, {_Bucket, {PartIdx, Values}}) when is_list(Values) ->
+to_wire(w3, {PartIdx, Values}) when is_list(Values) ->
     new_w3(PartIdx, Values);
-to_wire(w3, {_Bucket, {PartIdx, Val}}) ->
+to_wire(w3, {PartIdx, Val}) ->
     new_w3(PartIdx, [Val]).
 
 %% w3_encode_value({{_Bucket, _LocalKey}=Meta, MsgPackRObj}) ->

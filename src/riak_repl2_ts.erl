@@ -2,15 +2,23 @@
 %% Copyright (c) 2016 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_ts).
 
--export([postcommit/2]).
+-export([postcommit/3]).
 
 -include("riak_repl.hrl").
 
 %% Realtime replication hook for Timeseries
-postcommit({PK, Vals}=PartitionBatch, Bucket) when is_list(Vals) ->
+postcommit({PK, Val}, Bucket, BucketProps) when not is_list(Val) ->
+    postcommit({PK, [Val]}, Bucket, BucketProps);
+postcommit(PartitionBatch, Bucket, BucketProps) ->
+    maybe_postcommit(PartitionBatch, Bucket, proplists:get_value(repl, BucketProps, both)).
+
+maybe_postcommit(_PartitionBatch, _Bucket, NoRT) when NoRT == false orelse
+                                                      NoRT == fullsync ->
+    ok;
+maybe_postcommit({PK, Vals}=PartitionBatch, Bucket, _RT) ->
     lager:debug("Timeseries batch sent to repl~n    PartIdx~p => ~p...", [PK, hd(Vals)]),
     Meta = set_bucket_meta(Bucket),
-    BinObj = riak_repl_util:to_wire(w3, {Bucket, PartitionBatch}),
+    BinObj = riak_repl_util:to_wire(w3, PartitionBatch),
 
     %% try the proxy first, avoids race conditions with unregister()
     %% during shutdown
@@ -20,21 +28,6 @@ postcommit({PK, Vals}=PartitionBatch, Bucket) when is_list(Vals) ->
         _ ->
             %% we're shutting down and repl is stopped or stopping...
             riak_repl2_rtq_proxy:push(length(Vals), BinObj, Meta)
-    end;
-postcommit({PK, Val}=PartitionRecord, Bucket) ->
-    lager:debug("Timeseries object sent to repl~n    PartIdx~p => ~p", [PK, Val]),
-
-    Meta = set_bucket_meta(Bucket),
-    BinObj = riak_repl_util:to_wire(w3, PartitionRecord),
-
-    %% try the proxy first, avoids race conditions with unregister()
-    %% during shutdown
-    case whereis(riak_repl2_rtq_proxy) of
-        undefined ->
-            riak_repl2_rtq:push(1, BinObj, Meta);
-        _ ->
-            %% we're shutting down and repl is stopped or stopping...
-            riak_repl2_rtq_proxy:push(1, BinObj, Meta)
     end.
 
 set_bucket_meta({Type, _}) ->
