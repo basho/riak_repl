@@ -864,7 +864,9 @@ deduce_wire_version_from_proto({_Proto, {_CommonMajor, CMinor}, {_CommonMajor, H
 deduce_wire_version_from_proto({_Proto, _Client, _Host}) ->
     w0.
 
-%% Typically, Cmd :: fs_diff_obj | diff_obj
+%% Typically, Cmd :: fs_diff_obj | diff_obj | <partition id>
+encode_obj_msg(ts, {Partition, RObj}) ->
+    encode_obj_msg(w3, {Partition, RObj}, undefined);
 encode_obj_msg(V, {Cmd, RObj}) when is_binary(RObj) ->
     encode_obj_msg(V, {Cmd, RObj}, undefined);
 encode_obj_msg(V, {Cmd, RObj}) ->
@@ -874,6 +876,9 @@ encode_obj_msg(V, {Cmd, RObj}, undefined) ->
     case V of
         w0 ->
             term_to_binary({Cmd, RObj});
+        w3 ->
+            BObj = riak_repl_util:to_wire(w3,{Cmd, RObj}),
+            term_to_binary({Cmd, BObj});
         _W ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({Cmd, BObj})
@@ -888,7 +893,6 @@ encode_obj_msg(V, {Cmd, RObj}, T) ->
     case V of
         w0 ->
             term_to_binary({Cmd, {BTHash, RObj}});
-
         _W ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({Cmd, {BTHash, BObj}})

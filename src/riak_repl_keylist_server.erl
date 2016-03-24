@@ -604,11 +604,26 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             _ = [riak_repl_tcp_server:send(Transport, Socket,
                                        riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
              || O <- Objects],
-            _ = riak_repl_tcp_server:send(Transport, Socket,
-                                      riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj})),
+
+            Encoding = check_for_ts(RObj, V, riak_object:is_ts(RObj)),
+
+            _ = riak_repl_tcp_server:send(Transport, Socket, Encoding),
             ok
     end,
     {reply, ok, diff_bloom, State}.
+
+ts_partition_key({Table, _} = Bucket, LK) ->
+    {ok, Mod, DDL} = riak_kv_ts_util:get_table_ddl(Table),
+    PK = riak_kv_ts_util:encode_typeval_key(
+           riak_ql_ddl:get_partition_key(DDL, LK, Mod)),
+    riak_core_util:chash_key({Bucket, PK}).
+
+check_for_ts(RObj, _WireVersion, {true, _Version}) ->
+    Partition = ts_partition_key(riak_object:bucket(RObj),
+                                 sext:decode(riak_object:key(RObj))),
+    riak_repl_util:encode_obj_msg(ts, {Partition, RObj});
+check_for_ts(RObj, WireVersion, false) ->
+    riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,RObj}).
 
 %% gen_fsm callbacks
 
