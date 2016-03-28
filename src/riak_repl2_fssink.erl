@@ -152,8 +152,7 @@ handle_info({Proto, Socket, Data},
         {fs_diff_obj, RObj} ->
             riak_repl_util:do_repl_put(RObj);
         {ts, _Partition, _RObj} = TSMsg ->
-            %% XXX : should not be a list but must be for now
-            riak_repl_util:do_repl_put([TSMsg]);
+            riak_repl_util:do_repl_put(TSMsg);
         Other ->
             gen_fsm:send_event(State#state.fullsync_worker, Other)
     end,
@@ -196,19 +195,16 @@ decode_obj_msg(Data) ->
             {fs_diff_obj, RObj};
         {fs_diff_obj, _RObj} ->
             Msg;
-        {PartitionIdx, RObj} when is_binary(PartitionIdx) ->
-            %% XXX : This is passed as a list (thus the `hd' call) b/c
-            %% that's what I did for realtime, but it's probably
-            %% unnecessary
-            {ts, PartitionIdx, myconv(riak_repl_util:from_wire(hd(binary_to_term(RObj))))};
+        {PartitionIdx, W3ObjList} when is_binary(PartitionIdx) ->
+            {ts, PartitionIdx,
+             ts_to_robj(riak_repl_util:from_wire(binary_to_term(W3ObjList)))};
         Other ->
             Other
     end.
 
-%% XXX (better name)
-%% Convert a TS object record to a list of {{Bucket, LocalKey},
-%% msgpack-encoded} tuples
-myconv([{ts, _Part, [RObj]}]) ->
+%% Convert a single TS object from fullsync to a list of a single
+%% {{Bucket, LocalKey}, msgpack-encoded} tuple.
+ts_to_robj({ts, _Part, [RObj]}) ->
     [{
        {riak_object:bucket(RObj), sext:decode(riak_object:key(RObj))},
        riak_object:to_binary(v1, RObj, msgpack)

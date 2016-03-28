@@ -113,8 +113,7 @@ get_partitions(Ring) ->
     lists:sort([P || {P, _} <-
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
-%% XXX: need to figure out why this is a list
-do_repl_put([{ts, PartitionId, ObjectList}]) ->
+do_repl_put({ts, PartitionId, ObjectList}) ->
     riak_kv_w1c_worker:ts_batch_put_encoded(ObjectList, PartitionId);
 do_repl_put({RemoteTypeHash, Object}) ->
     Bucket = riak_object:bucket(Object),
@@ -965,9 +964,9 @@ to_wire(w3, {PartIdx, Val}) ->
 new_w3(PartitionIdx, Objects) ->
     PLen = byte_size(PartitionIdx),
     BinObj = term_to_binary(Objects),
-    term_to_binary([<<?MAGIC:8/integer, ?W3_VER:8/integer,
+    term_to_binary(<<?MAGIC:8/integer, ?W3_VER:8/integer,
       PLen:32/integer, PartitionIdx:PLen/binary,
-      BinObj/binary>>]).
+      BinObj/binary>>).
 
 
 
@@ -979,7 +978,16 @@ from_wire(w1, BinObjList) ->
     [from_wire(BObj) || BObj <- BinObjs];
 from_wire(w2, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
-    [from_wire(BObj) || BObj <- BinObjs].
+    maybe_w2_list(BinObjs).
+
+maybe_w2_list(BinObjs) when is_list(BinObjs) ->
+    [from_wire(BObj) || BObj <- BinObjs];
+maybe_w2_list(BinObj) ->
+    %% Timeseries will have one collector object instead of a
+    %% list. This must return a list because
+    %% `riak_repl_fullsync_worker:do_binputs_internal' will iterate
+    %% over it
+    [from_wire(BinObj)].
 
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
@@ -987,8 +995,8 @@ from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
 %% @doc Convert from wire version w3, dedicated to timeseries
 from_wire(<<?MAGIC:8/integer, ?W3_VER:8/integer,
             PLen:32/integer, P:PLen/binary,
-            BinObj/binary>>) ->
-    [{ts, P, binary_to_term(BinObj)}];
+            BinObjs/binary>>) ->
+    {ts, P, binary_to_term(BinObjs)};
 %% @doc Convert from wire version w2, which has bucket type information
 from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer,
             TLen:32/integer, T:TLen/binary,
