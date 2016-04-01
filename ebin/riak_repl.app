@@ -23,7 +23,6 @@
                   'riak_repl_console',
                   'riak_repl_fsm_common',
                   'riak_repl_fullsync_helper',
-                  'riak_repl2_fullsync_expiry_hook',
                   'riak_repl2_fscoordinator',
                   'riak_repl2_fscoordinator_sup',
                   'riak_repl2_fscoordinator_serv',
