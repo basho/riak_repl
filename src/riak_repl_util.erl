@@ -853,6 +853,8 @@ make_pg_name(Remote) ->
     list_to_atom("pg_requester_" ++ Remote).
 
 % everything from version 1.5 and up should use the new binary objects
+deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 3 ->
+    w3;
 deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 2 ->
     w2;
 deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 1 ->
@@ -955,7 +957,9 @@ to_wire(w2, Object) when not is_binary(Object) ->
 to_wire(w3, {PartIdx, Values}) when is_list(Values) ->
     new_w3(PartIdx, Values);
 to_wire(w3, {PartIdx, Val}) ->
-    new_w3(PartIdx, [Val]).
+    new_w3(PartIdx, [Val]);
+to_wire(w3, NonTSData) ->
+    to_wire(w2, NonTSData).
 
 %% w3_encode_value({{_Bucket, _LocalKey}=Meta, MsgPackRObj}) ->
 %%     MetaBin = term_to_binary(Meta),
@@ -978,7 +982,10 @@ from_wire(w1, BinObjList) ->
     [from_wire(BObj) || BObj <- BinObjs];
 from_wire(w2, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
-    maybe_w2_list(BinObjs).
+    maybe_w2_list(BinObjs);
+from_wire(w3, BinObjList) ->
+    %% w3 is an extension of w2 for timeseries
+    from_wire(w2, BinObjList).
 
 maybe_w2_list(BinObjs) when is_list(BinObjs) ->
     [from_wire(BObj) || BObj <- BinObjs];
