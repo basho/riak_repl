@@ -208,7 +208,10 @@ ts_to_robj({ts, _Part, [RObj]}) ->
     [{
        {riak_object:bucket(RObj), sext:decode(riak_object:key(RObj))},
        riak_object:to_binary(v1, RObj, msgpack)
-     }].
+     }];
+ts_to_robj(_) ->
+    lager:error("Bad fullsync signature: expected a timeseries tuple", []),
+    {error, bad_ts_wire_format}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strategy}) ->
     %% TODO: define a fullsync worker behavior and call it's stop function

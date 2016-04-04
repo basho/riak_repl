@@ -602,28 +602,37 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
             _ = [riak_repl_tcp_server:send(Transport, Socket,
-                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
-             || O <- Objects],
+                                           encode_robj(O, V))
+                 || O <- Objects],
 
-            Encoding = check_for_ts(RObj, V, riak_object:is_ts(RObj)),
+            EncodedObj = encode_robj(RObj, V),
 
-            _ = riak_repl_tcp_server:send(Transport, Socket, Encoding),
+            _ = riak_repl_tcp_server:send(Transport, Socket, EncodedObj),
             ok
     end,
     {reply, ok, diff_bloom, State}.
 
-ts_partition_key({Table, _} = Bucket, LK) ->
+-spec encode_robj(riak_object:riak_object(), atom()) -> binary().
+encode_robj(O, WireVersion) ->
+    case riak_object:is_ts(O) of
+        {true, _DDLVersion} ->
+            Partition = ts_partition_key(O, riak_object:bucket(O)),
+            riak_repl_util:encode_obj_msg(ts, {Partition, O});
+        false ->
+            riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,O})
+    end.
+
+ts_partition_key(RObj, {Table, _}=Bucket) ->
+    LK = sext:decode(riak_object:key(RObj)),
     {ok, Mod, DDL} = riak_kv_ts_util:get_table_ddl(Table),
     PK = riak_kv_ts_util:encode_typeval_key(
            riak_ql_ddl:get_partition_key(DDL, LK, Mod)),
-    riak_core_util:chash_key({Bucket, PK}).
-
-check_for_ts(RObj, _WireVersion, {true, _Version}) ->
-    Partition = ts_partition_key(riak_object:bucket(RObj),
-                                 sext:decode(riak_object:key(RObj))),
-    riak_repl_util:encode_obj_msg(ts, {Partition, RObj});
-check_for_ts(RObj, WireVersion, false) ->
-    riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,RObj}).
+    riak_core_util:chash_key({Bucket, PK});
+ts_partition_key(_RObj, _Bucket) ->
+    %% Timeseries data can only exist in bucket types, but
+    %% make dialyzer happy
+    lager:error("Timeseries object appears to be in legacy bucket", []),
+    <<>>.
 
 %% gen_fsm callbacks
 
