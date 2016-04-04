@@ -77,7 +77,7 @@
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
 -define(W2_VER, 2). %% Support bucket types
--define(W3_VER, 3). %% Dedicated to timeseries data
+-define(W3_VER, 3). %% Extend w2 for timeseries data
 -define(BAD_SOCKET_NUM, -1).
 
 make_peer_info() ->
