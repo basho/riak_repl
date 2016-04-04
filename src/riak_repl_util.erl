@@ -881,6 +881,9 @@ encode_obj_msg(V, {Cmd, RObj}, undefined) ->
     case V of
         w0 ->
             term_to_binary({Cmd, RObj});
+        %% Fullsync is hard-coded to w0 for KV. We cheat a bit with TS
+        %% to leverage w3, hence the fact that this `w3' atom is only
+        %% expected in this branch of `encode_obj_msg'
         w3 ->
             BObj = riak_repl_util:to_wire(w3,{Cmd, RObj}),
             term_to_binary({Cmd, BObj});
