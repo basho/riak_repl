@@ -292,11 +292,16 @@ maybe_push(Binary, Meta) ->
             lager:debug("Skipping cascade due to app env setting"),
             ok;
         always ->
-          lager:debug("app env either set to always, or in default; doing cascade"),
-          List = riak_repl_util:from_wire(Binary),
-          Meta2 = orddict:erase(skip_count, Meta),
-          riak_repl2_rtq:push(length(List), Binary, Meta2)
+            lager:debug("app env either set to always, or in default; doing cascade"),
+            Meta2 = orddict:erase(skip_count, Meta),
+            rtq_push(Binary, riak_repl_util:from_wire(Binary), Meta2)
     end.
+
+rtq_push(_Binary, {ts, PartIdx, Batch}, Meta) ->
+    riak_repl2_rtq:push(length(Batch),
+                        riak_repl_util:to_wire(w3, {PartIdx, Batch}), Meta);
+rtq_push(Binary, Items, Meta) ->
+    riak_repl2_rtq:push(length(Items), Binary, Meta).
 
 %% Note match on Seq
 do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
