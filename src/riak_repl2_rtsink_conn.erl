@@ -297,11 +297,14 @@ maybe_push(Binary, Meta) ->
             rtq_push(Binary, riak_repl_util:from_wire(Binary), Meta2)
     end.
 
-rtq_push(_Binary, {ts, PartIdx, Batch}, Meta) ->
+%% KV data is a list of to_wire objects
+rtq_push(Binary, Items, Meta) when is_list(Items) ->
+    riak_repl2_rtq:push(length(Items), Binary, Meta);
+%% Timeseries data is an encoded tagged tuple
+rtq_push(_Binary, TsItem, Meta) ->
+    {ts, PartIdx, Batch} = riak_repl_util:from_wire(TsItem),
     riak_repl2_rtq:push(length(Batch),
-                        riak_repl_util:to_wire(w3, {PartIdx, Batch}), Meta);
-rtq_push(Binary, Items, Meta) ->
-    riak_repl2_rtq:push(length(Items), Binary, Meta).
+                        riak_repl_util:to_wire(w3, {PartIdx, Batch}), Meta).
 
 %% Note match on Seq
 do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
