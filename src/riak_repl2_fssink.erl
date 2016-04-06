@@ -1,3 +1,5 @@
+%% Riak EnterpriseDS
+%% Copyright 2012-2016 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_fssink).
 -include("riak_repl.hrl").
 

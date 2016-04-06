@@ -1,5 +1,5 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.  All Rights Reserved.
 
 %% @doc This is the server-side component of the new fullsync strategy
 %% introduced in riak 1.1. It is an improvement over the previous strategy in
