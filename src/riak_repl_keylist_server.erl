@@ -616,19 +616,19 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
 encode_robj(O, WireVersion) ->
     case riak_object:is_ts(O) of
         {true, _DDLVersion} ->
-            Partition = ts_partition_key(O, riak_object:bucket(O)),
+            Partition = ts_partition_index(O, riak_object:bucket(O)),
             riak_repl_util:encode_obj_msg(ts, {Partition, O});
         false ->
             riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,O})
     end.
 
-ts_partition_key(RObj, {Table, _}=Bucket) ->
+ts_partition_index(RObj, {Table, _}=Bucket) ->
     LK = sext:decode(riak_object:key(RObj)),
     {ok, Mod, DDL} = riak_kv_ts_util:get_table_ddl(Table),
     PK = riak_kv_ts_util:encode_typeval_key(
            riak_ql_ddl:get_partition_key(DDL, LK, Mod)),
     riak_core_util:chash_key({Bucket, PK});
-ts_partition_key(_RObj, _Bucket) ->
+ts_partition_index(_RObj, _Bucket) ->
     %% Timeseries data can only exist in bucket types, but
     %% make dialyzer happy
     lager:error("Timeseries object appears to be in legacy bucket", []),

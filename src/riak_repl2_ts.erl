@@ -17,8 +17,8 @@ postcommit(PartitionBatch, Bucket, BucketProps) ->
 maybe_postcommit(_PartitionBatch, _Bucket, NoRT) when NoRT == false orelse
                                                       NoRT == fullsync ->
     ok;
-maybe_postcommit({PK, Vals}=PartitionBatch, Bucket, _RT) ->
-    lager:debug("Timeseries batch sent to repl~n    PartIdx~p => ~p...", [PK, hd(Vals)]),
+maybe_postcommit({PartIdx, Vals}=PartitionBatch, Bucket, _RT) ->
+    lager:debug("Timeseries batch sent to repl~n    PartIdx~p => ~p...", [PartIdx, hd(Vals)]),
     Meta = set_bucket_meta(Bucket),
 
     %% `w3' is the earliest wire protocol version to handle timeseries
