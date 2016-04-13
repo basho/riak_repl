@@ -973,11 +973,10 @@ to_wire(w3, NonTSData) ->
 %%     <<MetaBin/binary, MsgPackRObj/binary>>.
 
 new_w3(PartitionIdx, Objects) ->
-    PLen = byte_size(PartitionIdx),
     BinObj = term_to_binary(Objects),
     term_to_binary(<<?MAGIC:8/integer, ?W3_VER:8/integer,
-      PLen:32/integer, PartitionIdx:PLen/binary,
-      BinObj/binary>>).
+                     PartitionIdx:160/bitstring,
+                     BinObj/binary>>).
 
 
 
@@ -1008,7 +1007,7 @@ from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
 %% @doc Convert from wire version w3, dedicated to timeseries
 from_wire(<<?MAGIC:8/integer, ?W3_VER:8/integer,
-            PLen:32/integer, P:PLen/binary,
+            P:160/bitstring,
             BinObjs/binary>>) ->
     {ts, P, binary_to_term(BinObjs)};
 %% @doc Convert from wire version w2, which has bucket type information
