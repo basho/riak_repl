@@ -968,15 +968,10 @@ to_wire(w3, {PartIdx, Val}) ->
 to_wire(w3, NonTSData) ->
     to_wire(w2, NonTSData).
 
-%% w3_encode_value({{_Bucket, _LocalKey}=Meta, MsgPackRObj}) ->
-%%     MetaBin = term_to_binary(Meta),
-%%     <<MetaBin/binary, MsgPackRObj/binary>>.
-
 new_w3(PartitionIdx, Objects) ->
     BinObj = term_to_binary(Objects),
-    term_to_binary(<<?MAGIC:8/integer, ?W3_VER:8/integer,
-                     PartitionIdx:160/bitstring,
-                     BinObj/binary>>).
+    <<?MAGIC:8/integer, ?W3_VER:8/integer,
+      PartitionIdx:160/bitstring, BinObj/binary>>.
 
 
 
@@ -989,6 +984,8 @@ from_wire(w1, BinObjList) ->
 from_wire(w2, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
     maybe_w2_list(BinObjs);
+from_wire(w3, <<?MAGIC:8/integer, ?W3_VER:8/integer, _Rest/binary>>=Blob) ->
+    from_wire(Blob);
 from_wire(w3, BinObjList) ->
     %% w3 is an extension of w2 for timeseries
     from_wire(w2, BinObjList).

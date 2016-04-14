@@ -199,7 +199,7 @@ decode_obj_msg(Data) ->
             Msg;
         {PartitionIdx, W3ObjList} when is_binary(PartitionIdx) ->
             {ts, PartitionIdx,
-             ts_to_robj(riak_repl_util:from_wire(binary_to_term(W3ObjList)))};
+             ts_to_robj(riak_repl_util:from_wire(W3ObjList))};
         Other ->
             Other
     end.
@@ -211,8 +211,9 @@ ts_to_robj({ts, _Part, [RObj]}) ->
        {riak_object:bucket(RObj), sext:decode(riak_object:key(RObj))},
        riak_object:to_binary(v1, RObj, msgpack)
      }];
-ts_to_robj(_) ->
-    lager:error("Bad fullsync signature: expected a timeseries tuple", []),
+ts_to_robj(Unknown) ->
+    lager:error("bad_ts_wire_format on fullsync: expected a timeseries tuple, got ~p",
+                [Unknown]),
     {error, bad_ts_wire_format}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strategy}) ->
