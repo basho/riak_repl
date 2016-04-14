@@ -22,7 +22,7 @@ stop() ->
 install_hook() ->
     riak_kv_hooks:add_conditional_postcommit({?MODULE, conditional_hook}),
     riak_core_bucket:append_bucket_defaults([{repl, true}]),
-    maybe_install_ts_hook(app_helper:get_env(riak_repl, ts_realtime, false)),
+    maybe_install_ts_hook(app_helper:get_env(riak_repl, ts_realtime, true)),
     ok.
 
 maybe_install_ts_hook(true) ->
