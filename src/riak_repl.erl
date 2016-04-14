@@ -33,6 +33,7 @@ maybe_install_ts_hook(false) ->
 
 uninstall_hook() ->
     riak_kv_hooks:del_conditional_postcommit({?MODULE, conditional_hook}),
+    riak_kv_hooks:del_timeseries_postcommit({riak_repl2_ts, postcommit}),
     %% Cannot remove bucket defaults, best we can do is disable
     riak_core_bucket:append_bucket_defaults([{repl, false}]),
     ok.
