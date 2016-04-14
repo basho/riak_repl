@@ -14,19 +14,43 @@
 
 -define(DEFAULT_BUCKET_TYPE, <<"default">>).
 
--define(DEFAULT_HASH_BUCKET_PROPS, [w1c, ddl, consistent, datatype, n_val, allow_mult, last_write_wins]).
+-define(DEFAULT_HASH_BUCKET_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
 
 -spec bucket_props_match(proplists:proplist()) -> boolean().
 bucket_props_match(Props) ->
     case is_bucket_typed(Props) of
         true ->
             Type = prop_get(?BT_META_TYPE, ?DEFAULT_BUCKET_TYPE, Props),
-            property_hash(Type)  =:= prop_get(?BT_META_PROPS_HASH, undefined, Props);
+            RemoteHash = prop_get(?BT_META_PROPS_HASH, undefined, Props),
+            Extra = prop_get(?BT_META_EXTRA_VALIDATION, [], Props),
+            compare_bucket_types(Type, RemoteHash, Extra);
         false ->
             %% This is not a typed bucket. Check if the remote
             %% side is also untyped.
             undefined =:= prop_get(?BT_META_PROPS_HASH, undefined, Props)
     end.
+
+compare_bucket_types(Type, -1, Extra) ->
+    lists:filtermap(fun(P) -> test_prop_extra(P, Type) end, Extra) /= [];
+compare_bucket_types(Type, RemoteHash, _Extra) ->
+    property_hash(Type)  =:= RemoteHash.
+
+test_prop_extra({ts_ddl_hashes, [-1]}, _Type) ->
+    %% Remote end didn't have its DDL module compiled correctly for what we need, bail
+    false;
+test_prop_extra({ts_ddl_hashes, RemoteHashes}, Type) ->
+    LocalHashes = riak_repl2_ts:get_identity_hashes(Type),
+    %% We just need one hash out of each list to match
+    item_matches(RemoteHashes, LocalHashes);
+test_prop_extra(UnknownProp, Type) ->
+    lager:info("repl does not know what to do to compare ~p for ~p",
+               [UnknownProp, Type]),
+    %% We don't know what to do with unknown properties, so to be safe
+    %% default to a failed comparison
+    false.
+
+item_matches(L1, L2) ->
+    not ordsets:is_disjoint(ordsets:from_list(L1), ordsets:from_list(L2)).
 
 -spec bucket_props_match(binary(), integer()) -> boolean().
 bucket_props_match(Type, RemoteBucketTypeHash) ->

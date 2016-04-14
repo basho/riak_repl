@@ -43,6 +43,7 @@
 -define(BT_META_TYPED_BUCKET, typed_bucket).
 -define(BT_META_TYPE, bucket_type).
 -define(BT_META_PROPS_HASH, properties_hash_val).
+-define(BT_META_EXTRA_VALIDATION, extra_props).
 
 -type(ip_addr_str() :: string()).
 -type(ip_portnum() :: non_neg_integer()).
