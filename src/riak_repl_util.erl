@@ -51,10 +51,12 @@
          remove_unwanted_stats/1,
          format_ip_and_port/2,
          safe_pid_to_list/1,
+         safe_get_msg_q_len/1,
          peername/2,
          sockname/2,
          deduce_wire_version_from_proto/1,
          encode_obj_msg/2,
+         decode_bin_obj/1,
          make_pg_proxy_name/1,
          make_pg_name/1,
          mode_12_enabled/1,
@@ -832,6 +834,13 @@ safe_pid_to_list(Pid) when is_pid(Pid) ->
 safe_pid_to_list(NotAPid) ->
     NotAPid.
 
+safe_get_msg_q_len(Pid) when is_pid(Pid) ->
+    ProcInfo = erlang:process_info(Pid),
+    proplists:get_value(message_queue_len, ProcInfo);
+safe_get_msg_q_len(Other) ->
+    Other.
+
+
 peername(Socket, Transport) ->
     case Transport:peername(Socket) of
         {ok, {Ip, Port}} ->
@@ -905,6 +914,15 @@ encode_obj_msg(V, {Cmd, RObj}, T) ->
             BObj = riak_repl_util:to_wire(w1,RObj),
             term_to_binary({Cmd, {BTHash, BObj}})
     end.
+
+%% A wrapper around to_wire which leaves the object unencoded when using the w0 wire protocol.
+encode_obj(w0, RObj) ->
+    RObj;
+encode_obj(W, RObj) ->
+    to_wire(W, RObj).
+
+decode_bin_obj({BTHash, BinObj}) -> {BTHash, from_wire(BinObj)};
+decode_bin_obj(BinObj) -> from_wire(BinObj).
 
 %% @doc Create binary wire formatted replication blob for riak 2.0+, complete with
 %%      possible type, bucket and key for reconstruction on the other end. BinObj should be

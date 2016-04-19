@@ -327,8 +327,9 @@ handle_info(Msg, State) ->
     lager:warning("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
-terminate(_Reason, #state{helper_pid=_HelperPid, remote=Remote}) ->
+terminate(_Reason, #state{helper_pid=HelperPid, remote=Remote}) ->
     riak_core_connection_mgr:disconnect({rt_repl, Remote}),
+    catch riak_repl2_rtsource_helper:stop(HelperPid),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

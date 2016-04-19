@@ -140,7 +140,7 @@ handle_cast({put, RObj, Pool}, State) ->
     poolboy:checkin(Pool, self()),
     {noreply, State};
 handle_cast({bin_put, BinObj, Pool}, State) ->
-    RObj = riak_repl_util:from_wire(BinObj),
+    RObj = riak_repl_util:decode_bin_obj(BinObj),
     riak_repl_util:do_repl_put(RObj),
     poolboy:checkin(Pool, self()), % resume work
     {noreply, State};
