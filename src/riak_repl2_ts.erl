@@ -9,8 +9,8 @@
 %% Realtime replication hook for Timeseries. The basic ideas are
 %% copied from `riak_repl2_rt'
 
-postcommit({PK, Val}, Bucket, BucketProps) when not is_list(Val) ->
-    postcommit({PK, [Val]}, Bucket, BucketProps);
+postcommit({PartitionIdx, Val}, Bucket, BucketProps) when not is_list(Val) ->
+    postcommit({PartitionIdx, [Val]}, Bucket, BucketProps);
 postcommit(PartitionBatch, Bucket, BucketProps) ->
     maybe_postcommit(PartitionBatch, Bucket, proplists:get_value(repl, BucketProps, both)).
 
