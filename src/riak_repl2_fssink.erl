@@ -150,9 +150,8 @@ handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     %% aae strategy will not receive messages here
     Transport:setopts(Socket, [{active, once}]),
-    case binary_to_term(Data) of
-        {fs_diff_obj, BinObj} ->
-            RObj = riak_repl_util:decode_bin_obj(BinObj),
+    case decode_obj_msg(Data) of
+        {fs_diff_obj, RObj} ->
             riak_repl_util:do_repl_put(RObj);
         {ts, _Partition, _RObj} = TSMsg ->
             riak_repl_util:do_repl_put(TSMsg);

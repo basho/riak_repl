@@ -886,20 +886,11 @@ encode_obj_msg(V, {Cmd, RObj}) when is_binary(RObj) ->
 encode_obj_msg(V, {Cmd, RObj}) ->
     encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj)).
 
+encode_obj_msg(w3, {PartitionIdx, RObj}, _) ->
+    BObj = riak_repl_util:to_wire(w3,{PartitionIdx, RObj}),
+    term_to_binary({PartitionIdx, BObj});
 encode_obj_msg(V, {Cmd, RObj}, undefined) ->
-    case V of
-        w0 ->
-            term_to_binary({Cmd, RObj});
-        %% Fullsync is hard-coded to w0 for KV. We cheat a bit with TS
-        %% to leverage w3, hence the fact that this `w3' atom is only
-        %% expected in this branch of `encode_obj_msg'
-        w3 ->
-            BObj = riak_repl_util:to_wire(w3,{Cmd, RObj}),
-            term_to_binary({Cmd, BObj});
-        _W ->
-            BObj = riak_repl_util:to_wire(w1,RObj),
-            term_to_binary({Cmd, BObj})
-    end;
+    term_to_binary({Cmd, encode_obj(V, RObj)});
 encode_obj_msg(V, {Cmd, RObj}, T) ->
     BTHash = case riak_repl_bucket_type_util:property_hash(T) of
                  undefined ->
@@ -907,13 +898,7 @@ encode_obj_msg(V, {Cmd, RObj}, T) ->
                  Hash ->
                      Hash
              end,
-    case V of
-        w0 ->
-            term_to_binary({Cmd, {BTHash, RObj}});
-        _W ->
-            BObj = riak_repl_util:to_wire(w1,RObj),
-            term_to_binary({Cmd, {BTHash, BObj}})
-    end.
+    term_to_binary({Cmd, {BTHash, encode_obj(V, RObj)}}).
 
 %% A wrapper around to_wire which leaves the object unencoded when using the w0 wire protocol.
 encode_obj(w0, RObj) ->
