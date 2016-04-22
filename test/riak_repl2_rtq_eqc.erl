@@ -67,6 +67,7 @@ setup() ->
 
 cleanup(_) ->
     kill_and_wait(riak_repl2_rtq),
+    application:unset_env(riak_repl, rtq_max_bytes),
     catch(meck:unload(riak_repl_stats)),
     meck:unload(),
     ok.

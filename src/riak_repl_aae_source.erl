@@ -492,8 +492,11 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                                 {FoldRef, _Reply} ->
                                     %% we don't care about the reply
                                     gen_fsm:send_event(Self, diff_done);
-                                {'DOWN', MonRef, process, VNodePid, Reason}
-                                        when Reason /= normal ->
+                                {'DOWN', MonRef, process, VNodePid, normal} ->
+                                    lager:warning("VNode ~p exited before fold for partition ~p",
+                                        [VNodePid, Partition]),
+                                    exit({bloom_fold, vnode_exited_before_fold});
+                                {'DOWN', MonRef, process, VNodePid, Reason}  ->
                                     lager:warning("Fold of ~p exited with ~p",
                                                   [Partition, Reason]),
                                     exit({bloom_fold, Reason})
