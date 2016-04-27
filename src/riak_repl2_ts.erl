@@ -19,25 +19,32 @@ maybe_postcommit(_PartitionBatch, _Bucket, false) ->
     ok;
 maybe_postcommit(_PartitionBatch, _Bucket, fullsync) ->
     ok;
-maybe_postcommit({PartIdx, Vals}=PartitionBatch, Bucket, _ReplProp) ->
-    lager:debug("Timeseries batch sent to repl~n    PartIdx~p => ~p...", [PartIdx, hd(Vals)]),
+maybe_postcommit({_PartIdx, Vals}=PartitionBatch, Bucket, _ReplProp) ->
+    %% lager:debug("Timeseries batch sent to repl~n    PartIdx~p => ~p...", [PartIdx, hd(Vals)]),
     Meta = set_bucket_meta(Bucket),
 
-    %% `w3' is the earliest wire protocol version to handle timeseries
-    %% data properly
-    BinObj = riak_repl_util:to_wire(w3, PartitionBatch),
-
-    %% When a node starts shutting down, a process
-    %% `riak_repl2_rtq_proxy' is registered to forward realtime
-    %% updates to another node for delivery to the remote cluster. Try
-    %% that first to avoid race conditions with unregister() during
-    %% shutdown
-    case whereis(riak_repl2_rtq_proxy) of
-        undefined ->
-            riak_repl2_rtq:push(length(Vals), BinObj, Meta);
+    %% `set_bucket_meta/1' will return the `fail' atom if something
+    %% goes wrong and we should skip this batch
+    case Meta of
+        fail ->
+            ok;
         _ ->
-            %% we're shutting down and repl is stopped or stopping...
-            riak_repl2_rtq_proxy:push(length(Vals), BinObj, Meta)
+            %% `w3' is the earliest wire protocol version to handle timeseries
+            %% data properly
+            BinObj = riak_repl_util:to_wire(w3, PartitionBatch),
+
+            %% When a node starts shutting down, a process
+            %% `riak_repl2_rtq_proxy' is registered to forward realtime
+            %% updates to another node for delivery to the remote cluster. Try
+            %% that first to avoid race conditions with unregister() during
+            %% shutdown
+            case whereis(riak_repl2_rtq_proxy) of
+                undefined ->
+                    riak_repl2_rtq:push(length(Vals), BinObj, Meta);
+                _ ->
+                    %% we're shutting down and repl is stopped or stopping...
+                    riak_repl2_rtq_proxy:push(length(Vals), BinObj, Meta)
+            end
     end.
 
 %% Bucket properties will be checked at the remote cluster for
@@ -45,17 +52,26 @@ maybe_postcommit({PartIdx, Vals}=PartitionBatch, Bucket, _ReplProp) ->
 %% argument to this instead of a tuple for bucket types, but we don't
 %% support timeseries data in legacy buckets.
 set_bucket_meta({Type, _}) ->
-    %% By expressing an invalid bucket type property hash, we can
-    %% force the remote cluster to reject this data unless it
-    %% understands how to compare DDL hashes
-    PropsHash = -1,
+    %% First of all, make sure our local DDL-specific module can
+    %% generate identity hashes. If not, there's no point in
+    %% continuing, so we'll drop the batch elsewhere.
+    IdentityHashes = get_identity_hashes(Type),
+    case IdentityHashes of
+        fail ->
+            fail;
+        _ ->
+            %% By sending an invalid bucket type property hash we can
+            %% force the remote cluster to use our alternative hashing
+            %% to understand how to compare DDLs
+            PropsHash = ?INVALID_BT_HASH,
 
-    M = orddict:new(),
-    M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
-    M2 = orddict:store(?BT_META_TYPE, Type, M1),
-    M3 = orddict:store(?BT_META_EXTRA_VALIDATION,
-                       [{ts_ddl_hashes, get_identity_hashes(Type)}], M2),
-    orddict:store(?BT_META_PROPS_HASH, PropsHash, M3).
+            M = orddict:new(),
+            M1 = orddict:store(?BT_META_TYPED_BUCKET, true, M),
+            M2 = orddict:store(?BT_META_TYPE, Type, M1),
+            M3 = orddict:store(?BT_META_EXTRA_VALIDATION,
+                               [{ts_ddl_hashes, IdentityHashes}], M2),
+            orddict:store(?BT_META_PROPS_HASH, PropsHash, M3)
+    end.
 
 get_identity_hashes(Table) ->
     Mod = riak_ql_ddl:make_module_name(Table),
@@ -65,7 +81,7 @@ get_identity_hashes(Table) ->
             %% exist, etc
             lager:warning("DDL module for ~p does not exist or is not "
                           "compiled with identity hashes", [Table]),
-            [-1];
+            fail;
         HashList ->
             HashList
     end.

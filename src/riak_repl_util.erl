@@ -883,7 +883,7 @@ encode_obj_msg(V, {Cmd, RObj}) ->
     encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj)).
 
 encode_obj_msg(w3, {PartitionIdx, RObj}, _) ->
-    BObj = riak_repl_util:to_wire(w3,{PartitionIdx, RObj}),
+    BObj = to_wire(w3,{PartitionIdx, RObj}),
     term_to_binary({PartitionIdx, BObj});
 encode_obj_msg(V, {Cmd, RObj}, undefined) ->
     term_to_binary({Cmd, encode_obj(V, RObj)});

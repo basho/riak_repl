@@ -616,13 +616,13 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
     {reply, ok, diff_bloom, State}.
 
 -spec encode_robj(riak_object:riak_object(), atom()) -> binary().
-encode_robj(O, WireVersion) ->
-    case riak_object:is_ts(O) of
+encode_robj(RObj, WireVersion) ->
+    case riak_object:is_ts(RObj) of
         {true, _DDLVersion} ->
-            Partition = ts_partition_index(O, riak_object:bucket(O)),
-            riak_repl_util:encode_obj_msg(ts, {Partition, O});
+            Partition = ts_partition_index(RObj, riak_object:bucket(RObj)),
+            riak_repl_util:encode_obj_msg(ts, {Partition, RObj});
         false ->
-            riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,O})
+            riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,RObj})
     end.
 
 ts_partition_index(RObj, {Table, _}=Bucket) ->

@@ -128,3 +128,9 @@
 -define(LONG_TIMEOUT, 120*1000).
 
 -define(V2REPLDEP, "DEPRECATION NOTICE: The replication protocol you are currently using in this cluster has been deprecated and will be unsupported and removed some time after the Riak Enterprise 2.1 release. Please upgrade to the latest replication protocol as soon as possible. If you need assistance migrating contact Basho Client Services or follow the instructions in our documentation ( http://docs.basho.com/riakee/latest/cookbooks/Multi-Data-Center-Replication-UpgradeV2toV3/ ).").
+
+%% Used to represent bucket types that should be processed with an
+%% alternative hashing mechanism. The mechanism introduced with 2.0
+%% does not readily permit the inclusion of new properties between
+%% clusters of different versions.
+-define(INVALID_BT_HASH, -1).

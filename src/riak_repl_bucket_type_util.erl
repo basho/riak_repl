@@ -30,18 +30,18 @@ bucket_props_match(Props) ->
             undefined =:= prop_get(?BT_META_PROPS_HASH, undefined, Props)
     end.
 
-compare_bucket_types(Type, -1, Extra) ->
+%% If the source cluster gave us an invalid hash value (-1) this means
+%% that we need to perform comparisons other than the legacy 2.0
+%% static bucket type property hash
+compare_bucket_types(Type, ?INVALID_BT_HASH, Extra) ->
     lists:filtermap(fun(P) -> test_prop_extra(P, Type) end, Extra) /= [];
 compare_bucket_types(Type, RemoteHash, _Extra) ->
     property_hash(Type)  =:= RemoteHash.
 
-test_prop_extra({ts_ddl_hashes, [-1]}, _Type) ->
-    %% Remote end didn't have its DDL module compiled correctly for what we need, bail
-    false;
 test_prop_extra({ts_ddl_hashes, RemoteHashes}, Type) ->
     LocalHashes = riak_repl2_ts:get_identity_hashes(Type),
     %% We just need one hash out of each list to match
-    item_matches(RemoteHashes, LocalHashes);
+    any_item_matches(RemoteHashes, LocalHashes);
 test_prop_extra(UnknownProp, Type) ->
     lager:info("repl does not know what to do to compare ~p for ~p",
                [UnknownProp, Type]),
@@ -49,7 +49,7 @@ test_prop_extra(UnknownProp, Type) ->
     %% default to a failed comparison
     false.
 
-item_matches(L1, L2) ->
+any_item_matches(L1, L2) ->
     not ordsets:is_disjoint(ordsets:from_list(L1), ordsets:from_list(L2)).
 
 -spec bucket_props_match(binary(), integer()) -> boolean().
