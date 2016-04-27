@@ -155,6 +155,9 @@ handle_info({Proto, Socket, Data},
             riak_repl_util:do_repl_put(RObj);
         {ts, _Partition, _RObj} = TSMsg ->
             riak_repl_util:do_repl_put(TSMsg);
+        {error, unknown_wire_format} ->
+            %% error has already been logged
+            ok;
         Other ->
             gen_fsm:send_event(State#state.fullsync_worker, Other)
     end,
@@ -191,17 +194,24 @@ handle_info(_Msg, State) ->
 
 decode_obj_msg(Data) ->
     Msg = binary_to_term(Data),
-    case Msg of
+    catch case Msg of
         {fs_diff_obj, BObj} when is_binary(BObj) ->
-            RObj = riak_repl_util:from_wire(BObj),
+            RObj = from_wire_or_throw(BObj),
             {fs_diff_obj, RObj};
         {fs_diff_obj, _RObj} ->
             Msg;
         {PartitionIdx, W3ObjList} when is_binary(PartitionIdx) ->
             {ts, PartitionIdx,
-             ts_to_robj(riak_repl_util:from_wire(W3ObjList))};
+             ts_to_robj(from_wire_or_throw(W3ObjList))};
         Other ->
             Other
+    end.
+
+from_wire_or_throw(BObj) ->
+    case riak_repl_util:from_wire(BObj) of
+        {error, unknown_wire_format} = Error ->
+            throw(Error);
+        Value -> Value
     end.
 
 %% Convert a single TS object from fullsync to a list of a single

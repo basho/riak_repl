@@ -115,10 +115,6 @@ get_partitions(Ring) ->
     lists:sort([P || {P, _} <-
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
-do_repl_put({ts, _PartitionId, {error, _Error}}) ->
-    %% Something went wrong in `riak_repl2_fssink', and logging should
-    %% have occurred there. Simply skip this.
-    ok;
 do_repl_put({ts, PartitionId, ObjectList}) ->
     riak_kv_w1c_worker:ts_batch_put_encoded(ObjectList, PartitionId);
 do_repl_put({RemoteTypeHash, Object}) ->
