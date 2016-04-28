@@ -166,10 +166,14 @@ code_change(_OldVsn, State, _Extra) ->
 %% TODO: rename external 'do_blah' functions.  rest of riak uses do_blah
 %% for internal work
 do_binputs_internal(BinObjs, DoneFun, Pool, Ver) ->
-    %% TODO: add mechanism for detecting put failure so 
+    %% TODO: add mechanism for detecting put failure so
     %% we can drop rtsink and have it resent
-    Objects = riak_repl_util:from_wire(Ver, BinObjs),
-    _ = [riak_repl_util:do_repl_put(Obj) || Obj <- Objects],
+    case riak_repl_util:from_wire(Ver, BinObjs) of
+        {ts, _PartIdx, _Batch}=TsBatch ->
+            _ = riak_repl_util:do_repl_put(TsBatch);
+        Objects ->
+            _ = [riak_repl_util:do_repl_put(Obj) || Obj <- Objects]
+    end,
     poolboy:checkin(Pool, self()),
     %% let the caller know
     DoneFun().

@@ -1,5 +1,5 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl_util).
 -author('Andy Gross <andy@basho.com>').
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
@@ -78,7 +78,8 @@
 %% Defines for Wire format encode/decode
 -define(MAGIC, 42). %% as opposed to 131 for Erlang term_to_binary or 51 for riak_object
 -define(W1_VER, 1). %% first non-just-term-to-binary wire format
--define(W2_VER, 2). %% first non-just-term-to-binary wire format
+-define(W2_VER, 2). %% Support bucket types
+-define(W3_VER, 3). %% Extend w2 for timeseries data
 -define(BAD_SOCKET_NUM, -1).
 
 make_peer_info() ->
@@ -114,6 +115,8 @@ get_partitions(Ring) ->
     lists:sort([P || {P, _} <-
             riak_core_ring:all_owners(riak_core_ring:upgrade(Ring))]).
 
+do_repl_put({ts, PartitionId, ObjectList}) ->
+    riak_kv_w1c_worker:ts_batch_put_encoded(ObjectList, PartitionId);
 do_repl_put({RemoteTypeHash, Object}) ->
     Bucket = riak_object:bucket(Object),
     Type = riak_object:type(Object),
@@ -859,6 +862,8 @@ make_pg_name(Remote) ->
     list_to_atom("pg_requester_" ++ Remote).
 
 % everything from version 1.5 and up should use the new binary objects
+deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 3 ->
+    w3;
 deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 2 ->
     w2;
 deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 1 ->
@@ -869,12 +874,17 @@ deduce_wire_version_from_proto({_Proto, {_CommonMajor, CMinor}, {_CommonMajor, H
 deduce_wire_version_from_proto({_Proto, _Client, _Host}) ->
     w0.
 
-%% Typically, Cmd :: fs_diff_obj | diff_obj
+%% Typically, Cmd :: fs_diff_obj | diff_obj | <partition id>
+encode_obj_msg(ts, {Partition, RObj}) ->
+    encode_obj_msg(w3, {Partition, RObj}, undefined);
 encode_obj_msg(V, {Cmd, RObj}) when is_binary(RObj) ->
     encode_obj_msg(V, {Cmd, RObj}, undefined);
 encode_obj_msg(V, {Cmd, RObj}) ->
     encode_obj_msg(V, {Cmd, RObj}, riak_object:type(RObj)).
 
+encode_obj_msg(w3, {PartitionIdx, RObj}, _) ->
+    BObj = to_wire(w3,{PartitionIdx, RObj}),
+    term_to_binary({PartitionIdx, BObj});
 encode_obj_msg(V, {Cmd, RObj}, undefined) ->
     term_to_binary({Cmd, encode_obj(V, RObj)});
 encode_obj_msg(V, {Cmd, RObj}, T) ->
@@ -949,7 +959,20 @@ to_wire(w2, Objects) when is_list(Objects) ->
 to_wire(w2, Object) when not is_binary(Object) ->
     B = riak_object:bucket(Object),
     K = riak_object:key(Object),
-    to_wire(w2, B, K, Object).
+    to_wire(w2, B, K, Object);
+to_wire(w3, {PartIdx, Values}) when is_list(Values) ->
+    new_w3(PartIdx, Values);
+to_wire(w3, {PartIdx, Val}) ->
+    new_w3(PartIdx, [Val]);
+to_wire(w3, NonTSData) ->
+    to_wire(w2, NonTSData).
+
+new_w3(PartitionIdx, Objects) ->
+    BinObj = term_to_binary(Objects),
+    <<?MAGIC:8/integer, ?W3_VER:8/integer,
+      PartitionIdx:160/bitstring, BinObj/binary>>.
+
+
 
 %% When the wire format is known and objects are packed in a list of binaries
 from_wire(w0, BinObjList) ->
@@ -959,11 +982,30 @@ from_wire(w1, BinObjList) ->
     [from_wire(BObj) || BObj <- BinObjs];
 from_wire(w2, BinObjList) ->
     BinObjs = binary_to_term(BinObjList),
-    [from_wire(BObj) || BObj <- BinObjs].
+    maybe_w2_list(BinObjs);
+from_wire(w3, <<?MAGIC:8/integer, ?W3_VER:8/integer, _Rest/binary>>=Blob) ->
+    from_wire(Blob);
+from_wire(w3, BinObjList) ->
+    %% w3 is an extension of w2 for timeseries
+    from_wire(w2, BinObjList).
+
+maybe_w2_list(BinObjs) when is_list(BinObjs) ->
+    [from_wire(BObj) || BObj <- BinObjs];
+maybe_w2_list(BinObj) ->
+    %% Timeseries will have one collector object instead of a
+    %% list. This must return a list because
+    %% `riak_repl_fullsync_worker:do_binputs_internal' will iterate
+    %% over it
+    [from_wire(BinObj)].
 
 %% @doc Convert from wire format to non-binary riak_object form
 from_wire(<<131, _Rest/binary>>=BinObjTerm) ->
     binary_to_term(BinObjTerm);
+%% @doc Convert from wire version w3, dedicated to timeseries
+from_wire(<<?MAGIC:8/integer, ?W3_VER:8/integer,
+            P:160/bitstring,
+            BinObjs/binary>>) ->
+    {ts, P, binary_to_term(BinObjs)};
 %% @doc Convert from wire version w2, which has bucket type information
 from_wire(<<?MAGIC:8/integer, ?W2_VER:8/integer,
             TLen:32/integer, T:TLen/binary,

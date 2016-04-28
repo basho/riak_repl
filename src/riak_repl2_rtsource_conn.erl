@@ -1,5 +1,5 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.  All Rights Reserved.
 
 %% @doc Realtime replication source connection module
 %%
@@ -71,9 +71,10 @@
 %% TODO: expand version list or remove comment when we no
 %% longer support 1.3.1
 %% prefered version list: [{2,0}, {1,5}, {1,1}, {1,0}]
+%% {3,0} => bucket types
+%% {4,0} => timeseries
 
-
--define(CLIENT_SPEC, {{realtime,[{3,0}, {2,0}, {1,5}]},
+-define(CLIENT_SPEC, {{realtime,[{4,0}, {3,0}, {2,0}, {1,5}]},
                       {?TCP_OPTIONS, ?MODULE, self()}}).
 
 -record(state, {remote,    % remote name

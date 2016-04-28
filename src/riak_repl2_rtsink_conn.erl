@@ -1,5 +1,5 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_repl2_rtsink_conn).
 
 %% @doc Realtime replication sink connection module
@@ -62,7 +62,8 @@
 %% Register with service manager
 sync_register_service() ->
     %% version {3,0} supports typed bucket replication
-    ProtoPrefs = {realtime,[{3,0}, {2,0}, {1,4}, {1,1}, {1,0}]},
+    %% version {4,0} supports timeseries data
+    ProtoPrefs = {realtime,[{4,0}, {3,0}, {2,0}, {1,4}, {1,1}, {1,0}]},
     TcpOptions = [{keepalive, true}, % find out if connection is dead, this end doesn't send
                   {packet, 0},
                   {nodelay, true}],
@@ -293,11 +294,18 @@ maybe_push(Binary, Meta) ->
             lager:debug("Skipping cascade due to app env setting"),
             ok;
         always ->
-          lager:debug("app env either set to always, or in default; doing cascade"),
-          List = riak_repl_util:from_wire(Binary),
-          Meta2 = orddict:erase(skip_count, Meta),
-          riak_repl2_rtq:push(length(List), Binary, Meta2)
+            lager:debug("app env either set to always, or in default; doing cascade"),
+            Meta2 = orddict:erase(skip_count, Meta),
+            rtq_push(Binary, riak_repl_util:from_wire(Binary), Meta2)
     end.
+
+%% KV data is a list of to_wire objects
+rtq_push(Binary, Items, Meta) when is_list(Items) ->
+    riak_repl2_rtq:push(length(Items), Binary, Meta);
+%% Timeseries data is an encoded tagged tuple
+rtq_push(_Binary, {ts, PartIdx, Batch}, Meta) ->
+    riak_repl2_rtq:push(length(Batch),
+                        riak_repl_util:to_wire(w3, {PartIdx, Batch}), Meta).
 
 %% Note match on Seq
 do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,

@@ -1,5 +1,5 @@
 %% Riak EnterpriseDS
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.  All Rights Reserved.
 
 %% @doc This is the server-side component of the new fullsync strategy
 %% introduced in riak 1.1. It is an improvement over the previous strategy in
@@ -605,13 +605,37 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
             %% binarize here instead of in the send() so that our wire
             %% format for the riak_object is more compact.
             _ = [riak_repl_tcp_server:send(Transport, Socket,
-                                       riak_repl_util:encode_obj_msg(V,{fs_diff_obj,O}))
-             || O <- Objects],
-            _ = riak_repl_tcp_server:send(Transport, Socket,
-                                      riak_repl_util:encode_obj_msg(V,{fs_diff_obj,RObj})),
+                                           encode_robj(O, V))
+                 || O <- Objects],
+
+            EncodedObj = encode_robj(RObj, V),
+
+            _ = riak_repl_tcp_server:send(Transport, Socket, EncodedObj),
             ok
     end,
     {reply, ok, diff_bloom, State}.
+
+-spec encode_robj(riak_object:riak_object(), atom()) -> binary().
+encode_robj(RObj, WireVersion) ->
+    case riak_object:is_ts(RObj) of
+        {true, _DDLVersion} ->
+            Partition = ts_partition_index(RObj, riak_object:bucket(RObj)),
+            riak_repl_util:encode_obj_msg(ts, {Partition, RObj});
+        false ->
+            riak_repl_util:encode_obj_msg(WireVersion,{fs_diff_obj,RObj})
+    end.
+
+ts_partition_index(RObj, {Table, _}=Bucket) ->
+    LK = sext:decode(riak_object:key(RObj)),
+    {ok, Mod, DDL} = riak_kv_ts_util:get_table_ddl(Table),
+    PK = riak_kv_ts_util:encode_typeval_key(
+           riak_ql_ddl:get_partition_key(DDL, LK, Mod)),
+    riak_core_util:chash_key({Bucket, PK});
+ts_partition_index(_RObj, _Bucket) ->
+    %% Timeseries data can only exist in bucket types, but
+    %% make dialyzer happy
+    lager:error("Timeseries object appears to be in legacy bucket", []),
+    <<>>.
 
 %% gen_fsm callbacks
 

@@ -1,3 +1,5 @@
+%% Riak EnterpriseDS
+%% Copyright 2012-2016 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_fssink).
 -include("riak_repl.hrl").
 
@@ -148,10 +150,14 @@ handle_info({Proto, Socket, Data},
         State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     %% aae strategy will not receive messages here
     Transport:setopts(Socket, [{active, once}]),
-    case binary_to_term(Data) of
-        {fs_diff_obj, BinObj} ->
-            RObj = riak_repl_util:decode_bin_obj(BinObj),
+    case decode_obj_msg(Data) of
+        {fs_diff_obj, RObj} ->
             riak_repl_util:do_repl_put(RObj);
+        {ts, _Partition, _RObj} = TSMsg ->
+            riak_repl_util:do_repl_put(TSMsg);
+        {error, unknown_wire_format} ->
+            %% error has already been logged
+            ok;
         Other ->
             gen_fsm:send_event(State#state.fullsync_worker, Other)
     end,
@@ -185,6 +191,40 @@ handle_info(init_ack, State=#state{socket=Socket,
     end;
 handle_info(_Msg, State) ->
     {noreply, State}.
+
+decode_obj_msg(Data) ->
+    Msg = binary_to_term(Data),
+    catch case Msg of
+        {fs_diff_obj, BObj} when is_binary(BObj) ->
+            RObj = from_wire_or_throw(BObj),
+            {fs_diff_obj, RObj};
+        {fs_diff_obj, _RObj} ->
+            Msg;
+        {PartitionIdx, W3ObjList} when is_binary(PartitionIdx) ->
+            {ts, PartitionIdx,
+             ts_to_robj(from_wire_or_throw(W3ObjList))};
+        Other ->
+            Other
+    end.
+
+from_wire_or_throw(BObj) ->
+    case riak_repl_util:from_wire(BObj) of
+        {error, unknown_wire_format} = Error ->
+            throw(Error);
+        Value -> Value
+    end.
+
+%% Convert a single TS object from fullsync to a list of a single
+%% {{Bucket, LocalKey}, msgpack-encoded} tuple.
+ts_to_robj({ts, _Part, [RObj]}) ->
+    [{
+       {riak_object:bucket(RObj), sext:decode(riak_object:key(RObj))},
+       riak_object:to_binary(v1, RObj, msgpack)
+     }];
+ts_to_robj(Unknown) ->
+    lager:error("bad_ts_wire_format on fullsync: expected a timeseries tuple, got ~p",
+                [Unknown]),
+    {error, bad_ts_wire_format}.
 
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strategy}) ->
     %% TODO: define a fullsync worker behavior and call it's stop function
@@ -247,5 +287,3 @@ maybe_exchange_caps(_, Caps, Socket, Transport) ->
         {Error, Socket, Reason} ->
             throw({Error, Reason})
     end.
-
-
