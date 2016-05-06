@@ -164,7 +164,7 @@ do_repl_put(Object, B, true) ->
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
                     lager:debug("Incoming deleted obj ~p/~p", [B, K]),
-                    reap(ReqId, B, K),
+                    _ = reap(ReqId, B, K),
                     %% block waiting for response
                     wait_for_response(ReqId, "reap");
                 false ->
