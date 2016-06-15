@@ -12,14 +12,20 @@
 postcommit({PartitionIdx, Val}, Bucket, BucketProps) when not is_list(Val) ->
     postcommit({PartitionIdx, [Val]}, Bucket, BucketProps);
 postcommit(PartitionBatch, Bucket, BucketProps) ->
-    maybe_postcommit(PartitionBatch, Bucket, proplists:get_value(repl, BucketProps, both)).
+    maybe_postcommit(PartitionBatch, Bucket,
+                     proplists:get_value(repl, BucketProps, both),
+                     application:get_env(riak_repl, rtenabled, false)).
 
-%% If `repl' is `false' or `fullsync', we skip realtime
-maybe_postcommit(_PartitionBatch, _Bucket, false) ->
+%% If `repl' is `false' or `fullsync', we skip realtime. Also if
+%% riak_repl2_rt has yet to set the `rtenabled' environment value to
+%% true, skip
+maybe_postcommit(_PartitionBatch, _Bucket, false, _Enabled) ->
     ok;
-maybe_postcommit(_PartitionBatch, _Bucket, fullsync) ->
+maybe_postcommit(_PartitionBatch, _Bucket, fullsync, _Enabled) ->
     ok;
-maybe_postcommit({_PartIdx, Vals}=PartitionBatch, Bucket, _ReplProp) ->
+maybe_postcommit(_PartitionBatch, _Bucket, _Type, false) ->
+    ok;
+maybe_postcommit({_PartIdx, Vals}=PartitionBatch, Bucket, _ReplProp, true) ->
     %% lager:debug("Timeseries batch sent to repl~n    PartIdx~p => ~p...", [PartIdx, hd(Vals)]),
     Meta = set_bucket_meta(Bucket),
 
