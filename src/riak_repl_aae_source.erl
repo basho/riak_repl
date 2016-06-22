@@ -45,6 +45,7 @@
                 indexns     :: [index_n()],
                 tree_pid    :: pid(),
                 tree_mref   :: reference(),
+                tree_version :: atom(),
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
@@ -190,11 +191,13 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     case riak_kv_vnode:hashtree_pid(Partition) of
         {ok, TreePid} ->
             TreeMref = monitor(process, TreePid),
+            Version =riak_kv_index_hashtree:get_version(TreePid),
             State = State0#state{timeout=Timeout,
                                  indexns=IndexNs,
                                  tree_pid=TreePid,
-                                 tree_mref=TreeMref},
-            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
+                                 tree_mref=TreeMref,
+                                 tree_version=Version},
+            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source, Version) of
                 ok ->
                     prepare_exchange(start_exchange, State#state{local_lock=true});
                 Error ->
@@ -206,9 +209,9 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
         {error, wrong_node} ->
             {stop, wrong_node, State0}
     end;
-prepare_exchange(start_exchange, State=#state{index=Partition}) ->
-    %% try to get the remote lock
-    case send_synchronous_msg(?MSG_LOCK_TREE, State) of
+prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=Version}) ->
+    %% try to get the remote lock, need to pass Version into this message
+    case send_synchronous_msg(?MSG_LOCK_TREE, Version, State) of
         ok ->
             update_trees(init, State);
         Error ->
