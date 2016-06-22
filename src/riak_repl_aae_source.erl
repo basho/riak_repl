@@ -692,12 +692,6 @@ send_synchronous_msg(MsgType, Msg, State) ->
     Data = term_to_binary(Msg),
     send_synchronous_msg(MsgType, Data, State).
 
-%% send a message with type tag only, no data
-send_synchronous_msg(MsgType, State=#state{transport=Transport,
-                                           socket=Socket}) ->
-    ok = Transport:send(Socket, <<MsgType:8>>),
-    get_reply(State).
-
 %% Async message send with tag and (binary or term data).
 send_asynchronous_msg(MsgType, Data, #state{transport=Transport,
                                             socket=Socket}) when is_binary(Data) ->
