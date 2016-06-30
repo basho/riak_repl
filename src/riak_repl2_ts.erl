@@ -6,9 +6,14 @@
 
 -include("riak_repl.hrl").
 
+-type index() :: non_neg_integer().
+
 %% Realtime replication hook for Timeseries. The basic ideas are
 %% copied from `riak_repl2_rt'
 
+-spec postcommit(PartitionBatch :: {index(), term()}|{index(), [term()]},
+                 Bucket :: riak_core_bucket_type:bucket_type(),
+                 BucketProps :: [tuple()]) -> ok.
 postcommit({PartitionIdx, Val}, Bucket, BucketProps) when not is_list(Val) ->
     postcommit({PartitionIdx, [Val]}, Bucket, BucketProps);
 postcommit(PartitionBatch, Bucket, BucketProps) ->
@@ -16,6 +21,10 @@ postcommit(PartitionBatch, Bucket, BucketProps) ->
                      proplists:get_value(repl, BucketProps, both),
                      application:get_env(riak_repl, rtenabled, false)).
 
+-spec maybe_postcommit(PartitionBatch :: {index(), [term()]},
+                       Bucket :: riak_core_bucket_type:bucket_type(),
+                       ReplType :: atom(),
+                       RTEnabled :: boolean()) -> ok.
 %% If `repl' is `false' or `fullsync', we skip realtime. Also if
 %% riak_repl2_rt has yet to set the `rtenabled' environment value to
 %% true, skip
