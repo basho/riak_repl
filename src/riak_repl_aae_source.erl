@@ -45,7 +45,7 @@
                 indexns     :: [index_n()],
                 tree_pid    :: pid(),
                 tree_mref   :: reference(),
-                tree_version :: atom(),
+                tree_version :: non_neg_integer(),
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
@@ -191,7 +191,7 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     case riak_kv_vnode:hashtree_pid(Partition) of
         {ok, TreePid} ->
             TreeMref = monitor(process, TreePid),
-            Version =riak_kv_index_hashtree:get_version(TreePid),
+            Version = riak_kv_index_hashtree:get_version(TreePid),
             State = State0#state{timeout=Timeout,
                                  indexns=IndexNs,
                                  tree_pid=TreePid,
