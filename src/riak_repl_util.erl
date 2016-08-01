@@ -175,15 +175,7 @@ do_repl_put(Object, B, true) ->
     end.
 
 reap(ReqId, B, K) ->
-    %% Note that this doesn't currently actually link with the new FSM proc
-    %% (unless sidejob is disabled for get FSMs, which nobody currently does).
-    %% Instead it just ends up calling sidejob_supervisor:start_child.
-    %% This is good, since REPL doesn't expect us to link with the FSM,
-    %% and we don't want a crashed FSM to take down whatever process is calling
-    %% reap.
-    %% The riak_kv API will be updated and improved in 2.2, but for 2.0.x
-    %% this should be fine.
-    riak_kv_get_fsm:start_link(ReqId, B, K, 1, ?REPL_FSM_TIMEOUT, self()).
+    riak_kv_get_fsm:start(ReqId, B, K, 1, ?REPL_FSM_TIMEOUT, self()).
 
 wait_for_response(ReqId, Verb) ->
     receive
