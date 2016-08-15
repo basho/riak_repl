@@ -164,8 +164,7 @@ process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
     %% Message coming from an old aae source. Only allow lock if old undefined version
     %% is in use locally.
-    ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink, undefined),
-    send_reply(ResponseMsg, State);
+    process_msg(?MSG_LOCK_TREE, undefined, State=#state{tree_pid=TreePid});
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
