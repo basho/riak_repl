@@ -56,7 +56,8 @@
                 cont = <<>>,      %% Continuation from previous TCP buffer
                 bt_drops,         %% drops due to bucket type mis-matches
                 bt_interval,      %% how often (in ms) to report bt_drops
-                bt_timer          %% timer reference for interval   
+                bt_timer,         %% timer reference for interval   
+                skipped = []      %% Skipped sequence numbers
                }).
 
 %% Register with service manager
@@ -162,21 +163,22 @@ handle_call({set_socket, Socket, Transport}, _From, State) ->
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
-%% Note pattern patch on Ref
+%% Note pattern match on Ref
 handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
                                             seq_ref = Ref,
                                             acked_seq = AckedTo,
-                                            completed = Completed}) ->
+                                            completed = Completed,
+                                            skipped = SkippedList}) ->
     %% Worker pool has completed the put, check the completed
     %% list and work out where we can ack back to
     %case ack_to(AckedTo, ordsets:add_element(Seq, Completed)) of
-    case ack_to(AckedTo, insert_completed(Seq, Skips, Completed)) of
-        {AckedTo, Completed2} ->
-            {noreply, State#state{completed = Completed2}};
-        {AckTo, Completed2}  ->
+    case ack_to(AckedTo, insert_completed(Seq, Skips, Completed, SkippedList)) of
+        {AckedTo, Completed2, SkippedList2} ->
+            {noreply, State#state{completed = Completed2, skipped = SkippedList2}};
+        {AckTo, Completed2, SkippedList2}  ->
             TcpIOL = riak_repl2_rtframe:encode(ack, AckTo),
             T:send(S, TcpIOL),
-            {noreply, State#state{acked_seq = AckTo, completed = Completed2}}
+            {noreply, State#state{acked_seq = AckTo, completed = Completed2, skipped = SkippedList2}}
     end;
 handle_cast({ack, Ref, Seq, _Skips}, State) ->
     %% Nothing to send, it's old news.
@@ -349,11 +351,14 @@ do_write_objects(Seq, BinObjs, State) ->
     State2 = reset_ref_seq(Seq, State),
     do_write_objects(Seq, BinObjs, State2).
 
-insert_completed(Seq, Skipped, Completed) ->
+%% For small Skipped count, insert the sequence numbers into the Completed list
+insert_completed(Seq, Skipped, Completed, SkippedList) when Skipped =< 1000 ->
     Foldfun = fun(N, Acc) ->
-        ordsets:add_element(N, Acc)
+            ordsets:add_element(N, Acc)
     end,
-    lists:foldl(Foldfun, Completed, lists:seq(Seq - Skipped, Seq)).
+    {lists:foldl(Foldfun, Completed, lists:seq(Seq - Skipped, Seq)), SkippedList};
+insert_complted(Seq, Skipped, Completed, SkippedList) ->
+    {ordsets:add_element(Seq, Completed), ordsets:add_element({Seq - Skipped, Seq - 1}).
 
 reset_ref_seq(Seq, State) ->
     #state{source_drops = SourceDrops, expect_seq = ExpSeq} = State,
@@ -370,18 +375,18 @@ reset_ref_seq(Seq, State) ->
 %% Work out the highest sequence number that can be acked
 %% and return it, completed always has one or more elements on first
 %% call.
-ack_to(Acked, []) ->
-    {Acked, []};
-ack_to(Acked, [LessThanAck | _] = Completed) when LessThanAck =< Acked ->
-    ack_to(LessThanAck - 1, Completed);
-ack_to(Acked, [Seq | Completed2] = Completed) ->
-    case Acked + 1 of
-        Seq ->
-            ack_to(Seq, Completed2);
-        _ ->
-            {Acked, Completed}
-    end.
-
+ack_to(Acked, {[LessThanAck | _] = Completed, SkipList}) when LessThanAck =< Acked ->
+    ack_to(LessThanAck - 1, {Completed, SkipList});
+ack_to(Acked, {Completed, [{LessThanAck, _}|_] = SkipList}) when LessThanAck =< Acked ->
+    ack_to(LessThanAck - 1, {Completed, SkipList});
+ack_to(Acked, {[Seq | Completed2] = Completed, SkipList}) when (Acked + 1) == Seq ->
+    ack_to(Seq, {Completed2, SkipList});
+ack_to(Acked, {Completed, [{FirstSkipped, LastSkipped}|SkipList2]}) when 
+                                                   (Acked + 1) >= FirstSkipped,
+                                                   Acked =< LastSkipped ->
+    ack_to(LastSkipped, {Completed, SkipList2});
+ack_to(Acked, Completed, SkipList) ->
+    {Acked, Completed, SkipList}.
 %% Work out how many requests are pending (not writted yet, may not
 %% have been acked)
 pending(#state{acked_seq = undefined}) ->
