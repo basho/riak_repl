@@ -191,16 +191,14 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
     case riak_kv_vnode:hashtree_pid(Partition) of
         {ok, TreePid} ->
             TreeMref = monitor(process, TreePid),
-            Version = riak_kv_index_hashtree:get_version(TreePid),
             State = State0#state{timeout=Timeout,
                                  indexns=IndexNs,
                                  tree_pid=TreePid,
-                                 tree_mref=TreeMref,
-                                 tree_version=Version},
-            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source, Version) of
-                ok ->
-                    prepare_exchange(start_exchange, State#state{local_lock=true});
-                Error ->
+                                 tree_mref=TreeMref},
+            case riak_kv_index_hashtree:get_lock_and_version(TreePid, fullsync_source) of
+                {ok, Version} ->
+                    prepare_exchange(start_exchange, State#state{local_lock=true, tree_version=Version});
+                {Error, _Version} ->
                     lager:info("AAE source failed get_lock for partition ~p, got ~p",
                                [Partition, Error]),
                     State#state.owner ! {soft_exit, self(), Error},
