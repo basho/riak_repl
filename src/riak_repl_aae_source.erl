@@ -207,6 +207,18 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
         {error, wrong_node} ->
             {stop, wrong_node, State0}
     end;
+    
+prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=undefined}) ->
+     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
+        ok ->
+            update_trees(init, State);
+        Error ->
+            lager:info("Remote lock tree for partition ~p failed, got ~p",
+                          [Partition, Error]),
+            send_complete(State),
+            State#state.owner ! {soft_exit, self(), {remote, Error}},
+            {stop, normal, State}
+    end;
 prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=Version}) ->
     %% try to get the remote lock, need to pass Version into this message
     case send_synchronous_msg(?MSG_LOCK_TREE, Version, State) of
