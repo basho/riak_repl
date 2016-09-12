@@ -689,6 +689,12 @@ send_complete(State) ->
 %%------------
 %% Synchronous messaging with the AAE fullsync "sink" on the remote cluster
 %%------------
+%% send a message with type tag only, no data
+send_synchronous_msg(MsgType, State=#state{transport=Transport,
+                                           socket=Socket}) ->
+    ok = Transport:send(Socket, <<MsgType:8>>),
+    get_reply(State).
+
 %% send a tagged message with type and binary data. return the reply
 send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
                                                  socket=Socket}) when is_binary(Data) ->
