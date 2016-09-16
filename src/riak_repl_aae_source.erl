@@ -36,6 +36,7 @@
                   }).
 
 -type exchange() :: #exchange{}.
+-type version() :: legacy | non_neg_integer().
 
 -record(state, {cluster,
                 client,     %% riak:local_client()
@@ -45,7 +46,7 @@
                 indexns     :: [index_n()],
                 tree_pid    :: pid(),
                 tree_mref   :: reference(),
-                tree_version :: non_neg_integer(),
+                tree_version :: version(),
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
@@ -208,7 +209,7 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
             {stop, wrong_node, State0}
     end;
     
-prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=undefined}) ->
+prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=legacy}) ->
      case send_synchronous_msg(?MSG_LOCK_TREE, State) of
         ok ->
             update_trees(init, State);
