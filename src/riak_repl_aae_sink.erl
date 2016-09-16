@@ -160,11 +160,11 @@ process_msg(?MSG_LOCK_TREE, Version, State=#state{tree_pid=TreePid}) ->
     send_reply(ResponseMsg, State).
 
 %% replies: ok | not_built | already_locked | bad_version
-process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
+process_msg(?MSG_LOCK_TREE, State) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
     %% Message coming from an old aae source. Only allow lock if old undefined version
     %% is in use locally.
-    process_msg(?MSG_LOCK_TREE, undefined, State=#state{tree_pid=TreePid});
+    process_msg(?MSG_LOCK_TREE, legacy, State);
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
