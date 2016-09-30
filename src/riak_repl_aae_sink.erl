@@ -152,13 +152,19 @@ process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
 %% replies: ok | not_responsible
 process_msg(?MSG_UPDATE_TREE, IndexN, State=#state{tree_pid=TreePid}) ->
     ResponseMsg = riak_kv_index_hashtree:update(IndexN, TreePid),
+    send_reply(ResponseMsg, State);
+
+%% replies: ok | not_built | already_locked | bad_version
+process_msg(?MSG_LOCK_TREE, Version, State=#state{tree_pid=TreePid}) ->
+    ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink, Version),
     send_reply(ResponseMsg, State).
 
-%% replies: ok | not_built | already_locked
-process_msg(?MSG_LOCK_TREE, State=#state{tree_pid=TreePid}) ->
+%% replies: ok | not_built | already_locked | bad_version
+process_msg(?MSG_LOCK_TREE, State) ->
     %% NOTE: be sure to die if tcp connection dies, to give back lock
-    ResponseMsg = riak_kv_index_hashtree:get_lock(TreePid, fullsync_sink),
-    send_reply(ResponseMsg, State);
+    %% Message coming from an old aae source. Only allow lock if old undefined version
+    %% is in use locally.
+    process_msg(?MSG_LOCK_TREE, legacy, State);
 
 %% no reply
 process_msg(?MSG_COMPLETE, State=#state{owner=Owner}) ->
