@@ -36,6 +36,7 @@
                   }).
 
 -type exchange() :: #exchange{}.
+-type version() :: legacy | non_neg_integer().
 
 -record(state, {cluster,
                 client,     %% riak:local_client()
@@ -45,6 +46,7 @@
                 indexns     :: [index_n()],
                 tree_pid    :: pid(),
                 tree_mref   :: reference(),
+                tree_version :: version(),
                 built       :: non_neg_integer(),
                 timeout     :: pos_integer(),
                 wire_ver    :: atom(),
@@ -194,10 +196,10 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                                  indexns=IndexNs,
                                  tree_pid=TreePid,
                                  tree_mref=TreeMref},
-            case riak_kv_index_hashtree:get_lock(TreePid, fullsync_source) of
-                ok ->
-                    prepare_exchange(start_exchange, State#state{local_lock=true});
-                Error ->
+            case riak_kv_index_hashtree:get_lock_and_version(TreePid, fullsync_source) of
+                {ok, Version} ->
+                    prepare_exchange(start_exchange, State#state{local_lock=true, tree_version=Version});
+                {Error, _Version} ->
                     lager:info("AAE source failed get_lock for partition ~p, got ~p",
                                [Partition, Error]),
                     State#state.owner ! {soft_exit, self(), Error},
@@ -206,9 +208,21 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
         {error, wrong_node} ->
             {stop, wrong_node, State0}
     end;
-prepare_exchange(start_exchange, State=#state{index=Partition}) ->
-    %% try to get the remote lock
-    case send_synchronous_msg(?MSG_LOCK_TREE, State) of
+    
+prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=legacy}) ->
+     case send_synchronous_msg(?MSG_LOCK_TREE, State) of
+        ok ->
+            update_trees(init, State);
+        Error ->
+            lager:info("Remote lock tree for partition ~p failed, got ~p",
+                          [Partition, Error]),
+            send_complete(State),
+            State#state.owner ! {soft_exit, self(), {remote, Error}},
+            {stop, normal, State}
+    end;
+prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=Version}) ->
+    %% try to get the remote lock, need to pass Version into this message
+    case send_synchronous_msg(?MSG_LOCK_TREE, Version, State) of
         ok ->
             update_trees(init, State);
         Error ->
@@ -492,8 +506,11 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                                 {FoldRef, _Reply} ->
                                     %% we don't care about the reply
                                     gen_fsm:send_event(Self, diff_done);
-                                {'DOWN', MonRef, process, VNodePid, Reason}
-                                        when Reason /= normal ->
+                                {'DOWN', MonRef, process, VNodePid, normal} ->
+                                    lager:warning("VNode ~p exited before fold for partition ~p",
+                                        [VNodePid, Partition]),
+                                    exit({bloom_fold, vnode_exited_before_fold});
+                                {'DOWN', MonRef, process, VNodePid, Reason}  ->
                                     lager:warning("Fold of ~p exited with ~p",
                                                   [Partition, Reason]),
                                     exit({bloom_fold, Reason})
@@ -673,6 +690,12 @@ send_complete(State) ->
 %%------------
 %% Synchronous messaging with the AAE fullsync "sink" on the remote cluster
 %%------------
+%% send a message with type tag only, no data
+send_synchronous_msg(MsgType, State=#state{transport=Transport,
+                                           socket=Socket}) ->
+    ok = Transport:send(Socket, <<MsgType:8>>),
+    get_reply(State).
+
 %% send a tagged message with type and binary data. return the reply
 send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
                                                  socket=Socket}) when is_binary(Data) ->
@@ -685,12 +708,6 @@ send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
 send_synchronous_msg(MsgType, Msg, State) ->
     Data = term_to_binary(Msg),
     send_synchronous_msg(MsgType, Data, State).
-
-%% send a message with type tag only, no data
-send_synchronous_msg(MsgType, State=#state{transport=Transport,
-                                           socket=Socket}) ->
-    ok = Transport:send(Socket, <<MsgType:8>>),
-    get_reply(State).
 
 %% Async message send with tag and (binary or term data).
 send_asynchronous_msg(MsgType, Data, #state{transport=Transport,
