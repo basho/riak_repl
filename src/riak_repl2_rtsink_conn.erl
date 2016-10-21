@@ -243,8 +243,9 @@ handle_info(report_bt_drops, State=#state{bt_drops = DropDict}) ->
     Report = app_helper:get_env(riak_repl, bucket_type_drop_report_interval, ?DEFAULT_INTERVAL_MILLIS),
     {noreply, State#state{bt_drops = dict:new(), bt_timer = undefined, bt_interval = Report}}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, State) ->
     %% TODO: Consider trying to do something graceful with poolboy?
+    catch riak_repl2_rtsink_helper:stop(State#state.helper),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

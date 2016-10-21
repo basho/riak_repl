@@ -164,7 +164,7 @@ do_repl_put(Object, B, true) ->
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
                     lager:debug("Incoming deleted obj ~p/~p", [B, K]),
-                    reap(ReqId, B, K),
+                    _ = reap(ReqId, B, K),
                     %% block waiting for response
                     wait_for_response(ReqId, "reap");
                 false ->
@@ -175,9 +175,7 @@ do_repl_put(Object, B, true) ->
     end.
 
 reap(ReqId, B, K) ->
-    riak_kv_get_fsm_sup:start_get_fsm(node(),
-                                      [ReqId, B, K, 1, ?REPL_FSM_TIMEOUT,
-                                       self()]).
+    riak_kv_get_fsm:start(ReqId, B, K, 1, ?REPL_FSM_TIMEOUT, self()).
 
 wait_for_response(ReqId, Verb) ->
     receive
@@ -828,11 +826,10 @@ safe_pid_to_list(NotAPid) ->
     NotAPid.
 
 safe_get_msg_q_len(Pid) when is_pid(Pid) ->
-    ProcInfo = erlang:process_info(Pid),
-    proplists:get_value(message_queue_len, ProcInfo);
+    {message_queue_len, Len} = erlang:process_info(Pid, message_queue_len),
+    Len;
 safe_get_msg_q_len(Other) ->
     Other.
-
 
 peername(Socket, Transport) ->
     case Transport:peername(Socket) of
