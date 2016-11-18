@@ -86,7 +86,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Partition, Ver}, From, State) -
 
     ReqID = make_req_id(),
 
-    Req = ?KV_GET_REQ{bkey={B, K}, req_id=ReqID},
+    Req = riak_kv_requests:new_get_request({B, K}, ReqID),
     %% Assuming this function is called from a FSM process
     %% so self() == FSM pid
     riak_core_vnode_master:command(Preflist,
