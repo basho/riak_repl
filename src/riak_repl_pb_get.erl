@@ -56,8 +56,8 @@ decode(?PB_MSG_GET_CLUSTER_ID, <<>>) ->
 encode(#rpbgetresp{} = Msg) ->
     {ok, riak_pb_codec:encode(Msg)};
 encode(#rpbreplgetclusteridresp{} = Msg) ->
-    {ok,
-        [?PB_MSG_RESP_CLUSTER_ID|riak_repl_pb:encode_rpbreplgetclusteridresp(Msg)]}.
+    Resp = riak_repl_pb:encode_rpbreplgetclusteridresp(Msg),
+    {ok, [?PB_MSG_RESP_CLUSTER_ID, Resp]}.
 
 %% Process Protocol Buffer Requests
 %%
