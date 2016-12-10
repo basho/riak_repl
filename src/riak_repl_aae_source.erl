@@ -657,7 +657,7 @@ send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}
             end;
         {error, notfound} ->
             %% can't find the key!
-            lager:warning("not_found returned for fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
+            %% Likely because the object expired and riak_kv_vnode deleted it.
             0;
         {error, timeout} ->
             lager:warning("timeout during fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
