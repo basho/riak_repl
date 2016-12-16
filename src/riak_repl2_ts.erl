@@ -72,7 +72,7 @@ set_bucket_meta({Type, _}) ->
     %% continuing, so we'll drop the batch elsewhere.
     IdentityHashes = get_identity_hashes(Type),
     case IdentityHashes of
-        fail ->
+        [] ->
             fail;
         _ ->
             %% By sending an invalid bucket type property hash we can
@@ -96,7 +96,7 @@ get_identity_hashes(Table) ->
             %% exist, etc
             lager:warning("DDL module for ~p does not exist or is not "
                           "compiled with identity hashes", [Table]),
-            fail;
+            [];
         HashList ->
             HashList
     end.
