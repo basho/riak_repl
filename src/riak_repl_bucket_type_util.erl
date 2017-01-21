@@ -14,8 +14,6 @@
 
 -define(DEFAULT_BUCKET_TYPE, <<"default">>).
 
--define(DEFAULT_HASH_BUCKET_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
-
 -spec bucket_props_match(proplists:proplist()) -> boolean().
 bucket_props_match(Props) ->
     case is_bucket_typed(Props) of
@@ -77,4 +75,7 @@ prop_get(Key, Default, Props) ->
 property_hash(undefined) ->
     undefined;
 property_hash(Type) ->
-    riak_core_bucket_type:property_hash(Type, ?DEFAULT_HASH_BUCKET_PROPS).
+    Defaults = riak_core_capability:get(
+            {riak_repl, default_bucket_props_hash},
+            [consistent, datatype, n_val, allow_mult, last_write_wins]),
+    riak_core_bucket_type:property_hash(Type, Defaults).

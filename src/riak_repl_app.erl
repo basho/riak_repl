@@ -47,6 +47,18 @@ start(_Type, _StartArgs) ->
     riak_core_capability:register({riak_repl, rtq_meta},
         [true, false], false),
 
+    %% Register capability for the default bucket properties hash.
+    riak_core_capability:register(
+        {riak_repl, default_bucket_props_hash},
+        [
+            %% 2.0.6, 2.1.2
+            [consistent, datatype, n_val, write_once],
+
+            %% 2.0.5, 2.1.1 and earlier
+            [consistent, datatype, n_val, allow_mult, last_write_wins]
+        ],
+        [consistent, datatype, n_val, allow_mult, last_write_wins]),
+
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of
         true ->
