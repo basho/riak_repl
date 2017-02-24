@@ -35,8 +35,6 @@
          fs_enabled/1,
          set_modes/2,
          get_modes/1,
-         compose/2,
-         multicompose/1,
          pg_enable_trans/2,
          pg_disable_trans/2,
          pg_enabled/1,
@@ -494,11 +492,6 @@ del_nat_map(Ring, Mapping) ->
 
 get_nat_map(Ring) ->
     get_list(nat_map, Ring).
-
-%% Function composition
-compose(F,G) -> fun(X) -> F(G(X)) end.
-multicompose(Fs) ->
-    lists:foldl(fun compose/2, fun(X) -> X end, Fs).
 
 %% unit tests
 
