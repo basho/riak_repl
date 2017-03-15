@@ -27,7 +27,7 @@ status() ->
     LeaderNode = riak_repl2_leader:leader_node(),
     case LeaderNode of
         undefined ->
-            {[], []};
+            [{proxy_get, []}];
         _ ->
             ReqStats = try riak_repl2_pg_block_requester_sup:started(LeaderNode) of
                 [] ->
