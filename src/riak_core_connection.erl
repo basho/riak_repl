@@ -235,12 +235,12 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
             IpPort = {State#state.ip, State#state.port},
             NegotiatedProto = {ProtoName, {CommonMajor, LocalMinor}, {CommonMajor, RemoteMinor}},
             _ = Transport:setopts(Socket, State#state.socket_opts),
-            _ModStarted = Module:connected(Socket,
-                                           Transport,
-                                           IpPort,
-                                           NegotiatedProto,
-                                           ModArgs,
-                                           State#state.remote_capabilities),
+            _ModStarted = catch Module:connected(Socket,
+                                                 Transport,
+                                                 IpPort,
+                                                 NegotiatedProto,
+                                                 ModArgs,
+                                                 State#state.remote_capabilities),
             {stop, normal, State};
         Else ->
             lager:warning("Invalid version returned: ~p", [Else]),
