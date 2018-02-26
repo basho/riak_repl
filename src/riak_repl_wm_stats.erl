@@ -181,7 +181,7 @@ jsonify_stats([{K,V}|T], Acc) when is_list(V) ->
 jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], Acc) when is_integer(Year), is_integer(Month), is_integer(Day), is_integer(Hour), is_integer(Min), is_integer(Second) ->
     % the guard clause may be insane, but I just want to be very sure it's a
     % date time tuple that's being converted.
-    StrDate = httpd_util:rfc1123_date(DateTime),
+    StrDate = httpd_util:rfc1123_date(calendar:universal_time_to_local_time(DateTime)),
     jsonify_stats(T, [{K, list_to_binary(StrDate)} | Acc]);
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]);
@@ -199,6 +199,16 @@ jsonify_stats([KV|T], Acc) ->
 
 jsonify_stats_test_() ->
     [
+	 {"correctly handle utc datetimes in rfc1123",
+	  fun() ->
+            %% this datetime doesn't exist in DST, without correct handling
+            %% causes rfc1123 to explode.
+			Actual = [{date, {{2017,3,26},{1,0,0}}}],
+			Expected = [{date, <<"Sun, 26 Mar 2017 01:00:00 GMT">>}],
+			?assertEqual(Expected, jsonify_stats(Actual, [])),
+			_Result = mochijson2:encode({struct, Expected})
+	  end
+	 },
      %% test with bad stat to make sure
      %% the catch-all works
      {"catch-all",
@@ -251,7 +261,7 @@ jsonify_stats_test_() ->
      {"Coord during fullsync",
       fun() ->
              Date = {{2013, 9, 19}, {20, 51, 7}},
-             BinDate = list_to_binary(httpd_util:rfc1123_date(Date)),
+             BinDate = list_to_binary(httpd_util:rfc1123_date(calendar:universal_time_to_local_time(Date))),
              Input = [{fullsync_coordinator, [{"bar", [
                           {last_fullsync_started, Date}
                       ]}]}],
