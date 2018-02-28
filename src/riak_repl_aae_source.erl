@@ -4,6 +4,10 @@
 -module(riak_repl_aae_source).
 -behaviour(gen_fsm).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -include("riak_repl.hrl").
 -include("riak_repl_aae_fullsync.hrl").
 
@@ -754,3 +758,20 @@ get_reply(State=#state{transport=Transport, socket=Socket}) ->
             %% display and possibly retry the partition from.
             throw({stop, Reason, State})
     end.
+
+-ifdef(TEST).
+%% test for basho/riak_repl issue 774
+maybe_accumulate_key_test() ->
+    State = #state{estimated_nr_keys=10000},
+    %% ensure the count > limit to hit bloom
+    Exchange = #exchange{count=10, limit=9},
+    UnTypedBucket = <<"b">>,
+    Key = <<"k">>,
+    #exchange{bloom=Bloom} = E2 = maybe_accumulate_key(UnTypedBucket, Key, Exchange, State),
+    ?assert(ebloom:contains(Bloom, <<UnTypedBucket/binary, Key/binary>>)),
+    TypedBucket = {UnTypedBucket, UnTypedBucket},
+    #exchange{bloom=Bloom} = _E3 = maybe_accumulate_key(TypedBucket, Key, E2, State),
+    ExpectedBin = bucket_key_to_binary(TypedBucket, Key),
+    ?assert(ebloom:contains(Bloom, ExpectedBin)).
+
+-endif.
