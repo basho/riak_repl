@@ -531,7 +531,8 @@ maybe_create_bloom(#exchange{bloom=Bloom}, _State) ->
     Bloom.
 
 bloom_fold({B, K}, V, {MPid, Bloom}) ->
-    case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
+    BKBin = bucket_key_to_binary(B, K),
+    case ebloom:contains(Bloom, BKBin) of
         true ->
             RObj = riak_object:from_binary(B,K,V),
             gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
@@ -577,9 +578,25 @@ maybe_accumulate_key(Bucket, Key,
        true ->
             %% Past threshold, add to bloom filter for future bloom fold
             Bloom = maybe_create_bloom(Exchange, State),
-            ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
+            BKBin = bucket_key_to_binary(Bucket, Key),
+            ebloom:insert(Bloom, BKBin),
             Exchange#exchange{bloom=Bloom, count=Count+1}
     end.
+
+%% @private See https://github.com/basho/riak_repl/issues/774. Turn
+%% tuple-typed buckets and binary buckets and keys into a canonical
+%% binary
+-spec bucket_key_to_binary(Bucket::tuple() | binary(), Key::binary())
+                          -> BKBin::binary().
+bucket_key_to_binary({Type, Bucket}, Key) when
+      is_binary(Type),
+      is_binary(Bucket),
+      is_binary(Key) ->
+    <<Type/binary, Bucket/binary, Key/binary>>;
+bucket_key_to_binary(Bucket, Key) when
+      is_binary(Bucket),
+      is_binary(Key) ->
+    <<Bucket/binary, Key/binary>>.
 
 handle_direct(inline, Bucket, Key, Exchange, State) ->
     %% Send key inline
