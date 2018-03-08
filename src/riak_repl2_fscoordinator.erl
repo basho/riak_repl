@@ -1,6 +1,7 @@
 %% @doc Coordinates full sync replication parallelism.  Uses 3
 %% `riak_repl' application environment values: `fullsync_on_connect',
-%% `max_fssource_cluster', and `max_fssource_node'.
+%% `max_fssource_cluster', and `max_fssource_node',
+%% `max_fssource_retries' and `fssource_retry_wait'
 %%
 %% <dl>
 %%  <dt>`{fullsync_on_connect, boolean()}'</dt>
@@ -20,6 +21,19 @@
 %%  <dd>
 %% How many sources can be started on a single node, provided starting one
 %% wouldn't exceed the `max_fssource_cluster' setting. Defaults to 1.
+%%  </dd>
+%%
+%%  <dt>`{`max_fssource_retries, pos_integer()}'</dt>
+%%  <dd>
+%% How many times a "soft_exiting" partition (eg. where the sink is
+%% locked, or rebuilding for will be retried before it is
+%% discarded. Defaults to 100.
+%%  </dd>
+%%
+%%  <dt>`{`fssource_retry_wait, pos_integer()}'</dt>
+%%  <dd>
+%% How many seconds must elapse between retrying a fullsynce on a
+%% "soft_exiting" partition. to 60.
 %%  </dd>
 %% </dl>
 
@@ -536,20 +550,24 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
             SoftRetryCount = State4#state.soft_retry_exits + 1,
             if
                 SoftRetryLimit =:= infinity ->
-                    Purgatory = queue:in(Partition, State4#state.purgatory),
+                    Now = riak_core_util:moment(),
+                    Purgatory = queue:in({Partition, Now}, State4#state.purgatory),
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}};
 
                 SoftRetryLimit < ErrorCount ->
-                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
+                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p",
+                               [Partition#partition_info.index, SoftRetryLimit]),
+
                     ErrorExits1 = State4#state.error_exits + 1,
                     Dropped = [Partition#partition_info.index | State4#state.dropped],
-                    Purgatory = queue:filter(fun(P) -> P =/= Partition end,
+                    Purgatory = queue:filter(fun({P, _}) -> P =/= Partition end,
                                              State4#state.purgatory),
                     {noreply, State4#state{error_exits = ErrorExits1,
                                            purgatory = Purgatory,
                                            dropped = Dropped}};
                 true ->
-                    Purgatory = queue:in(Partition, State4#state.purgatory),
+                    Now = riak_core_util:moment(),
+                    Purgatory = queue:in({Partition, Now}, State4#state.purgatory),
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}}
             end;
 
@@ -707,9 +725,22 @@ maybe_pop_from_purgatory(State) ->
     case queue:out(State#state.purgatory) of
         {empty, _} ->
             State;
-        {{value, Partition}, NewPurgatory} ->
+        {{value, {Partition, Moment}}, NewPurgatory} ->
+            pop_if_wait_time_elapsed(Partition, Moment, NewPurgatory, State)
+    end.
+
+%% @private enforce the riak_repl.fssource_retry_wait setting.
+pop_if_wait_time_elapsed(Partition, Moment, NewPurgatory, State) ->
+    Now = riak_core_util:moment(),
+    RetryWaitTimeSecs = app_helper:get_env(riak_repl, fssource_retry_wait,
+                                           ?DEFAULT_SOURCE_RETRY_WAIT_SECS),
+    Elapsed = Now - Moment,
+    case Elapsed >= RetryWaitTimeSecs of
+        true ->
             PartitionQ2 = queue:in(Partition, State#state.partition_queue),
-            State#state{purgatory = NewPurgatory, partition_queue = PartitionQ2}
+            State#state{purgatory = NewPurgatory, partition_queue = PartitionQ2};
+        false ->
+            State
     end.
 
 start_up_reqs(State, N) when N < 1 ->
@@ -1071,4 +1102,3 @@ flush_exit_message(Pid) ->
         {'DOWN', Mon, process, Pid, _} ->
             ok
     end.
-
