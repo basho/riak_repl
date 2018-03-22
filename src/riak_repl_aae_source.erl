@@ -4,6 +4,10 @@
 -module(riak_repl_aae_source).
 -behaviour(gen_fsm).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -include("riak_repl.hrl").
 -include("riak_repl_aae_fullsync.hrl").
 
@@ -531,7 +535,8 @@ maybe_create_bloom(#exchange{bloom=Bloom}, _State) ->
     Bloom.
 
 bloom_fold({B, K}, V, {MPid, Bloom}) ->
-    case ebloom:contains(Bloom, <<B/binary, K/binary>>) of
+    BKBin = bucket_key_to_binary(B, K),
+    case ebloom:contains(Bloom, BKBin) of
         true ->
             RObj = riak_object:from_binary(B,K,V),
             gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
@@ -577,9 +582,25 @@ maybe_accumulate_key(Bucket, Key,
        true ->
             %% Past threshold, add to bloom filter for future bloom fold
             Bloom = maybe_create_bloom(Exchange, State),
-            ebloom:insert(Bloom, <<Bucket/binary, Key/binary>>),
+            BKBin = bucket_key_to_binary(Bucket, Key),
+            ebloom:insert(Bloom, BKBin),
             Exchange#exchange{bloom=Bloom, count=Count+1}
     end.
+
+%% @private See https://github.com/basho/riak_repl/issues/774. Turn
+%% tuple-typed buckets and binary buckets and keys into a canonical
+%% binary
+-spec bucket_key_to_binary(Bucket::tuple() | binary(), Key::binary())
+                          -> BKBin::binary().
+bucket_key_to_binary({Type, Bucket}, Key) when
+      is_binary(Type),
+      is_binary(Bucket),
+      is_binary(Key) ->
+    <<Type/binary, Bucket/binary, Key/binary>>;
+bucket_key_to_binary(Bucket, Key) when
+      is_binary(Bucket),
+      is_binary(Key) ->
+    <<Bucket/binary, Key/binary>>.
 
 handle_direct(inline, Bucket, Key, Exchange, State) ->
     %% Send key inline
@@ -737,3 +758,20 @@ get_reply(State=#state{transport=Transport, socket=Socket}) ->
             %% display and possibly retry the partition from.
             throw({stop, Reason, State})
     end.
+
+-ifdef(TEST).
+%% test for basho/riak_repl issue 774
+maybe_accumulate_key_test() ->
+    State = #state{estimated_nr_keys=10000},
+    %% ensure the count > limit to hit bloom
+    Exchange = #exchange{count=10, limit=9},
+    UnTypedBucket = <<"b">>,
+    Key = <<"k">>,
+    #exchange{bloom=Bloom} = E2 = maybe_accumulate_key(UnTypedBucket, Key, Exchange, State),
+    ?assert(ebloom:contains(Bloom, <<UnTypedBucket/binary, Key/binary>>)),
+    TypedBucket = {UnTypedBucket, UnTypedBucket},
+    #exchange{bloom=Bloom} = _E3 = maybe_accumulate_key(TypedBucket, Key, E2, State),
+    ExpectedBin = bucket_key_to_binary(TypedBucket, Key),
+    ?assert(ebloom:contains(Bloom, ExpectedBin)).
+
+-endif.
