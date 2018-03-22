@@ -1,6 +1,7 @@
 %% @doc Coordinates full sync replication parallelism.  Uses 3
 %% `riak_repl' application environment values: `fullsync_on_connect',
-%% `max_fssource_cluster', and `max_fssource_node'.
+%% `max_fssource_cluster', and `max_fssource_node',
+%% `max_fssource_retries' and `fssource_retry_wait'
 %%
 %% <dl>
 %%  <dt>`{fullsync_on_connect, boolean()}'</dt>
@@ -21,10 +22,27 @@
 %% How many sources can be started on a single node, provided starting one
 %% wouldn't exceed the `max_fssource_cluster' setting. Defaults to 1.
 %%  </dd>
+%%
+%%  <dt>`{`max_fssource_retries, pos_integer()}'</dt>
+%%  <dd>
+%% How many times a "soft_exiting" partition (eg. where the sink is
+%% locked, or rebuilding for will be retried before it is
+%% discarded. Defaults to 100.
+%%  </dd>
+%%
+%%  <dt>`{`fssource_retry_wait, pos_integer()}'</dt>
+%%  <dd>
+%% How many seconds must elapse between retrying a fullsynce on a
+%% "soft_exiting" partition. to 60.
+%%  </dd>
 %% </dl>
 
 -module(riak_repl2_fscoordinator).
 -include("riak_repl.hrl").
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
@@ -536,20 +554,24 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
             SoftRetryCount = State4#state.soft_retry_exits + 1,
             if
                 SoftRetryLimit =:= infinity ->
-                    Purgatory = queue:in(Partition, State4#state.purgatory),
+                    Now = riak_core_util:moment(),
+                    Purgatory = queue:in({Partition, Now}, State4#state.purgatory),
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}};
 
                 SoftRetryLimit < ErrorCount ->
-                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p", [Partition#partition_info.index, SoftRetryLimit]),
+                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p",
+                               [Partition#partition_info.index, SoftRetryLimit]),
+
                     ErrorExits1 = State4#state.error_exits + 1,
                     Dropped = [Partition#partition_info.index | State4#state.dropped],
-                    Purgatory = queue:filter(fun(P) -> P =/= Partition end,
+                    Purgatory = queue:filter(fun({P, _}) -> P =/= Partition end,
                                              State4#state.purgatory),
                     {noreply, State4#state{error_exits = ErrorExits1,
                                            purgatory = Purgatory,
                                            dropped = Dropped}};
                 true ->
-                    Purgatory = queue:in(Partition, State4#state.purgatory),
+                    Now = riak_core_util:moment(),
+                    Purgatory = queue:in({Partition, Now}, State4#state.purgatory),
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}}
             end;
 
@@ -707,9 +729,22 @@ maybe_pop_from_purgatory(State) ->
     case queue:out(State#state.purgatory) of
         {empty, _} ->
             State;
-        {{value, Partition}, NewPurgatory} ->
+        {{value, {Partition, Moment}}, NewPurgatory} ->
+            pop_if_wait_time_elapsed(Partition, Moment, NewPurgatory, State)
+    end.
+
+%% @private enforce the riak_repl.fssource_retry_wait setting.
+pop_if_wait_time_elapsed(Partition, Moment, NewPurgatory, State) ->
+    Now = riak_core_util:moment(),
+    RetryWaitTimeSecs = app_helper:get_env(riak_repl, fssource_retry_wait,
+                                           ?DEFAULT_SOURCE_RETRY_WAIT_SECS),
+    Elapsed = Now - Moment,
+    case Elapsed >= RetryWaitTimeSecs of
+        true ->
             PartitionQ2 = queue:in(Partition, State#state.partition_queue),
-            State#state{purgatory = NewPurgatory, partition_queue = PartitionQ2}
+            State#state{purgatory = NewPurgatory, partition_queue = PartitionQ2};
+        false ->
+            State
     end.
 
 start_up_reqs(State, N) when N < 1 ->
@@ -1072,3 +1107,133 @@ flush_exit_message(Pid) ->
             ok
     end.
 
+-ifdef(TEST).
+
+%% tests that the retry count and wait settings are respected.  Uses
+% mock for controlling time.
+handle_abnormal_exit_test_() ->
+    {setup,
+     fun setup/0,
+     fun teardown/1,
+     [{"test purgatory wait time", fun test_purgatory_wait_time/0},
+      {"test retry count", fun test_retry_count/0}]
+    }.
+
+%% @doc
+%% Test for changes for riak_repl#772. Checks that a soft-exiting
+%% partition sync attempt is not popped from purgatory until the
+%% configured retry wait time is passed.
+%% @see setup/0, teardown/1
+test_purgatory_wait_time() ->
+    Index = 0,
+    FakeNode = 'not@anode.net',
+    FakePid = fake_pid(),
+    PartInfo = #partition_info{running_source= FakePid, index=Index, node=FakeNode},
+    State = #state{running_sources=[PartInfo], transport=mock_transport},
+    meck:expect(riak_core_util, moment, [],
+                meck:seq([1, 2, 6])),
+
+    meck:expect(mock_transport, send, ['_', '_'], meck:val(ok)),
+
+    %% fail to sync, soft-exit, not_built
+    {noreply, State2=#state{purgatory=Purgatory, partition_queue=PQ}} = handle_abnormal_exit(soft_exit,
+                                                                                             FakePid,
+                                                                                             not_built,
+                                                                                             {value, PartInfo, []}, State),
+
+    %% the failing/soft-exiting partition should've been added to
+    %% purgatory, with a time of 1
+    ?assertEqual(1, queue:len(Purgatory)),
+    ?assertEqual(0, queue:len(PQ)),
+    QElem = queue:get(Purgatory),
+    Expected = PartInfo#partition_info{running_source=undefined},
+    ?assertEqual({Expected, 1}, QElem),
+
+    %% the purgatory member should _not_ be popped (yet) as time is
+    %% only 2
+    State3 = #state{purgatory=Purgatory2, partition_queue=PQ2} = maybe_pop_from_purgatory(State2),
+    ?assertEqual(1, queue:len(Purgatory2)),
+    ?assertEqual(0, queue:len(PQ2)),
+    QElem2 = queue:get(Purgatory2),
+    Expected2 = PartInfo#partition_info{running_source=undefined},
+    ?assertEqual({Expected2, 1}, QElem2),
+
+    %% next call to moment returns 6, 6 - 1 >= fssource_retry_wait, therefore should be
+    %% copied from purgatory to partition queue
+    #state{purgatory=Purgatory3, partition_queue=PQ3} = maybe_pop_from_purgatory(State3),
+    ?assertEqual(0, queue:len(Purgatory3)),
+    ?assertEqual(1, queue:len(PQ3)),
+    PQElem = queue:get(PQ3),
+    ?assertEqual(Expected2, PQElem),
+
+    meck:validate(mock_transport),
+    ok.
+
+%% @doc
+%% Test for changes for riak_repl#772. Checks that a soft-exiting
+%% partition sync attempt fails when retry count (when count <
+%% infinity) is reached
+%% @see setup/0, teardown/1
+test_retry_count() ->
+    meck:expect(riak_core_util, moment, [],
+                meck:seq(lists:seq(1, 100, 6))),
+
+    meck:expect(mock_transport, send, ['_', '_'], meck:val(ok)),
+
+    {ok, MaxRetries} = application:get_env(riak_repl, max_fssource_soft_retries),
+    MaxRetriesExpected = MaxRetries+1, %% NOTE: in abnormal_exits the test is ErrorCount > Limit
+
+    #state{purgatory=Purgatory,
+           dropped=Dropped,
+           error_exits=ErrorExits} = retry(0,
+                                           MaxRetriesExpected,
+                                           #state{transport=mock_transport}),
+
+    ?assertEqual(1, ErrorExits),
+    ?assertEqual(1, length(Dropped)),
+    ?assertEqual(0, hd(Dropped)),
+    ?assertEqual(0, queue:len(Purgatory)),
+
+    meck:validate(mock_transport),
+    ok.
+
+retry(MaxRetries, MaxRetries, State) ->
+    State;
+retry(Attempt, MaxRetries, State) ->
+    Index = 0,
+    FakeNode = 'not@anode.net',
+    FakePid = fake_pid(),
+    PartInfo = #partition_info{running_source= FakePid, index=Index, node=FakeNode},
+    %% fake removing from purgatory and setting up as running, too
+    %% complex to mock
+    State2 = State#state{running_sources=[PartInfo], purgatory=queue:new()},
+    {noreply, State3} = handle_abnormal_exit(soft_exit, FakePid,  not_built,
+                                             {value, PartInfo, []}, State2),
+    retry(Attempt+1, MaxRetries, State3).
+
+%% need a real pid for the calls to monitor in the code under test.
+fake_pid() ->
+    spawn(fun() ->
+                  whatever
+          end).
+
+setup() ->
+    %% play nice with others
+    OrigRetries = application:get_env(riak_repl, max_fssource_soft_retries, ?DEFAULT_SOURCE_SOFT_RETRIES),
+    OrigWait = application:get_env(riak_repl, fssource_retry_wait, ?DEFAULT_SOURCE_RETRY_WAIT_SECS),
+    %% set the app_env vars
+    application:set_env(riak_repl, max_fssource_soft_retries, 3),
+    application:set_env(riak_repl, fssource_retry_wait, 5),
+    %% control time with mocking, only want to mock one fun (moment)
+    meck:new(riak_core, [passthrough]),
+    %% make a fake transport
+    meck:new(mock_transport, [non_strict]),
+    {OrigRetries, OrigWait}.
+
+teardown({OrigRetries, OrigWait}) ->
+    meck:unload(riak_core),
+    meck:unload(mock_transport),
+    application:set_env(riak_repl, max_fssource_soft_retries, OrigRetries),
+    application:set_env(riak_repl, fssource_retry_wait, OrigWait).
+
+-endif.

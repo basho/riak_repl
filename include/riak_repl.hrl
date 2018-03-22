@@ -30,7 +30,10 @@
 -define(DEFAULT_RESERVE_RETRIES, 0).
 %% How many times during a fullsync we should retry a partion that has sent
 %% a 'soft_exit' message to the coordinator
--define(DEFAULT_SOURCE_SOFT_RETRIES, infinity).
+-define(DEFAULT_SOURCE_SOFT_RETRIES, 100).
+%% how long must elaspse before a partition fullsync is retried after
+%% a soft exit
+-define(DEFAULT_SOURCE_RETRY_WAIT_SECS, 60).
 %% 20 seconds. sources should claim within 5 seconds, but give them a little more time
 -define(RESERVATION_TIMEOUT, (20 * 1000)).
 -define(DEFAULT_MAX_FS_BUSIES_TOLERATED, 10).
