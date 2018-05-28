@@ -396,7 +396,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 Reason -> % something bad happened to the connection, reuse the request
                     lager:debug("handle_info: EP failed on ~p for ~p. removed Ref ~p",
                                      [Cur, Reason, Ref]),
-                    State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
+                    State2 = fail_endpoint(Cur, Reason, ProtocolId, State#state{pending = Pending2}),
                     %% the connection helper will not retry. It's up the caller.
                     State3 = fail_request(Reason, Req, State2),
                     {noreply, State3}
