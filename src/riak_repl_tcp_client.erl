@@ -561,8 +561,8 @@ get_all_listener_addrs(ReplConfig) ->
     NatListenAddrs = [R#nat_listener.listen_addr || R <- NatListeners],
     ListenAddrs++NatAddrs++NatListenAddrs.
 
--spec(rewrite_config_site_ips_pure/4 :: (repl_config(),ring(),repl_sitename(),ip_addr_str())
-                                        -> none|ring()).
+-spec rewrite_config_site_ips_pure(repl_config(),ring(),repl_sitename(),ip_addr_str())
+                                        -> none|ring().
 %% @doc Update replication configuration with corrected set of IP addrs for a RemoteSite.
 %%
 %% Given a "remote" server's replication configuration and our own ring configuration,
@@ -635,7 +635,7 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
             OurNewRing
     end.
 
--spec(update_site_ips/3 :: (repl_config(),repl_sitename(),ip_addr_str()) -> ok).
+-spec update_site_ips(repl_config(),repl_sitename(),ip_addr_str()) -> ok.
 %% @doc update the ring configuration to include new remote IP site addresses for SiteName
 %%
 %% This also ensures that we remove our own IP addrs from the list, just in case they

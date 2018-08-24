@@ -53,7 +53,7 @@ decode(?PB_MSG_GET_CLUSTER_ID, <<>>) ->
     {ok, riak_repl_pb:decode_rpbreplgetclusteridreq(<<>>)}.
 
 %% @doc encode/1 callback. Encodes an outgoing response message.
-encode(#rpbgetresp{} = Msg) ->
+encode(#'RpbGetResp'{} = Msg) ->
     {ok, riak_pb_codec:encode(Msg)};
 encode(#rpbreplgetclusteridresp{} = Msg) ->
     {ok,
@@ -105,7 +105,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
         {error, {deleted, TombstoneVClock}} ->
             %% Found a tombstone - return its vector clock so it can
             %% be properly overwritten
-            {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
+            {reply, #'RpbGetResp'{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             %% find connection by cluster_id
             lager:debug("CName = ~p", [ CName ]),
@@ -144,17 +144,17 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 notconnected ->
                     lager:info("not connected to cluster ~p", [CName]),
                     %% not connected to that cluster, return notfound
-                    {reply, #rpbgetresp{}, State};
+                    {reply, #'RpbGetResp'{}, State};
                 {ok, O} ->
                     spawn(riak_repl_util, do_repl_put, [O]),
                     make_object_response(O, VClock, Head, State);
                 {error, {deleted, TombstoneVClock}} ->
                     %% Found a tombstone - return its vector clock so
                     %% it can be properly overwritten
-                    {reply, #rpbgetresp{vclock =
+                    {reply, #'RpbGetResp'{vclock =
                                             pbify_rpbvc(TombstoneVClock)}, State};
                 {error, notfound} ->
-                    {reply, #rpbgetresp{}, State};
+                    {reply, #'RpbGetResp'{}, State};
                 {error, Reason} ->
                     {error, {format,Reason}, State}
             end;
@@ -233,7 +233,7 @@ pbify_rpbvc(Vc) ->
 make_object_response(O, VClock, Head, State) ->
     case erlify_rpbvc(VClock) == riak_object:vclock(O) of
         true ->
-            {reply, #rpbgetresp{unchanged = true}, State};
+            {reply, #'RpbGetResp'{unchanged = true}, State};
         _ ->
             Contents = riak_object:get_contents(O),
             PbContent = case Head of
@@ -246,7 +246,7 @@ make_object_response(O, VClock, Head, State) ->
                 _ ->
                     riak_pb_kv_codec:encode_contents(Contents)
             end,
-            {reply, #rpbgetresp{content = PbContent,
+            {reply, #'RpbGetResp'{content = PbContent,
                     vclock = pbify_rpbvc(riak_object:vclock(O))}, State}
     end.
 
