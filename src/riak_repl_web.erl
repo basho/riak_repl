@@ -23,7 +23,17 @@
 -export([dispatch_table/0]).
 
 dispatch_table() ->
+    Props = props(),
     [
-     {["riak-repl", "stats"],  riak_repl_wm_stats, []}
+     {["riak-repl", "stats"],  riak_repl_wm_stats, []},
+
+     {["rtq", bucket_type, bucket, key],
+      riak_repl_wm_rtenqueue, Props},
+
+     {["rtq", bucket, key],
+      riak_repl_wm_rtenqueue, Props}
      ].
+
+props() ->
+    [{riak, local}, {bucket_type, <<"default">>}].
 
