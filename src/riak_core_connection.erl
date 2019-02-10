@@ -33,7 +33,7 @@
 %% <li>after which we call ?MODULE:connect/6 and exit.</li>
 
 -module(riak_core_connection).
--behavior(gen_fsm).
+-behavior(gen_fsm_compat).
 
 -include("riak_core_connection.hrl").
 
@@ -50,7 +50,7 @@
 -export([connect/2,
          sync_connect/2]).
 -export([start_link/2, start_link/7, start/2, start/7]).
-%% gen_fsm
+%% gen_fsm_compat
 -export([init/1]).
 -export([
     wait_for_capabilities/3, wait_for_capabilities/2,
@@ -157,9 +157,9 @@ start(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs) ->
     start_maybe_link(Ip, Port, Protocol, ProtoVers, TcpOptions, CallbackMod, CallbackArgs, start).
 
 start_maybe_link(Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs, StartFunc) ->
-    gen_fsm:StartFunc(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}, []).
+    gen_fsm_compat:StartFunc(?MODULE, {Ip, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}, []).
 
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 
 init({IP, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}) ->
     case gen_tcp:connect(IP, Port, ?CONNECT_OPTIONS, ?CONNECTION_SETUP_TIMEOUT) of

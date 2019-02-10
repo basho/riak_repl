@@ -106,7 +106,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
               true ->
                   case Strategy of
                       keylist ->
-                          gen_fsm:sync_send_all_state_event(FSW, status);
+                          gen_fsm_compat:sync_send_all_state_event(FSW, status);
                       aae ->
                           gen_server:call(FSW, status, ?LONG_TIMEOUT)
                   end;
@@ -153,7 +153,7 @@ handle_info({Proto, Socket, Data},
             RObj = riak_repl_util:decode_bin_obj(BinObj),
             riak_repl_util:do_repl_put(RObj);
         Other ->
-            gen_fsm:send_event(State#state.fullsync_worker, Other)
+            gen_fsm_compat:send_event(State#state.fullsync_worker, Other)
     end,
     {noreply, State};
 handle_info(init_ack, State=#state{socket=Socket,
@@ -192,7 +192,7 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir, strategy=Strate
         true ->
             case Strategy of
                 keylist ->
-                    gen_fsm:sync_send_all_state_event(FSW, stop);
+                    gen_fsm_compat:sync_send_all_state_event(FSW, stop);
                 aae ->
                     gen_server:call(FSW, stop, ?LONG_TIMEOUT)
             end;

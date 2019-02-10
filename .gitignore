@@ -12,3 +12,4 @@ tags
 dialyzer_unhandled_warnings
 dialyzer_warnings
 .rebar/
+_build/
