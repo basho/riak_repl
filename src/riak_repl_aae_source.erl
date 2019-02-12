@@ -525,7 +525,7 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
 
 maybe_create_bloom(#exchange{bloom=undefined}, State) ->
     EstimatedNrKeys = State#state.estimated_nr_keys,
-    {ok, Bloom} = ebloom:new(max(10000, EstimatedNrKeys), 0.01, random:uniform(1000)),
+    {ok, Bloom} = ebloom:new(max(10000, EstimatedNrKeys), 0.01, rand:uniform(1000)),
     Bloom;
 maybe_create_bloom(#exchange{bloom=Bloom}, _State) ->
     Bloom.
@@ -619,7 +619,7 @@ send_missing(RObj, State=#state{client=Client, wire_ver=Ver, proto=Proto}) ->
 %% messages. But, something to keep in mind in the future.
 kv_local_get(Index, BKey, Timeout) ->
     Ref = make_ref(),
-    ReqId = erlang:phash2(erlang:now()),
+    ReqId = erlang:phash2({self(), os:timestamp()}), % only has to be unique per-pid
     Sender = {raw, Ref, self()},
     riak_kv_vnode:get({Index,node()}, BKey, ReqId, Sender),
     receive

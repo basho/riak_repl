@@ -838,7 +838,7 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
             %% default it to non-zero. Users can set it back to 0 if they are
             %% brave.
             DiffSize = State#state.diff_batch_size,
-            {ok, Bloom} = ebloom:new(NumKeys, 0.01, random:uniform(1000)),
+            {ok, Bloom} = ebloom:new(NumKeys, 0.01, rand:uniform(1000)),
             diff_bloom;
         false ->
             DiffSize = State#state.diff_batch_size div ?ACKS_IN_FLIGHT,

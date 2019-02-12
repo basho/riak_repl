@@ -875,7 +875,7 @@ sort_partitions(Ring) ->
     %% collisions later
     Partitions = lists:zip(RawPartitions,lists:seq(1,length(RawPartitions))),
     %% pick a random partition in the ring
-    R = crypto:rand_uniform(0, length(Partitions)),
+    R = rand:uniform(length(Partitions)),
     %% pretend that the ring starts at offset R
     {A, B} = lists:split(R, Partitions),
     OffsetPartitions = B ++ A,

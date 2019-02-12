@@ -727,9 +727,9 @@ elapsed_secs(Then) ->
 
 shuffle_partitions(Partitions, Seed) ->
     lager:info("Shuffling partition list using seed ~p", [Seed]),
-    _ = random:seed(Seed),
+    _ = rand:seed(Seed),
     [Partition || {Partition, _} <-
-        lists:keysort(2, [{Key, random:uniform()} || Key <- Partitions])].
+        lists:keysort(2, [{Key, rand:uniform()} || Key <- Partitions])].
 
 %% Parse the version into major, minor, micro digits, ignoring any release
 %% candidate suffix

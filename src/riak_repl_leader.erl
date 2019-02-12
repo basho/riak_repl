@@ -240,7 +240,7 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
                   true ->
                        0.0
                end,
-    Rand = random:uniform(),
+    Rand = rand:uniform(),
     case SendProb == 1.0 orelse Rand < SendProb of
         true ->
             %% S = definitely send, s = send in middle probability range
