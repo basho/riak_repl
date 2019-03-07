@@ -303,7 +303,7 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
                                                         hb_timeout_tref = HBTRef,
                                                         hb_timeout = HBTimeout,
                                                         remote = Remote}) ->
-    TimeSinceTimeout = timer:now_diff(now(), HBSent) div 1000,
+    TimeSinceTimeout = timer:now_diff(os:timestamp(), HBSent) div 1000,
 
     %% hb_timeout_tref is the authority of whether we should
     %% restart the conection on heartbeat timeout or not.
@@ -377,7 +377,7 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
 rebalance_delay_millis() ->
     MaxDelaySecs =
         app_helper:get_env(riak_repl, realtime_connection_rebalance_max_delay_secs, 5*60),
-    round(MaxDelaySecs * crypto:rand_uniform(0, 1000)).
+    round(MaxDelaySecs * rand:uniform(1000)).
 
 reconnect(State=#state{remote=Remote}, BetterAddrs) ->
     lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
@@ -435,7 +435,7 @@ recv(TcpBin, State = #state{remote = Name,
             %% reschedule next.
             {{value, HBSent}, HBSentQ2} = queue:out(HBSentQ),
             lager:debug("got heartbeat, hb_sent: ~w", [HBSent]),
-            HBRTT = timer:now_diff(now(), HBSent) div 1000,
+            HBRTT = timer:now_diff(os:timestamp(), HBSent) div 1000,
             _ = cancel_timer(HBTRef),
             State2 = State#state{hb_sent_q = HBSentQ2,
                                  hb_timeout_tref = undefined,
@@ -463,7 +463,7 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
 
     % Using now as need a unique reference for this heartbeat
     % to spot late heartbeat timeout messages
-    Now = now(),
+    Now = os:timestamp(),
 
     riak_repl2_rtsource_helper:send_heartbeat(HelperPid),
     TRef = erlang:send_after(timer:seconds(HBTimeout), self(), {heartbeat_timeout, Now}),

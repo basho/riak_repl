@@ -1,11 +1,11 @@
 -module(riak_core_service_conn).
--behavior(gen_fsm).
+-behavior(gen_fsm_compat).
 
 -include("riak_core_connection.hrl").
 
 % external api; generally used by ranch
 -export([start_link/4]).
-% gen_fsm
+% gen_fsm_compat
 -export([init/1]).
 -export([
     wait_for_hello/3, wait_for_hello/2,
@@ -43,7 +43,7 @@ init({Listener, Socket, Transport, InArgs}) ->
     ok = Transport:setopts(Socket, [{active, once}]),
     TransportMsgs = Transport:messages(),
     State = #state{transport = Transport, transport_msgs = TransportMsgs, socket = Socket, init_args = InArgs},
-    gen_fsm:enter_loop(?MODULE, [], wait_for_hello, State).
+    gen_fsm_compat:enter_loop(?MODULE, [], wait_for_hello, State).
 
 %% ===============
 %% wait_for_hello

@@ -23,11 +23,6 @@ init([]) ->
                 {worker_module, riak_repl_fullsync_worker},
                 {worker_args, []},
                 {size, MinPool}, {max_overflow, MaxPool}],
-    %% TODO: why are these not used? -cet
-    CMIP = app_helper:get_env(riak_repl, conn_address, "0.0.0.0"),
-    CMPort = app_helper:get_env(riak_repl, conn_port, 9900),
-    _CMAddr = {CMIP, CMPort},
-    
     Processes =
         [
           {riak_repl2_rtsink_pool, {poolboy, start_link, [PoolArgs]},
