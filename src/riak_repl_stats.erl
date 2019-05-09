@@ -344,8 +344,9 @@ is_rt_dirty() ->
 repl_stats_test_() ->
     error_logger:tty(false),
     {"stats test", setup, fun() ->
-                    folsom:start(),
                     meck:new(folsom_utils, [passthrough]),
+                    application:start(bear),
+                    ok = folsom:start(),
                     meck:new(riak_core_cluster_mgr, [passthrough]),
                     meck:new(riak_repl2_fscoordinator_sup, [passthrough]),
                     meck:expect(riak_core_cluster_mgr, get_leader, fun() ->
