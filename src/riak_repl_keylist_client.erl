@@ -8,14 +8,14 @@
 %% @see repl_keylist_server
 -module(riak_repl_keylist_client).
 
--behaviour(gen_fsm).
+-behaviour(gen_fsm_compat).
 
 -include("riak_repl.hrl").
 
 %% API
 -export([start_link/4]).
 
-%% gen_fsm
+%% gen_fsm_compat
 -export([init/1, 
          handle_event/3,
          handle_sync_event/4, 
@@ -50,7 +50,7 @@
     }).
 
 start_link(SiteName, Transport, Socket, WorkDir) ->
-    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir], []).
+    gen_fsm_compat:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir], []).
 
 init([SiteName, Transport, Socket, WorkDir]) ->
     AckFreq = app_helper:get_env(riak_repl,client_ack_frequency,
@@ -89,13 +89,13 @@ wait_for_fullsync(Command, State)
     Remaining = length(Partitions),
     lager:info("Full-sync with site ~p starting; ~p partitions.",
                           [State#state.sitename, Remaining]),
-    gen_fsm:send_event(self(), continue),
+    gen_fsm_compat:send_event(self(), continue),
     {next_state, request_partition, State#state{partitions=Partitions}};
 wait_for_fullsync({start_fullsync, Partitions}, State) ->
     Remaining = length(Partitions),
     lager:info("Full-sync with site ~p starting; ~p partitions.",
                           [State#state.sitename, Remaining]),
-    gen_fsm:send_event(self(), continue),
+    gen_fsm_compat:send_event(self(), continue),
     {next_state, request_partition, State#state{partitions=Partitions}};
 wait_for_fullsync(_Other, State) ->
     {next_state, wait_for_fullsync, State}.
@@ -156,7 +156,7 @@ request_partition({Ref, keylist_built, _Size}, State=#state{kl_ref = Ref}) ->
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
     case State#state.their_kl_ready of
         true ->
-            gen_fsm:send_event(self(), continue),
+            gen_fsm_compat:send_event(self(), continue),
             {next_state, send_keylist, State#state{stage_start=os:timestamp(),
                     kl_counter=State#state.kl_ack_freq}};
         _ ->
@@ -167,7 +167,7 @@ request_partition({kl_exchange, P}, #state{partition=P} = State) ->
     case State#state.our_kl_ready of
         true ->
             %% @plu client -> client: continue
-            gen_fsm:send_event(self(), continue),
+            gen_fsm_compat:send_event(self(), continue),
             %% @plu note over client: (send_keylist)
             {next_state, send_keylist, State#state{stage_start=os:timestamp(),
                     kl_counter=State#state.kl_ack_freq}};
@@ -185,7 +185,7 @@ request_partition({Ref, {error, Reason}}, #state{socket=Socket, kl_ref=Ref,
     case Skip of
         false ->
             _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
-            gen_fsm:send_event(self(), continue);
+            gen_fsm_compat:send_event(self(), continue);
         _ ->
             %% we've already decided to skip this partition, so do nothing
             ok
@@ -198,7 +198,7 @@ request_partition({skip_partition, Partition}, #state{partition=Partition,
     catch(riak_repl_fullsync_helper:stop(Pid)),
     case State#state.skipping of
         false ->
-            gen_fsm:send_event(self(), continue);
+            gen_fsm_compat:send_event(self(), continue);
         _ ->
             %% we've already decided to skip this partition, so do nothing
             ok
@@ -225,7 +225,7 @@ send_keylist(pause_fullsync,
     log_stop(pause_fullsync, State),
     {next_state, wait_for_fullsync, State};
 send_keylist(kl_ack, State) ->
-    gen_fsm:send_event(self(), continue),
+    gen_fsm_compat:send_event(self(), continue),
     {next_state, send_keylist,
         State#state{kl_counter=State#state.kl_ack_freq}};
 send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_counter=Count} = State) ->
@@ -245,7 +245,7 @@ send_keylist(continue, #state{kl_fh=FH0,transport=Transport,socket=Socket,kl_cou
                 true ->
                     _ = riak_repl_tcp_client:send(Transport, Socket, kl_wait);
                 _ ->
-                    gen_fsm:send_event(self(), continue)
+                    gen_fsm_compat:send_event(self(), continue)
             end,
             {next_state, send_keylist, State#state{kl_fh=FH,
                     kl_counter=Count-1}};
@@ -281,11 +281,11 @@ wait_ack(diff_done, State) ->
     lager:info("Full-sync with site ~p; full-sync for partition ~p complete (done in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.partition_start)]),
-    gen_fsm:send_event(self(), continue),
+    gen_fsm_compat:send_event(self(), continue),
     {next_state, request_partition, State}.
 
 
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.

@@ -88,21 +88,21 @@ init([SiteName]) ->
 %% these fullsync control messages are for 'inverse' mode only, and only work
 %% with the keylist strategy.
 handle_call(start_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, start_fullsync),
+    gen_fsm_compat:send_event(FSW, start_fullsync),
     {reply, ok, State};
 handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, cancel_fullsync),
+    gen_fsm_compat:send_event(FSW, cancel_fullsync),
     {reply, ok, State};
 handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, pause_fullsync),
+    gen_fsm_compat:send_event(FSW, pause_fullsync),
     {reply, ok, State};
 handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm:send_event(FSW, resume_fullsync),
+    gen_fsm_compat:send_event(FSW, resume_fullsync),
     {reply, ok, State};
 
 handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
     Res = case is_pid(FSW) of
-        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
+        true -> gen_fsm_compat:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
     Desc =
@@ -114,7 +114,7 @@ handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
         ] ++
         [
             {put_pool_size,
-                length(gen_fsm:sync_send_all_state_event(State#state.pool_pid,
+                length(gen_fsm_compat:sync_send_all_state_event(State#state.pool_pid,
                     get_all_workers, infinity))} || is_pid(State#state.pool_pid)
         ] ++
         case State#state.listener of
@@ -220,7 +220,7 @@ handle_info({Proto, Socket, Data},
         {peerinfo, TheirPI, Capability} ->
             handle_peerinfo(State, TheirPI, Capability);
         Other ->
-            gen_fsm:send_event(State#state.fullsync_worker, Other),
+            gen_fsm_compat:send_event(State#state.fullsync_worker, Other),
             {noreply, State}
     end,
     case State#state.keepalive_time of
@@ -258,7 +258,7 @@ terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW, work_dir=WorkDir})
     end,
     case is_pid(FSW) of
         true ->
-            gen_fsm:sync_send_all_state_event(FSW, stop);
+            gen_fsm_compat:sync_send_all_state_event(FSW, stop);
         false ->
             ok
     end,
@@ -561,8 +561,8 @@ get_all_listener_addrs(ReplConfig) ->
     NatListenAddrs = [R#nat_listener.listen_addr || R <- NatListeners],
     ListenAddrs++NatAddrs++NatListenAddrs.
 
--spec(rewrite_config_site_ips_pure/4 :: (repl_config(),ring(),repl_sitename(),ip_addr_str())
-                                        -> none|ring()).
+-spec rewrite_config_site_ips_pure(repl_config(),ring(),repl_sitename(),ip_addr_str())
+                                        -> none|ring().
 %% @doc Update replication configuration with corrected set of IP addrs for a RemoteSite.
 %%
 %% Given a "remote" server's replication configuration and our own ring configuration,
@@ -635,7 +635,7 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
             OurNewRing
     end.
 
--spec(update_site_ips/3 :: (repl_config(),repl_sitename(),ip_addr_str()) -> ok).
+-spec update_site_ips(repl_config(),repl_sitename(),ip_addr_str()) -> ok.
 %% @doc update the ring configuration to include new remote IP site addresses for SiteName
 %%
 %% This also ensures that we remove our own IP addrs from the list, just in case they
