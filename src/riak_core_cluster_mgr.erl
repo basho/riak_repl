@@ -758,7 +758,7 @@ connect_to_persisted_clusters(State) ->
     end.
 
 shuffle_with_seed(List, Seed={_,_,_}) ->
-    _ = rand:seed(Seed),
+    _ = rand:seed(exrop, Seed),
     [E || {E, _} <- lists:keysort(2, [{Elm, rand:uniform()} || Elm <- List])];
 shuffle_with_seed(List, Seed) ->
     <<_:10,S1:50,S2:50,S3:50>> = crypto:hash(sha, term_to_binary(Seed)),

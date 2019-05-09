@@ -106,10 +106,11 @@ single_node_test_() ->
             ?assertEqual({ok, [?REMOTE_CLUSTER_NAME]}, Knowners)
         end},
 
-        %% We should get "127.0.0.1",5002 every time 
+        %% We should get "127.0.0.1",5002 as first in the list every time
         %% since local is always nonode@nohost
         {"get ipaddres of cluster", fun() ->
-            Original = [{"127.0.0.1",5002}, {"127.0.0.1",5001}, {"127.0.0.1",5003}],
+            {ok, Original} = riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME),
+            ?assertEqual({"127.0.0.1",5002}, hd(Original)),
             ?assertEqual({ok,Original},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
             ?assertEqual({ok,Original},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME)),
             ?assertEqual({ok,Original},riak_core_cluster_mgr:get_ipaddrs_of_cluster(?REMOTE_CLUSTER_NAME))

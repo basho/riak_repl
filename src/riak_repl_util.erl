@@ -727,7 +727,7 @@ elapsed_secs(Then) ->
 
 shuffle_partitions(Partitions, Seed) ->
     lager:info("Shuffling partition list using seed ~p", [Seed]),
-    _ = rand:seed(Seed),
+    _ = rand:seed(exrop, Seed),
     [Partition || {Partition, _} <-
         lists:keysort(2, [{Key, rand:uniform()} || Key <- Partitions])].
 
