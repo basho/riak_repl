@@ -41,6 +41,32 @@
     {default, 1}
 ]}.
 
+%% @doc Limits the number of "soft_exist" that the fullsynce
+%% coordinator will handle before failing a partition from
+%% fullsync. The soft_retries is per-fullsync, not per-partition.
+%% Only affects nodes on the source cluster on which this parameter is
+%% defined via the configuration file
+{mapping, "mdc.max_fssource_soft_retries", "riak_repl.max_fssource_soft_retries", [
+    {datatype, integer},
+    {default, 100}
+]}.
+
+%% @doc Adds a retry wait time. To be used in conjunction with
+%% soft_retries. When a partition fails to fullsync with a soft_exit,
+%% it is added to a queue to be retried. The retry wait time is the
+%% minimum amount of time to elapse before a fullsync is re-attempted
+%% on that partition. An example of usage: If the remote partition's
+%% AAE tree is being re-built it can take many minutes, even
+%% hours. There is no point in rapidly re-trying the same partition
+%% `max_fssource_soft_retries' times in rapid
+%% succession. fssource_retry_wait * max_fssource_soft_retries is the
+%% maximum amount of time that can pass before fullsync discards a
+%% partition.
+{mapping, "mdc.fssource_retry_wait", "riak_repl.fssource_retry_wait", [
+    {datatype, {duration, s}},
+    {default, "60s"}
+]}.
+
 %% @doc Limits the number of fullsync workers allowed to run on each
 %% individual node in a sink cluster. This is a hard limit for all
 %% fullsync sources interacting with the sink cluster. Thus, multiple

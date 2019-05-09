@@ -125,13 +125,13 @@ handle_info({TransOk, Socket, Data}, wait_for_protocol_versions, State = #state{
             {stop, {error, invalid_protocol_response}, State}
     end;
 
-handle_info({TransError, Socket, Error}, StateName, State = #state{socket = Socket, transport_msgs = {_, _, TransError}}) ->
+handle_info({TransError, Socket, Error}, _StateName, State = #state{socket = Socket, transport_msgs = {_, _, TransError}}) ->
     lager:warning("Socket error: ~p", [Error]),
-    {stop, Error, StateName, State};
+    {stop, Error, State};
 
-handle_info({TransClosed, Socket}, StateName, State = #state{socket = Socket, transport_msgs = {_, TransClosed, _}}) ->
+handle_info({TransClosed, Socket}, _StateName, State = #state{socket = Socket, transport_msgs = {_, TransClosed, _}}) ->
     lager:debug("Socket closed"),
-    {stop, normal, StateName, State}.
+    {stop, normal, State}.
 
 %% ===============
 %% termiante

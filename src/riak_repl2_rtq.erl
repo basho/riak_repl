@@ -13,7 +13,7 @@
 %% with the sequence number.  If multiple deliveries have taken
 %% place an ack of the highest seq number acknowledge all previous.
 %%
-%% The queue is currently stored in a private ETS table.  Once
+%% The queue is currently stored in a protected ETS table.  Once
 %% all consumers are done with an item it is removed from the table.
 -module(riak_repl2_rtq).
 
@@ -53,7 +53,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {qtab = ets:new(?MODULE, [private, ordered_set]), % ETS table
+-record(state, {qtab = ets:new(?MODULE, [protected, ordered_set]), % ETS table
                 qseq = 0,  % Last sequence number handed out
                 max_bytes = undefined, % maximum ETS table memory usage in bytes
 
@@ -773,3 +773,4 @@ minseq(QTab, QSeq) ->
 summarize_object(Obj) ->
   ObjFmt = riak_core_capability:get({riak_kv, object_format}, v0),
   {riak_object:key(Obj), riak_object:approximate_size(ObjFmt, Obj)}.
+
