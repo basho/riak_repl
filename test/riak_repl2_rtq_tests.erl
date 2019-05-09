@@ -12,7 +12,7 @@ rtq_trim_test() ->
     try
         gen_server:call(Pid, {register, rtq_test}),
         %% insert over 20mb in the queue
-        MyBin = crypto:rand_bytes(1024*1024),
+        MyBin = crypto:strong_rand_bytes(1024*1024),
         [gen_server:cast(Pid, {push, 1, MyBin}) || _ <- lists:seq(0, 20)],
 
         %% we get all 10 bytes back, because in TEST mode the RTQ disregards
@@ -59,7 +59,7 @@ status_test_() ->
     fun(_QPid) -> [
 
         {"queue size has percentage, and is correct", fun() ->
-            MyBin = crypto:rand_bytes(1024 * 1024),
+            MyBin = crypto:strong_rand_bytes(1024 * 1024),
             [riak_repl2_rtq:push(1, MyBin) || _ <- lists:seq(1, 5)],
             Status = riak_repl2_rtq:status(),
             StatusMaxBytes = proplists:get_value(max_bytes, Status),
@@ -291,7 +291,7 @@ get_approximate_size(O) -> riak_object:approximate_size(object_format(), O).
 push_objects(Bucket, Keys) -> [push_object(Bucket, O) || O <- Keys].
 
 push_object(Bucket, Key) ->
-    RandomData = crypto:rand_bytes(1024 * 1024),
+    RandomData = crypto:strong_rand_bytes(1024 * 1024),
     Obj = riak_object:new(Bucket, Key, RandomData),
     riak_repl2_rtq:push(1, Obj),
     Obj.
