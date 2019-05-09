@@ -6,10 +6,10 @@
 %% basic schema test will check to make sure that all defaults from
 %% the schema make it into the generated app.config
 basic_schema_test() ->
-    %% The defaults are defined in ../priv/riak_repl.schema.
+    %% The defaults are defined in priv/riak_repl.schema.
     %% it is the file under test.
     Config = cuttlefish_unit:generate_templated_config(
-        ["../priv/riak_repl.schema"], [], context()),
+        ["priv/riak_repl.schema"], [], context()),
     io:format("~p~n", [Config]),
 
     cuttlefish_unit:assert_config(Config, "riak_repl.data_root", "./repl/root"),
@@ -47,10 +47,10 @@ override_schema_test() ->
             {["mdc", "max_fssource_soft_retries"], 196}
            ],
 
-    %% The defaults are defined in ../priv/riak_repl.schema.
+    %% The defaults are defined in priv/riak_repl.schema.
     %% it is the file under test.
     Config = cuttlefish_unit:generate_templated_config(
-        ["../priv/riak_repl.schema"], Conf, context()),
+        ["priv/riak_repl.schema"], Conf, context()),
 
     cuttlefish_unit:assert_config(Config, "riak_repl.data_root", "/some/repl/place"),
     cuttlefish_unit:assert_config(Config, "riak_core.cluster_mgr", {"4.3.2.1", 4321}),
