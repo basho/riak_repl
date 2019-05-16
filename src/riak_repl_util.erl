@@ -413,6 +413,7 @@ maybe_use_ssl() ->
                 get_my_common_name(app_helper:get_env(riak_repl, certfile,
                         undefined))}},
         {verify, verify_peer},
+        {server_name_indication, disable},
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
