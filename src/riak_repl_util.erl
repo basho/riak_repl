@@ -414,6 +414,7 @@ maybe_use_ssl() ->
                         undefined))}},
         {verify, verify_peer},
         {server_name_indication, disable},
+        {crl_check, true},
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
