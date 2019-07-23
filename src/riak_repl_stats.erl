@@ -36,6 +36,9 @@
          register_stats/0,
          get_stats/0,
          produce_stats/0,
+         get_stats_status/0,
+         get_stats_info/0,
+         get_stats_values/0,
          rt_source_errors/0,
          rt_sink_errors/0,
          clear_rt_dirty/0,
@@ -43,6 +46,7 @@
          remove_rt_dirty_file/0,
          is_rt_dirty/0]).
 
+-define(PFX, riak_stat:prefix()).
 -define(APP, riak_repl).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -51,13 +55,22 @@ stop() ->
     gen_server:cast(?MODULE, stop).
 
 register_stats() ->
-    _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
-    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
-    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
+  register_stats(stats()),
+%%    _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
+  riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
+  update(last_report, tstamp(), gauge).
 
-reregister_stat(Name, Type) ->
-    catch folsom_metrics:delete_metric({?APP, Name}),
-    register_stat(Name, Type).
+register_stats(Stats) ->
+  riak_stat:register(?APP, Stats).
+
+%%register_stats() ->
+%%    _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
+%%    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
+%%    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, tstamp(), gauge).
+
+%%reregister_stat(Name, Type) ->
+%%    catch folsom_metrics:delete_metric({?APP, Name}),
+%%    register_stat(Name, Type).
 
 client_bytes_sent(Bytes) ->
     increment_counter(client_bytes_sent, Bytes).
@@ -147,6 +160,8 @@ rt_dirty() ->
         false -> ok
     end.
 
+update(Name, IncrBy, Type) ->
+  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
 
 get_stats() ->
     case erlang:whereis(riak_repl_stats) of
@@ -157,8 +172,25 @@ get_stats() ->
     end.
 
 produce_stats() ->
-    lists:flatten([backwards_compat(Stat, Type) ||
-        {Stat, Type} <- stats()]).
+  [riak_stat:get_stats_values(Stat) || Stat <- get_app_stats()].
+%%  [print_stats(find_entries(stat_name(Stat), enabled), []) || {Stat, _Type} <- stats()].
+
+%%
+%%produce_stats() ->
+%%    lists:flatten([backwards_compat(Stat, Type) ||
+%%        {Stat, Type} <- stats()]).
+
+get_app_stats() ->
+  riak_stat:get_app_stats(?APP).
+
+get_stats_status() ->
+  riak_stat:get_stats_status(?APP).
+
+get_stats_info() ->
+  riak_stat:get_stats_info(?APP).
+
+get_stats_values() ->
+  riak_stat:get_stats_values(?APP).
 
 init([]) ->
     register_stats(),
@@ -166,7 +198,7 @@ init([]) ->
     case is_rt_dirty() of
         true ->
             lager:warning("RT marked as dirty upon startup"),
-            ok = folsom_metrics:notify_existing_metric({?APP, rt_dirty}, {inc, 1}, counter),
+            update(rt_dirty, 1, counter),
             % let the coordinator know about the dirty state when the node
             % comes back up
             lager:debug("Notifying coordinator of rt_dirty state"),
@@ -176,13 +208,13 @@ init([]) ->
     end,
     {ok, ok}.
 
-register_stat(Name, counter) ->
-    ok = folsom_metrics:new_counter({?APP, Name});
-register_stat(Name, history) ->
-    BwHistoryLen =  get_bw_history_len(),
-    ok = folsom_metrics:new_history({?APP, Name}, BwHistoryLen);
-register_stat(Name, gauge) ->
-    ok = folsom_metrics:new_gauge({?APP, Name}).
+%%register_stat(Name, counter) ->
+%%    ok = folsom_metrics:new_counter({?APP, Name});
+%%register_stat(Name, history) ->
+%%    BwHistoryLen =  get_bw_history_len(),
+%%    ok = folsom_metrics:new_history({?APP, Name}, BwHistoryLen);
+%%register_stat(Name, gauge) ->
+%%    ok = folsom_metrics:new_gauge({?APP, Name}).
 
 stats() ->
     [{server_bytes_sent, counter},
@@ -224,7 +256,9 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({increment_counter, Name, IncrBy}, State) ->
-    ok = folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
+  update(Name, IncrBy, counter),
+
+%%  ok = folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
     {noreply, State};
 handle_cast(stop, State) ->
     {stop, normal, State};
@@ -244,20 +278,23 @@ handle_info(report_bw, State) ->
     ServerTx = bytes_to_kbits_per_sec(ThisServerBytesSent, lookup_stat(last_server_bytes_sent), DeltaSecs),
     ServerRx = bytes_to_kbits_per_sec(ThisServerBytesRecv, lookup_stat(last_server_bytes_recv), DeltaSecs),
 
-    _ = [ok = folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, history)
+      _ = [update(Metric, Reading, histogram)
+%%    _ = [ok = folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, history)
      || {Metric, Reading} <- [{client_tx_kbps, ClientTx},
                               {client_rx_kbps, ClientRx},
                               {server_tx_kbps, ServerTx},
                               {server_rx_kbps, ServerRx}]],
 
-    _ = [ok = folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, gauge)
+      _ = [update(Metric, Reading, gauge)
+%%    _ = [ok = folsom_metrics:notify_existing_metric({?APP, Metric}, Reading, gauge)
      || {Metric, Reading} <- [{last_client_bytes_sent, ThisClientBytesSent},
                               {last_client_bytes_recv, ThisClientBytesRecv},
                               {last_server_bytes_sent, ThisServerBytesSent},
                               {last_server_bytes_recv, ThisServerBytesRecv}]],
 
     schedule_report_bw(),
-    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),
+    update(last_report, Now, gauge),
+%%    ok = folsom_metrics:notify_existing_metric({?APP, last_report}, Now, gauge),
     {noreply, State};
 handle_info(_Info, State) -> {noreply, State}.
 
@@ -275,7 +312,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    folsom_metrics:get_metric_value({?APP, Name}).
+    riak_stat:get_value(Name).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
@@ -283,19 +320,19 @@ now_diff(_, _) ->
     undefined.
 
 tstamp() ->
-    folsom_utils:now_epoch().
+    riak_stat:timestamp().
+%%
+%%get_bw_history_len() ->
+%%    app_helper:get_env(riak_repl, bw_history_len, 8).
 
-get_bw_history_len() ->
-    app_helper:get_env(riak_repl, bw_history_len, 8).
-
-backwards_compat(Name, history) ->
-    Stats = folsom_metrics:get_history_values({?APP, Name}, get_bw_history_len()),
-    Readings = [[Reading || {event, Reading} <- Events] || {_Moment, Events} <- Stats],
-    {Name, lists:flatten(Readings)};
-backwards_compat(_Name, gauge) ->
-    [];
-backwards_compat(Name,  _Type) ->
-    {Name, lookup_stat(Name)}.
+%%backwards_compat(Name, history) ->
+%%    Stats = folsom_metrics:get_history_values({?APP, Name}, get_bw_history_len()),
+%%    Readings = [[Reading || {event, Reading} <- Events] || {_Moment, Events} <- Stats],
+%%    {Name, lists:flatten(Readings)};
+%%backwards_compat(_Name, gauge) ->
+%%    [];
+%%backwards_compat(Name,  _Type) ->
+%%    {Name, lookup_stat(Name)}.
 
 rt_dirty_filename() ->
     %% or riak_repl/work_dir?
@@ -346,7 +383,7 @@ repl_stats_test_() ->
     {"stats test", setup, fun() ->
                     meck:new(folsom_utils, [passthrough]),
                     application:start(bear),
-                    ok = folsom:start(),
+                    ok = riak_stat:start(),
                     meck:new(riak_core_cluster_mgr, [passthrough]),
                     meck:new(riak_repl2_fscoordinator_sup, [passthrough]),
                     meck:expect(riak_core_cluster_mgr, get_leader, fun() ->
@@ -359,7 +396,7 @@ repl_stats_test_() ->
                     Pid
             end,
      fun(_Pid) ->
-             folsom:stop(),
+             riak_stat:stop(),
              riak_repl_stats:stop(),
              riak_core_stat_cache:stop(),
              meck:unload(folsom_utils),
@@ -375,7 +412,7 @@ repl_stats_test_() ->
 test_register_stats() ->
    error_logger:tty(false),
     register_stats(),
-    RegisteredReplStats = [Stat || {App, Stat} <- folsom_metrics:get_metrics(),
+    RegisteredReplStats = [Stat || {App, Stat} <- get_stats(),
                                    App == riak_repl],
     {Stats, _Types} = lists:unzip(stats()),
     ?assertEqual(lists:sort(Stats), lists:sort(RegisteredReplStats)).
@@ -459,13 +496,12 @@ for_n_minutes(0, _Time, _Bytes) ->
     ok;
 for_n_minutes(Minutes, Time0, Bytes) ->
     Time = tick(Time0, 60),
-    [folsom_metrics:notify_existing_metric({?APP, Name},
-                                           {inc, Bytes},
-                                           counter) || Name <-
-                                                           [client_bytes_sent,
-                                                            client_bytes_recv,
-                                                            server_bytes_sent,
-                                                            server_bytes_recv]],
+  [update(Name, Bytes,
+                      counter) || Name <-
+                        [client_bytes_sent,
+                          client_bytes_recv,
+                          server_bytes_sent,
+                          server_bytes_recv]],
 
     riak_repl_stats:handle_info(report_bw, ok),
     for_n_minutes(Minutes - 1, Time, Bytes).
