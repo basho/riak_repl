@@ -46,7 +46,7 @@
          remove_rt_dirty_file/0,
          is_rt_dirty/0]).
 
--define(PFX, riak_stat:prefix()).
+-define(PFX, riak_core_stat_admin:prefix()).
 -define(APP, riak_repl).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -61,7 +61,7 @@ register_stats() ->
   update(last_report, tstamp(), gauge).
 
 register_stats(Stats) ->
-  riak_stat:register(?APP, Stats).
+  riak_core_stat_admin:register(?APP, Stats).
 
 %%register_stats() ->
 %%    _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
@@ -161,7 +161,7 @@ rt_dirty() ->
     end.
 
 update(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
+  riak_core_stat_admin:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
 
 get_stats() ->
     case erlang:whereis(riak_repl_stats) of
@@ -172,7 +172,7 @@ get_stats() ->
     end.
 
 produce_stats() ->
-  [riak_stat:get_stats_values(Stat) || Stat <- get_app_stats()].
+  [riak_core_stat_admin:get_stats_values(Stat) || Stat <- get_app_stats()].
 %%  [print_stats(find_entries(stat_name(Stat), enabled), []) || {Stat, _Type} <- stats()].
 
 %%
@@ -181,16 +181,13 @@ produce_stats() ->
 %%        {Stat, Type} <- stats()]).
 
 get_app_stats() ->
-  riak_stat:get_app_stats(?APP).
-
-get_stats_status() ->
-  riak_stat:get_stats_status(?APP).
+  riak_core_stat_admin:get_app_stats(?APP).
 
 get_stats_info() ->
-  riak_stat:get_stats_info(?APP).
+  riak_core_stat_admin:get_stats_info(?APP).
 
 get_stats_values() ->
-  riak_stat:get_stats_values(?APP).
+  riak_core_stat_admin:get_stats_values(?APP).
 
 init([]) ->
     register_stats(),
@@ -320,7 +317,7 @@ now_diff(_, _) ->
     undefined.
 
 tstamp() ->
-    riak_stat:timestamp().
+  riak_core_stat_exometer:timestamp().
 %%
 %%get_bw_history_len() ->
 %%    app_helper:get_env(riak_repl, bw_history_len, 8).
@@ -363,6 +360,7 @@ remove_rt_dirty_file() ->
 clear_rt_dirty() ->
     remove_rt_dirty_file(),
     %% folsom_metrics:notify_existing_metric doesn't support clear yet
+    %% TODO: move this into exometer_core?
     folsom_metrics_counter:clear({riak_repl, rt_dirty}).
 
 is_rt_dirty() ->
@@ -383,7 +381,7 @@ repl_stats_test_() ->
     {"stats test", setup, fun() ->
                     meck:new(folsom_utils, [passthrough]),
                     application:start(bear),
-                    ok = riak_stat:start(),
+                    ok = riak_core_stat_exometer:start(),
                     meck:new(riak_core_cluster_mgr, [passthrough]),
                     meck:new(riak_repl2_fscoordinator_sup, [passthrough]),
                     meck:expect(riak_core_cluster_mgr, get_leader, fun() ->
@@ -396,7 +394,7 @@ repl_stats_test_() ->
                     Pid
             end,
      fun(_Pid) ->
-             riak_stat:stop(),
+             riak_core_stat_exometer:stop(),
              riak_repl_stats:stop(),
              riak_core_stat_cache:stop(),
              meck:unload(folsom_utils),

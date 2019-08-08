@@ -10,7 +10,6 @@
                   crypto,
                   ssl,
                   ebloom,
-                  riak_stat,
                   riak_core,
                   riak_kv,
                   ranch]},

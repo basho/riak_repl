@@ -48,8 +48,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    _ = [(catch folsom_metrics:delete_metric(Stat)) ||
-            Stat <- folsom_metrics:get_metrics(),
+    _ = [(catch riak_core_stat_admin:unregister(Stat)) ||
+            Stat <- riak_core_stat_admin:get_stats(),
             is_tuple(Stat), element(1, Stat) == ?APP],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
@@ -252,7 +252,7 @@ do_update(Stat, IPAddr, Protocol) ->
 
 %% dynamically update (and create if needed) a stat
 create_or_update(Name, UpdateVal, Type) ->
-    case (catch folsom_metrics:notify_existing_metric(Name, UpdateVal, Type)) of
+    case (catch riak_core_stat_admin:update(Name, UpdateVal, Type)) of
         ok ->
             ok;
         {'EXIT', _} ->
@@ -260,19 +260,17 @@ create_or_update(Name, UpdateVal, Type) ->
             create_or_update(Name, UpdateVal, Type)
     end.
 
-register_stat(Name, spiral) ->
-    ok = folsom_metrics:new_spiral(Name);
-register_stat(Name, counter) ->
-    ok = folsom_metrics:new_counter(Name).
+register_stat(Name, Type) ->
+    ok = riak_core_stat_admin:register(?APP, [{Name, Type}]).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
-    Stats = [Stat || Stat <- folsom_metrics:get_metrics(), is_tuple(Stat), element(1, Stat) == ?APP],
+    Stats = [Stat || Stat <- riak_stat_admin:get_stats(), is_tuple(Stat), element(1, Stat) == ?APP],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
-    folsom_metrics:get_metric_value(Name).
+    riak_core_stat_admin:get_stat_value(Name).
