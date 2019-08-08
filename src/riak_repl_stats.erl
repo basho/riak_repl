@@ -36,7 +36,6 @@
          register_stats/0,
          get_stats/0,
          produce_stats/0,
-         get_stats_status/0,
          get_stats_info/0,
          get_stats_values/0,
          rt_source_errors/0,
