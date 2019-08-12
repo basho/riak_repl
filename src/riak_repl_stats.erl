@@ -163,7 +163,9 @@ update(Name, IncrBy, Type) ->
   riak_core_stat_admin:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
 
 get_stats() ->
-    case erlang:whereis(riak_repl_stats) of
+  io:format("hitting get_stats()~n"),
+
+  case erlang:whereis(riak_repl_stats) of
         Pid when is_pid(Pid) ->
             {ok, Stats, _TS} = riak_core_stat_cache:get_stats(?APP),
             Stats;
@@ -171,6 +173,7 @@ get_stats() ->
     end.
 
 produce_stats() ->
+  io:format("hitting produce_stats()~n"),
   [riak_core_stat_admin:get_stats_values(Stat) || Stat <- get_app_stats()].
 %%  [print_stats(find_entries(stat_name(Stat), enabled), []) || {Stat, _Type} <- stats()].
 
@@ -180,6 +183,8 @@ produce_stats() ->
 %%        {Stat, Type} <- stats()]).
 
 get_app_stats() ->
+  io:format("hitting get_app_stats()~n"),
+
   riak_core_stat_admin:get_app_stats(?APP).
 
 get_stats_info() ->
@@ -213,34 +218,50 @@ init([]) ->
 %%    ok = folsom_metrics:new_gauge({?APP, Name}).
 
 stats() ->
-    [{server_bytes_sent, counter},
-     {server_bytes_recv, counter},
-     {server_connects, counter},
-     {server_connect_errors, counter},
-     {server_fullsyncs, counter},
-     {client_bytes_sent, counter},
-     {client_bytes_recv, counter},
-     {client_connects, counter},
-     {client_connect_errors, counter},
-     {client_redirect, counter},
-     {objects_dropped_no_clients, counter},
-     {objects_dropped_no_leader, counter},
-     {objects_sent, counter},
-     {objects_forwarded, counter},
-     {elections_elected, counter},
-     {elections_leader_changed, counter},
-     {client_rx_kbps, history},
-     {client_tx_kbps, history},
-     {server_rx_kbps, history},
-     {server_tx_kbps, history},
-     {last_report, gauge},
-     {last_client_bytes_sent, gauge},
-     {last_client_bytes_recv, gauge},
-     {last_server_bytes_sent, gauge},
-     {last_server_bytes_recv, gauge},
-     {rt_source_errors, counter},
-     {rt_sink_errors, counter},
-     {rt_dirty, counter}].
+    [{server_bytes_sent,          counter,  [], [{value, server_bytes_sent}]},
+     {server_bytes_recv,          counter,   [], [{value, server_bytes_recv}]},
+     {server_connects,            counter,   [], [{value, server_connects}]},
+     {server_connect_errors,      counter,   [], [{value, server_connect_errors}]},
+     {server_fullsyncs,           counter,   [], [{value, server_fullsyncs}]},
+     {client_bytes_sent,          counter,   [], [{value, client_bytes_sent}]},
+     {client_bytes_recv,          counter,   [], [{value, client_bytes_recv}]},
+     {client_connects,            counter,   [], [{value, client_connects}]},
+     {client_connect_errors,      counter,   [], [{value, client_connect_errors}]},
+     {client_redirect,            counter,   [], [{value, client_redirect}]},
+     {objects_dropped_no_clients, counter,   [], [{value, objects_dropped_no_clients}]},
+     {objects_dropped_no_leader,  counter,   [], [{value, objects_dropped_no_leader}]},
+     {objects_sent,               counter,   [], [{value, objects_sent}]},
+     {objects_forwarded,          counter,   [], [{value, objects_forwarded}]},
+     {elections_elected,          counter,   [], [{value, elections_elected}]},
+     {elections_leader_changed,   counter,   [], [{value, elections_leader_changed}]},
+     {client_rx_kbps,             histogram, [], [{mean  , client_rx_kbps_mean},
+                                                  {median, client_rx_kbps_median},
+                                                  {95    , client_rx_kbps_95},
+                                                  {99    , client_rx_kbps_99},
+                                                  {max   , client_rx_kbps_100}]},
+     {client_tx_kbps,             histogram, [], [{mean  , client_tx_kbps_mean},
+                                                  {median, client_tx_kbps_median},
+                                                  {95    , client_tx_kbps_95},
+                                                  {99    , client_tx_kbps_99},
+                                                  {max   , client_tx_kbps_100}]},
+     {server_rx_kbps,             histogram, [], [{mean  , server_rx_kbps_mean},
+                                                  {median, server_rx_kbps_median},
+                                                  {95    , server_rx_kbps_95},
+                                                  {99    , server_rx_kbps_99},
+                                                  {max   , server_rx_kbps_100}]},
+     {server_tx_kbps,             histogram, [], [{mean  , server_tx_kbps_mean},
+                                                  {median, server_tx_kbps_median},
+                                                  {95    , server_tx_kbps_95},
+                                                  {99    , server_tx_kbps_99},
+                                                  {max   , server_tx_kbps_100}]},
+     {last_report,                gauge},
+     {last_client_bytes_sent,     gauge},
+     {last_client_bytes_recv,     gauge},
+     {last_server_bytes_sent,     gauge},
+     {last_server_bytes_recv,     gauge},
+     {rt_source_errors,           counter,   [], [{value, rt_source_errors}]},
+     {rt_sink_errors,             counter,   [], [{value, rt_sink_errors}]},
+     {rt_dirty, counter,                     [], [{value, rt_dirty}]}].
 
 increment_counter(Name) ->
     increment_counter(Name, 1).
