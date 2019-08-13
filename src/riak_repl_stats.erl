@@ -36,8 +36,9 @@
          register_stats/0,
          get_stats/0,
          produce_stats/0,
-         get_stats_info/0,
+         get_info/0,
          get_stats_values/0,
+         aggregate/2,
          rt_source_errors/0,
          rt_sink_errors/0,
          clear_rt_dirty/0,
@@ -163,8 +164,6 @@ update(Name, IncrBy, Type) ->
   riak_core_stat_admin:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
 
 get_stats() ->
-  io:format("hitting get_stats()~n"),
-
   case erlang:whereis(riak_repl_stats) of
         Pid when is_pid(Pid) ->
             {ok, Stats, _TS} = riak_core_stat_cache:get_stats(?APP),
@@ -173,8 +172,7 @@ get_stats() ->
     end.
 
 produce_stats() ->
-  io:format("hitting produce_stats()~n"),
-  [riak_core_stat_admin:get_stats_values(Stat) || Stat <- get_app_stats()].
+  [get_stats_values(Stat) || Stat <- get_app_stats()].
 %%  [print_stats(find_entries(stat_name(Stat), enabled), []) || {Stat, _Type} <- stats()].
 
 %%
@@ -183,15 +181,22 @@ produce_stats() ->
 %%        {Stat, Type} <- stats()]).
 
 get_app_stats() ->
-  io:format("hitting get_app_stats()~n"),
+  riak_core_stat_admin:get_stats(?APP).
 
-  riak_core_stat_admin:get_app_stats(?APP).
-
-get_stats_info() ->
-  riak_core_stat_admin:get_stats_info(?APP).
+get_info() ->
+  riak_core_stat_admin:get_info(?APP).
 
 get_stats_values() ->
-  riak_core_stat_admin:get_stats_values(?APP).
+  get_stats_values(?APP).
+get_stats_values(Arg) ->
+  riak_core_stat_admin:get_value(Arg).
+
+%%%----------------------------------------------------------------%%%
+
+aggregate(Stats, DPS) ->
+  riak_core_stat_admin:aggregate(Stats, DPS).
+
+%%%----------------------------------------------------------------%%%
 
 init([]) ->
     register_stats(),
@@ -329,7 +334,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_stat:get_value(Name).
+    riak_core_stat_admin:get_value(Name).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
