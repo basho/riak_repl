@@ -48,9 +48,9 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    _ = [(catch riak_core_stat_admin:unregister(Stat)) ||
-            Stat <- riak_core_stat_admin:get_stats(),
-            is_tuple(Stat), element(1, Stat) == ?APP],
+%%    _ = [(catch riak_core_stat_admin:unregister(Stat)) ||
+%%            Stat <- catch riak_core_stat_admin:get_stats(?APP),
+%%            is_tuple(Stat)],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
@@ -267,10 +267,13 @@ register_stat(Name, Type) ->
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
-    Stats = [Stat || Stat <- riak_stat_admin:get_stats(), is_tuple(Stat), element(1, Stat) == ?APP],
+    io:format("proiduce_stats ~n"),
+    Stats = [Stat || Stat <- riak_core_stat_admin:get_stats(?APP)
+%%      ,is_tuple(Stat), element(1, Stat) == ?APP
+    ],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
-    riak_core_stat_admin:get_stat_value(Name).
+    riak_core_stat_admin:get_value(Name).
