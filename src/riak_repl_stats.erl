@@ -46,7 +46,7 @@
          remove_rt_dirty_file/0,
          is_rt_dirty/0]).
 
--define(PFX, riak_core_stat_admin:prefix()).
+-define(PFX, riak_stat:prefix()).
 -define(APP, riak_repl).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -61,7 +61,7 @@ register_stats() ->
   update(last_report, tstamp(), gauge).
 
 register_stats(Stats) ->
-  riak_core_stat_admin:register(?APP, Stats).
+  riak_stat:register(?APP, Stats).
 
 %%register_stats() ->
 %%    _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
@@ -161,7 +161,7 @@ rt_dirty() ->
     end.
 
 update(Name, IncrBy, Type) ->
-  riak_core_stat_admin:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
+  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
 
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
@@ -181,20 +181,20 @@ produce_stats() ->
 %%        {Stat, Type} <- stats()]).
 
 get_app_stats() ->
-  riak_core_stat_admin:get_stats(?APP).
+  riak_stat:get_stats(?APP).
 
 get_info() ->
-  riak_core_stat_admin:get_info(?APP).
+  riak_stat:get_info(?APP).
 
 get_stats_values() ->
   get_stats_values(?APP).
 get_stats_values(Arg) ->
-  riak_core_stat_admin:get_value(Arg).
+  riak_stat:get_value(Arg).
 
 %%%----------------------------------------------------------------%%%
 
 aggregate(Stats, DPS) ->
-  riak_core_stat_admin:aggregate(Stats, DPS).
+  riak_stat:aggregate(Stats, DPS).
 
 %%%----------------------------------------------------------------%%%
 
@@ -334,7 +334,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_core_stat_admin:get_value(Name).
+    riak_stat:get_value(Name).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
@@ -342,7 +342,7 @@ now_diff(_, _) ->
     undefined.
 
 tstamp() ->
-  riak_core_stat_exometer:timestamp().
+  riak_stat_exom:timestamp().
 %%
 %%get_bw_history_len() ->
 %%    app_helper:get_env(riak_repl, bw_history_len, 8).
@@ -406,7 +406,7 @@ repl_stats_test_() ->
     {"stats test", setup, fun() ->
                     meck:new(folsom_utils, [passthrough]),
                     application:start(bear),
-                    ok = riak_core_stat_exometer:start(),
+                    ok = exometer:start(),
                     meck:new(riak_core_cluster_mgr, [passthrough]),
                     meck:new(riak_repl2_fscoordinator_sup, [passthrough]),
                     meck:expect(riak_core_cluster_mgr, get_leader, fun() ->
@@ -419,7 +419,7 @@ repl_stats_test_() ->
                     Pid
             end,
      fun(_Pid) ->
-             riak_core_stat_exometer:stop(),
+             exometer:stop(),
              riak_repl_stats:stop(),
              riak_core_stat_cache:stop(),
              meck:unload(folsom_utils),

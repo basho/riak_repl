@@ -252,7 +252,7 @@ do_update(Stat, IPAddr, Protocol) ->
 
 %% dynamically update (and create if needed) a stat
 create_or_update(Name, UpdateVal, Type) ->
-    case (catch riak_core_stat_admin:update(Name, UpdateVal, Type)) of
+    case (catch riak_stat:update(Name, UpdateVal, Type)) of
         ok ->
             ok;
         {'EXIT', _} ->
@@ -261,14 +261,14 @@ create_or_update(Name, UpdateVal, Type) ->
     end.
 
 register_stat(Name, Type) ->
-    ok = riak_core_stat_admin:register(?APP, [{Name, Type}]).
+    ok = riak_stat:register(?APP, [{Name, Type}]).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
     io:format("proiduce_stats ~n"),
-    Stats = [Stat || Stat <- riak_core_stat_admin:get_stats(?APP)
+    Stats = [Stat || Stat <- riak_stat:get_stats(?APP)
 %%      ,is_tuple(Stat), element(1, Stat) == ?APP
     ],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
@@ -276,4 +276,4 @@ produce_stats() ->
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
-    riak_core_stat_admin:get_value(Name).
+    riak_stat_exom:get_values(Name).
