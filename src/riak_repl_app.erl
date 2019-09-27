@@ -106,7 +106,6 @@ start(_Type, _StartArgs) ->
             riak_core:register(riak_repl, [{stat_mod, riak_repl_stats}]),
             ok = riak_core_ring_events:add_guarded_handler(
                     riak_repl_ring_handler, []),
-            lager:info("riak_repl_stats started~n"),
             %% Add routes to webmachine
             _ = [ webmachine_router:add_route(R)
               || R <- lists:reverse(riak_repl_web:dispatch_table()) ],

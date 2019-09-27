@@ -57,7 +57,7 @@ stop() ->
 register_stats() ->
   register_stats(stats()),
 %%    _ = [reregister_stat(Name, Type) || {Name, Type} <- stats()],
-  riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
+%%  riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}),
   update(last_report, tstamp(), gauge).
 
 register_stats(Stats) ->
@@ -166,13 +166,14 @@ update(Name, IncrBy, Type) ->
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
         Pid when is_pid(Pid) ->
-            {ok, Stats, _TS} = riak_core_stat_cache:get_stats(?APP),
-            Stats;
+            Stats = produce_stats(),
+            get_stats_values(Stats);
         _ -> []
     end.
 
 produce_stats() ->
-  [get_stats_values(Stat) || Stat <- get_app_stats()].
+    {Stats,_} = get_app_stats(), Stats.
+%%        [get_stats_values(Stat) || {Stat,_,_} <- Stats].
 %%  [print_stats(find_entries(stat_name(Stat), enabled), []) || {Stat, _Type} <- stats()].
 
 %%
@@ -181,7 +182,7 @@ produce_stats() ->
 %%        {Stat, Type} <- stats()]).
 
 get_app_stats() ->
-  riak_stat:get_stats(?APP).
+  riak_stat:get_stats([[?PFX,?APP|'_']]).
 
 get_info() ->
   riak_stat:get_info(?APP).
@@ -334,7 +335,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_stat:get_value(Name).
+    riak_stat_exom:get_value([?PFX,?APP,Name]).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
