@@ -60,8 +60,8 @@
 -endif.
 
 -record(stat_cache, {
-    worker :: {pid(), reference()},
-    refresh_timer :: reference(),
+    worker :: {pid(), reference()} | undefined,
+    refresh_timer :: reference() | undefined,
     refresh_interval = app_helper:get_env(riak_repl, fullsync_stat_refresh_interval, ?DEFAULT_STAT_REFRESH_INTERVAL) :: pos_integer(),
     last_refresh = riak_core_util:moment() :: 'undefined' | pos_integer(),
     stats = [] :: [tuple()]

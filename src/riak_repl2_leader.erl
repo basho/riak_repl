@@ -43,7 +43,7 @@
                 candidates=[] :: [node()],      % candidate nodes for leader
                 workers=[node()] :: [node()],   % workers
                 check_tref :: timer:tref(),     % check mailbox timer
-                elected_mbox_size :: integer()  % elected leader box size
+                elected_mbox_size :: undefined | non_neg_integer()  % elected leader box size
                }).
      
 %%%===================================================================

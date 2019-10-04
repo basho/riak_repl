@@ -21,9 +21,9 @@
           clustername,
           socket,
           transport,
-          tree_pid      :: pid(),  %% pid of the AAE tree
+          tree_pid      :: pid() | undefined,  %% pid of the AAE tree
           partition,
-          sender        :: pid(),
+          sender        :: pid() | undefined,
           owner         :: pid()   %% our fssource owner
          }).
 

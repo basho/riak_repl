@@ -44,7 +44,7 @@ handle_call({get, B, K, Transport, Socket, Pool, Ver}, From, State) ->
     gen_server:reply(From, ok),
     %% do the get and send it to the client
     {ok, Client} = riak:local_client(),
-    case Client:get(B, K, 1, ?REPL_FSM_TIMEOUT) of
+    case riak_client:get(B, K, 1, ?REPL_FSM_TIMEOUT, Client) of
         {ok, RObj} ->
             %% we don't actually have the vclock to compare, so just send the
             %% key and let the other side sort things out.

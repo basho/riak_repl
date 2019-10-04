@@ -149,6 +149,7 @@
 -type msg() :: term().
 -type reason() :: atom().
 -type extra() :: term().
+-type server() :: #server{}.
 
 -callback init(list()) -> {ok, state()} | {ignore, term()} | {stop, term()}.
 -callback elected(state(), election(), node()) -> {ok, term(), state()}.
@@ -933,7 +934,7 @@ loop(#server{parent = Parent,
               _Msg when Debug == [] ->
                 handle_msg(Msg, Server, Role, E);
               _Msg ->
-                Debug1 = sys:handle_debug(Debug, {?MODULE, print_event},
+                Debug1 = sys:handle_debug(Debug, fun print_event/3,
                                           E#election.name, {in, Msg}),
                 handle_msg(Msg, Server#server{debug = Debug1}, Role, E)
             end
@@ -1112,7 +1113,7 @@ reply({To, Tag}, Reply, #server{state = State} = Server, Role, E) ->
 handle_debug(#server{debug = []} = Server, _Role, _E, _Event) ->
     Server;
 handle_debug(#server{debug = Debug} = Server, _Role, E, Event) ->
-    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event},
+    Debug1 = sys:handle_debug(Debug, fun print_event/3,
                               E#election.name, Event),
     Server#server{debug = Debug1}.
 
@@ -1120,6 +1121,7 @@ handle_debug(#server{debug = Debug} = Server, _Role, E, Event) ->
 %%% Terminate the server.
 %%% ---------------------------------------------------
 
+-spec terminate(reason(), msg(), server(), any(), election()) -> no_return().
 terminate(Reason, Msg, #server{mod = Mod,
                                state = State,
                                debug = Debug} = _Server, _Role,

@@ -43,19 +43,25 @@
         ]).
 
 -record(ctx, {
-              client,     %% :: riak_client()             %% the store client
-              riak,       %% local | {node(), atom()}     %% params for riak client
-              bucket_type :: binary(),                    %% bucket type (from uri)
-              bucket      :: binary(),                    %% Bucket name (from uri)
-              key         :: binary(),                    %% Key (from uri)
-              r,            %% integer() - r-value for reads
-              pr,           %% integer() - number of primary nodes required in preflist on read
-              basic_quorum, %% boolean() - whether to use basic_quorum
-              notfound_ok,  %% boolean() - whether to treat notfounds as successes
-              prefix,       %% string() - prefix for resource uris
-              doc,          %% {ok, riak_object()}|{error, term()} - the object found
-              timeout,      %% integer() - passed-in timeout value in ms
-              security    :: riak_core_security:context() %% security context
+              client                :: riak_client:riak_client() | undefined,
+                                                                    %% the store client
+              riak                  :: local | {node(), atom()},    %% params for riak client
+              bucket_type           :: binary(),                    %% bucket type (from uri)
+              bucket                :: binary() | undefined,        %% Bucket name (from uri)
+              key                   :: binary() | undefined,        %% Key (from uri)
+              r                     :: non_neg_integer() | undefined,
+                                                                    %% r-value for reads
+              pr                    :: non_neg_integer() | undefined,
+                                                                    %% number of primary nodes required in preflist on read
+              basic_quorum = true   :: boolean(),                   %% whether to use basic_quorum
+              notfound_ok = false   :: boolean(),                   %% whether to treat notfounds as successes
+              prefix                :: string() | undefined,        %% prefix for resource uris
+              doc                   :: {ok, riak_object:riak_object()}|{error, term()}|undefined,
+                                                                    %% the object found
+              timeout               :: non_neg_integer() | undefined,
+                                                                    %% passed-in timeout value in ms
+              security              :: riak_core_security:context() | undefined
+                                                                    %% security context
              }).
 
 -type context() :: #ctx{}.
