@@ -258,9 +258,9 @@ create_or_update(Name, UpdateVal, Type) ->
 %%      of stats.
 produce_stats() ->
     {Stats,_} = riak_stat:get_stats(?APP),
-    lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
+    lists:flatten([{Stat, get_stat_value(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
-get_stat(Name) ->
+get_stat_value(Name) ->
     riak_stat_exom:get_values(Name).
