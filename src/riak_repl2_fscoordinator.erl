@@ -1027,9 +1027,6 @@ maybe_complete_fullsync(Running, State) ->
                                   }};
         _ ->
             % there's something waiting for a response.
-            lager:info("Something waiting ... EmptyRunning=~w " ++
-                            "QEmpty=~w PurgatoryEmpty=~w Waiting=~w",
-                            [EmptyRunning, QEmpty, PurgatoryEmpty, Waiting]),
             State2 = start_up_reqs(State#state{running_sources = Running}),
             {noreply, State2}
     end.
@@ -1133,7 +1130,10 @@ test_purgatory_wait_time() ->
     FakeNode = 'not@anode.net',
     FakePid = fake_pid(),
     PartInfo = #partition_info{running_source= FakePid, index=Index, node=FakeNode},
-    State = #state{running_sources=[PartInfo], transport=mock_transport},
+    State =
+        #state{running_sources=[PartInfo],
+                transport=mock_transport,
+                fullsync_start_time = riak_core_util:moment()},
     meck:expect(riak_core_util, moment, [],
                 meck:seq([1, 2, 6])),
 
@@ -1189,9 +1189,11 @@ test_retry_count() ->
 
     #state{purgatory=Purgatory,
            dropped=Dropped,
-           error_exits=ErrorExits} = retry(0,
-                                           MaxRetriesExpected,
-                                           #state{transport=mock_transport}),
+           error_exits=ErrorExits} =
+        retry(0,
+                MaxRetriesExpected,
+                #state{transport=mock_transport,
+                        fullsync_start_time = riak_core_util:moment()}),
 
     ?assertEqual(1, ErrorExits),
     ?assertEqual(1, length(Dropped)),
@@ -1232,6 +1234,10 @@ setup() ->
     meck:new(riak_core, [passthrough]),
     %% make a fake transport
     meck:new(mock_transport, [non_strict]),
+    meck:new(riak_core_connection),
+    meck:expect(riak_core_connection,
+                symbolic_clustername,
+                fun() -> "test_cluster" end),
     {OrigRetries, OrigWait}.
 
 teardown({OrigRetries, OrigWait}) ->
