@@ -566,9 +566,10 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
                     Dropped = [Partition#partition_info.index | State4#state.dropped],
                     Purgatory = queue:filter(fun({P, _}) -> P =/= Partition end,
                                              State4#state.purgatory),
-                    {noreply, State4#state{error_exits = ErrorExits1,
-                                           purgatory = Purgatory,
-                                           dropped = Dropped}};
+                    maybe_complete_fullsync(Running,
+                                            State4#state{error_exits = ErrorExits1,
+                                                            purgatory = Purgatory,
+                                                            dropped = Dropped});
                 true ->
                     Now = riak_core_util:moment(),
                     Purgatory = queue:in({Partition, Now}, State4#state.purgatory),
