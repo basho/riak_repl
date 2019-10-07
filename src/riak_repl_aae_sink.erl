@@ -43,7 +43,7 @@ init_sync(AAEWorker) ->
 %%%===================================================================
 
 init([ClusterName, Transport, Socket, OwnerPid]) ->
-    lager:info("Starting AAE fullsync sink worker"),
+    lager:info("Starting AAE fullsync sink worker with Socket ~w", [Socket]),
     {ok, #state{clustername=ClusterName, socket=Socket, transport=Transport, owner=OwnerPid}}.
 
 handle_call(init_sync, _From, State=#state{transport=Transport, socket=Socket}) ->
