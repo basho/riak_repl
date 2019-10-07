@@ -950,8 +950,18 @@ system_continue(_Parent, _Debug, [normal, Server, Role, E]) ->
     loop(Server, Role, E,{}).
 
 %% @hidden
-system_terminate(Reason, _Parent, _Debug, [_Mode, Server, Role, E]) ->
-    terminate(Reason, [], Server, Role, E).
+system_terminate(Reason,
+                    _Parent, 
+                    _Debug, 
+                    [_Mode, 
+                        #server{mod = Mod,
+                                state = State,
+                                debug = Debug}, 
+                        _Role, 
+                        #election{name = Name, cand_timer = Timer}]) ->
+    _ = timer:cancel(Timer),
+    R = maybe_log_reason(Mod, Reason, Name, [], State, Debug),
+    exit(R).
 
 %% @hidden
 system_code_change([Mode, Server, Role, E], _Module, OldVsn, Extra) ->
@@ -1127,20 +1137,24 @@ terminate(Reason, Msg, #server{mod = Mod,
                                debug = Debug} = _Server, _Role,
           #election{name = Name, cand_timer = Timer} = _E) ->
     _ = timer:cancel(Timer),
+    R = maybe_log_reason(Mod, Reason, Name, Msg, State, Debug),
+    exit(R).
+
+maybe_log_reason(Mod, Reason, Name, Msg, State, Debug) ->
     case catch Mod:terminate(Reason, State) of
         {'EXIT', R} ->
             error_info(R, Name, Msg, State, Debug),
-            exit(R);
+            R;
         _ ->
             case Reason of
                 normal ->
-                    exit(normal);
+                    ok;
                 shutdown ->
-                    exit(shutdown);
+                    ok;
                 _ ->
-                    error_info(Reason, Name, Msg, State, Debug),
-                    exit(Reason)
-            end
+                    error_info(Reason, Name, Msg, State, Debug)
+            end,
+            Reason
     end.
 
 %% Maybe we shouldn't do this?  We have the crash report...
