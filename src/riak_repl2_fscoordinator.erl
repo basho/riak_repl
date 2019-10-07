@@ -1026,6 +1026,9 @@ maybe_complete_fullsync(Running, State) ->
                                   }};
         _ ->
             % there's something waiting for a response.
+            lager:info("Something waiting ... EmptyRunning=~w " ++
+                            "QEmpty=~w PurgatoryEmpty=~w Waiting=~w",
+                            [EmptyRunning, QEmpty, PurgatoryEmpty, Waiting]),
             State2 = start_up_reqs(State#state{running_sources = Running}),
             {noreply, State2}
     end.
