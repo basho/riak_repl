@@ -934,7 +934,7 @@ loop(#server{parent = Parent,
               _Msg when Debug == [] ->
                 handle_msg(Msg, Server, Role, E);
               _Msg ->
-                Debug1 = sys:handle_debug(Debug, fun print_event/3,
+                Debug1 = sys:handle_debug(Debug, fun ?MODULE:print_event/3,
                                           E#election.name, {in, Msg}),
                 handle_msg(Msg, Server#server{debug = Debug1}, Role, E)
             end
