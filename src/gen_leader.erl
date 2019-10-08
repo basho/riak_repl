@@ -1123,7 +1123,7 @@ reply({To, Tag}, Reply, #server{state = State} = Server, Role, E) ->
 handle_debug(#server{debug = []} = Server, _Role, _E, _Event) ->
     Server;
 handle_debug(#server{debug = Debug} = Server, _Role, E, Event) ->
-    Debug1 = sys:handle_debug(Debug, fun print_event/3,
+    Debug1 = sys:handle_debug(Debug, fun ?MODULE:print_event/3,
                               E#election.name, Event),
     Server#server{debug = Debug1}.
 
