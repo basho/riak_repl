@@ -782,10 +782,12 @@ rewrite_config_site_ips_pure_test() ->
     %% Put an already known "active" addr in our Site list and make sure it stays there.
     ActiveAddr = {"10.11.12.12", 9012}, %% connected on existing NAT'd IP
     MyRingActive = riak_repl_ring:add_site_addr(MyRing2, RemoteSiteName, ActiveAddr),
-    case riak_repl_ring:get_site(MyRingActive, RemoteSiteName) of
-        undefined -> ?assertEqual("", "empty site list for MyRingActive!");
-        #repl_site{addrs=[Addr]} -> ?assertEqual(Addr, {"10.11.12.12", 9012})
-    end,
+    AddrGot = 
+        case riak_repl_ring:get_site(MyRingActive, RemoteSiteName) of
+            undefined -> "empty site list for MyRingActive!";
+            #repl_site{addrs=[Addr]} -> Addr
+        end,
+    ?assertEqual({"10.11.12.12", 9012}, AddrGot),
 
     %% put a stale IP addr in my list of RemoteSite addrs and make sure it gets removed.
     %% My Ring now has a combination of Stale and Active IP addresses.
@@ -803,14 +805,17 @@ rewrite_config_site_ips_pure_test() ->
     %% but not the other, which collides with us (.14). And we had one that was already
     %% active (.12).
     Site = riak_repl_ring:get_site(MyNewRing, RemoteSiteName),
-    case Site of
-        undefined ->
-            ?assertEqual(undefined, false);
-        #repl_site{addrs=Addrs} ->
-            [NewAddr,ActiveAddr] = Addrs,
-            ?assertEqual(ActiveAddr, {"10.11.12.12", 9012}),
-            ?assertEqual(NewAddr, {"10.11.12.13", 9013})
-    end.
+    R = 
+        case Site of
+            undefined ->
+                false;
+            #repl_site{addrs=Addrs} ->
+                [NewAddr,ActiveAddr] = Addrs,
+                ?assertEqual(ActiveAddr, {"10.11.12.12", 9012}),
+                ?assertEqual(NewAddr, {"10.11.12.13", 9013}),
+                ok
+        end,
+    ?assertEqual(ok, R).
 
 
 rewrite_config_site_ips_pure_same_public_ip_test() ->
@@ -860,14 +865,17 @@ rewrite_config_site_ips_pure_same_public_ip_test() ->
 
     %% We should have added three new IP/Port entries and removed the stale entry.
     Site = riak_repl_ring:get_site(MyNewRing, RemoteSiteName),
-    case Site of
-        undefined ->
-            ?assertEqual(undefined, false);
-        #repl_site{addrs=Addrs} ->
-            [A,B,C] = Addrs,
-            ?assertEqual(A, {"10.11.12.1", 9090}),
-            ?assertEqual(B, {"10.11.12.1", 9091}),
-            ?assertEqual(C, {"10.11.12.1", 9092})
-    end.
+    R = 
+        case Site of
+            undefined ->
+                false;
+            #repl_site{addrs=Addrs} ->
+                [A,B,C] = Addrs,
+                ?assertEqual(A, {"10.11.12.1", 9090}),
+                ?assertEqual(B, {"10.11.12.1", 9091}),
+                ?assertEqual(C, {"10.11.12.1", 9092}),
+                ok
+        end,
+    ?assertEqual(ok, R).
 
 -endif.

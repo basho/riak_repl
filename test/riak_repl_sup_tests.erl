@@ -12,7 +12,6 @@ can_start_test_() ->
       {setup,
       fun() ->
               error_logger:tty(false),
-              error_logger:logfile({open, "riak_repl_sup_tests.log"}),
               %% core features that are needed
               {ok, _Eventer} = riak_core_ring_events:start_link(),
               {ok, _RingMgr} = riak_core_ring_manager:start_link(test),

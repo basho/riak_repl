@@ -79,17 +79,17 @@
 -type ranch_transport_messages() :: {atom(), atom(), atom()}.
 -record(state, {mode :: atom(),
                 remote :: remote(),
-                socket :: port(),
-                name :: clustername(),
+                socket :: port() | undefined,
+                name :: clustername() |undefined,
                 previous_name="undefined" :: clustername(),
                 members=[] :: [peer_address() | node_address()],
-                connection_ref :: reference(),
+                connection_ref :: reference() | undefined,
                 connection_timeout :: timeout(),
-                transport :: atom(),
-                address :: peer_address(),
-                connection_props :: proplists:proplist(),
-                transport_msgs :: ranch_transport_messages(),
-                proto_version :: {non_neg_integer(), non_neg_integer()} }).
+                transport :: atom() | undefined,
+                address :: peer_address() | undefined,
+                connection_props = [] :: proplists:proplist(),
+                transport_msgs :: ranch_transport_messages() | undefined,
+                proto_version :: {non_neg_integer(), non_neg_integer()} | undefined }).
 -type state() :: #state{}.
 
 %%%===================================================================
