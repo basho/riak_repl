@@ -47,7 +47,7 @@
         cluster,
         fullsync_worker,
         work_dir = undefined,
-        strategy :: keylist | aae | undefined,
+        strategy = keylist :: keylist | aae,
         proto,
         ver              % highest common wire protocol in common with fs source
     }).
