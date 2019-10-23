@@ -2,7 +2,7 @@
 
 -include("riak_repl.hrl").
 
--include_lib("riak_repl_pb_api/include/riak_repl_pb.hrl").
+-include("riak_repl_pb.hrl").
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
 
@@ -279,5 +279,3 @@ client_cluster_names_13() ->
         P /= undefined,
         {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
     ].
-
-    
