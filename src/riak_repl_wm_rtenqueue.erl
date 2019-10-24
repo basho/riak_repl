@@ -184,12 +184,11 @@ process_post(RD, Ctx) ->
 
 -spec malformed_timeout_param(#wm_reqdata{}, context()) ->
     {boolean(), #wm_reqdata{}, context()}.
-%% @doc Check that the timeout parameter is are a
-%%      string-encoded integer.  Store the integer value
-%%      in context() if so.
+%% @doc Check that the timeout parameter is a string-encoded integer.
+%%      Store the integer value in context() if so.
 malformed_timeout_param(RD, Ctx) ->
-    case wrq:get_qs_value("timeout", none, RD) of
-        none ->
+    case wrq:get_qs_value("timeout", RD) of
+        undefined ->
             {false, RD, Ctx};
         TimeoutStr ->
             try
