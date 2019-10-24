@@ -15,3 +15,7 @@ dialyzer_warnings
 _build/
 rebar.lock
 .DS_Store
+include/riak_repl_pb.hrl
+src/riak_repl_pb.erl
+undefined
+data/*
