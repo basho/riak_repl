@@ -34,26 +34,31 @@ handle_event({ring_update, Ring}, State=#state{ring=Ring}) ->
     {ok, State};
 handle_event({ring_update, NewRing}, State=#state{ring=OldRing}) ->
     %% Ring has changed.
-    FinalRing = init_repl_config(OldRing, NewRing),
-    update_leader(FinalRing),
-    _ = rt_update_events(FinalRing),
-    _ = pg_update_events(FinalRing),
-    riak_repl_listener_sup:ensure_listeners(FinalRing),
-    case riak_repl_leader:is_leader() of
+    case riak_core_ring:check_lastgasp(NewRing) of
         true ->
-            riak_repl_leader:ensure_sites();
-        _ ->
-            ok
-    end,
-    %% Force the cluster manager to connect to the clusters when it
-    %% learns about an event *after* an election has occurred.
-    case riak_repl2_leader:is_leader() of
-        true ->
-            riak_core_cluster_mgr:connect_to_clusters();
-        _ ->
-            ok
-    end,
-    {ok, State#state{ring=FinalRing}};
+            {ok, State};
+        false ->
+            FinalRing = init_repl_config(OldRing, NewRing),
+            update_leader(FinalRing),
+            _ = rt_update_events(FinalRing),
+            _ = pg_update_events(FinalRing),
+            riak_repl_listener_sup:ensure_listeners(FinalRing),
+            case riak_repl_leader:is_leader() of
+                true ->
+                    riak_repl_leader:ensure_sites();
+                _ ->
+                    ok
+            end,
+            %% Force the cluster manager to connect to the clusters when it
+            %% learns about an event *after* an election has occurred.
+            case riak_repl2_leader:is_leader() of
+                true ->
+                    riak_core_cluster_mgr:connect_to_clusters();
+                _ ->
+                    ok
+            end,
+            {ok, State#state{ring=FinalRing}}
+    end;
 handle_event(_Event, State) ->
     {ok, State}.
 
