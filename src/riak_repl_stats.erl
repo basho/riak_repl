@@ -38,7 +38,6 @@
          produce_stats/0,
          get_info/0,
          get_stats_values/0,
-         aggregate/2,
          rt_source_errors/0,
          rt_sink_errors/0,
          clear_rt_dirty/0,
@@ -174,10 +173,6 @@ get_stats_values() ->
 get_stats_values(Arg) ->
   riak_stat:get_value(Arg).
 
-%%%----------------------------------------------------------------%%%
-
-aggregate(Stats, DPS) ->
-  riak_stat:aggregate(Stats, DPS).
 
 %%%----------------------------------------------------------------%%%
 
