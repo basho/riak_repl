@@ -61,69 +61,69 @@ register_stats(Stats) ->
   riak_stat:register(?APP, Stats).
 
 client_bytes_sent(Bytes) ->
-    increment_counter(client_bytes_sent, Bytes).
+    increment_counter([client,bytes,sent], Bytes).
 
 client_bytes_recv(Bytes) ->
-    increment_counter(client_bytes_recv, Bytes).
+    increment_counter([client,bytes,recv], Bytes).
 
 client_connects() ->
-    increment_counter(client_connects).
+    increment_counter([client,connects]).
 
 client_connect_errors() ->
-    increment_counter(client_connect_errors).
+    increment_counter([client,connect,errors]).
 
 client_redirect() ->
-    increment_counter(client_redirect).
+    increment_counter([client,redirect]).
 
 server_bytes_sent(Bytes) ->
-    increment_counter(server_bytes_sent, Bytes).
+    increment_counter([server,bytes,sent], Bytes).
 
 server_bytes_recv(Bytes) ->
-    increment_counter(server_bytes_recv, Bytes).
+    increment_counter([server,bytes,recv], Bytes).
 
 server_connects() ->
-    increment_counter(server_connects).
+    increment_counter([server,connects]).
 
 server_connect_errors() ->
-    increment_counter(server_connect_errors).
+    increment_counter([server,connect,errors]).
 
 server_fullsyncs() ->
-    increment_counter(server_fullsyncs).
+    increment_counter([server,fullsyncs]).
 
 objects_dropped_no_clients() ->
-    increment_counter(objects_dropped_no_clients).
+    increment_counter([objects,dropped,no,clients]).
 
 objects_dropped_no_leader() ->
-    increment_counter(objects_dropped_no_leader).
+    increment_counter([objects,dropped,no,leader]).
 
 objects_sent() ->
-    increment_counter(objects_sent).
+    increment_counter([objects,sent]).
 
 objects_forwarded() ->
-    increment_counter(objects_forwarded).
+    increment_counter([objects,forwarded]).
 
 elections_elected() ->
-    increment_counter(elections_elected).
+    increment_counter([elections,elected]).
 
 elections_leader_changed() ->
-    increment_counter(elections_leader_changed).
+    increment_counter([elections,leader,changed]).
 
 %% If any source errors are detected, write a file out to persist this status
 %% across restarts
 rt_source_errors() ->
-    increment_counter(rt_source_errors),
+    increment_counter([rt,source,errors]),
     rt_dirty().
 
 %% If any sink errors are detected, write a file out to persist this status
 %% across restarts
 rt_sink_errors() ->
-    increment_counter(rt_sink_errors),
+    increment_counter([rt,sink,errors]),
     rt_dirty().
 
 rt_dirty() ->
     touch_rt_dirty_file(),
-    increment_counter(rt_dirty),
-    Stat = lookup_stat(rt_dirty) + 1,  % we know it's at least 1
+    increment_counter([rt,dirty]),
+    Stat = lookup_stat([rt,dirty]) + 1,  % we know it's at least 1
     % increment counter is a cast, so if the number is relatively small
     % then notify the server. otherwise, we don't want to spam the
     % coordinator. Once this value is reset to 0, we'll notify the
@@ -149,7 +149,7 @@ rt_dirty() ->
     end.
 
 update(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?PFX, ?APP | [Name]]), IncrBy, Type).
+  riak_stat:update(lists:flatten([?PFX, ?APP | Name]), IncrBy, Type).
 
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
@@ -258,29 +258,29 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(report_bw, State) ->
-    ThisClientBytesSent=lookup_stat(client_bytes_sent),
-    ThisClientBytesRecv=lookup_stat(client_bytes_recv),
-    ThisServerBytesSent=lookup_stat(server_bytes_sent),
-    ThisServerBytesRecv=lookup_stat(server_bytes_recv),
+    ThisClientBytesSent=lookup_stat([client,bytes,sent]),
+    ThisClientBytesRecv=lookup_stat([client,bytes,recv]),
+    ThisServerBytesSent=lookup_stat([server,bytes,sent]),
+    ThisServerBytesRecv=lookup_stat([server,bytes,recv]),
 
     Now = tstamp(),
-    DeltaSecs = now_diff(Now, lookup_stat(last_report)),
-    ClientTx = bytes_to_kbits_per_sec(ThisClientBytesSent, lookup_stat(last_client_bytes_sent), DeltaSecs),
-    ClientRx = bytes_to_kbits_per_sec(ThisClientBytesRecv, lookup_stat(last_client_bytes_recv), DeltaSecs),
-    ServerTx = bytes_to_kbits_per_sec(ThisServerBytesSent, lookup_stat(last_server_bytes_sent), DeltaSecs),
-    ServerRx = bytes_to_kbits_per_sec(ThisServerBytesRecv, lookup_stat(last_server_bytes_recv), DeltaSecs),
+    DeltaSecs = now_diff(Now, lookup_stat([last,report])),
+    ClientTx = bytes_to_kbits_per_sec(ThisClientBytesSent, lookup_stat([last,client,bytes,sent]), DeltaSecs),
+    ClientRx = bytes_to_kbits_per_sec(ThisClientBytesRecv, lookup_stat([last,client,bytes,recv]), DeltaSecs),
+    ServerTx = bytes_to_kbits_per_sec(ThisServerBytesSent, lookup_stat([last,server,bytes,sent]), DeltaSecs),
+    ServerRx = bytes_to_kbits_per_sec(ThisServerBytesRecv, lookup_stat([last,server,bytes,recv]), DeltaSecs),
 
       _ = [update(Metric, Reading, histogram)
-     || {Metric, Reading} <- [{client_tx_kbps, ClientTx},
-                              {client_rx_kbps, ClientRx},
-                              {server_tx_kbps, ServerTx},
-                              {server_rx_kbps, ServerRx}]],
+     || {Metric, Reading} <- [{[client,tx,kbps], ClientTx},
+                              {[client,rx,kbps], ClientRx},
+                              {[server,tx,kbps], ServerTx},
+                              {[server,rx,kbps], ServerRx}]],
 
       _ = [update(Metric, Reading, gauge)
-     || {Metric, Reading} <- [{last_client_bytes_sent, ThisClientBytesSent},
-                              {last_client_bytes_recv, ThisClientBytesRecv},
-                              {last_server_bytes_sent, ThisServerBytesSent},
-                              {last_server_bytes_recv, ThisServerBytesRecv}]],
+     || {Metric, Reading} <- [{[last,client,bytes,sent], ThisClientBytesSent},
+                              {[last,client,bytes,recv], ThisClientBytesRecv},
+                              {[last,server,bytes,sent], ThisServerBytesSent},
+                              {[last,server,bytes,recv], ThisServerBytesRecv}]],
 
     schedule_report_bw(),
     update(last_report, Now, gauge),
@@ -301,7 +301,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_stat_exom:get_value([?PFX,?APP,Name]).
+    riak_stat_exom:get_value([?PFX,?APP|Name]).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
