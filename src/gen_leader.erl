@@ -149,6 +149,7 @@
 -type msg() :: term().
 -type reason() :: atom().
 -type extra() :: term().
+-type server() :: #server{}.
 
 -callback init(list()) -> {ok, state()} | {ignore, term()} | {stop, term()}.
 -callback elected(state(), election(), node()) -> {ok, term(), state()}.
@@ -933,7 +934,7 @@ loop(#server{parent = Parent,
               _Msg when Debug == [] ->
                 handle_msg(Msg, Server, Role, E);
               _Msg ->
-                Debug1 = sys:handle_debug(Debug, {?MODULE, print_event},
+                Debug1 = sys:handle_debug(Debug, fun ?MODULE:print_event/3,
                                           E#election.name, {in, Msg}),
                 handle_msg(Msg, Server#server{debug = Debug1}, Role, E)
             end
@@ -949,8 +950,18 @@ system_continue(_Parent, _Debug, [normal, Server, Role, E]) ->
     loop(Server, Role, E,{}).
 
 %% @hidden
-system_terminate(Reason, _Parent, _Debug, [_Mode, Server, Role, E]) ->
-    terminate(Reason, [], Server, Role, E).
+system_terminate(Reason,
+                    _Parent, 
+                    _Debug, 
+                    [_Mode, 
+                        #server{mod = Mod,
+                                state = State,
+                                debug = Debug}, 
+                        _Role, 
+                        #election{name = Name, cand_timer = Timer}]) ->
+    _ = timer:cancel(Timer),
+    R = maybe_log_reason(Mod, Reason, Name, [], State, Debug),
+    exit(R).
 
 %% @hidden
 system_code_change([Mode, Server, Role, E], _Module, OldVsn, Extra) ->
@@ -1112,7 +1123,7 @@ reply({To, Tag}, Reply, #server{state = State} = Server, Role, E) ->
 handle_debug(#server{debug = []} = Server, _Role, _E, _Event) ->
     Server;
 handle_debug(#server{debug = Debug} = Server, _Role, E, Event) ->
-    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event},
+    Debug1 = sys:handle_debug(Debug, fun ?MODULE:print_event/3,
                               E#election.name, Event),
     Server#server{debug = Debug1}.
 
@@ -1120,25 +1131,30 @@ handle_debug(#server{debug = Debug} = Server, _Role, E, Event) ->
 %%% Terminate the server.
 %%% ---------------------------------------------------
 
+-spec terminate(reason(), msg(), server(), any(), election()) -> no_return().
 terminate(Reason, Msg, #server{mod = Mod,
                                state = State,
                                debug = Debug} = _Server, _Role,
           #election{name = Name, cand_timer = Timer} = _E) ->
     _ = timer:cancel(Timer),
+    R = maybe_log_reason(Mod, Reason, Name, Msg, State, Debug),
+    exit(R).
+
+maybe_log_reason(Mod, Reason, Name, Msg, State, Debug) ->
     case catch Mod:terminate(Reason, State) of
         {'EXIT', R} ->
             error_info(R, Name, Msg, State, Debug),
-            exit(R);
+            R;
         _ ->
             case Reason of
                 normal ->
-                    exit(normal);
+                    ok;
                 shutdown ->
-                    exit(shutdown);
+                    ok;
                 _ ->
-                    error_info(Reason, Name, Msg, State, Debug),
-                    exit(Reason)
-            end
+                    error_info(Reason, Name, Msg, State, Debug)
+            end,
+            Reason
     end.
 
 %% Maybe we shouldn't do this?  We have the crash report...

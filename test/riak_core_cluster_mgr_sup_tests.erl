@@ -1,5 +1,5 @@
 -module(riak_core_cluster_mgr_sup_tests).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -ifdef(EQC).
 -include("riak_core_connection.hrl").
 -include_lib("eunit/include/eunit.hrl").

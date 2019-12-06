@@ -6,7 +6,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -define(SINK_PORT, 5006).
 -define(SOURCE_PORT, 4006).

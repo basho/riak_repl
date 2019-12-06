@@ -36,17 +36,17 @@
          terminate/2, code_change/3]).
 
 -record(state, {
-        sitename :: repl_sitename(),
+        sitename :: repl_sitename() | undefined,
         socket :: repl_socket(),
         transport :: 'ranch_tcp' | 'ranch_ssl',
-        listener :: pid(),
-        client :: tuple(),
+        listener :: pid() | undefined,
+        client :: tuple() | undefined,
         q :: undefined | pid(),
-        work_dir :: string(),   %% working directory for this repl session
-        my_pi :: #peer_info{},
-        their_pi :: #peer_info{},
+        work_dir :: string() | undefined,   %% working directory for this repl session
+        my_pi :: #peer_info{} | undefined,
+        their_pi :: #peer_info{} |undefined,
         fullsync_worker :: pid() | undefined,
-        fullsync_strategy :: atom(),
+        fullsync_strategy :: atom() |undefined,
         election_timeout :: undefined | reference(), % reference for the election timeout
         keepalive_time :: undefined | integer(),
         ver = w0

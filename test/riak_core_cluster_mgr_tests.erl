@@ -2,7 +2,7 @@
 %% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
 
 -module(riak_core_cluster_mgr_tests).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(TEST).
 -include("riak_core_cluster.hrl").
