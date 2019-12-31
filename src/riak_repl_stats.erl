@@ -4,7 +4,7 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(gen_server).
 -include("riak_repl.hrl").
-
+-include_lib("riak_core/include/riak_stat.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -45,7 +45,6 @@
          remove_rt_dirty_file/0,
          is_rt_dirty/0]).
 
--define(PFX, riak_stat:prefix()).
 -define(APP, riak_repl).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -55,7 +54,7 @@ stop() ->
 
 register_stats() ->
   register_stats(stats()),
-  update(last_report, tstamp(), gauge).
+  update([last,report], tstamp(), gauge).
 
 register_stats(Stats) ->
   riak_stat:register(?APP, Stats).
@@ -149,7 +148,7 @@ rt_dirty() ->
     end.
 
 update(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?PFX, ?APP | Name]), IncrBy, Type).
+  riak_stat:update(lists:flatten([?Prefix, ?APP | Name]), IncrBy, Type).
 
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
@@ -163,7 +162,7 @@ produce_stats() ->
     {Stats,_} = get_app_stats(), Stats.
 
 get_app_stats() ->
-  riak_stat:get_stats([[?PFX,?APP|'_']]).
+  riak_stat:get_stats([[?Prefix,?APP|'_']]).
 
 get_info() ->
   riak_stat:get_info(?APP).
@@ -283,7 +282,7 @@ handle_info(report_bw, State) ->
                               {[last,server,bytes,recv], ThisServerBytesRecv}]],
 
     schedule_report_bw(),
-    update(last_report, Now, gauge),
+    update([last,report], Now, gauge),
     {noreply, State};
 handle_info(_Info, State) -> {noreply, State}.
 
@@ -301,7 +300,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_stat_exom:get_value([?PFX,?APP|Name]).
+    riak_stat_exom:get_value([?Prefix,?APP|Name]).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
@@ -340,8 +339,8 @@ remove_rt_dirty_file() ->
 clear_rt_dirty() ->
     remove_rt_dirty_file(),
 %%    folsom_metrics_counter:clear({riak_repl, rt_dirty}). legacy code
-    riak_stat:reset([?PFX,?APP,rt_dirty]),
-    register(?APP, {rt_dirty, counter,[], [{value, rt_dirty}]}).
+    riak_stat:reset([?Prefix,?APP,rt,dirty]),
+    register(?APP, {[rt,dirty], counter,[], [{value, rt_dirty}]}).
 
 is_rt_dirty() ->
     DirtyRTFile = rt_dirty_filename(),
@@ -420,29 +419,29 @@ test_populate_stats() ->
 test_check_stats() ->
    error_logger:tty(false),
     Expected = [ %% Test, values might be different from exometer.
-        {server_bytes_sent,1000},
-        {server_bytes_recv,1000},
-        {server_connects,1},
-        {server_connect_errors,1},
-        {server_fullsyncs,1},
-        {client_bytes_sent,1000},
-        {client_bytes_recv,1000},
-        {client_connects,1},
-        {client_connect_errors,1},
-        {client_redirect,1},
-        {objects_dropped_no_clients,1},
-        {objects_dropped_no_leader,1},
-        {objects_sent,1},
-        {objects_forwarded,1},
-        {elections_elected,1},
-        {elections_leader_changed,1},
-        {client_rx_kbps,[]},
-        {client_tx_kbps,[]},
-        {server_rx_kbps,[]},
-        {server_tx_kbps,[]},
-        {rt_source_errors,1},
-        {rt_sink_errors, 1},
-        {rt_dirty, 2}],
+        {[server,bytes,sent],1000},
+        {[server,bytes,recv],1000},
+        {[server,connects],1},
+        {[server,connect,errors],1},
+        {[server,fullsyncs],1},
+        {[client,bytes,sent],1000},
+        {[client,bytes,recv],1000},
+        {[client,connects],1},
+        {[client,connect,errors],1},
+        {[client,redirect],1},
+        {[objects,dropped,no,clients],1},
+        {[objects,dropped,no,leader],1},
+        {[objects,sent],1},
+        {[objects,forwarded],1},
+        {[elections,elected],1},
+        {[elections,leader,changed],1},
+        {[client,rx,kbps],[]},
+        {[client,tx,kbps],[]},
+        {[server,rx,kbps],[]},
+        {[server,tx,kbps],[]},
+        {[rt,source,errors],1},
+        {[rt,sink,errors], 1},
+        {[rt,dirty], 2}],
     Result = get_stats(),
 
     ?assertEqual(Expected,
@@ -460,10 +459,10 @@ test_report() ->
          ?assertEqual(8, length(Values)),
          [?assertEqual(8, Val) || Val <- Values]
      end || {Name, Values} <- get_stats(),
-            lists:member(Name, [client_rx_kbps,
-                                client_tx_kbps,
-                                server_rx_kbps,
-                                server_tx_kbps])].
+            lists:member(Name, [[client,rx,kbps],
+                                [client,tx,kbps],
+                                [server,rx,kbps],
+                                [server,tx,kbps]])].
 
 for_n_minutes(0, _Time, _Bytes) ->
     ok;
@@ -471,10 +470,10 @@ for_n_minutes(Minutes, Time0, Bytes) ->
     Time = tick(Time0, 60),
   [update(Name, Bytes,
                       counter) || Name <-
-                        [client_bytes_sent,
-                          client_bytes_recv,
-                          server_bytes_sent,
-                          server_bytes_recv]],
+                        [[client,bytes,sent],
+                          [client,bytes,recv],
+                          [server,bytes,sent],
+                          [server,bytes,recv]]],
 
     riak_repl_stats:handle_info(report_bw, ok),
     for_n_minutes(Minutes - 1, Time, Bytes).

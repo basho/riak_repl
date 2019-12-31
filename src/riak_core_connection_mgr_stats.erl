@@ -250,7 +250,7 @@ do_update(Stat, IPAddr, Protocol) ->
 
 create_or_update(Name, UpdateVal, Type) ->
     ListName = tuple_to_list(Name),
-    StatName = [?PFX | ListName],
+    StatName = [?Prefix | ListName],
     riak_stat:update(StatName, UpdateVal, Type).
 
 %% @spec produce_stats() -> proplist()
