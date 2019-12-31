@@ -1,5 +1,5 @@
 -module(riak_repl2_rtq_tests).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
 
 -define(SETUP_ENV, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).

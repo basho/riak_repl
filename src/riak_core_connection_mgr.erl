@@ -77,8 +77,8 @@
              is_black_listed = false :: boolean(), %% true after a failed connection attempt
              backoff_delay=0 :: counter(),  %% incremented on each failure, reset to zero on success
              failures = orddict:new() :: orddict:orddict(), %% failure reasons
-             last_fail_time :: erlang:timestamp(),          %% time of last failure since 1970
-             next_try_secs :: counter()     %% time in seconds to next retry attempt
+             last_fail_time :: erlang:timestamp() | undefined,          %% time of last failure since 1970
+             next_try_secs = 0 :: counter()     %% time in seconds to next retry attempt
              }).
 
 %% connection request record

@@ -2,7 +2,7 @@
 
 -include("riak_repl.hrl").
 
--include_lib("riak_repl_pb_api/include/riak_repl_pb.hrl").
+-include("riak_repl_pb.hrl").
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
 
@@ -47,17 +47,12 @@ init() ->
 
 
 %% @doc decode/2 callback. Decodes an incoming message.
-decode(?PB_MSG_PROXY_GET, Bin) ->
-    {ok, riak_repl_pb:decode_rpbreplgetreq(Bin)};
-decode(?PB_MSG_GET_CLUSTER_ID, <<>>) ->
-    {ok, riak_repl_pb:decode_rpbreplgetclusteridreq(<<>>)}.
+decode(_, Bin) ->
+    {ok, Bin}.
 
 %% @doc encode/1 callback. Encodes an outgoing response message.
 encode(#rpbgetresp{} = Msg) ->
-    {ok, riak_pb_codec:encode(Msg)};
-encode(#rpbreplgetclusteridresp{} = Msg) ->
-    {ok,
-        [?PB_MSG_RESP_CLUSTER_ID|riak_repl_pb:encode_rpbreplgetclusteridresp(Msg)]}.
+    {ok, riak_pb_codec:encode(Msg)}.
 
 %% Process Protocol Buffer Requests
 %%
@@ -279,5 +274,3 @@ client_cluster_names_13() ->
         P /= undefined,
         {ClusterID, ClusterName} <- [client_cluster_name_13(P)]
     ].
-
-    

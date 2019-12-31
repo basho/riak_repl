@@ -34,33 +34,13 @@
 
 -record(exchange, {mode   :: inline | buffered,
                    buffer :: ets:tid(),
-                   bloom  :: reference(), %% ebloom
+                   bloom  :: reference() | undefined, %% ebloom
                    limit  :: non_neg_integer(),
                    count  :: non_neg_integer()
                   }).
 
 -type exchange() :: #exchange{}.
 -type version() :: legacy | non_neg_integer().
-
--record(state, {cluster,
-                client,     %% riak:local_client()
-                transport,
-                socket,
-                index       :: index(),
-                indexns     :: [index_n()],
-                tree_pid    :: pid(),
-                tree_mref   :: reference(),
-                tree_version :: version(),
-                built       :: non_neg_integer(),
-                timeout     :: pos_integer(),
-                wire_ver    :: atom(),
-                diff_batch_size = 1000 :: non_neg_integer(),
-                estimated_nr_keys :: non_neg_integer(),
-                local_lock = false :: boolean(),
-                owner       :: pid(),
-                proto       :: term(),
-                exchange    :: exchange()
-               }).
 
 %% Per state transition timeout used by certain transitions
 -define(DEFAULT_ACTION_TIMEOUT, 300000). %% 5 minutes
@@ -71,6 +51,27 @@
 
 %% Diff percentage needed to use bloom filter
 -define(DIFF_PERCENTAGE, 5).
+
+-record(state, {cluster,
+                client,     %% riak:local_client()
+                transport,
+                socket,
+                index       :: index(),
+                indexns     :: [index_n()] | undefined,
+                tree_pid    :: pid() | undefined,
+                tree_mref   :: reference() | undefined,
+                tree_version :: version() | undefined,
+                built       :: non_neg_integer(),
+                timeout = ?DEFAULT_ACTION_TIMEOUT  :: pos_integer(),
+                wire_ver    :: atom() | undefined,
+                diff_batch_size = 1000 :: non_neg_integer(),
+                estimated_nr_keys :: non_neg_integer() | undefined,
+                local_lock = false :: boolean(),
+                owner       :: pid(),
+                proto       :: term(),
+                exchange    :: exchange() | undefined
+               }).
+
 
 %%%===================================================================
 %%% API

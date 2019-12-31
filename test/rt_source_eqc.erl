@@ -1,6 +1,6 @@
 -module(rt_source_eqc).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(EQC).
 -include("rt_source_eqc.hrl").
