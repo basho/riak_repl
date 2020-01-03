@@ -24,7 +24,6 @@
 
 -module(riak_core_connection_mgr_stats).
 -author("Chris Tilt").
--include_lib("riak_core/include/riak_stat.hrl").
 
 -behaviour(gen_server).
 
@@ -44,6 +43,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_conn_mgr_stats).
+-define(Prefix, riak).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
