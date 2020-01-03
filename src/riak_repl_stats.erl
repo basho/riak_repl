@@ -4,7 +4,6 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(gen_server).
 -include("riak_repl.hrl").
--include_lib("riak_core/include/riak_stat.hrl").
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -46,6 +45,7 @@
          is_rt_dirty/0]).
 
 -define(APP, riak_repl).
+-define(Prefix, riak).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
