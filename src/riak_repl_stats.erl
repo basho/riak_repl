@@ -240,7 +240,7 @@ stats() ->
 increment_counter(Name) ->
     increment_counter(Name, 1).
 
-increment_counter(Name, IncrBy) when is_atom(Name) andalso is_integer(IncrBy) ->
+increment_counter(Name, IncrBy) when is_integer(IncrBy) ->
     gen_server:cast(?MODULE, {increment_counter, Name, IncrBy}).
 
 handle_call(_Req, _From, State) ->
