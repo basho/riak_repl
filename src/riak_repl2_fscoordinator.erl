@@ -1014,7 +1014,7 @@ maybe_complete_fullsync(Running, State) ->
             % otherwise, don't do anything
             State2 = notify_rt_dirty_nodes(State),
             %% update legacy stats too! some riak_tests depend on them.
-            riak_repl_stats:server_fullsyncs(),
+            riak_repl_stats:update([server,fullsyncs]),
             TotalFullsyncs = State#state.fullsyncs_completed + 1,
             Finish = riak_core_util:moment(),
             ElapsedSeconds = Finish - State#state.fullsync_start_time,

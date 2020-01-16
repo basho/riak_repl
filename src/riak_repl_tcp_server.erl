@@ -153,7 +153,7 @@ handle_info({Proto, Socket, Data},
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
     Reply = handle_msg(Msg, State),
-    riak_repl_stats:server_bytes_recv(size(Data)),
+    riak_repl_stats:update([server,bytes,recv],size(Data)),
     case Reply of
         {noreply, NewState} ->
             case NewState#state.keepalive_time of
@@ -184,7 +184,7 @@ handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
             Timeout = erlang:send_after(?ELECTION_TIMEOUT, self(), election_timeout),
             {noreply, State#state{sitename=SiteName, election_timeout=Timeout}};
         {error, Reason} ->
-            riak_repl_stats:server_connect_errors(),
+            riak_repl_stats:update([server,connect,errors]),
             %% debug to avoid DOS logging
             lager:debug("Failed to receive site name banner from replication"
                 "client: ~p", [Reason]),
@@ -411,7 +411,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
 send(Transport, {Owner, Socket}, Data) when is_binary(Data) ->
     case Transport:send(Socket, Data) of
         ok ->
-            riak_repl_stats:server_bytes_sent(size(Data)),
+            riak_repl_stats:update([server,bytes,sent],size(Data)),
             ok;
         {error, _} = Error ->
             Owner ! {list_to_atom(atom_to_list(Transport:name()) ++ "_error"), Socket, Error},

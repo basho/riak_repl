@@ -205,7 +205,7 @@ handle_cast({repl, Msg}, State) when State#state.i_am_leader =:= true ->
     case State#state.receivers of
         [] ->
             riak_repl_util:dropped_realtime_hook(Msg),
-            riak_repl_stats:objects_dropped_no_clients(),
+            riak_repl_stats:update([objects,dropped,no,clients]),
             {noreply, State};
         Receivers ->
             case timer:now_diff(os:timestamp(), State#state.lastpoll) of
@@ -246,19 +246,19 @@ handle_cast({repl, Msg}, State) when State#state.leader_node =/= undefined ->
             %% S = definitely send, s = send in middle probability range
             %% if SendProb == 1.0 -> io:format("S"); true -> io:format("s") end,
             gen_server:cast({?SERVER, State#state.leader_node}, {repl, Msg}),
-            riak_repl_stats:objects_forwarded();
+            riak_repl_stats:update([objects,forwarded]);
         false ->
             %% D = definitely drop
             %% io:format("D"),
             %% TODO: create a new stat rather than abusing this counter.
             riak_repl_util:dropped_realtime_hook(Msg),
-            riak_repl_stats:objects_dropped_no_clients()
+            riak_repl_stats:update([objects,dropped,no,clients])
     end,
     {noreply, State};
 handle_cast({repl, Msg}, State) ->
     %% No leader currently defined - cannot do anything
     riak_repl_util:dropped_realtime_hook(Msg),
-    riak_repl_stats:objects_dropped_no_leader(),
+    riak_repl_stats:update([objects,dropped,no,leader]),
     {noreply, State};
 handle_cast(ensure_sites, State) ->
     %% use the leader refresh to trigger a set_leader which will call
@@ -340,8 +340,8 @@ become_leader(Leader, State) ->
             ensure_sites(Leader),
             lager:info("Re-elected as replication leader");
         _ ->
-            riak_repl_stats:elections_elected(),
-            riak_repl_stats:elections_leader_changed(),
+            riak_repl_stats:update([elections,elected]),
+            riak_repl_stats:update([elections,leader,changed]),
             leader_change(State#state.i_am_leader, true),
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
@@ -357,7 +357,7 @@ new_leader(Leader, LeaderPid, State0) ->
         This ->
             %% this node is surrendering leadership
             leader_change(State0#state.i_am_leader, false), % will close connections
-            riak_repl_stats:elections_leader_changed(),
+            riak_repl_stats:update([elections,leader,changed]),
             lager:info("Replication leadership surrendered to ~p", [Leader]),
             %% reset the mailbox size to 0 until we poll it again
             State#state{elected_mbox_size = 0};
@@ -365,7 +365,7 @@ new_leader(Leader, LeaderPid, State0) ->
             lager:info("Replication leader kept as ~p", [Leader]),
             State;
         _NewLeader ->
-            riak_repl_stats:elections_leader_changed(),
+            riak_repl_stats:update([elections,leader,changed]),
             lager:info("Replication leader set to ~p", [Leader]),
             %% reset the mailbox size to 0 until we poll it again
             State#state{elected_mbox_size = 0}

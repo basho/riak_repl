@@ -757,7 +757,7 @@ wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
 
 fullsync_completed_while_waiting(State) ->
     lager:info("Full-sync with site ~p completed", [State#state.sitename]),
-    riak_repl_stats:server_fullsyncs(),
+    riak_repl_stats:update([server,fullsyncs]),
     riak_repl_util:schedule_fullsync(),
     {next_state, wait_for_partition, State}.
 

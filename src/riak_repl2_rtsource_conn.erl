@@ -410,7 +410,7 @@ recv(TcpBin, State = #state{remote = Name,
             {noreply, State#state{cont = Cont}};
         {ok, {ack, Seq}, Cont} when ProtoMajor >= 2 ->
             %% TODO: report this better per-remote
-            riak_repl_stats:objects_sent(),
+            riak_repl_stats:update([objects,sent]),
             ok = riak_repl2_rtq:ack(Name, Seq),
             %% reset heartbeat timer, since we've seen activity from the peer
             case HBTRef of

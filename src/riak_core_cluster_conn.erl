@@ -138,7 +138,7 @@ connected(Socket,
 -spec connect_failed({term(), term()}, {error, term()}, {_, atom() | pid() | port() | {atom(), _} | {via, _, _}}) -> ok.
 connect_failed({_Proto, _Vers}, {error, _}=Error, {_Remote, Client}) ->
     %% increment stats for "client failed to connect"
-    riak_repl_stats:client_connect_errors(),
+    riak_repl_stats:update([client,connect,errors]),
     %% tell client we bombed and why
     gen_fsm_compat:send_event(Client, {connect_failed, Error}).
 

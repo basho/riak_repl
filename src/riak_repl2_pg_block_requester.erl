@@ -134,7 +134,7 @@ handle_info({Proto, Socket, Data},
   State=#state{socket=Socket,transport=Transport}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
     Msg = binary_to_term(Data),
-    riak_repl_stats:client_bytes_recv(size(Data)),
+    riak_repl_stats:update([client,bytes,recv],size(Data)),
     Reply =
         case Msg of
             stay_awake ->

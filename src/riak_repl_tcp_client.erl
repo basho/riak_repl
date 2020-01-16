@@ -195,7 +195,7 @@ handle_info({ssl_error, Socket, Reason}, #state{socket = Socket} = State) ->
 handle_info({Proto, Socket, Data},
         State=#state{transport=Transport,socket=Socket}) when Proto==tcp; Proto==ssl ->
     Transport:setopts(Socket, [{active, once}]),
-    riak_repl_stats:client_bytes_recv(size(Data)),
+    riak_repl_stats:update([client,bytes,recv],size(Data)),
     Reply = case decode_obj_msg(Data) of
         {diff_obj, RObj} ->
             do_diff_obj_and_reply({diff_obj, RObj}, State);
@@ -348,7 +348,7 @@ async_connect(Parent, IPAddr, Port) ->
             ok = Transport:controlling_process(Socket, Parent),
             Parent ! {connected, Transport, Socket};
         {error, Reason} ->
-            riak_repl_stats:client_connect_errors(),
+            riak_repl_stats:update([client,connect,errors]),
             %% Send Reason so it shows in traces even if nothing is done with it
             Parent ! {connect_failed, Reason}
     end.
@@ -356,7 +356,7 @@ async_connect(Parent, IPAddr, Port) ->
 send(Transport, {Owner, Socket}, Data) when is_binary(Data) ->
     case Transport:send(Socket, Data) of
         ok ->
-            riak_repl_stats:client_bytes_sent(size(Data)),
+            riak_repl_stats:update([client,bytes,sent],size(Data)),
             ok;
         {error, _} = Error ->
             Owner ! {list_to_atom(atom_to_list(Transport:name()) ++ "_error"), Socket, Error},
@@ -434,7 +434,7 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                         _ ->
                             ok
                     end,
-                    riak_repl_stats:client_redirect(),
+                    riak_repl_stats:update([client,redirect]),
                     catch T:close(Socket),
                     self() ! try_connect,
                     {noreply, State#state{pending=[{IPAddr, Port} |
@@ -505,7 +505,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                     ClusterName = list_to_binary(io_lib:format("~p",
                             [proplists:get_value(cluster_name, Capability)])),
                     Transport:setopts(Socket, [{active, once}]),
-                    riak_repl_stats:client_connects(),
+                    riak_repl_stats:update([client,connects]),
                     MinPool = app_helper:get_env(riak_repl, min_put_workers, 5),
                     MaxPool = app_helper:get_env(riak_repl, max_put_workers, 100),
                     {ok, Pid} = poolboy:start_link([{worker_module, riak_repl_fullsync_worker},

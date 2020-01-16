@@ -16,22 +16,9 @@
          code_change/3]).
 -export([start_link/0,
          stop/0,
-         client_bytes_sent/1,
-         client_bytes_recv/1,
-         client_connects/0,
-         client_connect_errors/0,
-         client_redirect/0,
-         server_bytes_sent/1,
-         server_bytes_recv/1,
-         server_connects/0,
-         server_connect_errors/0,
-         server_fullsyncs/0,
-         objects_dropped_no_clients/0,
-         objects_dropped_no_leader/0,
-         objects_sent/0,
-         objects_forwarded/0,
-         elections_elected/0,
-         elections_leader_changed/0,
+         update/1,
+         update/2,
+         update/3,
          register_stats/0,
          get_stats/0,
          produce_stats/0,
@@ -59,69 +46,21 @@ register_stats() ->
 register_stats(Stats) ->
   riak_stat:register(?APP, Stats).
 
-client_bytes_sent(Bytes) ->
-    increment_counter([client,bytes,sent], Bytes).
-
-client_bytes_recv(Bytes) ->
-    increment_counter([client,bytes,recv], Bytes).
-
-client_connects() ->
-    increment_counter([client,connects]).
-
-client_connect_errors() ->
-    increment_counter([client,connect,errors]).
-
-client_redirect() ->
-    increment_counter([client,redirect]).
-
-server_bytes_sent(Bytes) ->
-    increment_counter([server,bytes,sent], Bytes).
-
-server_bytes_recv(Bytes) ->
-    increment_counter([server,bytes,recv], Bytes).
-
-server_connects() ->
-    increment_counter([server,connects]).
-
-server_connect_errors() ->
-    increment_counter([server,connect,errors]).
-
-server_fullsyncs() ->
-    increment_counter([server,fullsyncs]).
-
-objects_dropped_no_clients() ->
-    increment_counter([objects,dropped,no,clients]).
-
-objects_dropped_no_leader() ->
-    increment_counter([objects,dropped,no,leader]).
-
-objects_sent() ->
-    increment_counter([objects,sent]).
-
-objects_forwarded() ->
-    increment_counter([objects,forwarded]).
-
-elections_elected() ->
-    increment_counter([elections,elected]).
-
-elections_leader_changed() ->
-    increment_counter([elections,leader,changed]).
-
 %% If any source errors are detected, write a file out to persist this status
 %% across restarts
 rt_source_errors() ->
-    increment_counter([rt,source,errors]),
+    update([rt,source,errors]),
     rt_dirty().
 
 %% If any sink errors are detected, write a file out to persist this status
 %% across restarts
 rt_sink_errors() ->
-    increment_counter([rt,sink,errors]),
+    update([rt,sink,errors]),
     rt_dirty().
 
 rt_dirty() ->
     touch_rt_dirty_file(),
-    increment_counter([rt,dirty]),
+    update([rt,dirty]),
     Stat = lookup_stat([rt,dirty]) + 1,  % we know it's at least 1
     % increment counter is a cast, so if the number is relatively small
     % then notify the server. otherwise, we don't want to spam the
@@ -147,8 +86,14 @@ rt_dirty() ->
         false -> ok
     end.
 
+%% @doc assumed counter as default @end
+update(Name) ->
+    update(Name, 1, counter).
+update(Name, IncrBy) ->
+    update(Name, IncrBy, counter).
 update(Name, IncrBy, Type) ->
-  riak_stat:update(lists:flatten([?Prefix, ?APP | Name]), IncrBy, Type).
+    StatName = lists:flatten([?Prefix, ?APP | Name]),
+    riak_stat:update(StatName, IncrBy, Type).
 
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
@@ -237,20 +182,9 @@ stats() ->
      {[rt,sink,errors],             counter,   [], [{value, rt_sink_errors}]},
      {[rt,dirty],                   counter,   [], [{value, rt_dirty}]}].
 
-increment_counter(Name) ->
-    increment_counter(Name, 1).
-
-increment_counter(Name, IncrBy) when is_integer(IncrBy) ->
-    gen_server:cast(?MODULE, {increment_counter, Name, IncrBy}).
-
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
-handle_cast({increment_counter, Name, IncrBy}, State) ->
-  update(Name, IncrBy, counter),
-
-%%  ok = folsom_metrics:notify_existing_metric({?APP, Name}, {inc, IncrBy}, counter),
-    {noreply, State};
 handle_cast(stop, State) ->
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -397,22 +331,22 @@ test_register_stats() ->
 test_populate_stats() ->
     error_logger:tty(false),
     Bytes = 1000,
-    ok = client_bytes_sent(Bytes),
-    ok = client_bytes_recv(Bytes),
-    ok = client_connects(),
-    ok = client_connect_errors(),
-    ok = client_redirect(),
-    ok = server_bytes_sent(Bytes),
-    ok = server_bytes_recv(Bytes),
-    ok = server_connects(),
-    ok = server_connect_errors(),
-    ok = server_fullsyncs(),
-    ok = objects_dropped_no_clients(),
-    ok = objects_dropped_no_leader(),
-    ok = objects_sent(),
-    ok = objects_forwarded(),
-    ok = elections_elected(),
-    ok = elections_leader_changed(),
+    ok = update([client,bytes,sent],Bytes),
+    ok = update([client,bytes,recv],Bytes),
+    ok = update([client,connects]),
+    ok = update([client,connect,errors]),
+    ok = update([client,redirect]),
+    ok = update([server,bytes,sent],Bytes),
+    ok = update([server,bytes,recv],Bytes),
+    ok = update([server,connects]),
+    ok = update([server,connect,errors]),
+    ok = update([server,fullsyncs]),
+    ok = update([objects,dropped,no,clients]),
+    ok = update([objects,dropped,no,leader]),
+    ok = update([objects,sent]),
+    ok = update([objects,forwarded]),
+    ok = update([elections,elected]),
+    ok = update([elections,leader,changed]),
     ok = rt_source_errors(),
     ok = rt_sink_errors().
 
