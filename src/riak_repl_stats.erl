@@ -44,7 +44,7 @@ register_stats() ->
   update([last,report], tstamp(), gauge).
 
 register_stats(Stats) ->
-  riak_stat:register(?APP, Stats).
+    riak_core_stats_mgr:register(?APP, Stats).
 
 %% If any source errors are detected, write a file out to persist this status
 %% across restarts
@@ -93,7 +93,7 @@ update(Name, IncrBy) ->
     update(Name, IncrBy, counter).
 update(Name, IncrBy, Type) ->
     StatName = lists:flatten([?Prefix, ?APP | Name]),
-    riak_stat:update(StatName, IncrBy, Type).
+    riak_core_stats_mgr:update(StatName, IncrBy, Type).
 
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
@@ -107,15 +107,15 @@ produce_stats() ->
     {Stats,_} = get_app_stats(), Stats.
 
 get_app_stats() ->
-  riak_stat:get_stats([[?Prefix,?APP|'_']]).
+    riak_core_stats_mgr:get_stats([[?Prefix,?APP|'_']]).
 
 get_info() ->
-  riak_stat:get_info(?APP).
+    riak_core_stats_mgr:get_info(?APP).
 
 get_stats_values() ->
   get_stats_values(?APP).
 get_stats_values(Arg) ->
-  riak_stat:get_value(Arg).
+    riak_core_stats_mgr:get_value(Arg).
 
 
 %%%----------------------------------------------------------------%%%
@@ -234,7 +234,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_stat_exom:get_value([?Prefix,?APP|Name]).
+    riak_core_stats_mgr:get_value([?Prefix,?APP|Name]).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
@@ -242,7 +242,7 @@ now_diff(_, _) ->
     undefined.
 
 tstamp() ->
-  riak_stat_exom:timestamp().
+    riak_core_stats_mgr:timestamp().
 
 rt_dirty_filename() ->
     %% or riak_repl/work_dir?
@@ -272,8 +272,7 @@ remove_rt_dirty_file() ->
 
 clear_rt_dirty() ->
     remove_rt_dirty_file(),
-%%    folsom_metrics_counter:clear({riak_repl, rt_dirty}). legacy code
-    riak_stat:reset([?Prefix,?APP,rt,dirty]),
+    exometer:reset([?Prefix,?APP,rt,dirty]),
     register(?APP, {[rt,dirty], counter,[], [{value, rt_dirty}]}).
 
 is_rt_dirty() ->
