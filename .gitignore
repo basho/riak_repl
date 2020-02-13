@@ -12,3 +12,5 @@ tags
 dialyzer_unhandled_warnings
 dialyzer_warnings
 .rebar/
+src/riak_repl_pb.erl
+include/riak_repl_pb.hrl
