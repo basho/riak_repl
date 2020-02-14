@@ -10,6 +10,7 @@
                   crypto,
                   ssl,
                   ebloom,
+                  stats,
                   riak_core,
                   riak_kv,
                   riak_api,

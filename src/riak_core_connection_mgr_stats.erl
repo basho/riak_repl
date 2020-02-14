@@ -43,7 +43,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_conn_mgr_stats).
--define(Prefix, riak).
+-define(PREFIX, riak).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -250,17 +250,17 @@ do_update(Stat, IPAddr, Protocol) ->
 
 create_or_update(Name, UpdateVal, Type) ->
     ListName = tuple_to_list(Name),
-    StatName = [?Prefix | ListName],
-    riak_core_stats_mgr:update(StatName, UpdateVal, Type).
+    StatName = [?PREFIX | ListName],
+    stats:update(StatName, UpdateVal, Type).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
-    {Stats,_} = riak_core_stats_mgr:get_stats(?APP),
+    {Stats,_} = stats:get_stats(?APP),
     lists:flatten([{Stat, get_stat_value(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat_value(Name) ->
-    riak_core_stats_mgr:get_values(Name).
+    stats:get_values(Name).

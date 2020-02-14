@@ -22,7 +22,6 @@
          register_stats/0,
          get_stats/0,
          produce_stats/0,
-         get_info/0,
          get_stats_values/0,
          rt_source_errors/0,
          rt_sink_errors/0,
@@ -32,7 +31,7 @@
          is_rt_dirty/0]).
 
 -define(APP, riak_repl).
--define(Prefix, riak).
+-define(PREFIX, riak).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -44,7 +43,7 @@ register_stats() ->
   update([last,report], tstamp(), gauge).
 
 register_stats(Stats) ->
-    riak_core_stats_mgr:register(?APP, Stats).
+    lists:foreach(fun(Stat) -> stats:register([?PREFIX,?APP| Stat]) end, Stats).
 
 %% If any source errors are detected, write a file out to persist this status
 %% across restarts
@@ -92,8 +91,8 @@ update(Name) ->
 update(Name, IncrBy) ->
     update(Name, IncrBy, counter).
 update(Name, IncrBy, Type) ->
-    StatName = lists:flatten([?Prefix, ?APP | Name]),
-    riak_core_stats_mgr:update(StatName, IncrBy, Type).
+    StatName = lists:flatten([?PREFIX, ?APP | Name]),
+    stats:update(StatName, IncrBy, Type).
 
 get_stats() ->
   case erlang:whereis(riak_repl_stats) of
@@ -107,15 +106,12 @@ produce_stats() ->
     {Stats,_} = get_app_stats(), Stats.
 
 get_app_stats() ->
-    riak_core_stats_mgr:get_stats([[?Prefix,?APP|'_']]).
-
-get_info() ->
-    riak_core_stats_mgr:get_info(?APP).
+    stats:get_stats([[?PREFIX,?APP|'_']]).
 
 get_stats_values() ->
   get_stats_values(?APP).
 get_stats_values(Arg) ->
-    riak_core_stats_mgr:get_value(Arg).
+    stats:get_value(Arg).
 
 
 %%%----------------------------------------------------------------%%%
@@ -234,7 +230,7 @@ bytes_to_kbits_per_sec(_, _, _) ->
     undefined.
 
 lookup_stat(Name) ->
-    riak_core_stats_mgr:get_value([?Prefix,?APP|Name]).
+    stats:get_value([?PREFIX,?APP|Name]).
 
 now_diff(NowSecs, ThenSecs) when is_number(NowSecs), is_number(ThenSecs) ->
     NowSecs - ThenSecs;
@@ -242,7 +238,7 @@ now_diff(_, _) ->
     undefined.
 
 tstamp() ->
-    riak_core_stats_mgr:timestamp().
+    stats:timestamp().
 
 rt_dirty_filename() ->
     %% or riak_repl/work_dir?
@@ -272,7 +268,7 @@ remove_rt_dirty_file() ->
 
 clear_rt_dirty() ->
     remove_rt_dirty_file(),
-    exometer:reset([?Prefix,?APP,rt,dirty]),
+    exometer:reset([?PREFIX,?APP,rt,dirty]),
     register(?APP, {[rt,dirty], counter,[], [{value, rt_dirty}]}).
 
 is_rt_dirty() ->
