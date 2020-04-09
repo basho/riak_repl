@@ -320,6 +320,15 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
             {stop, normal, State}
     end.
 
+
+-ifdef(otp21).
+ssl_handshake(Socket, SslOpts) ->
+    ssl:handshake(Socket, SslOpts).
+-else.
+ssl_handshake(Socket, SslOpts) ->
+    ssl:ssl_accept(Socket, SslOpts).
+-endif.
+
 send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = State) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
@@ -361,7 +370,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                     {ok, Data} = Transport:recv(Socket, 0, infinity),
                     case binary_to_term(Data) of
                         {peerinfo, _, [ssl_required|_]} ->
-                            case ssl:ssl_accept(Socket, Config) of
+                            case ssl_handshake(Socket, Config) of
                                 {ok, SSLSocket} ->
                                     send_peerinfo(State#state{socket=SSLSocket,
                                                               transport=ranch_ssl});
