@@ -38,7 +38,7 @@ start_link(Listener, Socket, Transport, InArgs) ->
 
 init({Listener, Socket, Transport, InArgs}) ->
     ok = proc_lib:init_ack({ok, self()}),
-    ok = ranch:accept_ack(Listener),
+    {ok, _} = ranch:handshake(Listener),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     ok = Transport:setopts(Socket, [{active, once}]),
     TransportMsgs = Transport:messages(),

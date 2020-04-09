@@ -168,7 +168,7 @@ handle_info({Proto, Socket, Data},
     end;
 handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
     %% acknowledge the change of socket ownership
-    ok = ranch:accept_ack(State#state.listener),
+    {ok, _} = ranch:handshake(State#state.listener),
     ok = Transport:setopts(Socket, [
             binary,
             {keepalive, true},
