@@ -46,7 +46,7 @@
       Error::{error, Reason},
       Reason::term().
 rt_enqueue(Bucket, Key, Options, Client) ->
-    GetRes = Client:get(Bucket, Key, Options),
+    GetRes = riak_client:get(Bucket, Key, Options, Client),
     case GetRes of
         {ok, Object} ->
             rt_enqueue_object(Object);
