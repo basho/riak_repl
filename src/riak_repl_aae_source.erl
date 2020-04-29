@@ -2,7 +2,12 @@
 %% Copyright 2013 Basho Technologies, Inc. All Rights Reserved.
 
 -module(riak_repl_aae_source).
--behaviour(gen_fsm_compat).
+-behaviour(gen_fsm).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_event, 3}]}).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -25,7 +30,7 @@
          send_missing/3,
          bloom_fold/3]).
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
 
@@ -80,17 +85,17 @@
 -spec start_link(term(), term(), term(), term(), index(), pid(), term())
                 -> {ok,pid()} | ignore | {error, term()}.
 start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto) ->
-    gen_fsm_compat:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto], []).
+    gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto], []).
 
 start_exchange(AAESource) ->
     lager:debug("Send start_exchange to AAE fullsync sink worker"),
-    gen_fsm_compat:send_event(AAESource, start_exchange).
+    gen_fsm:send_event(AAESource, start_exchange).
 
 cancel_fullsync(Pid) ->
-    gen_fsm_compat:send_event(Pid, cancel_fullsync).
+    gen_fsm:send_event(Pid, cancel_fullsync).
 
 %%%===================================================================
-%%% gen_fsm_compat callbacks
+%%% gen_fsm callbacks
 %%%===================================================================
 
 init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
@@ -162,7 +167,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %%%===================================================================
-%%% gen_fsm_compat states
+%%% gen_fsm states
 %%%===================================================================
 
 %% @doc Initial state. Attempt to acquire all necessary exchange locks.
@@ -255,10 +260,10 @@ update_trees({start_exchange, [IndexHead|IndexTail]}, State=#state{tree_pid=Tree
     update_request(TreePid, {Partition, undefined}, IndexHead),
     case send_synchronous_msg(?MSG_UPDATE_TREE, IndexHead, State) of
         ok ->
-            gen_fsm_compat:send_event(self(), tree_built),
+            gen_fsm:send_event(self(), tree_built),
             case IndexTail of
                 [] -> ok;
-                _  -> gen_fsm_compat:send_event(self(), {start_exchange, IndexTail})
+                _  -> gen_fsm:send_event(self(), {start_exchange, IndexTail})
             end,
             {next_state, update_trees, State};
         not_responsible ->
@@ -326,7 +331,7 @@ key_exchange(continue, State=#state{indexns=IndexNs}) ->
             send_diffs(init, State);
         [_|RestNs] ->
             State2 = State#state{built=0, indexns=RestNs},
-            gen_fsm_compat:send_event(self(), start_key_exchange),
+            gen_fsm:send_event(self(), start_key_exchange),
             {next_state, key_exchange, State2}
     end;
 key_exchange(start_key_exchange, State=#state{cluster=Cluster,
@@ -352,7 +357,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                      %% socket (with correct ownership). We'll send a 'ready'
                      %% back here once the socket ownership is transfered and
                      %% we are ready to proceed with the compare.
-                     gen_fsm_compat:send_event(SourcePid, {'$aae_src', worker_pid, self()}),
+                     gen_fsm:send_event(SourcePid, {'$aae_src', worker_pid, self()}),
                      receive
                          {'$aae_src', ready, SourcePid} ->
                              ok
@@ -397,7 +402,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                        Exchange2 = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, Exchange, TreePid),
                        lager:debug("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                                    [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
-                       gen_fsm_compat:send_event(SourcePid, {'$aae_src', done, Exchange2})
+                       gen_fsm:send_event(SourcePid, {'$aae_src', done, Exchange2})
                end),
 
     %% wait for differences from bloom_folder or to be done
@@ -479,7 +484,7 @@ finish_sending_differences(#exchange{bloom=undefined, count=DiffCnt},
                            #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
     lager:info("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                [0, DiffCnt, Partition, EstimatedNrKeys]),
-    gen_fsm_compat:send_event(self(), diff_done);
+    gen_fsm:send_event(self(), diff_done);
 
 finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                            #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
@@ -487,7 +492,7 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
         Count = 0 ->
             lager:info("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                        [Count, DiffCnt, Partition, EstimatedNrKeys]),
-            gen_fsm_compat:send_event(self(), diff_done);
+            gen_fsm:send_event(self(), diff_done);
         Count ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             OwnerNode = riak_core_ring:index_owner(Ring, Partition),
@@ -510,7 +515,7 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                             receive
                                 {FoldRef, _Reply} ->
                                     %% we don't care about the reply
-                                    gen_fsm_compat:send_event(Self, diff_done);
+                                    gen_fsm:send_event(Self, diff_done);
                                 {'DOWN', MonRef, process, VNodePid, normal} ->
                                     lager:warning("VNode ~p exited before fold for partition ~p",
                                         [VNodePid, Partition]),
@@ -540,7 +545,7 @@ bloom_fold({B, K}, V, {MPid, Bloom}) ->
     case ebloom:contains(Bloom, BKBin) of
         true ->
             RObj = riak_object:from_binary(B,K,V),
-            gen_fsm_compat:sync_send_event(MPid, {diff_obj, RObj}, infinity);
+            gen_fsm:sync_send_event(MPid, {diff_obj, RObj}, infinity);
         false ->
             ok
     end,
@@ -702,7 +707,7 @@ as_event(F) ->
     Self = self(),
     spawn_link(fun() ->
                        Result = F(),
-                       gen_fsm_compat:send_event(Self, Result)
+                       gen_fsm:send_event(Self, Result)
                end),
     ok.
 

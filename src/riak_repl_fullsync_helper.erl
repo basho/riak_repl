@@ -8,6 +8,10 @@
 -module(riak_repl_fullsync_helper).
 -behaviour(riak_core_gen_server).
 
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2}]}).
+
+
 %% API
 -export([start_link/1,
          stop/1,
@@ -57,7 +61,7 @@ stop(Pid) ->
 %% Make a sorted file of key/object hashes.
 %% 
 %% Return {ok, Ref} if build starts successfully, then sends
-%% a gen_fsm_compat event {Ref, keylist_built} to the OwnerFsm or
+%% a gen_fsm event {Ref, keylist_built} to the OwnerFsm or
 %% a {Ref, {error, Reason}} event on failures
 make_keylist(Pid, Partition, Filename) ->
     riak_core_gen_server:call(Pid, {make_keylist, Partition, Filename}, ?LONG_TIMEOUT).
@@ -153,7 +157,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                    kl_fp = FP},
             {noreply, NewState};
         false ->
-            gen_fsm_compat:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
+            gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}}),
             {stop, normal, State}
     end;
 %% sent from keylist_fold every 100 key/value hashes
@@ -196,9 +200,9 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
                             lager:error("Partition ~p: Read Errors.",
                                                 [Partition, Errors])
                     end,
-                    gen_fsm_compat:send_event(State#state.owner_fsm, {Ref, diff_done});
+                    gen_fsm:send_event(State#state.owner_fsm, {Ref, diff_done});
                 false ->
-                    gen_fsm_compat:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
+                    gen_fsm:send_event(State#state.owner_fsm, {Ref, {error, node_not_available}})
             end
         after
             _ = file:close(RemoteFile),
@@ -245,7 +249,7 @@ handle_cast(kl_sort, State) ->
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
     lager:info("Sorted ~s of ~p keys in ~.2f seconds",
                           [Filename, State#state.kl_total, ElapsedUsec / 1000000]),
-    gen_fsm_compat:send_event(State#state.owner_fsm, {State#state.ref, keylist_built,
+    gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built,
         State#state.kl_total}),
     {stop, normal, State}.
 
@@ -254,7 +258,7 @@ handle_info({'EXIT', Pid,  Reason}, State) when Pid =:= State#state.folder_pid -
         normal ->
             {noreply, State};
         _ ->
-            gen_fsm_compat:send_event(State#state.owner_fsm, 
+            gen_fsm:send_event(State#state.owner_fsm, 
                                {State#state.ref, {error, {folder_died, Reason}}}),
             {stop, normal, State}
     end;
@@ -315,7 +319,7 @@ itr_next(Size, File, Tag) ->
 
 diff_keys(R, L, #diff_state{replies=0, fsm=FSM, ref=Ref, count=Count} = DiffState) 
   when Count /= 0 ->
-    gen_fsm_compat:send_event(FSM, {Ref, diff_paused}),
+    gen_fsm:send_event(FSM, {Ref, diff_paused}),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
     receive
@@ -354,7 +358,7 @@ diff_keys(eof, _, DiffState) ->
 %% Called when the hashes differ with the packed bkey
 diff_hash(PBKey, DiffState = #diff_state{need_vclocks=false, fsm=FSM, ref=Ref}) ->
     BKey = unpack_key(PBKey),
-    gen_fsm_compat:send_event(FSM, {Ref, {merkle_diff, {BKey, undefined}}}),
+    gen_fsm:send_event(FSM, {Ref, {merkle_diff, {BKey, undefined}}}),
     DiffState#diff_state{diff_hash = DiffState#diff_state.diff_hash + 1,
         replies=DiffState#diff_state.replies - 1};
 diff_hash(PBKey, DiffState) ->
@@ -365,7 +369,7 @@ diff_hash(PBKey, DiffState) ->
         [{BKey, _Vclock} = BkeyVclock] ->
             Fsm = DiffState#diff_state.fsm,
             Ref = DiffState#diff_state.ref,
-            gen_fsm_compat:send_event(Fsm, {Ref, {merkle_diff, BkeyVclock}}),
+            gen_fsm:send_event(Fsm, {Ref, {merkle_diff, BkeyVclock}}),
             DiffState#diff_state{diff_hash = UpdDiffHash,
                 replies=DiffState#diff_state.replies - 1};
         Reason ->
@@ -378,7 +382,7 @@ missing_key(PBKey, DiffState) ->
     BKey = unpack_key(PBKey),
     Fsm = DiffState#diff_state.fsm,
     Ref = DiffState#diff_state.ref,
-    gen_fsm_compat:send_event(Fsm, {Ref, {merkle_diff, {BKey, vclock:fresh()}}}),
+    gen_fsm:send_event(Fsm, {Ref, {merkle_diff, {BKey, vclock:fresh()}}}),
     UpdMissing = DiffState#diff_state.missing + 1,
     DiffState#diff_state{missing = UpdMissing,
         replies=DiffState#diff_state.replies - 1}.

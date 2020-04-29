@@ -37,7 +37,14 @@
 %% keys in disk-order to speed up the key-list creation process.
 -module(riak_repl_keylist_server).
 
--behaviour(gen_fsm_compat).
+-behaviour(gen_fsm).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2},
+                {gen_fsm, sync_send_all_state_event, 3}]}).
 
 %% API
 -export([start_link/6,
@@ -48,7 +55,7 @@
         resume_fullsync/1
     ]).
 
-%% gen_fsm_compat
+%% gen_fsm
 -export([init/1,
          handle_event/3,
          handle_sync_event/4,
@@ -115,22 +122,22 @@
 -define(KEY_LIST_THRESHOLD,(1024)).
 
 start_link(SiteName, Transport, Socket, WorkDir, Client, Proto) ->
-    gen_fsm_compat:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto], []).
+    gen_fsm:start_link(?MODULE, [SiteName, Transport, Socket, WorkDir, Client, Proto], []).
 
 start_fullsync(Pid) ->
-    gen_fsm_compat:send_event(Pid, start_fullsync).
+    gen_fsm:send_event(Pid, start_fullsync).
 
 start_fullsync(Pid, Partitions) ->
-    gen_fsm_compat:send_event(Pid, {start_fullsync, Partitions}).
+    gen_fsm:send_event(Pid, {start_fullsync, Partitions}).
 
 cancel_fullsync(Pid) ->
-    gen_fsm_compat:send_event(Pid, cancel_fullsync).
+    gen_fsm:send_event(Pid, cancel_fullsync).
 
 pause_fullsync(Pid) ->
-    gen_fsm_compat:send_event(Pid, pause_fullsync).
+    gen_fsm:send_event(Pid, pause_fullsync).
 
 resume_fullsync(Pid) ->
-    gen_fsm_compat:send_event(Pid, resume_fullsync).
+    gen_fsm:send_event(Pid, resume_fullsync).
 
 init([SiteName, Transport, Socket, WorkDir, Client, Proto]) ->
     MinPool = app_helper:get_env(riak_repl, min_get_workers, 5),
@@ -501,7 +508,7 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
                             receive
                                 {FoldRef, _Reply} ->
                                     %% we don't care about the reply
-                                    gen_fsm_compat:send_event(Self,
+                                    gen_fsm:send_event(Self,
                                                        {Ref, diff_exchanged});
                                 {'DOWN', MonRef, process, VNodePid, normal} ->
                                     lager:warning("VNode ~p exited before fold for partition ~p",
@@ -613,7 +620,7 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
     end,
     {reply, ok, diff_bloom, State}.
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 
 handle_event(_Event, StateName, State) ->
     lager:debug("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _Event]),
@@ -632,7 +639,7 @@ handle_sync_event(status, _From, StateName, State) ->
                 {stage_start,
                     riak_repl_util:elapsed_secs(State#state.stage_start)},
                 {get_pool_size,
-                    length(gen_fsm_compat:sync_send_all_state_event(State#state.pool,
+                    length(gen_fsm:sync_send_all_state_event(State#state.pool,
                             get_all_workers, infinity))}
             ]
     end,
@@ -681,7 +688,7 @@ bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent,
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
     Monitor = erlang:monitor(process, MPid),
     ?TRACE(lager:info("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
-    gen_fsm_compat:send_event(MPid, {self(), bloom_paused}),
+    gen_fsm:send_event(MPid, {self(), bloom_paused}),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
     receive
@@ -706,7 +713,7 @@ bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinS
                         {'EXIT', _} ->
                             ok;
                         RObj ->
-                            gen_fsm_compat:sync_send_event(MPid,
+                            gen_fsm:sync_send_event(MPid,
                                                     {diff_obj, RObj},
                                                     infinity)
                     end,
@@ -723,7 +730,7 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
                         {'EXIT', _} ->
                             ok;
                         RObj ->
-                            gen_fsm_compat:sync_send_event(MPid,
+                            gen_fsm:sync_send_event(MPid,
                                                     {diff_obj, RObj},
                                                     infinity)
                     end,

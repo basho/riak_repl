@@ -22,6 +22,11 @@
 
 -behaviour(gen_server).
 
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_all_state_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
+
 %% API
 -export([start_link/4, set_socket/2, send/3, status/1, status/2]).
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
@@ -102,7 +107,7 @@ handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
     {reply, ok, State};
 handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
     Res = case is_pid(FSW) of
-        true -> gen_fsm_compat:sync_send_all_state_event(FSW, status, infinity);
+        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
     Desc =
@@ -212,7 +217,7 @@ handle_info(_Event, State) ->
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir,q=Q}) ->
     case is_pid(FSW) of
         true ->
-            gen_fsm_compat:sync_send_all_state_event(FSW, stop);
+            gen_fsm:sync_send_all_state_event(FSW, stop);
         _ ->
             ok
     end,
@@ -248,7 +253,7 @@ handle_msg({proxy_get, Ref, Bucket, Key, Options}, State) ->
     _ = send(State#state.transport, State#state.socket, {proxy_get_resp, Ref, Res}),
     {noreply, State};
 handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
-    gen_fsm_compat:send_event(FSW, Msg),
+    gen_fsm:send_event(FSW, Msg),
     {noreply, State}.
 
 handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my_pi=MyPI} = State, TheirPI, Capability) ->

@@ -2,9 +2,11 @@ ebin/*.beam
 ebin/*.app
 deps
 .eunit
+.eqc/
 .eqc-info
 .qc/
 current_counterexample.eqc
+rebar3.crashdump
 erl_crash.dump
 repl_leader_eqc_data/
 .local_dialyzer_plt
@@ -19,3 +21,4 @@ include/riak_repl_pb.hrl
 src/riak_repl_pb.erl
 undefined
 data/*
+.rebar3/erlcinfo
