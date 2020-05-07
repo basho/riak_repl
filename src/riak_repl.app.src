@@ -13,6 +13,7 @@
                   riak_core,
                   riak_kv,
                   riak_api,
+                  lager,
                   ranch]},
   {registered,   [riak_repl_connector_sup,
                   riak_repl_leader,

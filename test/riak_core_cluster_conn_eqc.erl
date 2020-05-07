@@ -47,7 +47,9 @@
 -export([test/0,
          test/1]).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
+
+-compile([{nowarn_deprecated_function, [{gen_fsm, send_event, 2}]}]).
 
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) ->
