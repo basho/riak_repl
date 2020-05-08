@@ -43,9 +43,11 @@
 %% would be sent to the gen_server
 -define(SERVER, riak_repl_leader_gs).
 
+-ifdef(TEST).
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -export([prop_balance/0]).
+-endif.
 -endif.
 
 -ifdef(TEST).
