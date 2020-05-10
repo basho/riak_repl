@@ -1,4 +1,4 @@
-.PHONY: compile rel cover test dialyzer
+.PHONY: compile rel cover test dialyzer eqc
 REBAR=./rebar3
 
 compile:
@@ -9,16 +9,21 @@ clean:
 	rm -f src/*_pb.erl
 	$(REBAR) clean
 
-cover: test
+cover: 
+	$(REBAR) eunit --cover
 	$(REBAR) cover
 
 test: compile
-	$(REBAR) as test do eunit
+	$(REBAR) eunit
 
 dialyzer:
 	$(REBAR) dialyzer
 
 xref:
 	$(REBAR) xref
+
+eqc:
+	$(REBAR) as test eqc --testing_budget 120
+	$(REBAR) as eqc eunit
 
 check: test dialyzer xref

@@ -32,11 +32,11 @@ fixup_test_() ->
                 application:unset_env(riak_repl, rtenabled)
         end,
         [
-            fun simple/0,
-            fun preexisting_repl_hook/0,
-            fun other_postcommit_hook/0,
-            fun blank_bucket/0,
-            fun inherit_from_default_bucket/0
+            {"simple", fun simple/0},
+            {"pre-existing", fun preexisting_repl_hook/0},
+            {"other postcommit hook", fun other_postcommit_hook/0},
+            {"blank bucker", fun blank_bucket/0},
+            {"inherit from default bucket", fun inherit_from_default_bucket/0}
         ]
     }.
 

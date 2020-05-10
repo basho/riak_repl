@@ -67,27 +67,25 @@ cleanup(_Ctx) ->
     % ?debugMsg("leave cleanup(~p)", [_Ctx]),
     ok.
 
-prop_test_() ->
+property_test() ->
     {spawn,
-     [
-      {setup,
-       fun setup/0,
-       fun cleanup/1,
-       [%% Run the quickcheck tests
-        {timeout, 120,
-         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
-       ]
-      }
+     [%% Run the quickcheck tests
+      {timeout, 120,
+       ?_assertEqual(true, eqc:quickcheck(eqc:numtests(5, ?QC_OUT(prop_main()))))}
      ]
     }.
 
 prop_main() ->
+    ?SETUP(fun() ->
+                   setup(),
+                   fun(X) -> cleanup(X) end
+           end,
     ?FORALL(Cmds, noshrink(commands(?MODULE)),
         aggregate(command_names(Cmds), begin
              {H, S, Res} = run_commands(?MODULE, Cmds),
              process_flag(trap_exit, false),
             pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok)
-        end)).
+        end))).
 
 %% ====================================================================
 %% Generators (including commands)
