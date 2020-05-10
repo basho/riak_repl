@@ -65,7 +65,7 @@ cleanup(_) ->
     unload_mecks(),
     ok.
 
-prop_main() ->
+xprop_main() ->
     ?SETUP(fun() ->
                    setup(),
                    fun(X) -> cleanup(X) end
