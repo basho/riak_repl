@@ -20,6 +20,7 @@ fixup_test_() ->
                 application:set_env(riak_repl, rtenabled, true),
                 riak_core_bucket:append_bucket_defaults([{postcommit, []}]),
                 RingEvtPid = maybe_start_link(riak_core_ring_events:start_link()),
+                timer:sleep(10),  %% next line counts on precesses being registered
                 RingMgrPid = maybe_start_link(riak_core_ring_manager:start_link(test)),
                 {RingEvtPid, RingMgrPid}
 
