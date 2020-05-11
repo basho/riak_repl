@@ -56,7 +56,7 @@ setup() ->
     % ?debugFmt("leave setup() -> ~p", [R]),
     R.
 
-cleanup(_Ctx) ->
+cleanup() ->
     % ?debugFmt("enter cleanup(~p)", [_Ctx]),
     rt_source_helpers:kill_fake_sink(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
@@ -78,14 +78,17 @@ property_test() ->
 prop_main() ->
     ?SETUP(fun() ->
                    setup(),
-                   fun(X) -> cleanup(X) end
+                   fun() ->
+                           process_flag(trap_exit, false),
+                           cleanup()
+                   end
            end,
     ?FORALL(Cmds, noshrink(commands(?MODULE)),
-        aggregate(command_names(Cmds), begin
+        begin
              {H, S, Res} = run_commands(?MODULE, Cmds),
-             process_flag(trap_exit, false),
-            pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok)
-        end))).
+            aggregate(command_names(Cmds),
+                      pretty_commands(?MODULE, Cmds, {H,S,Res}, Res == ok))
+        end)).
 
 %% ====================================================================
 %% Generators (including commands)
