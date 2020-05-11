@@ -44,18 +44,12 @@
     already_routed
 }).
 
-%% eqc_test_() ->
+%% rt_sink_eqc_test_() ->
 %%    {spawn,
-%%    [
-%%      {setup,
-%%       fun setup/0,
-%%       fun cleanup/1,
 %%       [%% Run the quickcheck tests
 %%        {timeout, 30,
 %%         ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(?MODULE:prop_main()))))}
 %%       ]
-%%      }
-%%     ]
 %%    }.
 
 setup() ->
@@ -71,7 +65,11 @@ cleanup(_) ->
     unload_mecks(),
     ok.
 
-prop_main() ->
+xprop_main() ->
+    ?SETUP(fun() ->
+                   setup(),
+                   fun(X) -> cleanup(X) end
+           end,
     ?FORALL(Cmds, commands(?MODULE),
         aggregate(command_names(Cmds), begin
             {H, S, Res} = run_commands(?MODULE, Cmds),
@@ -79,7 +77,7 @@ prop_main() ->
             teardown(),
             unload_mecks(),
             Out
-        end)).
+        end))).
 
 unload_mecks() ->
     riak_repl_test_util:maybe_unload_mecks([

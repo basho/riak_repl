@@ -40,16 +40,9 @@
 
 rtq_test_() ->
     {spawn,
-     [
-      {setup,
-       fun setup/0,
-       fun cleanup/1,
        [ % run qc tests
           {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_main()))))},
           {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:numtests(250, ?QC_OUT(prop_parallel()))))}
-
-       ]
-      }
      ]
     }.
 
@@ -65,7 +58,7 @@ setup() ->
         fun() -> ok end),
     ok.
 
-cleanup(_) ->
+cleanup() ->
     kill_and_wait(riak_repl2_rtq),
     application:unset_env(riak_repl, rtq_max_bytes),
     catch(meck:unload(riak_repl_stats)),
@@ -73,27 +66,31 @@ cleanup(_) ->
     ok.
 
 prop_main() ->
+    ?SETUP(fun() ->
+                   setup(),
+                   fun() -> cleanup() end
+           end,
     ?FORALL(Cmds, commands(?MODULE),
         begin
-%                setup(),
-                {H, S, Res} = run_commands(?MODULE,Cmds),
+                {H, S, Res} = run_commands(Cmds),
                 catch(exit(S#state.rtq, kill)),
                 aggregate(command_names(Cmds),
                     pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok))
-        end).
+            end)).
 
 prop_parallel() ->
-    ?LET(Repeat, ?SHRINK(1, []),
+    ?SETUP(fun() ->
+                   setup(),
+                   fun() -> cleanup() end
+           end,
+    ?LET(Shrinking, parameter(shrinking, false),
     ?FORALL(Cmds, parallel_commands(?MODULE),
-    ?ALWAYS(Repeat,
+    ?ALWAYS(if Shrinking -> 10; true -> 1 end,
         begin
-%                setup(),
-                {H, S, Res} = run_parallel_commands(?MODULE,Cmds),
+                {H, S, Res} = run_parallel_commands(Cmds),
                 kill_all_pids({H, S}),
-%                aggregate(command_names(Cmds),
-                command_names(Cmds),
                     pretty_commands(?MODULE, Cmds, {H,S,Res}, Res==ok)
-        end))).
+        end)))).
 
 -ifdef(PULSE).
 

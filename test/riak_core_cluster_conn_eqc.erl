@@ -68,14 +68,7 @@
 %%====================================================================
 
 eqc_test_() ->
-    {setup,
-     fun setup/0,
-     fun cleanup/1,
-     {spawn,
-      [
-       {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(30, ?QC_OUT(prop_cluster_conn_state_transition()))))}
-      ]
-     }}.
+    {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(30, ?QC_OUT(prop_cluster_conn_state_transition()))))}.
 
 setup() ->
     riak_repl_test_util:start_lager().
@@ -94,6 +87,10 @@ cleanup(Apps) ->
 %% effects that may occur in any particular state and those are
 %% avoided by starting the fsm in `test' mode.
 prop_cluster_conn_state_transition() ->
+    ?SETUP(fun() ->
+                   Apps = setup(),
+                   fun() -> cleanup(Apps) end
+           end,
     ?FORALL(Cmds,
             commands(?MODULE),
             begin
@@ -110,7 +107,7 @@ prop_cluster_conn_state_transition() ->
                                  ?debugFmt("\nHistory: ~p~n", [H])
                              end,
                              equals(ok, Res)))
-            end).
+            end)).
 
 %%====================================================================
 %% eqc_fsm callbacks
