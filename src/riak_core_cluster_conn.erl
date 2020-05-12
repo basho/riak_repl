@@ -346,7 +346,7 @@ handle_sync_event(current_state, _From, StateName, State) ->
     Reply = {StateName, State},
     {reply, Reply, StateName, State};
 handle_sync_event(force_stop, _From, _StateName, State) ->
-    ok = lager:debug("Stopping because I was asked nicely to."),
+    % ok = lager:debug("Stopping because I was asked nicely to."),
     {stop, normal, ok, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
