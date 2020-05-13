@@ -239,6 +239,7 @@ overload_test_() ->
             % msg queue = 0, totol objects dropped = 5
             riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
             Seq1 = pull(5),
+            timer:sleep(1200),
             Seq2 = pull(1),
             ?assertEqual(Seq1 + 1 + 5, Seq2),
             Status = riak_repl2_rtq:status(),

@@ -1213,7 +1213,7 @@ dbg_opts(Name, Opts) ->
 format_status(Opt, StatusData) ->
     [PDict, SysState, Parent, Debug, [Mode, Server, Role, E]] = StatusData,
     Header = lists:concat(["Status for gen_leader ", E#election.name]),
-    Log = sys:get_debug(log, Debug, []),
+    Log = get_debug(Debug),
     #server{mod = Mod, state = State} = Server,
     Specific =
         case erlang:function_exported(Mod, format_status, 2) of
@@ -1233,6 +1233,14 @@ format_status(Opt, StatusData) ->
              {"Role", Role},
              {"Election", format_election(E)}]} |
      Specific].
+
+-ifdef(otp22).
+get_debug(Debug) ->
+    sys:get_log(Debug).
+-else.
+get_debug(Debug) ->
+    sys:get_debug(log, Debug, []).
+-endif.
 
 format_election(E) ->
     [

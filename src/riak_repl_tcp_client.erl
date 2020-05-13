@@ -15,6 +15,11 @@
 
 -behaviour(gen_server).
 
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_all_state_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
+
 %% API
 -export([start_link/1, status/1, status/2, async_connect/3, send/3,
         handle_peerinfo/3, make_state/6, cluster_name/1, proxy_get/4]).
@@ -88,21 +93,21 @@ init([SiteName]) ->
 %% these fullsync control messages are for 'inverse' mode only, and only work
 %% with the keylist strategy.
 handle_call(start_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm_compat:send_event(FSW, start_fullsync),
+    gen_fsm:send_event(FSW, start_fullsync),
     {reply, ok, State};
 handle_call(cancel_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm_compat:send_event(FSW, cancel_fullsync),
+    gen_fsm:send_event(FSW, cancel_fullsync),
     {reply, ok, State};
 handle_call(pause_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm_compat:send_event(FSW, pause_fullsync),
+    gen_fsm:send_event(FSW, pause_fullsync),
     {reply, ok, State};
 handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW} = State) ->
-    gen_fsm_compat:send_event(FSW, resume_fullsync),
+    gen_fsm:send_event(FSW, resume_fullsync),
     {reply, ok, State};
 
 handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
     Res = case is_pid(FSW) of
-        true -> gen_fsm_compat:sync_send_all_state_event(FSW, status, infinity);
+        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
     Desc =
@@ -114,7 +119,7 @@ handle_call(status, _From, #state{fullsync_worker=FSW} = State) ->
         ] ++
         [
             {put_pool_size,
-                length(gen_fsm_compat:sync_send_all_state_event(State#state.pool_pid,
+                length(gen_fsm:sync_send_all_state_event(State#state.pool_pid,
                     get_all_workers, infinity))} || is_pid(State#state.pool_pid)
         ] ++
         case State#state.listener of
@@ -220,7 +225,7 @@ handle_info({Proto, Socket, Data},
         {peerinfo, TheirPI, Capability} ->
             handle_peerinfo(State, TheirPI, Capability);
         Other ->
-            gen_fsm_compat:send_event(State#state.fullsync_worker, Other),
+            gen_fsm:send_event(State#state.fullsync_worker, Other),
             {noreply, State}
     end,
     case State#state.keepalive_time of
@@ -258,7 +263,7 @@ terminate(_Reason, #state{pool_pid=Pool, fullsync_worker=FSW, work_dir=WorkDir})
     end,
     case is_pid(FSW) of
         true ->
-            gen_fsm_compat:sync_send_all_state_event(FSW, stop);
+            gen_fsm:sync_send_all_state_event(FSW, stop);
         false ->
             ok
     end,

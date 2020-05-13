@@ -251,6 +251,9 @@ terminate(_Reason, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+send_heartbeat(undefined, _Socket) ->
+    lager:warning("Heartbeat received but transport undefined"),
+    ok;
 send_heartbeat(Transport, Socket) ->
     Transport:send(Socket, riak_repl2_rtframe:encode(heartbeat, undefined)).
 

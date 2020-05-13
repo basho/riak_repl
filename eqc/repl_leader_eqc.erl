@@ -20,12 +20,11 @@
 
 -module(repl_leader_eqc).
 
--ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -record(replnode, {node,
                    running=false,
@@ -623,4 +622,3 @@ register_receiver() ->
     Leader2 = riak_repl_leader:leader_node(),
     {Leader1, Leader2, Res, Pid}.
 
--endif. % EQC

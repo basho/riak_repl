@@ -22,7 +22,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -eqc_group_commands(true).
 -include_lib("eqc/include/eqc_statem.hrl").
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -record(remote,
         {node,              % node running as the remote
@@ -76,7 +76,7 @@ initial_state() ->
 enable_command(S) ->
     {call, ?MODULE, enable, [S#ts.local, elements(remote_names(S))]}.
 
-enable_next(S, _R, [Local, Remote]) ->
+enable_next(S, _R, [_Local, Remote]) ->
     case lists:member(Remote, expect_disabled(S)) of
         true ->
             update_tr(Remote, fun(TR) -> TR#remote{rtstate=enabled} end, S);
@@ -84,7 +84,7 @@ enable_next(S, _R, [Local, Remote]) ->
             S
     end.
 
-enable_post(S, [Local, Remote], Res) ->
+enable_post(S, [_Local, Remote], Res) ->
     Expect = case lists:member(Remote, expect_disabled(S)) of
                 true ->
                     ok;
@@ -103,7 +103,7 @@ enable(Local, Remote) ->
 disable_command(S) ->
     {call, ?MODULE, disable, [S#ts.local, elements(remote_names(S))]}.
 
-disable_next(S, _R, [Local, Remote]) ->
+disable_next(S, _R, [_Local, Remote]) ->
     case lists:member(Remote, expect_disabled(S)) of
         false ->
             update_tr(Remote, fun(TR) -> TR#remote{rtstate=disabled} end, S);
@@ -111,7 +111,7 @@ disable_next(S, _R, [Local, Remote]) ->
             S
     end.
 
-disable_post(S, [Local, Remote], Res) ->
+disable_post(S, [_Local, Remote], Res) ->
     Expect = case lists:member(Remote, expect_disabled(S)) of
                 false ->
                     ok;
@@ -130,7 +130,7 @@ disable(Local, Remote) ->
 start_command(S) ->
     {call, ?MODULE, start, [S#ts.local, elements(remote_names(S))]}.
 
-start_next(S, _R, [Local, Remote]) ->
+start_next(S, _R, [_Local, Remote]) ->
     case expect_rtstate(Remote, S) of
         enabled ->
             update_tr(Remote, fun(TR) -> TR#remote{rtstate=started} end, S);
@@ -138,7 +138,7 @@ start_next(S, _R, [Local, Remote]) ->
             S
     end.
 
-start_post(S, [Local, Remote], Res) ->
+start_post(S, [_Local, Remote], Res) ->
     Expect = case expect_rtstate(Remote, S) of
                  disabled ->
                      {not_changed, {not_enabled, Remote}};
@@ -159,7 +159,7 @@ start(Local, Remote) ->
 stop_command(S) ->
     {call, ?MODULE, stop, [S#ts.local, elements(remote_names(S))]}.
 
-stop_next(S, _R, [Local, Remote]) ->
+stop_next(S, _R, [_Local, Remote]) ->
     case expect_rtstate(Remote, S) of
         started ->
             update_tr(Remote, fun(TR) -> TR#remote{rtstate=enabled} end, S);
@@ -167,7 +167,7 @@ stop_next(S, _R, [Local, Remote]) ->
             S
     end.
 
-stop_post(S, [Local, Remote], Res) ->
+stop_post(S, [_Local, Remote], Res) ->
     Expect = case expect_rtstate(Remote, S) of
                  disabled ->
                      {not_changed, {not_present, Remote}};
@@ -188,7 +188,7 @@ stop(Local, Remote) ->
 status_command(S) ->
     {call, ?MODULE, status, [S#ts.local]}.
 
-status_post(S, [Local], Status) ->
+status_post(S, [_Local], Status) ->
     %% Check facts about status...
     post_expect([{enabled, % must be enabled to be started
                   lists:sort(expect_enabled(S)++expect_started(S)), 
@@ -211,12 +211,15 @@ write_object_next(S = #ts{remotes = Remotes},
     %% Add the expected value
     AddVal = fun(R) -> R#remote{expected = [NextVal | R#remote.expected]} end,
     Remotes2 = 
-        lists:foldl(fun(Cluster, Remotes) -> orddict:update(Cluster, AddVal, Remotes) end,
-                    Remotes, orddict:fetch_keys(Remotes)),
+        lists:foldl(fun(Cluster, RemotesAcc) ->
+                            orddict:update(Cluster, AddVal, RemotesAcc)
+                        end,
+                        Remotes,
+                        orddict:fetch_keys(Remotes)),
     %% Update next val
     S#ts{next_val = <<(NextValInt + 1):64>>, remotes = Remotes2}.
 
-write_object_post(S, [_Client, _NextVal, _Extra], Res) ->
+write_object_post(_S, [_Client, _NextVal, _Extra], Res) ->
     post_expect([{return, ok, Res}]).
 
 write_object(Client, NextVal, Extra) ->
@@ -234,7 +237,7 @@ prop_repl2_rt() ->
                 S0 = initial_state(),
                 reset_nodes(S0),
                 %% run the test
-                {H,S,Result} = HSRes = 
+                {_H,S,Result} = HSRes = 
                     run_commands(?MODULE, Cmds),
                 pretty_commands(?MODULE, Cmds, HSRes, 
                                 aggregate(command_names(Cmds),
@@ -242,7 +245,7 @@ prop_repl2_rt() ->
                                                           [{commands, equals(Result, ok)}])))
             end).
 
-weight(S, write_object) ->
+weight(_S, write_object) ->
     20;
 weight(_S, _) ->
     1.
@@ -276,7 +279,7 @@ update_tr(Node, Fun, S = #ts{remotes = Remotes}) ->
     S#ts{remotes = orddict:update(Node, Fun, Remotes)}.
 
 
-check_remote_results(S = #ts{client = Client, remotes = Remotes}) ->
+check_remote_results(_S = #ts{client = Client, remotes = Remotes}) ->
     orddict:fold(fun(Cluster, #remote{expected = Expected}, Acc) ->
                       [check_remote_result(Client, Cluster, Expected) | Acc]
               end, [], Remotes).

@@ -1,11 +1,15 @@
 -module(riak_core_service_conn).
--behavior(gen_fsm_compat).
+-behavior(gen_fsm).
+
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, enter_loop, 4}]}).
 
 -include("riak_core_connection.hrl").
 
 % external api; generally used by ranch
 -export([start_link/4]).
-% gen_fsm_compat
+% gen_fsm
 -export([init/1]).
 -export([
     wait_for_hello/3, wait_for_hello/2,
@@ -38,12 +42,12 @@ start_link(Listener, Socket, Transport, InArgs) ->
 
 init({Listener, Socket, Transport, InArgs}) ->
     ok = proc_lib:init_ack({ok, self()}),
-    ok = ranch:accept_ack(Listener),
+    {ok, _} = ranch:handshake(Listener),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     ok = Transport:setopts(Socket, [{active, once}]),
     TransportMsgs = Transport:messages(),
     State = #state{transport = Transport, transport_msgs = TransportMsgs, socket = Socket, init_args = InArgs},
-    gen_fsm_compat:enter_loop(?MODULE, [], wait_for_hello, State).
+    gen_fsm:enter_loop(?MODULE, [], wait_for_hello, State).
 
 %% ===============
 %% wait_for_hello

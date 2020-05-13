@@ -22,6 +22,11 @@
 
 -behaviour(gen_server).
 
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_all_state_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
+
 %% API
 -export([start_link/4, set_socket/2, send/3, status/1, status/2]).
 -export([start_fullsync/1, cancel_fullsync/1, pause_fullsync/1,
@@ -102,7 +107,7 @@ handle_call(resume_fullsync, _From, #state{fullsync_worker=FSW,
     {reply, ok, State};
 handle_call(status, _From, #state{fullsync_worker=FSW, q=Q} = State) ->
     Res = case is_pid(FSW) of
-        true -> gen_fsm_compat:sync_send_all_state_event(FSW, status, infinity);
+        true -> gen_fsm:sync_send_all_state_event(FSW, status, infinity);
         false -> []
     end,
     Desc =
@@ -168,7 +173,7 @@ handle_info({Proto, Socket, Data},
     end;
 handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
     %% acknowledge the change of socket ownership
-    ok = ranch:accept_ack(State#state.listener),
+    {ok, _} = ranch:handshake(State#state.listener),
     ok = Transport:setopts(Socket, [
             binary,
             {keepalive, true},
@@ -212,7 +217,7 @@ handle_info(_Event, State) ->
 terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir,q=Q}) ->
     case is_pid(FSW) of
         true ->
-            gen_fsm_compat:sync_send_all_state_event(FSW, stop);
+            gen_fsm:sync_send_all_state_event(FSW, stop);
         _ ->
             ok
     end,
@@ -248,7 +253,7 @@ handle_msg({proxy_get, Ref, Bucket, Key, Options}, State) ->
     _ = send(State#state.transport, State#state.socket, {proxy_get_resp, Ref, Res}),
     {noreply, State};
 handle_msg(Msg, #state{fullsync_worker = FSW} = State) ->
-    gen_fsm_compat:send_event(FSW, Msg),
+    gen_fsm:send_event(FSW, Msg),
     {noreply, State}.
 
 handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my_pi=MyPI} = State, TheirPI, Capability) ->
@@ -320,6 +325,15 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
             {stop, normal, State}
     end.
 
+
+-ifdef(otp21).
+ssl_handshake(Socket, SslOpts) ->
+    ssl:handshake(Socket, SslOpts).
+-else.
+ssl_handshake(Socket, SslOpts) ->
+    ssl:ssl_accept(Socket, SslOpts).
+-endif.
+
 send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = State) ->
     OurNode = node(),
     case riak_repl_leader:leader_node()  of
@@ -361,7 +375,7 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                     {ok, Data} = Transport:recv(Socket, 0, infinity),
                     case binary_to_term(Data) of
                         {peerinfo, _, [ssl_required|_]} ->
-                            case ssl:ssl_accept(Socket, Config) of
+                            case ssl_handshake(Socket, Config) of
                                 {ok, SSLSocket} ->
                                     send_peerinfo(State#state{socket=SSLSocket,
                                                               transport=ranch_ssl});

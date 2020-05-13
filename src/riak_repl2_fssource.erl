@@ -2,6 +2,12 @@
 -include("riak_repl.hrl").
 
 -behaviour(gen_server).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_all_state_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
+
 %% API
 -export([start_link/2, start_link/3, connected/6, connect_failed/3,
     start_fullsync/1, stop_fullsync/1, fullsync_complete/1,
@@ -184,7 +190,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
             % try/catch because there may be a message in the pid's
             % mailbox that will cause it to exit before it gets to our
             % status request message.
-            try gen_fsm_compat:sync_send_all_state_event(FSW, status, infinity) of
+            try gen_fsm:sync_send_all_state_event(FSW, status, infinity) of
                 SyncSendRes ->
                     SyncSendRes
             catch
@@ -264,7 +270,7 @@ handle_info({Proto, Socket, Data},
             %% our terminate function and stop the keylist_server.
             {stop, normal, State};
         _ ->
-            gen_fsm_compat:send_event(State#state.fullsync_worker, Msg),
+            gen_fsm:send_event(State#state.fullsync_worker, Msg),
             {noreply, State}
     end;
 handle_info({soft_exit, Pid, Reason}, State = #state{fullsync_worker = Pid}) ->
@@ -280,7 +286,7 @@ terminate(_Reason, #state{fullsync_worker=FSW, work_dir=WorkDir}) ->
         false ->
             ok;
         true ->
-            catch gen_fsm_compat:sync_send_all_state_event(FSW, stop) 
+            catch gen_fsm:sync_send_all_state_event(FSW, stop) 
     end,
     case WorkDir of
         undefined -> ok;

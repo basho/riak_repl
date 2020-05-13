@@ -25,7 +25,13 @@
 
 -module(riak_core_cluster_conn).
 
--behavior(gen_fsm_compat).
+-behavior(gen_fsm).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_event, 3},
+                {gen_fsm, sync_send_all_state_event, 2}]}).
 
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
@@ -55,7 +61,7 @@
          connect_failed/3,
          stop/1]).
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 -export([init/1,
          initiating_connection/2,
          initiating_connection/3,
@@ -105,11 +111,11 @@ start_link(Remote) ->
 
 -spec start_link(remote(), atom()) -> {ok, pid()} | {error, term()}.
 start_link(Remote, Mode) ->
-    gen_fsm_compat:start_link(?MODULE, [Remote, Mode], []).
+    gen_fsm:start_link(?MODULE, [Remote, Mode], []).
 
 -spec stop(pid()) -> ok.
 stop(Ref) ->
-    gen_fsm_compat:sync_send_all_state_event(Ref, force_stop).
+    gen_fsm:sync_send_all_state_event(Ref, force_stop).
 
 -spec status(pid()) -> term().
 status(Ref) ->
@@ -117,7 +123,7 @@ status(Ref) ->
 
 -spec status(pid(), timeout()) -> term().
 status(Ref, Timeout) ->
-    gen_fsm_compat:sync_send_event(Ref, status, Timeout).
+    gen_fsm:sync_send_event(Ref, status, Timeout).
 
 -spec connected(port(), atom(), ip_addr(), term(), term(), proplists:proplist()) -> ok.
 connected(Socket,
@@ -131,7 +137,7 @@ connected(Socket,
     %% give control over the socket to the `Client' process.
     %% tell client we're connected and to whom
     Transport:controlling_process(Socket, Client),
-    gen_fsm_compat:send_event(Client,
+    gen_fsm:send_event(Client,
                        {connected_to_remote, Socket, Transport, Addr, Props,
                         {CommonMajor, min(LocalMinor,RemoteMinor)}}).
 
@@ -140,10 +146,10 @@ connect_failed({_Proto, _Vers}, {error, _}=Error, {_Remote, Client}) ->
     %% increment stats for "client failed to connect"
     riak_repl_stats:client_connect_errors(),
     %% tell client we bombed and why
-    gen_fsm_compat:send_event(Client, {connect_failed, Error}).
+    gen_fsm:send_event(Client, {connect_failed, Error}).
 
 %%%===================================================================
-%%% gen_fsm_compat callbacks
+%%% gen_fsm callbacks
 %%%===================================================================
 
 -spec init([remote() | atom()]) -> {ok, initiating_connection, state(), timeout()}.
@@ -340,7 +346,7 @@ handle_sync_event(current_state, _From, StateName, State) ->
     Reply = {StateName, State},
     {reply, Reply, StateName, State};
 handle_sync_event(force_stop, _From, _StateName, State) ->
-    ok = lager:debug("Stopping because I was asked nicely to."),
+    % ok = lager:debug("Stopping because I was asked nicely to."),
     {stop, normal, ok, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
@@ -350,7 +356,7 @@ handle_sync_event(_Event, _From, StateName, State) ->
 handle_info({TransOK, Socket, Name},
             waiting_for_cluster_name,
             State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
-    gen_fsm_compat:send_event(self(), {cluster_name, binary_to_term(Name)}),
+    gen_fsm:send_event(self(), {cluster_name, binary_to_term(Name)}),
     Transport = State#state.transport,
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_name, State};
@@ -358,14 +364,14 @@ handle_info({TransOK, Socket, Members},
             waiting_for_cluster_members,
             State=#state{socket=Socket, transport_msgs = {TransOK, _, _}, proto_version={1,0}}) ->
     Transport = State#state.transport,
-    gen_fsm_compat:send_event(self(), {cluster_members, binary_to_term(Members)}),
+    gen_fsm:send_event(self(), {cluster_members, binary_to_term(Members)}),
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_members, State};
 handle_info({TransOK, Socket, Members},
             waiting_for_cluster_members,
             State=#state{socket=Socket, transport_msgs = {TransOK, _, _}}) ->
     Transport = State#state.transport,
-    gen_fsm_compat:send_event(self(), {all_cluster_members, binary_to_term(Members)}),
+    gen_fsm:send_event(self(), {all_cluster_members, binary_to_term(Members)}),
     _ = Transport:setopts(Socket, [{active, once}]),
     {next_state, waiting_for_cluster_members, State};
 handle_info({TransOK, Socket, Data},
@@ -396,7 +402,7 @@ handle_info({TransClosed, Socket} = Msg,
     ok = lager:debug("Stopping because it looks like the connect closed: ~p", [Msg]),
     {stop, connection_closed, State};
 handle_info({_ClusterManager, poll_cluster}, StateName, State) ->
-    gen_fsm_compat:send_event(self(), poll_cluster),
+    gen_fsm:send_event(self(), poll_cluster),
     {next_state, StateName, State};
 handle_info(Msg, StateName, State) ->
     lager:warning("Unmatch message ~p", [Msg]),
@@ -460,6 +466,6 @@ initiate_connection(State=#state{remote=Remote}) ->
 %% @doc Get the current state of the fsm for testing inspection
 -spec current_state(pid()) -> {atom(), #state{}} | {error, term()}.
 current_state(Pid) ->
-    gen_fsm_compat:sync_send_all_state_event(Pid, current_state).
+    gen_fsm:sync_send_all_state_event(Pid, current_state).
 
 -endif.

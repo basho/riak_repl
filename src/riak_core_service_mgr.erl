@@ -296,7 +296,7 @@ start_link(Listener, Socket, Transport, SubProtocols) ->
 %% the sub protocol and version, negotiated with the client.
 dispatch_service(Listener, Socket, Transport, _Args) ->
     %% tell ranch "we've got it. thanks pardner"
-    ok = ranch:accept_ack(Listener),
+    {ok, _} = ranch:handshake(Listener),
     %% set some starting options for the channel; these should match the client
     lager:debug("setting system options on service side: ~p", [?CONNECT_OPTIONS]),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
@@ -508,9 +508,14 @@ normalize_ip(IP) when is_tuple(IP) ->
 -spec(start_dispatcher(ip_addr(), non_neg_integer(), [hostspec()]) -> {ok, pid()}).
 start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
     {ok, RawAddress} = inet_parse:address(IP),
-    {ok, Pid} = ranch:start_listener({IP,Port}, MaxListeners, ranch_tcp,
-                                [{ip, RawAddress}, {port, Port}],
-                                riak_core_service_conn, SubProtocols),
+    {ok, Pid} =
+        ranch:start_listener({IP,Port},
+                                ranch_tcp,
+                                [{ip, RawAddress},
+                                    {port, Port},
+                                    {num_acceptors, MaxListeners}],
+                                riak_core_service_conn,
+                                SubProtocols),
     lager:info("Service manager: listening on ~s:~p", [IP, Port]),
     {ok, Pid}.
 
