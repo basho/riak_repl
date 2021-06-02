@@ -57,6 +57,11 @@ encode(#rpbgetresp{} = Msg) ->
 %% Process Protocol Buffer Requests
 %%
 %% @doc Return Cluster Id of the local cluster
+process(<<Code:8, Data/binary>>, State) ->
+    Msg = riak_pb_codec:decode(Code, Data),
+    lager:debug("Got tunnelled message ~p", [Msg]),
+    process(Msg, State);
+
 process(#rpbreplgetclusteridreq{}, State) ->
     %% get cluster id from local ring manager and format as string
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
