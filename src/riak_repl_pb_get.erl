@@ -51,7 +51,7 @@ decode(_, Bin) ->
     {ok, Bin}.
 
 %% @doc encode/1 callback. Encodes an outgoing response message.
-encode(#rpbgetresp{} = Msg) ->
+encode(Msg) ->
     {ok, riak_pb_codec:encode(Msg)}.
 
 %% Process Protocol Buffer Requests
