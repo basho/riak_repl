@@ -62,7 +62,12 @@ process(<<Code:8, Data/binary>>, State) ->
     lager:debug("Got tunnelled message ~p", [Msg]),
     process(Msg, State);
 
-process(#rpbreplgetclusteridreq{}, State) ->
+process(rpbreplgetclusteridreq, State) ->
+    %% avoid having to change riak_pb_codec:decode to consistently
+    %% work for messages with and without args, for which it currently
+    %% returns just the record's tag as a bare atom (and not
+    %% #rpbreplgetclusteridreq{} as it probably should)
+
     %% get cluster id from local ring manager and format as string
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
