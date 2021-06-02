@@ -99,7 +99,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
         make_option(basic_quorum, BQ) ++
         make_option(n_val, N_val) ++
         make_option(sloppy_quorum, SloppyQuorum),
-    case C:get(B, K, GetOptions) of
+    case riak_client:get(B, K, GetOptions, C) of
         {ok, O} ->
             make_object_response(O, VClock, Head, State);
         {error, {deleted, TombstoneVClock}} ->
