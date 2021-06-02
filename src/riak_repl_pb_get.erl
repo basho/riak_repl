@@ -81,9 +81,9 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
 
     % check in ring metadata to see if there is a mapped cluser for this cluster_id
     % to use, in case the named one has been disabled
-    
+
     case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, CName0) of
-        undefined -> 
+        undefined ->
             lager:info("Using non-mapped cluster_id: ~s", [CName0]),
             CName = CName0;
         MappedToClusterId ->
@@ -91,7 +91,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             CName = MappedToClusterId
     end,
     lager:info("doing replicated GET using cluster id ~p", [CName]),
-    
+
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
