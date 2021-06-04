@@ -146,7 +146,7 @@ handle_msg({proxy_get, Ref, Bucket, Key, Options},
                          proxy_gets_provided=PGCount}) ->
     lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),
     C = State#state.client,
-    Res = C:get(Bucket, Key, Options),
+    Res = riak_client:get(Bucket, Key, Options, C),
     Data = term_to_binary({proxy_get_resp, Ref, Res}),
     Transport:send(Socket, Data),
     {noreply, State#state{proxy_gets_provided=PGCount+1}}.
