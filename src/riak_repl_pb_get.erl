@@ -51,13 +51,23 @@ decode(_, Bin) ->
     {ok, Bin}.
 
 %% @doc encode/1 callback. Encodes an outgoing response message.
-encode(#rpbgetresp{} = Msg) ->
+encode(Msg) ->
     {ok, riak_pb_codec:encode(Msg)}.
 
 %% Process Protocol Buffer Requests
 %%
 %% @doc Return Cluster Id of the local cluster
-process(#rpbreplgetclusteridreq{}, State) ->
+process(<<Code:8, Data/binary>>, State) ->
+    Msg = riak_pb_codec:decode(Code, Data),
+    lager:debug("Got tunnelled message ~p", [Msg]),
+    process(Msg, State);
+
+process(rpbreplgetclusteridreq, State) ->
+    %% avoid having to change riak_pb_codec:decode to consistently
+    %% work for messages with and without args, for which it currently
+    %% returns just the record's tag as a bare atom (and not
+    %% #rpbreplgetclusteridreq{} as it probably should)
+
     %% get cluster id from local ring manager and format as string
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
@@ -76,9 +86,9 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
 
     % check in ring metadata to see if there is a mapped cluser for this cluster_id
     % to use, in case the named one has been disabled
-    
+
     case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, CName0) of
-        undefined -> 
+        undefined ->
             lager:info("Using non-mapped cluster_id: ~s", [CName0]),
             CName = CName0;
         MappedToClusterId ->
@@ -86,7 +96,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             CName = MappedToClusterId
     end,
     lager:info("doing replicated GET using cluster id ~p", [CName]),
-    
+
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
         make_option(pr, PR) ++
@@ -94,7 +104,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
         make_option(basic_quorum, BQ) ++
         make_option(n_val, N_val) ++
         make_option(sloppy_quorum, SloppyQuorum),
-    case C:get(B, K, GetOptions) of
+    case riak_client:get(B, K, GetOptions, C) of
         {ok, O} ->
             make_object_response(O, VClock, Head, State);
         {error, {deleted, TombstoneVClock}} ->
