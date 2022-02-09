@@ -46,6 +46,8 @@
                 {gen_fsm, sync_send_all_state_event, 2},
                 {gen_fsm, sync_send_all_state_event, 3}]}).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 -export([start_link/6,
         start_fullsync/1,
@@ -176,7 +178,7 @@ wait_for_partition({partition, Partition}, State) ->
     wait_for_individual_partition(Partition, State);
 %% Unknown event (ignored)
 wait_for_partition(Event, State) ->
-    lager:debug("Full-sync with site ~p; ignoring event ~p",
+    ?LOG_DEBUG("Full-sync with site ~p; ignoring event ~p",
         [State#state.sitename, Event]),
     {next_state, wait_for_partition, State}.
 
@@ -193,20 +195,20 @@ build_keylist({Ref, keylist_built, Size}, State=#state{kl_ref=Ref}) ->
 %% Error
 build_keylist({Ref, {error, Reason}}, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
-    lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
+    ?LOG_WARNING("Full-sync with site ~p; skipping partition ~p because of error ~p",
         [State#state.sitename, State#state.partition, Reason]),
     _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
     {next_state, wait_for_partition, State};
 build_keylist({_Ref, keylist_built, _Size}, State) ->
-    lager:warning("Stale keylist_built message received, ignoring"),
+    ?LOG_WARNING("Stale keylist_built message received, ignoring"),
     {next_state, build_keylist, State};
 build_keylist({_Ref, {error, Reason}}, State) ->
-    lager:warning("Stale {error, ~p} message received, ignoring", [Reason]),
+    ?LOG_WARNING("Stale {error, ~p} message received, ignoring", [Reason]),
     {next_state, build_keylist, State};
 %% Request to skip specified partition
 build_keylist({skip_partition, Partition}, #state{partition=Partition,
         kl_pid=Pid} = State) ->
-    lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
+    ?LOG_WARNING("Full-sync with site ~p; skipping partition ~p as requested by client",
         [State#state.sitename, Partition]),
     catch(riak_repl_fullsync_helper:stop(Pid)),
     {next_state, wait_for_partition, State}.
@@ -224,20 +226,20 @@ build_keylist({Ref, keylist_built, Size}, _From, State=#state{kl_ref=Ref}) ->
 %% Error
 build_keylist({Ref, {error, Reason}}, _From, #state{transport=Transport,
         socket=Socket, kl_ref=Ref} = State) ->
-    lager:warning("Full-sync with site ~p; skipping partition ~p because of error ~p",
+    ?LOG_WARNING("Full-sync with site ~p; skipping partition ~p because of error ~p",
         [State#state.sitename, State#state.partition, Reason]),
     _ = riak_repl_tcp_server:send(Transport, Socket, {skip_partition, State#state.partition}),
     {next_state, wait_for_partition, State};
 build_keylist({_Ref, keylist_built, _Size}, _From, State) ->
-    lager:warning("Stale keylist_built message received, ignoring"),
+    ?LOG_WARNING("Stale keylist_built message received, ignoring"),
     {next_state, build_keylist, State};
 build_keylist({_Ref, {error, Reason}}, _From, State) ->
-    lager:warning("Stale {error, ~p} message received, ignoring", [Reason]),
+    ?LOG_WARNING("Stale {error, ~p} message received, ignoring", [Reason]),
     {next_state, build_keylist, State};
 %% Request to skip specified partition
 build_keylist({skip_partition, Partition}, _From,
               #state{partition=Partition, kl_pid=Pid} = State) ->
-    lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
+    ?LOG_WARNING("Full-sync with site ~p; skipping partition ~p as requested by client",
         [State#state.sitename, Partition]),
     catch(riak_repl_fullsync_helper:stop(Pid)),
     {next_state, wait_for_partition, State}.
@@ -263,7 +265,7 @@ wait_for_partition({partition, Partition}, _From, State) ->
     wait_for_individual_partition(Partition, State);
 %% Unknown event (ignored)
 wait_for_partition(Event, _From, State) ->
-    lager:debug("Full-sync with site ~p; ignoring event ~p",
+    ?LOG_DEBUG("Full-sync with site ~p; ignoring event ~p",
         [State#state.sitename, Event]),
     {next_state, wait_for_partition, State}.
 
@@ -285,7 +287,7 @@ wait_keylist({kl_hunk, Hunk}, State) ->
 wait_keylist(kl_eof, State) ->
     kl_eof(State);
 wait_keylist({skip_partition, Partition}, #state{partition=Partition} = State) ->
-    lager:warning("Full-sync with site ~p; skipping partition ~p as requested by client",
+    ?LOG_WARNING("Full-sync with site ~p; skipping partition ~p as requested by client",
         [State#state.sitename, Partition]),
     {next_state, wait_for_partition, State}.
 
@@ -369,7 +371,7 @@ diff_keylist({diff_ack, Partition}, #state{partition=Partition, diff_ref=Ref,
     end,
     {next_state, diff_keylist, State#state{pending_acks=PendingAcks,generator_paused=false}};
 diff_keylist({Ref, diff_done}, #state{diff_ref=Ref} = State) ->
-    lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         [State#state.sitename, State#state.partition,
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
@@ -436,7 +438,7 @@ diff_keylist({diff_ack, Partition}, _From, #state{partition=Partition, diff_ref=
     end,
     {next_state, diff_keylist, State#state{pending_acks=PendingAcks,generator_paused=false}};
 diff_keylist({Ref, diff_done}, _From, #state{diff_ref=Ref} = State) ->
-    lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
         [State#state.sitename, State#state.partition,
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
@@ -470,12 +472,12 @@ diff_bloom({Ref, {merkle_diff, {{B, K}, _VClock}}}, #state{diff_ref=Ref, bloom=B
 %% Sent by the fullsync_helper "streaming" difference generator when it's done.
 %% @plu server <- s:helper : diff_done
 diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Bloom} = State) ->
-    lager:info("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.partition_start)]),
     case ebloom:elements(Bloom) == 0 of
         true ->
-            lager:info("No differences, skipping bloom fold"),
+            ?LOG_INFO("No differences, skipping bloom fold"),
             _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
             {next_state, wait_for_partition, State};
         false ->
@@ -511,11 +513,11 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
                                     gen_fsm:send_event(Self,
                                                        {Ref, diff_exchanged});
                                 {'DOWN', MonRef, process, VNodePid, normal} ->
-                                    lager:warning("VNode ~p exited before fold for partition ~p",
+                                    ?LOG_WARNING("VNode ~p exited before fold for partition ~p",
                                         [VNodePid, Partition]),
                                     exit({bloom_fold, vnode_exited_before_fold});
                                 {'DOWN', MonRef, process, VNodePid, Reason} ->
-                                    lager:warning("Fold of ~p exited with ~p",
+                                    ?LOG_WARNING("Fold of ~p exited with ~p",
                                                   [Partition, Reason]),
                                     exit({bloom_fold, Reason})
                             end
@@ -531,9 +533,9 @@ diff_bloom({Ref, diff_done}, #state{diff_ref=Ref, partition=Partition, bloom=Blo
 %% @plu server <-- s:helper : diff_paused
 %% For bloom folding, we don't want the difference generator to pause at all.
 diff_bloom({Ref,diff_paused}, #state{diff_ref=Ref} = State) ->
-    ?TRACE(lager:info("diff_bloom <- diff_keys: {Ref, diff_paused}. resuming diff gen for ~p",
+    ?TRACE(?LOG_INFO("diff_bloom <- diff_keys: {Ref, diff_paused}. resuming diff gen for ~p",
                       [State#state.partition])),
-    ?TRACE(lager:info("diff_bloom -> diff_keys: {Ref, diff_resume}")),
+    ?TRACE(?LOG_INFO("diff_bloom -> diff_keys: {Ref, diff_resume}")),
     State#state.diff_pid ! {Ref, diff_resume},
     {next_state, diff_bloom, State};
 
@@ -541,7 +543,7 @@ diff_bloom({Ref,diff_paused}, #state{diff_ref=Ref} = State) ->
 %% @plu server <-- bloom_fold: {BloomFoldPid, bloom_paused}
 diff_bloom({BFPid,bloom_paused}, #state{socket=Socket, transport=Transport,
         partition=Partition, pending_acks=PendingAcks0} = State) ->
-    ?TRACE(lager:info("diff_bloom <- bloom_paused")),
+    ?TRACE(?LOG_INFO("diff_bloom <- bloom_paused")),
     %% request ack from client
     _ = riak_repl_tcp_server:send(Transport, Socket, {diff_ack, Partition}),
     PendingAcks = PendingAcks0+1,
@@ -551,15 +553,15 @@ diff_bloom({BFPid,bloom_paused}, #state{socket=Socket, transport=Transport,
     WorkerPaused = case PendingAcks < ?ACKS_IN_FLIGHT of
                        true ->
                            %% another batch can be sent immediately
-                           ?TRACE(lager:info("diff_bloom resuming bloom worker immediately")),
-                           ?TRACE(lager:info("diff_bloom -> ~p : bloom_resume", [BFPid])),
+                           ?TRACE(?LOG_INFO("diff_bloom resuming bloom worker immediately")),
+                           ?TRACE(?LOG_INFO("diff_bloom -> ~p : bloom_resume", [BFPid])),
                            BFPid ! bloom_resume,
                            false;
                        false ->
                            %% already ACKS_IN_FLIGHT batches out. Don't resume yet.
                            true
                    end,
-    ?TRACE(lager:info("diff_bloom WorkerPaused = ~p, PendingAcks = ~p", [WorkerPaused, PendingAcks])),
+    ?TRACE(?LOG_INFO("diff_bloom WorkerPaused = ~p, PendingAcks = ~p", [WorkerPaused, PendingAcks])),
     {next_state, diff_bloom, State#state{pending_acks=PendingAcks,
                                          generator_paused=WorkerPaused,
                                          bloom_pid=BFPid}};
@@ -570,14 +572,14 @@ diff_bloom({diff_ack, Partition}, #state{partition=Partition,
                                          pending_acks=PendingAcks0} = State) ->
     %% That's one less "pending" ack from the client. Tell client to keep going.
     PendingAcks = PendingAcks0-1,
-    ?TRACE(lager:info("diff_bloom <- diff_ack: PendingAcks = ~p", [PendingAcks])),
+    ?TRACE(?LOG_INFO("diff_bloom <- diff_ack: PendingAcks = ~p", [PendingAcks])),
     %% If the generator was paused, resume it. That would happen if there are already
     %% ACKS_IN_FLIGHT batches in flight. Better to check "paused" state than guess by
     %% pending acks count.
     case WorkerPaused of
         true ->
-            ?TRACE(lager:info("diff_bloom resuming bloom fold worker after ACK")),
-            ?TRACE(lager:info("diff_bloom -> ~p : bloom_resume",
+            ?TRACE(?LOG_INFO("diff_bloom resuming bloom fold worker after ACK")),
+            ?TRACE(?LOG_INFO("diff_bloom -> ~p : bloom_resume",
                               [State#state.bloom_pid])),
             State#state.bloom_pid ! bloom_resume;
         false ->
@@ -591,7 +593,7 @@ diff_bloom({diff_ack, Partition}, #state{partition=Partition,
 diff_bloom({Ref,diff_exchanged},  #state{diff_ref=Ref} = State) ->
     %% Tell client that we're done with differences for this partition.
     _ = riak_repl_tcp_server:send(State#state.transport, State#state.socket, diff_done),
-    lager:info("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; differences exchanged for partition ~p (done in ~p secs)",
                [State#state.sitename, State#state.partition,
                 riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %% Wait for another partition.
@@ -623,7 +625,7 @@ diff_bloom({diff_obj, RObj}, _From, #state{client=Client, transport=Transport,
 %% gen_fsm callbacks
 
 handle_event(_Event, StateName, State) ->
-    lager:debug("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _Event]),
+    ?LOG_DEBUG("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _Event]),
     {next_state, StateName, State}.
 
 handle_sync_event(status, _From, StateName, State) ->
@@ -647,11 +649,11 @@ handle_sync_event(status, _From, StateName, State) ->
 handle_sync_event(stop,_F,_StateName,State) ->
     {stop, normal, ok, State};
 handle_sync_event(_Event,_F,StateName,State) ->
-    lager:debug("Fullsync with site ~p; ignoring ~p", [State#state.sitename,_Event]),
+    ?LOG_DEBUG("Fullsync with site ~p; ignoring ~p", [State#state.sitename,_Event]),
     {reply, ok, StateName, State}.
 
 handle_info(_I, StateName, State) ->
-    lager:info("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _I]),
+    ?LOG_INFO("Full-sync with site ~p; ignoring ~p", [State#state.sitename, _I]),
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, State) ->
@@ -670,7 +672,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% internal funtions
 
 log_stop(Command, State) ->
-    lager:info("Full-sync with site ~p; ~s at partition ~p (after ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; ~s at partition ~p (after ~p secs)",
         [State#state.sitename, command_verb(Command), State#state.partition,
             riak_repl_util:elapsed_secs(State#state.partition_start)]).
 
@@ -687,7 +689,7 @@ bloom_fold(BK, V, {MPid, {serialized, SBloom}, Client, Transport, Socket, NSent,
     bloom_fold(BK, V, {MPid, Bloom, Client, Transport, Socket, NSent, WinSz});
 bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) ->
     Monitor = erlang:monitor(process, MPid),
-    ?TRACE(lager:info("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
+    ?TRACE(?LOG_INFO("bloom_fold -> MPid(~p) : bloom_paused", [MPid])),
     gen_fsm:send_event(MPid, {self(), bloom_paused}),
     %% wait for a message telling us to stop, or to continue.
     %% TODO do this more correctly when there's more time.
@@ -697,14 +699,14 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, 0, WinSz} = Acc) 
             erlang:demonitor(Monitor, [flush]),
             Acc;
         bloom_resume ->
-            ?TRACE(lager:info("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
+            ?TRACE(?LOG_INFO("bloom_fold <- MPid(~p) : bloom_resume", [MPid])),
             erlang:demonitor(Monitor, [flush]),
             bloom_fold({B,K}, V, {MPid, Bloom, Client, Transport, Socket, WinSz, WinSz});
         {'DOWN', Monitor, process, MPid, _Reason} ->
             throw(receiver_down);
         _Other ->
             erlang:demonitor(Monitor, [flush]),
-            ?TRACE(lager:info("bloom_fold <- ? : ~p", [_Other]))
+            ?TRACE(?LOG_INFO("bloom_fold <- ? : ~p", [_Other]))
     end;
 bloom_fold({{T, B}, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) ->
     NSent = case ebloom:contains(Bloom, <<T/binary, B/binary, K/binary>>) of
@@ -742,9 +744,9 @@ bloom_fold({B, K}, V, {MPid, Bloom, Client, Transport, Socket, NSent0, WinSz}) -
     {MPid, Bloom, Client, Transport, Socket, NSent, WinSz}.
 
 wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
-    lager:info("Full-sync with site ~p; doing fullsync for ~p",
+    ?LOG_INFO("Full-sync with site ~p; doing fullsync for ~p",
                [State#state.sitename, Partition]),
-    lager:info("Full-sync with site ~p; building keylist for ~p",
+    ?LOG_INFO("Full-sync with site ~p; building keylist for ~p",
                [State#state.sitename, Partition]),
     %% client wants keylist for this partition
     TheirKeyListFn = riak_repl_util:keylist_filename(WorkDir, Partition, theirs),
@@ -763,7 +765,7 @@ wait_for_individual_partition(Partition, State=#state{work_dir=WorkDir}) ->
                                             their_kl_fh=undefined}}.
 
 fullsync_completed_while_waiting(State) ->
-    lager:info("Full-sync with site ~p completed", [State#state.sitename]),
+    ?LOG_INFO("Full-sync with site ~p completed", [State#state.sitename]),
     riak_repl_stats:server_fullsyncs(),
     riak_repl_util:schedule_fullsync(),
     {next_state, wait_for_partition, State}.
@@ -788,7 +790,7 @@ perform_pause_fullsync(#state{their_kl_fh=FH, kl_pid=KlPid, diff_pid=DiffPid} = 
     log_stop(pause_fullsync, State).
 
 keylist_built(Ref, Size, State=#state{kl_ref=Ref, socket=Socket, transport=Transport, partition=Partition}) ->
-    lager:info("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; built keylist for ~p (built in ~p secs)",
         [State#state.sitename, Partition,
          riak_repl_util:elapsed_secs(State#state.stage_start)]),
     %% @plu server -> client: {kl_exchange, P}
@@ -819,10 +821,10 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
             _ = file:close(FH),
             ok
     end,
-    lager:info("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
+    ?LOG_INFO("Full-sync with site ~p; received keylist for ~p (received in ~p secs)",
         [State#state.sitename, State#state.partition,
             riak_repl_util:elapsed_secs(State#state.stage_start)]),
-    ?TRACE(lager:info("Full-sync with site ~p; calculating ~p differences for ~p",
+    ?TRACE(?LOG_INFO("Full-sync with site ~p; calculating ~p differences for ~p",
                       [State#state.sitename, NumDKeys, State#state.partition])),
     {ok, Pid} = riak_repl_fullsync_helper:start_link(self()),
 
@@ -858,6 +860,6 @@ kl_eof(#state{their_kl_fh=FH, num_diffs=NumKeys} = State) ->
                                                       State#state.their_kl_fn,
                                                       DiffSize),
 
-    lager:info("Full-sync with site ~p; using ~p for ~p",
+    ?LOG_INFO("Full-sync with site ~p; using ~p for ~p",
                [State#state.sitename, NextState, State#state.partition]),
     {next_state, NextState, State#state{diff_ref=Ref, bloom=Bloom, diff_pid=Pid, stage_start=os:timestamp()}}.

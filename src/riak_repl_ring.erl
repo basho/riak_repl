@@ -4,6 +4,8 @@
 -author('Andy Gross <andy@andygross.org>').
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([ensure_config/1,
          initial_config/0,
          get_repl_config/1,
@@ -365,7 +367,7 @@ rt_cascades_trans(Ring, Val) ->
                               dict:store(realtime_cascades, Val, RC),
                               Ring)};
         _ ->
-            lager:warning("ignoring invalid cascading realtime setting: ~p; using old setting ~p", [Val, OldVal]),
+            ?LOG_WARNING("ignoring invalid cascading realtime setting: ~p; using old setting ~p", [Val, OldVal]),
             {ignore, {invalid_option, Val}}
     end.
 
@@ -473,7 +475,7 @@ set_modes(Ring, NewModes) ->
             riak_core_ring_manager:force_update(),
             NewState;
         false ->
-            lager:warning("Invalid replication modes specified: ~p", [NewModes]),
+            ?LOG_WARNING("Invalid replication modes specified: ~p", [NewModes]),
             Ring
     end.
 

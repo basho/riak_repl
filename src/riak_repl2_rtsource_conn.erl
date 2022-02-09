@@ -36,6 +36,8 @@
 -behaviour(gen_server).
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([riak_core_connection_mgr_connect/2]).
@@ -134,7 +136,7 @@ connected(Socket, Transport, Endpoint, Proto, RtSourcePid, _Props) ->
                         ?LONG_TIMEOUT)
     catch
         _:Reason ->
-            lager:warning("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
+            ?LOG_WARNING("Unable to contact RT source connection process (~p). Killing it to force reconnect.",
                           [RtSourcePid]),
             exit(RtSourcePid, {unable_to_contact, Reason}),
             ok
@@ -148,13 +150,13 @@ connect_failed(_ClientProto, Reason, RtSourcePid) ->
 %% Initialize
 init([Remote]) ->
     %% Todo: check for bad remote name
-    lager:debug("connecting to remote ~p", [Remote]),
+    ?LOG_DEBUG("connecting to remote ~p", [Remote]),
     case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC) of
         {ok, Ref} ->
-            lager:debug("connection ref ~p", [Ref]),
+            ?LOG_DEBUG("connection ref ~p", [Ref]),
             {ok, #state{remote = Remote, connection_ref = Ref}};
         {error, Reason}->
-            lager:warning("Error connecting to remote"),
+            ?LOG_WARNING("Error connecting to remote"),
             {stop, Reason}
     end.
 
@@ -223,11 +225,11 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
     case Transport:send(Socket, <<>>) of
         ok ->
             Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-            lager:debug("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
+            ?LOG_DEBUG("RT source connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
             {_, ClientVer, _} = Proto,
             {ok, HelperPid} = riak_repl2_rtsource_helper:start_link(Remote, Transport, Socket, ClientVer),
             SocketTag = riak_repl_util:generate_socket_tag("rt_source", Transport, Socket),
-            lager:debug("Keeping stats for " ++ SocketTag),
+            ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
             riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, source,
                                                SocketTag}, Transport),
             State2 = State#state{transport = Transport,
@@ -237,7 +239,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
                                  peername = peername(Transport, Socket),
                                  helper_pid = HelperPid,
                                  ver = Ver},
-            lager:info("Established realtime connection to site ~p address ~s",
+            ?LOG_INFO("Established realtime connection to site ~p address ~s",
                        [Remote, peername(State2)]),
 
             case Proto of
@@ -263,7 +265,7 @@ handle_call({connected, Socket, Transport, EndPoint, Proto}, _From,
 %%   functionality should be in the connection manager (I want a connection to site X)
 handle_cast({connect_failed, _HelperPid, Reason},
             State = #state{remote = Remote}) ->
-    lager:warning("Realtime replication connection to site ~p failed - ~p\n",
+    ?LOG_WARNING("Realtime replication connection to site ~p failed - ~p\n",
                   [Remote, Reason]),
     {stop, normal, State};
 
@@ -282,7 +284,7 @@ handle_info({Closed, _S},
             ok;
         NumBytes ->
             riak_repl_stats:rt_source_errors(),
-            lager:warning("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
+            ?LOG_WARNING("Realtime connection ~s to ~p closed with partial receive of ~b bytes\n",
                           [peername(State), Remote, NumBytes])
     end,
     %% go to sleep for 1s so a sink that opens the connection ok but then
@@ -293,7 +295,7 @@ handle_info({Error, _S, Reason},
             State = #state{remote = Remote, cont = Cont})
   when Error == tcp_error; Error == ssl_error ->
     riak_repl_stats:rt_source_errors(),
-    lager:warning("Realtime connection ~s to ~p network error ~p - ~b bytes pending\n",
+    ?LOG_WARNING("Realtime connection ~s to ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Remote, Reason, size(Cont)]),
     {stop, normal, State};
 
@@ -309,21 +311,21 @@ handle_info({heartbeat_timeout, HBSent}, State = #state{hb_sent_q = HBSentQ,
     %% restart the conection on heartbeat timeout or not.
     case HBTRef of
         undefined ->
-            lager:info("Realtime connection ~s to ~p heartbeat "
+            ?LOG_INFO("Realtime connection ~s to ~p heartbeat "
                        "time since timeout ~p",
                        [peername(State), Remote, TimeSinceTimeout]),
             {noreply, State};
         _ ->
-            lager:warning("Realtime connection ~s to ~p heartbeat timeout "
+            ?LOG_WARNING("Realtime connection ~s to ~p heartbeat timeout "
                           "after ~p seconds\n",
                           [peername(State), Remote, HBTimeout]),
-            lager:debug("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
+            ?LOG_DEBUG("hb_sent_q_len after heartbeat_timeout: ~p", [queue:len(HBSentQ)]),
             {stop, normal, State}
     end;
 handle_info(rebalance_now, State) ->
     {noreply, maybe_rebalance(State#state{rb_timeout_tref = undefined}, now)};
 handle_info(Msg, State) ->
-    lager:warning("Unhandled info:  ~p", [Msg]),
+    ?LOG_WARNING("Unhandled info:  ~p", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, #state{helper_pid=HelperPid, remote=Remote}) ->
@@ -355,7 +357,7 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, Remote),
     {ok, ShuffledAddrs} = riak_core_cluster_mgr:shuffle_remote_ipaddrs(Addrs),
-    lager:debug("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
+    ?LOG_DEBUG("ShuffledAddrs: ~p, ConnectedAddr: ~p", [ShuffledAddrs, ConnectedAddr]),
     case (ShuffledAddrs /= []) andalso same_ipaddr(ConnectedAddr, hd(ShuffledAddrs)) of
         true ->
             no; % we're already connected to the ideal buddy
@@ -365,7 +367,7 @@ should_rebalance(#state{address=ConnectedAddr, remote=Remote}) ->
                                        ShuffledAddrs),
             %% remove those that are blacklisted anyway
             UsefulAddrs = riak_core_connection_mgr:filter_blacklisted_ipaddrs(BetterAddrs),
-            lager:debug("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
+            ?LOG_DEBUG("BetterAddrs: ~p, UsefulAddrs ~p", [BetterAddrs, UsefulAddrs]),
             case UsefulAddrs of
                 [] ->
                     no;
@@ -380,18 +382,18 @@ rebalance_delay_millis() ->
     round(MaxDelaySecs * rand:uniform(1000)).
 
 reconnect(State=#state{remote=Remote}, BetterAddrs) ->
-    lager:info("trying reconnect to one of: ~p", [BetterAddrs]),
+    ?LOG_INFO("trying reconnect to one of: ~p", [BetterAddrs]),
 
     %% if we have a pending connection attempt - drop that
     riak_core_connection_mgr:disconnect({rt_repl, Remote}),
 
-    lager:debug("re-connecting to remote ~p", [Remote]),
+    ?LOG_DEBUG("re-connecting to remote ~p", [Remote]),
     case riak_core_connection_mgr:connect({rt_repl, Remote}, ?CLIENT_SPEC, {use_only, BetterAddrs}) of
         {ok, Ref} ->
-            lager:debug("connecting ref ~p", [Ref]),
+            ?LOG_DEBUG("connecting ref ~p", [Ref]),
             State#state{ connection_ref = Ref};
         {error, Reason}->
-            lager:warning("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
+            ?LOG_WARNING("Error connecting to remote ~p (ignoring as we're reconnecting)", [Reason]),
             State
     end.
 
@@ -434,13 +436,13 @@ recv(TcpBin, State = #state{remote = Name,
             %% Compute last heartbeat roundtrip in msecs and
             %% reschedule next.
             {{value, HBSent}, HBSentQ2} = queue:out(HBSentQ),
-            lager:debug("got heartbeat, hb_sent: ~w", [HBSent]),
+            ?LOG_DEBUG("got heartbeat, hb_sent: ~w", [HBSent]),
             HBRTT = timer:now_diff(os:timestamp(), HBSent) div 1000,
             _ = cancel_timer(HBTRef),
             State2 = State#state{hb_sent_q = HBSentQ2,
                                  hb_timeout_tref = undefined,
                                  hb_rtt = HBRTT},
-            lager:debug("got heartbeat, hb_sent_q_len after heartbeat_recv: ~p", [queue:len(HBSentQ2)]),
+            ?LOG_DEBUG("got heartbeat, hb_sent_q_len after heartbeat_recv: ~p", [queue:len(HBSentQ2)]),
             recv(Cont, schedule_heartbeat(State2))
     end.
 
@@ -469,10 +471,10 @@ send_heartbeat(State = #state{hb_timeout = HBTimeout,
     TRef = erlang:send_after(timer:seconds(HBTimeout), self(), {heartbeat_timeout, Now}),
     State2 = State#state{hb_interval_tref = undefined, hb_timeout_tref = TRef,
                          hb_sent_q = queue:in(Now, SentQ)},
-    lager:debug("hb_sent_q_len after sending heartbeat: ~p", [queue:len(SentQ)+1]),
+    ?LOG_DEBUG("hb_sent_q_len after sending heartbeat: ~p", [queue:len(SentQ)+1]),
     State2;
 send_heartbeat(State) ->
-    lager:warning("Heartbeat is misconfigured and is not a valid integer."),
+    ?LOG_WARNING("Heartbeat is misconfigured and is not a valid integer."),
     State.
 
 %% Schedule the next heartbeat
@@ -483,11 +485,11 @@ schedule_heartbeat(State = #state{hb_interval_tref = undefined,
 
 schedule_heartbeat(State = #state{hb_interval_tref = _TRef,
                                   hb_interval = HBInterval}) when is_integer(HBInterval) ->
-    lager:debug("hb_interval_tref is not undefined when attempting to schedule new heartbeat."),
+    ?LOG_DEBUG("hb_interval_tref is not undefined when attempting to schedule new heartbeat."),
     State;
 
 schedule_heartbeat(State) ->
-    lager:warning("Heartbeat is misconfigured and is not a valid integer."),
+    ?LOG_WARNING("Heartbeat is misconfigured and is not a valid integer."),
     State.
 
 same_ipaddr({IP,Port}, {IP,Port}) ->
@@ -495,7 +497,7 @@ same_ipaddr({IP,Port}, {IP,Port}) ->
 same_ipaddr({_IP1,_Port1}, {_IP2,_Port2}) ->
     false;
 same_ipaddr(X,Y) ->
-    lager:warning("ipaddrs have unexpected format! ~p, ~p", [X,Y]),
+    ?LOG_WARNING("ipaddrs have unexpected format! ~p, ~p", [X,Y]),
     false.
 
 %% ===================================================================

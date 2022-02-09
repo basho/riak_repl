@@ -13,6 +13,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_repl.hrl").
 -include("riak_repl_aae_fullsync.hrl").
 
@@ -88,7 +90,7 @@ start_link(Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto) ->
     gen_fsm:start_link(?MODULE, [Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto], []).
 
 start_exchange(AAESource) ->
-    lager:debug("Send start_exchange to AAE fullsync sink worker"),
+    ?LOG_DEBUG("Send start_exchange to AAE fullsync sink worker"),
     gen_fsm:send_event(AAESource, start_exchange).
 
 cancel_fullsync(Pid) ->
@@ -99,7 +101,7 @@ cancel_fullsync(Pid) ->
 %%%===================================================================
 
 init([Cluster, Client, Transport, Socket, Partition, OwnerPid, Proto]) ->
-    lager:debug("AAE fullsync source worker started for partition ~p",
+    ?LOG_DEBUG("AAE fullsync source worker started for partition ~p",
                [Partition]),
 
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
@@ -134,27 +136,27 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 handle_info({'DOWN', TreeMref, process, Pid, Why}, _StateName, State=#state{tree_mref=TreeMref}) ->
     %% Local hashtree process went down. Stop exchange.
-    lager:info("Monitored pid ~p, AAE Hashtree process went down because: ~p", [Pid, Why]),
+    ?LOG_INFO("Monitored pid ~p, AAE Hashtree process went down because: ~p", [Pid, Why]),
     send_complete(State),
     State#state.owner ! {soft_exit, self(), {aae_hastree_went_down, Why}},
     {stop, normal, State};
 handle_info(Error={'DOWN', _, _, _, _}, _StateName, State) ->
     %% Something else exited. Stop exchange.
-    lager:info("Something went down ~p", [Error]),
+    ?LOG_INFO("Something went down ~p", [Error]),
     send_complete(State),
     {stop, something_went_down, State};
 handle_info({tcp_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
-    lager:info("AAE source connection to ~p closed", [State#state.cluster]),
+    ?LOG_INFO("AAE source connection to ~p closed", [State#state.cluster]),
     {stop, {tcp_closed, Socket}, State};
 handle_info({tcp_error, Socket, Reason}, _StateName, State) ->
-    lager:error("AAE source connection to ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("AAE source connection to ~p closed unexpectedly: ~p",
                 [State#state.cluster, Reason]),
     {stop, {tcp_error, Socket, Reason}, State};
 handle_info({ssl_closed, Socket}, _StateName, State=#state{socket=Socket}) ->
-    lager:info("AAE source ssl connection to ~p closed", [State#state.cluster]),
+    ?LOG_INFO("AAE source ssl connection to ~p closed", [State#state.cluster]),
     {stop, {ssl_closed, Socket}, State};
 handle_info({ssl_error, Socket, Reason}, _StateName, State) ->
-    lager:error("AAE source ssl connection to ~p closed unexpectedly with: ~p",
+    ?LOG_ERROR("AAE source ssl connection to ~p closed unexpectedly with: ~p",
                 [State#state.cluster, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
 handle_info(_Info, StateName, State) ->
@@ -175,7 +177,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%      remote concurrency lock, and remote tree lock. Exchange will
 %%      timeout if locks cannot be acquired in a timely manner.
 prepare_exchange(cancel_fullsync, State) ->
-    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    ?LOG_INFO("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 prepare_exchange(start_exchange, State0=#state{transport=Transport,
@@ -210,7 +212,7 @@ prepare_exchange(start_exchange, State0=#state{transport=Transport,
                 {ok, Version} ->
                     prepare_exchange(start_exchange, State#state{local_lock=true, tree_version=Version});
                 {Error, _Version} ->
-                    lager:info("AAE source failed get_lock for partition ~p, got ~p",
+                    ?LOG_INFO("AAE source failed get_lock for partition ~p, got ~p",
                                [Partition, Error]),
                     State#state.owner ! {soft_exit, self(), Error},
                     {stop, normal, State}
@@ -224,7 +226,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=lega
         ok ->
             update_trees(init, State);
         Error ->
-            lager:info("Remote lock tree for partition ~p failed, got ~p",
+            ?LOG_INFO("Remote lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
             State#state.owner ! {soft_exit, self(), {remote, Error}},
@@ -236,7 +238,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=Vers
         ok ->
             update_trees(init, State);
         Error ->
-            lager:info("Remote lock tree for partition ~p failed, got ~p",
+            ?LOG_INFO("Remote lock tree for partition ~p failed, got ~p",
                           [Partition, Error]),
             send_complete(State),
             State#state.owner ! {soft_exit, self(), {remote, Error}},
@@ -251,7 +253,7 @@ prepare_exchange(start_exchange, State=#state{index=Partition, tree_version=Vers
 update_trees(init, State=#state{indexns=IndexNs}) ->
     update_trees({start_exchange, IndexNs}, State);
 update_trees(cancel_fullsync, State) ->
-    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    ?LOG_INFO("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 update_trees({start_exchange, [IndexHead|IndexTail]}, State=#state{tree_pid=TreePid,
@@ -267,14 +269,14 @@ update_trees({start_exchange, [IndexHead|IndexTail]}, State=#state{tree_pid=Tree
             end,
             {next_state, update_trees, State};
         not_responsible ->
-            lager:debug("Skipping AAE fullsync tree update for vnode ~p because"
+            ?LOG_DEBUG("Skipping AAE fullsync tree update for vnode ~p because"
                         " it is not responsible for the preflist ~p", [Partition, IndexHead]),
             gen_server:cast(Owner, not_responsible),
             {stop, normal, State}
     end;
 
 update_trees({not_responsible, Partition, IndexN}, State=#state{owner=Owner}) ->
-    lager:debug("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
+    ?LOG_DEBUG("VNode ~p does not cover preflist ~p", [Partition, IndexN]),
     gen_server:cast(Owner, not_responsible),
     {stop, normal, State};
 
@@ -285,9 +287,9 @@ update_trees(tree_built, State = #state{indexns=IndexNs}) ->
         NeededBuilts ->
             %% Trees built now we can estimate how many keys
             {ok, EstimatedNrKeys} = riak_kv_index_hashtree:estimate_keys(State#state.tree_pid),
-            lager:debug("EstimatedNrKeys ~p for partition ~p", [EstimatedNrKeys, State#state.index]),
+            ?LOG_DEBUG("EstimatedNrKeys ~p for partition ~p", [EstimatedNrKeys, State#state.index]),
 
-            lager:debug("Moving to key exchange state"),
+            ?LOG_DEBUG("Moving to key exchange state"),
             key_exchange(init, State#state{built=Built, estimated_nr_keys = EstimatedNrKeys});
         _ ->
             {next_state, update_trees, State#state{built=Built}}
@@ -315,12 +317,12 @@ key_exchange(init, State) ->
     State2 = State#state{exchange=Exchange},
     key_exchange(start_key_exchange, State2);
 key_exchange(cancel_fullsync, State) ->
-    lager:info("AAE fullsync source cancelled for partition ~p", [State#state.index]),
+    ?LOG_INFO("AAE fullsync source cancelled for partition ~p", [State#state.index]),
     send_complete(State),
     {stop, normal, State};
 key_exchange(finish_fullsync, State=#state{owner=Owner}) ->
     send_complete(State),
-    lager:debug("AAE fullsync source completed partition ~p",
+    ?LOG_DEBUG("AAE fullsync source completed partition ~p",
                 [State#state.index]),
     riak_repl2_fssource:fullsync_complete(Owner),
     %% TODO: Why stay in key_exchange? Should we stop instead?
@@ -341,7 +343,7 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
                                               tree_pid=TreePid,
                                               exchange=Exchange,
                                               indexns=[IndexN|_IndexNs]}) ->
-    lager:debug("Starting fullsync key exchange with ~p for ~p/~p",
+    ?LOG_DEBUG("Starting fullsync key exchange with ~p for ~p/~p",
                [Cluster, Partition, IndexN]),
 
     SourcePid = self(),
@@ -396,11 +398,11 @@ key_exchange(start_key_exchange, State=#state{cluster=Cluster,
     end,
 
     %% TODO: Add stats for AAE
-    lager:debug("Starting compare for partition ~p", [Partition]),
+    ?LOG_DEBUG("Starting compare for partition ~p", [Partition]),
     spawn_link(fun() ->
                        StageStart=os:timestamp(),
                        Exchange2 = riak_kv_index_hashtree:compare(IndexN, Remote, AccFun, Exchange, TreePid),
-                       lager:debug("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
+                       ?LOG_DEBUG("Full-sync with site ~p; fullsync difference generator for ~p complete (completed in ~p secs)",
                                    [State#state.cluster, Partition, riak_repl_util:elapsed_secs(StageStart)]),
                        gen_fsm:send_event(SourcePid, {'$aae_src', done, Exchange2})
                end),
@@ -442,7 +444,7 @@ maybe_send_direct(#exchange{mode=inline, count=Count, limit=Limit},
                   #state{index=Partition}) ->
     %% Inline sends already occured inline
     Sent = erlang:min(Count, Limit),
-    lager:info("Directly sent ~b differences inline for partition ~p",
+    ?LOG_INFO("Directly sent ~b differences inline for partition ~p",
                [Sent, Partition]),
     ok;
 maybe_send_direct(#exchange{buffer=Buffer}, State=#state{index=Partition}) ->
@@ -450,7 +452,7 @@ maybe_send_direct(#exchange{buffer=Buffer}, State=#state{index=Partition}) ->
     true = ets:delete(Buffer),
     Sorted = lists:sort(Keys),
     Count = length(Sorted),
-    lager:debug("Directly sending ~p differences for partition ~p", [Count, Partition]),
+    ?LOG_DEBUG("Directly sending ~p differences for partition ~p", [Count, Partition]),
     _ = [send_missing(Bucket, Key, State) || {Bucket, Key} <- Sorted],
     ok.
 
@@ -482,7 +484,7 @@ send_diffs(diff_done, State) ->
 %%%===================================================================
 finish_sending_differences(#exchange{bloom=undefined, count=DiffCnt},
                            #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
-    lager:info("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+    ?LOG_INFO("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                [0, DiffCnt, Partition, EstimatedNrKeys]),
     gen_fsm:send_event(self(), diff_done);
 
@@ -490,13 +492,13 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                            #state{index=Partition, estimated_nr_keys=EstimatedNrKeys}) ->
     case ebloom:elements(Bloom) of
         Count = 0 ->
-            lager:info("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+            ?LOG_INFO("Syncing without bloom ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                        [Count, DiffCnt, Partition, EstimatedNrKeys]),
             gen_fsm:send_event(self(), diff_done);
         Count ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             OwnerNode = riak_core_ring:index_owner(Ring, Partition),
-            lager:info("Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
+            ?LOG_INFO("Bloom folding over ~p/~p differences for partition ~p with EstimatedNrKeys ~p",
                        [Count, DiffCnt, Partition, EstimatedNrKeys]),
             Self = self(),
             Worker = fun() ->
@@ -517,11 +519,11 @@ finish_sending_differences(#exchange{bloom=Bloom, count=DiffCnt},
                                     %% we don't care about the reply
                                     gen_fsm:send_event(Self, diff_done);
                                 {'DOWN', MonRef, process, VNodePid, normal} ->
-                                    lager:warning("VNode ~p exited before fold for partition ~p",
+                                    ?LOG_WARNING("VNode ~p exited before fold for partition ~p",
                                         [VNodePid, Partition]),
                                     exit({bloom_fold, vnode_exited_before_fold});
                                 {'DOWN', MonRef, process, VNodePid, Reason}  ->
-                                    lager:warning("Fold of ~p exited with ~p",
+                                    ?LOG_WARNING("Fold of ~p exited with ~p",
                                                   [Partition, Reason]),
                                     exit({bloom_fold, Reason})
                             end
@@ -556,23 +558,23 @@ accumulate_diff(KeyDiff, Exchange, State=#state{index=Partition}) ->
         {remote_missing, Bin} ->
             %% send object and related objects to remote
             {Bucket,Key} = binary_to_term(Bin),
-            lager:debug("Keydiff: remote partition ~p remote missing: ~p:~p",
+            ?LOG_DEBUG("Keydiff: remote partition ~p remote missing: ~p:~p",
                         [Partition, Bucket, Key]),
             maybe_accumulate_key(Bucket, Key, Exchange, State);
         {different, Bin} ->
             %% send object and related objects to remote
             {Bucket,Key} = binary_to_term(Bin),
-            lager:debug("Keydiff: remote partition ~p different: ~p:~p",
+            ?LOG_DEBUG("Keydiff: remote partition ~p different: ~p:~p",
                         [Partition, Bucket, Key]),
             maybe_accumulate_key(Bucket, Key, Exchange, State);
         {missing, Bin} ->
             %% remote has a key we don't have. Ignore it.
             {Bucket,Key} = binary_to_term(Bin),
-            lager:debug("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
+            ?LOG_DEBUG("Keydiff: remote partition ~p local missing: ~p:~p (ignored)",
                         [Partition, Bucket, Key]),
             Exchange;
         Other ->
-            lager:warning("Unexpected error keydiff: ~p (ignored)", [Other]),
+            ?LOG_WARNING("Unexpected error keydiff: ~p (ignored)", [Other]),
             Exchange
     end.
 
@@ -684,10 +686,10 @@ send_missing(Bucket, Key, State=#state{client=Client, wire_ver=Ver, proto=Proto}
             end;
         {error, notfound} ->
             %% can't find the key!
-            lager:warning("not_found returned for fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
+            ?LOG_WARNING("not_found returned for fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
             0;
         {error, timeout} ->
-            lager:warning("timeout during fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
+            ?LOG_WARNING("timeout during fullsync client get on Bucket: ~p Key:~p", [Bucket,Key]),
             0
     end.
 
@@ -726,10 +728,10 @@ send_synchronous_msg(MsgType, State=#state{transport=Transport,
 %% send a tagged message with type and binary data. return the reply
 send_synchronous_msg(MsgType, Data, State=#state{transport=Transport,
                                                  socket=Socket}) when is_binary(Data) ->
-    lager:debug("sending message type ~p", [MsgType]),
+    ?LOG_DEBUG("sending message type ~p", [MsgType]),
     ok = Transport:send(Socket, <<MsgType:8, Data/binary>>),
     Response = get_reply(State),
-    lager:debug("got reply ~p", [Response]),
+    ?LOG_DEBUG("got reply ~p", [Response]),
     Response;
 %% send a tagged message with type and msg. return the reply
 send_synchronous_msg(MsgType, Msg, State) ->

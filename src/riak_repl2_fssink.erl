@@ -1,6 +1,3 @@
--module(riak_repl2_fssink).
--include("riak_repl.hrl").
-
 %% @doc fssink
 %%
 %% This module is responsible, at a high level, for accomplishing the full sync
@@ -32,6 +29,11 @@
 %%
 %% Once the strategy is settled, the sockets are handled to the appropriate spawned
 %% fullssync worker processes.
+
+-module(riak_repl2_fssink).
+-include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
 
 -behaviour(gen_server).
 
@@ -97,13 +99,13 @@ init([Socket, Transport, OKProto, Props]) ->
     {ok, Proto} = OKProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
     SocketTag = riak_repl_util:generate_socket_tag("fs_sink", Transport, Socket),
-    lager:debug("Negotiated ~p with ver ~p", [Proto, Ver]),
-    lager:debug("Keeping stats for " ++ SocketTag),
+    ?LOG_DEBUG("Negotiated ~p with ver ~p", [Proto, Ver]),
+    ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, sink,
                                        SocketTag}, Transport),
 
     Cluster = proplists:get_value(clustername, Props),
-    lager:debug("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
+    ?LOG_DEBUG("fullsync connection (ver ~p) from cluster ~p", [Ver, Cluster]),
     {ok, #state{proto=Proto, socket=Socket, transport=Transport, cluster=Cluster, ver=Ver}}.
 
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
@@ -136,18 +138,18 @@ handle_cast(fullsync_complete, State) ->
     %% sent from AAE fullsync worker
     %% TODO: The sink state should include the partition ID
     %% or some other useful information
-    lager:info("Fullsync of partition complete."),
+    ?LOG_INFO("Fullsync of partition complete."),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
-    lager:info("Connection for site ~p closed", [State#state.cluster]),
+    ?LOG_INFO("Connection for site ~p closed", [State#state.cluster]),
     {stop, normal, State};
 handle_info({Error, _Socket, Reason}, State)
         when Error == tcp_error; Error == ssl_error ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("Connection for site ~p closed unexpectedly: ~p",
         [State#state.cluster, Reason]),
     {stop, normal, State};
 handle_info({Proto, Socket, Data},

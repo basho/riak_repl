@@ -12,6 +12,8 @@
 %% API
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -72,7 +74,7 @@ sync_register_service() ->
 %% Callback from service manager
 start_service(Socket, Transport, Proto, _Args, Props) ->
     SocketTag = riak_repl_util:generate_socket_tag("rt_sink", Transport, Socket),
-    lager:debug("Keeping stats for " ++ SocketTag),
+    ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_RT_APP, sink, SocketTag},
                               Transport),
     Remote = proplists:get_value(clustername, Props),
@@ -108,7 +110,7 @@ init([OkProto, Remote]) ->
     %% TODO: remove annoying 'ok' from service mgr proto
     {ok, Proto} = OkProto,
     Ver = riak_repl_util:deduce_wire_version_from_proto(Proto),
-    lager:debug("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
+    ?LOG_DEBUG("RT sink connection negotiated ~p wire format from proto ~p", [Ver, Proto]),
     {ok, Helper} = riak_repl2_rtsink_helper:start_link(self()),
     riak_repl2_rt:register_sink(self()),
     MaxPending = app_helper:get_env(riak_repl, rtsink_max_pending, 100),
@@ -158,7 +160,7 @@ handle_call(legacy_status, _From, State = #state{remote = Remote,
     {reply, {status, Status}, State};
 handle_call({set_socket, Socket, Transport}, _From, State) ->
     Transport:setopts(Socket, [{active, once}]), % pick up errors in tcp_error msg
-    lager:debug("Starting realtime connection service"),
+    ?LOG_DEBUG("Starting realtime connection service"),
     {reply, ok, State#state{socket=Socket, transport=Transport, peername = peername(Transport, Socket)}};
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
@@ -181,7 +183,7 @@ handle_cast({ack, Ref, Seq, Skips}, State = #state{transport = T, socket = S,
     end;
 handle_cast({ack, Ref, Seq, _Skips}, State) ->
     %% Nothing to send, it's old news.
-    lager:debug("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
+    ?LOG_DEBUG("Received ack ~p for previous sequence ~p\n", [Seq, Ref]),
     {noreply, State};
 handle_cast({drop, BucketType}, #state{bt_timer = undefined, bt_interval = Interval} = State) ->
     {ok, Timer} = timer:send_after(Interval, report_bt_drops),
@@ -200,7 +202,7 @@ handle_info({Closed, _S}, State = #state{cont = Cont})
         NumBytes ->
             riak_repl_stats:rt_sink_errors(),
             %% cached_peername not caclulated from socket, so should be valid
-            lager:warning("Realtime connection from ~p closed with partial receive of ~b bytes\n",
+            ?LOG_WARNING("Realtime connection from ~p closed with partial receive of ~b bytes\n",
                           [peername(State), NumBytes])
     end,
     {stop, normal, State};
@@ -208,7 +210,7 @@ handle_info({Error, _S, Reason}, State= #state{cont = Cont}) when
         Error == tcp_error; Error == ssl_error ->
     %% peername not calculated from socket, so should be valid
     riak_repl_stats:rt_sink_errors(),
-    lager:warning("Realtime connection from ~p network error ~p - ~b bytes pending\n",
+    ?LOG_WARNING("Realtime connection from ~p network error ~p - ~b bytes pending\n",
                   [peername(State), Reason, size(Cont)]),
     {stop, normal, State};
 handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, socket = S,
@@ -217,7 +219,7 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
         true ->
             {noreply, schedule_reactivate_socket(State#state{active = false})};
         _ ->
-            lager:debug("Realtime sink recovered - reactivating transport ~p socket ~p\n",
+            ?LOG_DEBUG("Realtime sink recovered - reactivating transport ~p socket ~p\n",
                         [T, S]),
             %% Check the socket is ok
             case T:peername(S) of
@@ -226,20 +228,20 @@ handle_info(reactivate_socket, State = #state{remote = Remote, transport = T, so
                     {noreply, State#state{active = true}};
                 {error, Reason} ->
                     riak_repl_stats:rt_sink_errors(),
-                    lager:error("Realtime replication sink for ~p had socket error - ~p\n",
+                    ?LOG_ERROR("Realtime replication sink for ~p had socket error - ~p\n",
                                 [Remote, Reason]),
                     {stop, normal, State}
             end
     end;
 handle_info(report_bt_drops, State=#state{bt_drops = DropDict}) ->
     Total = dict:fold(fun(BucketType, Counter, TotalCount) ->
-                          lager:error("drops due to missing or mismatched type ~p: ~p", 
+                          ?LOG_ERROR("drops due to missing or mismatched type ~p: ~p", 
                           [BucketType, Counter]),
                           TotalCount + Counter
                       end,
                       0,
                       DropDict),
-    lager:error("total bucket type drop count: ~p", [Total]),
+    ?LOG_ERROR("total bucket type drop count: ~p", [Total]),
     Report = app_helper:get_env(riak_repl, bucket_type_drop_report_interval, ?DEFAULT_INTERVAL_MILLIS),
     {noreply, State#state{bt_drops = dict:new(), bt_timer = undefined, bt_interval = Report}}.
 
@@ -252,7 +254,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 send_heartbeat(undefined, _Socket) ->
-    lager:warning("Heartbeat received but transport undefined"),
+    ?LOG_WARNING("Heartbeat received but transport undefined"),
     ok;
 send_heartbeat(Transport, Socket) ->
     Transport:send(Socket, riak_repl2_rtframe:encode(heartbeat, undefined)).
@@ -293,10 +295,10 @@ make_donefun(Binary, Me, Ref, Seq) when is_binary(Binary) ->
 maybe_push(Binary, Meta) ->
     case app_helper:get_env(riak_repl, realtime_cascades, always) of
         never ->
-            lager:debug("Skipping cascade due to app env setting"),
+            ?LOG_DEBUG("Skipping cascade due to app env setting"),
             ok;
         always ->
-          lager:debug("app env either set to always, or in default; doing cascade"),
+          ?LOG_DEBUG("app env either set to always, or in default; doing cascade"),
           List = riak_repl_util:from_wire(Binary),
           Meta2 = orddict:erase(skip_count, Meta),
           riak_repl2_rtq:push(length(List), Binary, Meta2)
@@ -317,7 +319,7 @@ do_write_objects(Seq, BinObjsMeta, State = #state{max_pending = MaxPending,
                     riak_repl2_rtsink_helper:write_objects(Helper, BinObjs, DoneFun, Ver);
                 false ->
                     BucketType = riak_repl_bucket_type_util:prop_get(?BT_META_TYPE, ?DEFAULT_BUCKET_TYPE, Meta),
-                    lager:debug("Bucket type:~p is not equal on both the source and sink; not writing object.",
+                    ?LOG_DEBUG("Bucket type:~p is not equal on both the source and sink; not writing object.",
                                 [BucketType]),
                     gen_server:cast(Me, {drop, BucketType}),
                     DoneFun()
@@ -416,7 +418,7 @@ schedule_reactivate_socket(State = #state{transport = T,
                                           deactivated = Deactivated}) ->
     case Active of
         true ->
-            lager:debug("Realtime sink overloaded - deactivating transport ~p socket ~p\n",
+            ?LOG_DEBUG("Realtime sink overloaded - deactivating transport ~p socket ~p\n",
                         [T, S]),
             T:setopts(S, [{active, false}]),
             self() ! reactivate_socket,
@@ -424,7 +426,7 @@ schedule_reactivate_socket(State = #state{transport = T,
         false ->
             %% already deactivated, try again in configured interval, or default
             ReactivateSockInt = get_reactivate_socket_interval(),
-            lager:debug("reactivate_socket_interval_millis: ~sms.",
+            ?LOG_DEBUG("reactivate_socket_interval_millis: ~sms.",
               [ReactivateSockInt]),
 
             erlang:send_after(ReactivateSockInt, self(), reactivate_socket),

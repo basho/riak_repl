@@ -25,6 +25,8 @@
 -author("Chris Tilt").
 -include_lib("eunit/include/eunit.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([test1service/5, connected/6, connect_failed/3]).
 
 -define(TEST_ADDR, { "127.0.0.1", 4097}).
@@ -37,14 +39,14 @@
 
 %% host service functions
 test1service(_Socket, _Transport, {error, Reason}, Args, _Props) ->
-    lager:debug("test1service failed with {error, ~p}", [Reason]),
+    ?LOG_DEBUG("test1service failed with {error, ~p}", [Reason]),
     ?assert(Args == failed_host_args),
     ?assert(Reason == protocol_version_not_supported),
     {error, Reason};
 test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, Props) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     RemoteClusterName = proplists:get_value(clustername, Props),
-    lager:debug("test1service started with Args ~p Props ~p", [Args, Props]),
+    ?LOG_DEBUG("test1service started with Args ~p Props ~p", [Args, Props]),
     ?assert(RemoteClusterName == "undefined"),
     ?assert(ExpectedMyVer == MyVer),
     ?assert(ExpectedRemoteVer == RemoteVer),
@@ -56,7 +58,7 @@ test1service(_Socket, _Transport, {ok, {Proto, MyVer, RemoteVer}}, Args, Props) 
 connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, Props) ->
     [ExpectedMyVer, ExpectedRemoteVer] = Args,
     RemoteClusterName = proplists:get_value(clustername, Props),
-    lager:debug("connected with Args ~p Props ~p", [Args, Props]),
+    ?LOG_DEBUG("connected with Args ~p Props ~p", [Args, Props]),
     ?assert(RemoteClusterName == "undefined"),
     ?assert(Proto == test1proto),
     ?assert(ExpectedMyVer == MyVer),
@@ -64,7 +66,7 @@ connected(_Socket, _Transport, {_IP, _Port}, {Proto, MyVer, RemoteVer}, Args, Pr
     timer:sleep(2000).
 
 connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
-    lager:debug("connect_failed: Reason = ~p Args = ~p", [Reason, Args]),
+    ?LOG_DEBUG("connect_failed: Reason = ~p Args = ~p", [Reason, Args]),
     ?assert(Args == failed_client_args),
     ?assert(Reason == protocol_version_not_supported),
     ?assert(Proto == test1protoFailed).
@@ -74,21 +76,21 @@ conection_test_() ->
      [
       {setup,
        fun() ->
-               Apps = riak_repl_test_util:maybe_start_lager(),
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
                ok = application:start(ranch),
                {ok, _} = riak_core_service_mgr:start_link(?TEST_ADDR),
-               Apps
+               error_logger:tty(false),
+               ok
        end,
-       fun(Apps) ->
+       fun(ok) ->
                process_flag(trap_exit, true),
                riak_core_service_mgr:stop(),
                riak_core_ring_manager:stop(),
                catch exit(riak_core_ring_events, kill),
                application:stop(ranch),
-               ok = riak_repl_test_util:stop_apps(Apps),
                process_flag(trap_exit, false),
+               error_logger:tty(true),
                ok
        end,
        fun(_) -> [

@@ -4,6 +4,8 @@
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -record(state, {
     transport, transport_msgs, socket, local_ver, remote_ver, remote_addr, remote_name
 }).
@@ -27,7 +29,7 @@ start_link(_Socket, _Transport, {error, _} = Error, _Args, _Props) ->
 start_link(Socket, Transport, NegotiatedVers, _Args, Props) ->
     {ok, ClientAddr} = Transport:peername(Socket),
     RemoteClusterName = proplists:get_value(clustername, Props),
-    lager:debug("Cluster Manager: accepted connection from cluster at ~p named ~p"),
+    ?LOG_DEBUG("Cluster Manager: accepted connection from cluster at ~p named ~p"),
     case gen_server:start_link(?MODULE, {Socket, Transport, NegotiatedVers, ClientAddr, RemoteClusterName, Props}, []) of
         {ok, Pid} ->
             Transport:controlling_process(Socket, Pid),
@@ -127,7 +129,7 @@ handle_socket_info(?CTRL_ALL_MEMBERS, Transport, Socket, State) ->
     end;
 
 handle_socket_info(OtherData, _Transport, _Socket, State) ->
-    ok = lager:warning("Some other data from the socket: ~p", [OtherData]),
+    ?LOG_WARNING("Some other data from the socket: ~p", [OtherData]),
     {stop, {error, unrecognized_request}, State}.
 
 read_ip_address(Socket, Transport, Remote) ->
@@ -137,17 +139,17 @@ read_ip_address(Socket, Transport, Remote) ->
                 {IPAddrStr, IPPort} when is_list(IPAddrStr), is_integer(IPPort) ->
                     {ok, {IPAddrStr, IPPort}};
                 InvalidTerm ->
-                    lager:error("Cluster Manager: failed to receive ip addr from remote ~p: invalid term recieved: ~p", [Remote, InvalidTerm]),
+                    ?LOG_ERROR("Cluster Manager: failed to receive ip addr from remote ~p: invalid term recieved: ~p", [Remote, InvalidTerm]),
                     {error, bad_address_format}
             catch
                 error:badarg ->
-                    lager:error("Cluster Manager: failed to receive ip addr from remote ~p: unsafe binary to decode was sent", [Remote]),
+                    ?LOG_ERROR("Cluster Manager: failed to receive ip addr from remote ~p: unsafe binary to decode was sent", [Remote]),
                     {error, unsafe_data}
             end;
         {error, closed} ->
             {error, closed};
         Error ->
-            lager:error("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
+            ?LOG_ERROR("Cluster Manager: failed to receive ip addr from remote ~p: ~p",
                         [Remote, Error]),
             Error
     end.

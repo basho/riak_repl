@@ -5,6 +5,8 @@
 -module(riak_repl2_rtq_eqc).
 -compile([export_all, nowarn_export_all]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
@@ -285,7 +287,6 @@ next_state(S0, _V, {call, _, push, [Value, RoutedClusters, _Q]}) ->
     end;
 next_state(S,_V,{call, _, pull, [Name, _Q]}) ->
     Client = get_client(Name, S),
-    %lager:info("tout is ~p~n", [Client#tc.tout]),
     SplitFun = fun(#qed_item{meta = Meta}) ->
         lists:member(Name, Meta)
     end,
@@ -346,7 +347,7 @@ make_item() ->
     ?LAZY([make_ref()]).
 
 push(List, Q) ->
-    lager:info("pushed item ~p~n to ~p~n", [List, Q]),
+    ?LOG_INFO("pushed item ~p~n to ~p~n", [List, Q]),
     NumItems = length(List),
     Bin = term_to_binary(List),
     riak_repl2_rtq:push(NumItems, Bin).
@@ -357,16 +358,16 @@ push(List, RoutedClusters, _Q) ->
     riak_repl2_rtq:push(NumItems, Bin, [{routed_clusters, RoutedClusters}]).
 
 new_consumer(Name, Q) ->
-    lager:info("registering ~p to ~p~n", [Name, Q]),
+    ?LOG_INFO("registering ~p to ~p~n", [Name, Q]),
     riak_repl2_rtq:register(Name).
 
 reregister_consumer(Name, _Q) ->
-    lager:info("unregistering ~p", [Name]),
+    ?LOG_INFO("unregistering ~p", [Name]),
     riak_repl2_rtq:unregister(Name),
     riak_repl2_rtq:unregister(Name).
 
 replace_consumer(Name, _Q) ->
-    lager:info("replacing ~p", [Name]),
+    ?LOG_INFO("replacing ~p", [Name]),
     riak_repl2_rtq:register(Name).
 
 get_rtq_bytes(_Q) ->
@@ -385,21 +386,21 @@ pull(Name, Q) ->
                     ok
             after
                 1000 ->
-                    lager:info("No pull ack from ~p~n", [Name]),
+                    ?LOG_INFO("No pull ack from ~p~n", [Name]),
                     error
             end
     end,
     riak_repl2_rtq:pull(Name, F),
     receive
         {Ref, {Seq, Size, Item, Meta}} ->
-            lager:info("~p got ~p size ~p seq ~p meta ~p~n", [Name, Item, Size, Seq, Meta]),
+            ?LOG_INFO("~p got ~p size ~p seq ~p meta ~p~n", [Name, Item, Size, Seq, Meta]),
             Q ! {Ref, ok},
             {Seq, Size, binary_to_term(Item)};
         {Ref, _Wut} ->
             none
     after
         1000 ->
-            lager:info("queue empty: ~p~n", [Name]),
+            ?LOG_INFO("queue empty: ~p~n", [Name]),
             none
     end.
 

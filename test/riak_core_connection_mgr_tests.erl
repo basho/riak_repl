@@ -80,15 +80,14 @@ connections_test_() ->
      [
       {setup,
        fun() ->
-               Apps = riak_repl_test_util:maybe_start_lager(),
                ok = application:start(ranch),
                riak_core_ring_events:start_link(),
                riak_core_ring_manager:start_link(test),
                {ok, _} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
                {ok, _} = riak_core_connection_mgr:start_link(),
-               Apps
+               ok
        end,
-       fun(StartedApps) ->
+       fun(ok) ->
                process_flag(trap_exit, true),
                riak_core_connection_mgr:stop(),
                riak_core_service_mgr:stop(),
@@ -96,7 +95,6 @@ connections_test_() ->
                catch exit(riak_core_ring_events, kill),
                application:stop(ranch),
                process_flag(trap_exit, false),
-               riak_repl_test_util:stop_apps(StartedApps),
                ok
        end,
        fun(_) -> [

@@ -5,6 +5,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 -export([start_link/0,migrate_queue/0, migrate_queue/1]).
 
@@ -28,11 +30,11 @@ migrate_queue(Timeout) ->
     gen_server:call(?SERVER, {wait_for_queue, Timeout}, infinity).
 
 init([]) ->
-    lager:info("Riak replication migration server started"),
+    ?LOG_INFO("Riak replication migration server started"),
     {ok, #state{elapsed_sleep=0}}.
 
 handle_call({wait_for_queue, MaxTimeout}, From, State) ->
-    lager:info("Realtime Repl queue migration sleeping"),
+    ?LOG_INFO("Realtime Repl queue migration sleeping"),
     %% TODO: is there a better way to do the next line? just call
     %% handle_info?
     erlang:send_after(100, self(), {sleep, MaxTimeout}),
@@ -45,28 +47,28 @@ handle_info({sleep, MaxTimeout}, State = #state{elapsed_sleep = ElapsedSleep}) -
     case riak_repl2_rtq:all_queues_empty() of
         true ->
             gen_server:reply(State#state.caller, ok),
-            lager:info("Queue empty, no replication queue migration required");
+            ?LOG_INFO("Queue empty, no replication queue migration required");
         false ->
             case (ElapsedSleep >= MaxTimeout) of
                 true ->
-                    lager:info("Realtime queue has not completely drained"),
+                    ?LOG_INFO("Realtime queue has not completely drained"),
                     _ = case riak_repl_util:get_peer_repl_nodes() of
                         [] ->
-                            lager:error("No nodes available to migrate replication data"),
+                            ?LOG_ERROR("No nodes available to migrate replication data"),
                             riak_repl_stats:rt_source_errors(),
                             error;
                         [Peer|_Rest] ->
                             {ok, _} = riak_repl2_rtq:register(qm),
                             WireVer = riak_repl_util:peer_wire_format(Peer),
-                            lager:info("Migrating replication queue data to ~p with wire version ~p",
+                            ?LOG_INFO("Migrating replication queue data to ~p with wire version ~p",
                                        [Peer, WireVer]),
                             drain_queue(riak_repl2_rtq:is_empty(qm), Peer, WireVer),
-                            lager:info("Done migrating replication queue"),
+                            ?LOG_INFO("Done migrating replication queue"),
                             ok
                     end,
                     gen_server:reply(State#state.caller, ok);
                 false ->
-                    lager:info("Waiting for realtime repl queue to drain"),
+                    ?LOG_INFO("Waiting for realtime repl queue to drain"),
                     erlang:send_after(1000, self(), {sleep, MaxTimeout})
             end
     end,
@@ -97,7 +99,7 @@ drain_queue(false, Peer, PeerWireVer) ->
                 catch
                     _:_ ->
                         % probably too much spam in the logs for this warning
-                        %lager:warning("Dropped object during replication queue migration"),
+                        %?LOG_WARNING("Dropped object during replication queue migration"),
                         % is this the correct stat?
                         riak_repl_stats:objects_dropped_no_clients(),
                         riak_repl_stats:rt_source_errors()

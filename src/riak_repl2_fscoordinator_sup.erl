@@ -1,6 +1,9 @@
 %% @doc simple supervisor for the fscoordinator, starting/stopping it
 %% in response to leader changes.
 -module(riak_repl2_fscoordinator_sup).
+
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0, set_leader/2, start_coord/2, stop_coord/2,
     started/0, started/1, coord_for_cluster/1]).
 -export([init/1]).
@@ -21,12 +24,12 @@ set_leader(Node, _Pid) ->
     end.
 
 start_coord(Node, Remote) ->
-    lager:info("Starting replication coordination ~p", [Remote]),
+    ?LOG_INFO("Starting replication coordination ~p", [Remote]),
     Childspec = make_remote(Remote),
     supervisor:start_child({?MODULE, Node}, Childspec).
 
 stop_coord(Node, Remote) ->
-    lager:info("Stopping replication coordination ~p", [Remote]),
+    ?LOG_INFO("Stopping replication coordination ~p", [Remote]),
     _ = supervisor:terminate_child({?MODULE, Node}, Remote),
     _ = supervisor:delete_child({?MODULE, Node}, Remote).
 

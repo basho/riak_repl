@@ -6,6 +6,8 @@
 -include_lib("riak_kv/include/riak_kv_vnode.hrl").
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
 -include_lib("eunit/include/eunit.hrl").
@@ -119,7 +121,7 @@ do_repl_put({RemoteTypeHash, Object}) ->
     Type = riak_object:type(Object),
     case riak_core_bucket:get_bucket(Bucket) of
         {error, no_type} ->
-            lager:warning("Type ~p not defined on sink, not doing put", [Type]),
+            ?LOG_WARNING("Type ~p not defined on sink, not doing put", [Type]),
             ok;
         _Props ->
             BucketPropsMatch =
@@ -133,7 +135,7 @@ do_repl_put(Object) ->
 
 do_repl_put(_Object, _B, false) ->
     %% Remote and local bucket properties differ so ignore this object
-    lager:warning("Remote and local bucket properties differ for type ~p",
+    ?LOG_WARNING("Remote and local bucket properties differ for type ~p",
                   [riak_object:type(_Object)]),
     ok;
 do_repl_put(Object, B, true) ->
@@ -157,21 +159,21 @@ do_repl_put(Object, B, true) ->
                 {'DOWN', MRef, _, _, _} ->
                     ok
             after 60000 ->
-                    lager:warning("put fsm did not exit on schedule"),
+                    ?LOG_WARNING("put fsm did not exit on schedule"),
                     ok
             end,
 
             case riak_kv_util:is_x_deleted(Object) of
                 true ->
-                    lager:debug("Incoming deleted obj ~p/~p", [B, K]),
+                    ?LOG_DEBUG("Incoming deleted obj ~p/~p", [B, K]),
                     _ = reap(ReqId, B, K),
                     %% block waiting for response
                     wait_for_response(ReqId, "reap");
                 false ->
-                    lager:debug("Incoming obj ~p/~p", [B, K])
+                    ?LOG_DEBUG("Incoming obj ~p/~p", [B, K])
             end;
         cancel ->
-            lager:debug("Skipping repl received object ~p/~p", [B, K])
+            ?LOG_DEBUG("Skipping repl received object ~p/~p", [B, K])
     end.
 
 reap(ReqId, B, K) ->
@@ -180,11 +182,11 @@ reap(ReqId, B, K) ->
 wait_for_response(ReqId, Verb) ->
     receive
         {ReqId, {error, Reason}} ->
-            lager:debug("Failed to ~s replicated object: ~p", [Verb, Reason]);
+            ?LOG_DEBUG("Failed to ~s replicated object: ~p", [Verb, Reason]);
         {ReqId, _} ->
             ok
     after 60000 ->
-            lager:warning("Timed out after 1 minute doing ~s on replicated object",
+            ?LOG_WARNING("Timed out after 1 minute doing ~s on replicated object",
             [Verb]),
             ok
     end.
@@ -205,13 +207,13 @@ repl_helper_recv([{App, Mod}|T], Object) ->
         cancel ->
             cancel;
         Other ->
-            lager:error("Unexpected result running repl recv helper "
+            ?LOG_ERROR("Unexpected result running repl recv helper "
                 "~p from application ~p : ~p",
                 [Mod, App, Other]),
             repl_helper_recv(T, Object)
     catch
         What:Why ->
-            lager:error("Crash while running repl recv helper "
+            ?LOG_ERROR("Crash while running repl recv helper "
                 "~p from application ~p : ~p:~p",
                 [Mod, App, What, Why]),
             repl_helper_recv(T, Object)
@@ -223,7 +225,7 @@ maybe_send(Object, C, Proto) ->
 maybe_send({_T, _B}, Object, C, {Major, _Minor}) when Major >=3 ->
     repl_helper_send(Object, C);
 maybe_send({_T, _B}, _Object, _C, Proto) ->
-    lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending", [Proto]),
+    ?LOG_DEBUG("Negotiated protocol version:~p does not support typed buckets, not sending", [Proto]),
     cancel;
 maybe_send(_B, Object, C, _Proto) ->
     repl_helper_send(Object, C).
@@ -238,7 +240,7 @@ repl_helper_send(Object, C) ->
                     repl_helper_send(Mods, Object, C, [])
             end;
         false ->
-            lager:debug("Repl disabled for bucket ~p", [B]),
+            ?LOG_DEBUG("Repl disabled for bucket ~p", [B]),
             cancel
     end.
 
@@ -280,13 +282,13 @@ repl_helper_send([{App, Mod}|T], Object, C, Acc) ->
         cancel ->
             cancel;
          Other ->
-            lager:error("Unexpected result running repl send helper "
+            ?LOG_ERROR("Unexpected result running repl send helper "
                 "~p from application ~p : ~p",
                 [Mod, App, Other]),
             repl_helper_send(T, Object, C, Acc)
     catch
         What:Why ->
-            lager:error("Crash while running repl send helper "
+            ?LOG_ERROR("Crash while running repl send helper "
                 "~p from application ~p : ~p:~p",
                 [Mod, App, What, Why]),
             repl_helper_send(T, Object, C, Acc)
@@ -310,13 +312,13 @@ repl_helper_send_realtime([{App, Mod}|T], Object, C, Acc) ->
         cancel ->
             cancel;
          Other ->
-            lager:error("Unexpected result running repl realtime send helper "
+            ?LOG_ERROR("Unexpected result running repl realtime send helper "
                 "~p from application ~p : ~p",
                 [Mod, App, Other]),
             repl_helper_send_realtime(T, Object, C, Acc)
     catch
         What:Why ->
-            lager:error("Crash while running repl realtime send helper "
+            ?LOG_ERROR("Crash while running repl realtime send helper "
                 "~p from application ~p : ~p:~p",
                 [Mod, App, What, Why]),
             repl_helper_send_realtime(T, Object, C, Acc)
@@ -422,7 +424,7 @@ maybe_use_ssl() ->
         true ->
             SSLOpts;
         {error, Reason} ->
-            lager:error("Error, invalid SSL configuration: ~s", [Reason]),
+            ?LOG_ERROR("Error, invalid SSL configuration: ~s", [Reason]),
             false;
         false ->
             %% not all the SSL options are configured, use TCP
@@ -489,14 +491,14 @@ load_certs(CertDir) ->
     end.
 
 load_certs([], Acc) ->
-    lager:debug("Successfully loaded ~p CA certificates", [length(Acc)]),
+    ?LOG_DEBUG("Successfully loaded ~p CA certificates", [length(Acc)]),
     Acc;
 load_certs([Cert|Certs], Acc) ->
     case filelib:is_dir(Cert) of
         true ->
             load_certs(Certs, Acc);
         _ ->
-            lager:debug("Loading certificate ~p", [Cert]),
+            ?LOG_DEBUG("Loading certificate ~p", [Cert]),
             load_certs(Certs, load_cert(Cert) ++ Acc)
     end.
 
@@ -522,7 +524,7 @@ verify_ssl(_, valid, UserState) ->
     %% this is the check for the CA cert
     {valid, UserState};
 verify_ssl(_, valid_peer, undefined) ->
-    lager:error("Unable to determine local certificate's common name"),
+    ?LOG_ERROR("Unable to determine local certificate's common name"),
     {fail, bad_local_common_name};
 verify_ssl(Cert, valid_peer, MyCommonName) ->
 
@@ -530,18 +532,18 @@ verify_ssl(Cert, valid_peer, MyCommonName) ->
 
     case string:to_lower(CommonName) == string:to_lower(MyCommonName) of
         true ->
-            lager:error("Peer certificate's common name matches local "
+            ?LOG_ERROR("Peer certificate's common name matches local "
                 "certificate's common name"),
             {fail, duplicate_common_name};
         _ ->
             case validate_common_name(CommonName,
                     app_helper:get_env(riak_repl, peer_common_name_acl, "*")) of
                 {true, Filter} ->
-                    lager:info("SSL connection from ~s granted by ACL ~s",
+                    ?LOG_INFO("SSL connection from ~s granted by ACL ~s",
                         [CommonName, Filter]),
                     {valid, MyCommonName};
                 false ->
-                    lager:error("SSL connection from ~s denied, no matching ACL",
+                    ?LOG_ERROR("SSL connection from ~s denied, no matching ACL",
                         [CommonName]),
                     {fail, no_acl}
             end
@@ -687,7 +689,7 @@ schedule_fullsync(Pid) ->
 
 start_fullsync_timer(Pid, FullsyncIvalMins, Cluster) ->
     FullsyncIval = timer:minutes(FullsyncIvalMins),
-    lager:info("Fullsync for ~p scheduled in ~p minutes",
+    ?LOG_INFO("Fullsync for ~p scheduled in ~p minutes",
                [Cluster, FullsyncIvalMins]),
     spawn(fun() ->
                 timer:sleep(FullsyncIval),
@@ -727,7 +729,7 @@ elapsed_secs(Then) ->
     CentiSecs / 100.0.
 
 shuffle_partitions(Partitions, Seed) ->
-    lager:info("Shuffling partition list using seed ~p", [Seed]),
+    ?LOG_INFO("Shuffling partition list using seed ~p", [Seed]),
     _ = rand:seed(exrop, Seed),
     [Partition || {Partition, _} <-
         lists:keysort(2, [{Key, rand:uniform()} || Key <- Partitions])].
@@ -754,7 +756,7 @@ proxy_get_active() ->
 log_dropped_realtime_obj(Obj) ->
     DroppedKey = riak_object:key(Obj),
     DroppedBucket = riak_object:bucket(Obj),
-    lager:info("REPL dropped object: ~p ~p",
+    ?LOG_INFO("REPL dropped object: ~p ~p",
                [ DroppedBucket, DroppedKey]).
 
 dropped_realtime_hook(Obj) ->
@@ -861,7 +863,7 @@ deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _H
     w2;
 deduce_wire_version_from_proto({_Proto, {CommonMajor, _CMinor}, {CommonMajor, _HMinor}}) when CommonMajor > 1 ->
     w1;
-deduce_wire_version_from_proto({_Proto, {_CommonMajor, CMinor}, {_CommonMajor, HMinor}}) when CMinor >= 5 andalso HMinor >= 5 ->
+deduce_wire_version_from_proto({_Proto, {CommonMajor, CMinor}, {CommonMajor, HMinor}}) when CMinor >= 5 andalso HMinor >= 5 ->
     w1;
 % legacy wire binary packing.
 deduce_wire_version_from_proto({_Proto, _Client, _Host}) ->
@@ -978,7 +980,7 @@ from_wire(<<?MAGIC:8/integer, ?W1_VER:8/integer,
             KLen:32/integer, K:KLen/binary, BinObj/binary>>) ->
     riak_object:from_binary(B, K, BinObj);
 from_wire(X) when is_binary(X) ->
-    lager:error("An unknown replicaion wire format has been detected: ~p", [X]),
+    ?LOG_ERROR("An unknown replicaion wire format has been detected: ~p", [X]),
     {error, unknown_wire_format};
 from_wire(RObj) ->
     RObj.
@@ -1045,7 +1047,7 @@ maybe_get_vnode_lock(SrcPartition) ->
                 {ok, _Ref} ->
                     ok;
                 max_concurrency ->
-                    lager:debug("max_concurrency for lock ~p: info ~p locks ~p",
+                    ?LOG_DEBUG("max_concurrency for lock ~p: info ~p locks ~p",
                                 [SrcPartition,
                                  riak_core_bg_manager:lock_info(Lock),
                                  riak_core_bg_manager:all_locks(Lock)]),

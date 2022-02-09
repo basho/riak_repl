@@ -7,6 +7,8 @@
 
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 %% gen_event callbacks
 -export([init/1, handle_event/2, handle_call/2,
          handle_info/2, terminate/2, code_change/3]).
@@ -107,7 +109,7 @@ init_repl_config(OldRing, NewRing) ->
 %% Given a new repl config, update the system-local ring.
 %%
 update_ring(ReplConfig) ->
-    lager:info("Repushing new REPL config!"),
+    ?LOG_INFO("Repushing new REPL config!"),
     F = fun(Ring, _) ->
                 {new_ring, riak_repl_ring:set_repl_config(Ring, ReplConfig)}
         end,

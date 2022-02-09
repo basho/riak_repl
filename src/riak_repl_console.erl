@@ -3,6 +3,11 @@
 -module(riak_repl_console).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
+-define(LOG_USER_CMD(Msg, Params), ?LOG_NOTICE("[user] " ++ Msg, Params)).
+
 -export([add_listener/1, del_listener/1, add_nat_listener/1]).
 -export([add_site/1, del_site/1]).
 -export([status/1, start_fullsync/1, cancel_fullsync/1,
@@ -40,7 +45,7 @@
      ]).
 
 add_listener(Params) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     Ring = get_ring(),
     case add_listener_internal(Ring,Params) of
         {ok, NewRing} ->
@@ -49,7 +54,7 @@ add_listener(Params) ->
     end.
 
 add_nat_listener(Params) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     Ring = get_ring(),
     case add_nat_listener_internal(Ring, Params) of
         {ok, NewRing} ->
@@ -98,7 +103,7 @@ add_nat_listener_internal(Ring, [NodeName, IP, Port, PublicIP, PublicPort]) ->
     end.
 
 del_listener([NodeName, IP, Port]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     Ring = get_ring(),
     Listener = make_listener(NodeName, IP, Port),
     NewRing0 = riak_repl_ring:del_listener(Ring, Listener),
@@ -106,14 +111,14 @@ del_listener([NodeName, IP, Port]) ->
     ok = maybe_set_ring(Ring, NewRing).
 
 add_site([IP, Port, SiteName]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     Ring = get_ring(),
     Site = make_site(SiteName, IP, Port),
     NewRing = riak_repl_ring:add_site(Ring, Site),
     ok = maybe_set_ring(Ring, NewRing).
 
 del_site([SiteName]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     Ring = get_ring(),
     NewRing = riak_repl_ring:del_site(Ring, SiteName),
     ok = maybe_set_ring(Ring, NewRing).
@@ -184,25 +189,25 @@ cluster_fs_running(Sink) ->
     riak_repl2_fscoordinator:is_running(ClusterCoord).
 
 start_fullsync([]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:start_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 cancel_fullsync([]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:cancel_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 pause_fullsync([]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:pause_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
 
 resume_fullsync([]) ->
-    lager:warning(?V2REPLDEP, []),
+    ?LOG_WARNING(?V2REPLDEP, []),
     _ = [riak_repl_tcp_server:resume_fullsync(Pid) ||
         Pid <- riak_repl_listener_sup:server_pids()],
     ok.
@@ -614,7 +619,7 @@ del_nat_map([External, Internal]) ->
 %     over disterlang. When this API becomes available, this feature may use
 %     it. 
 add_block_provider_redirect([FromClusterId, ToClusterId]) ->
-    lager:info("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
+    ?LOG_INFO("Redirecting cluster id: ~p to ~p", [FromClusterId, ToClusterId]),
     riak_core_metadata:put({<<"replication">>, <<"cluster-mapping">>}, 
                            FromClusterId, ToClusterId).
 
@@ -627,7 +632,7 @@ show_block_provider_redirect([FromClusterId]) ->
     end.
 
 delete_block_provider_redirect([FromClusterId]) ->
-    lager:info("Deleting redirect to ~p", [FromClusterId]),
+    ?LOG_INFO("Deleting redirect to ~p", [FromClusterId]),
     riak_core_metadata:delete({<<"replication">>, <<"cluster-mapping">>}, FromClusterId).
 
 show_local_cluster_id([]) ->
@@ -739,7 +744,7 @@ make_nat_listener(NodeName, IP, Port, PublicIP, PublicPort) ->
 make_site(SiteName, IP, Port) ->
     #repl_site{name=SiteName, addrs=[{IP, list_to_integer(Port)}]}.
 
-maybe_set_ring(_R, _R) -> ok;
+maybe_set_ring(R, R) -> ok;
 maybe_set_ring(_R1, R2) ->
     RC = riak_repl_ring:get_repl_config(R2),
     F = fun(InRing, ReplConfig) ->
@@ -1027,12 +1032,12 @@ proplists_get([Key | Path], Props, Default) when is_list(Props) ->
         undefined ->
             Default;
         too_busy ->
-            lager:debug("Something was too busy to give stats"),
+            ?LOG_DEBUG("Something was too busy to give stats"),
             Default;
         AList when is_list(AList) ->
             proplists_get(Path, AList, Default);
         Wut ->
-            lager:warning("~p Not a list when getting stepwise key ~p: ~p", [Wut, [Key | Path], Props]),
+            ?LOG_WARNING("~p Not a list when getting stepwise key ~p: ~p", [Wut, [Key | Path], Props]),
             Default
     end.
 

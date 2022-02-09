@@ -13,6 +13,8 @@
          v1_ack/2,
          status/1, status/2, send_heartbeat/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_repl.hrl").
 
 -define(SERVER, ?MODULE).
@@ -97,11 +99,11 @@ handle_cast({v1_ack, Seq}, State = #state{v1_seq_map = Map}) ->
     {noreply, State#state{v1_seq_map = Map2}};
 
 handle_cast(Msg, _State) ->
-    lager:info("Realtime source helper received unexpected cast - ~p\n", [Msg]).
+    ?LOG_INFO("Realtime source helper received unexpected cast - ~p\n", [Msg]).
 
 
 handle_info(Msg, State) ->
-    lager:info("Realtime source helper received unexpected message - ~p\n", [Msg]),
+    ?LOG_INFO("Realtime source helper received unexpected message - ~p\n", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -121,7 +123,7 @@ maybe_send(Transport, Socket, QEntry, State) ->
     Routed = get_routed(Meta),
     case lists:member(Remote, Routed) of
         true ->
-            lager:debug("Did not forward to ~p; destination already in routed list", [Remote]),
+            ?LOG_DEBUG("Did not forward to ~p; destination already in routed list", [Remote]),
             State;
         false ->
             case State#state.proto of
@@ -132,7 +134,7 @@ maybe_send(Transport, Socket, QEntry, State) ->
                         false ->
                             encode_and_send(QEntry, Remote, Transport, Socket, State);
                         true ->
-                            lager:debug("Negotiated protocol version:~p does not support typed buckets, not sending"),
+                            ?LOG_DEBUG("Negotiated protocol version:~p does not support typed buckets, not sending"),
                             State
                     end
             end
@@ -141,7 +143,7 @@ maybe_send(Transport, Socket, QEntry, State) ->
 encode_and_send(QEntry, Remote, Transport, Socket, State) ->
     QEntry2 = merge_forwards_and_routed_meta(QEntry, Remote),
     {Encoded, State2} = encode(QEntry2, State),
-    lager:debug("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
+    ?LOG_DEBUG("Forwarding to ~p with new data: ~p derived from ~p", [State#state.remote, QEntry2, QEntry]),
     Transport:send(Socket, Encoded),
     State2.
 

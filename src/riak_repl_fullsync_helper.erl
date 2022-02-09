@@ -11,6 +11,7 @@
 -compile({nowarn_deprecated_function, 
             [{gen_fsm, send_event, 2}]}).
 
+-include_lib("kernel/include/logger.hrl").
 
 %% API
 -export([start_link/1,
@@ -141,7 +142,7 @@ handle_call({make_keylist, Partition, Filename}, From, State) ->
                                     riak_core_gen_server:cast(Self,
                                                               {kl_finish, Total});
                                 {'DOWN', MonRef, process, VNodePid, Reason} ->
-                                    lager:warning("Keylist fold of ~p exited with ~p",
+                                    ?LOG_WARNING("Keylist fold of ~p exited with ~p",
                                                [Partition, Reason]),
                                     exit({vnode_terminated, Reason})
                             end
@@ -187,7 +188,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
                                                     ref = Ref,
                                                     need_vclocks = NeedVClocks,
                                                     preflist = {Partition, OwnerNode}}),
-                    lager:info("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
+                    ?LOG_INFO("Partition ~p: ~p remote / ~p local: ~p missing, ~p differences.",
                                         [Partition, 
                                         erlang:get(remote_reads),
                                         erlang:get(local_reads),
@@ -197,7 +198,7 @@ handle_call({diff, Partition, RemoteFilename, LocalFilename, Count, NeedVClocks}
                         [] ->
                             ok;
                         Errors ->
-                            lager:error("Partition ~p: Read Errors.",
+                            ?LOG_ERROR("Partition ~p: Read Errors.",
                                                 [Partition, Errors])
                     end,
                     gen_fsm:send_event(State#state.owner_fsm, {Ref, diff_done});
@@ -244,10 +245,10 @@ handle_cast(kl_sort, State) ->
     Filename = State#state.filename,
     %% we want the GC to stop running, so set a giant heap size
     %% this process is about to die, so this is OK
-    lager:info("Sorting keylist ~p", [Filename]),
+    ?LOG_INFO("Sorting keylist ~p", [Filename]),
     erlang:process_flag(min_heap_size, 1000000),
     {ElapsedUsec, ok} = timer:tc(file_sorter, sort, [Filename]),
-    lager:info("Sorted ~s of ~p keys in ~.2f seconds",
+    ?LOG_INFO("Sorted ~s of ~p keys in ~.2f seconds",
                           [Filename, State#state.kl_total, ElapsedUsec / 1000000]),
     gen_fsm:send_event(State#state.owner_fsm, {State#state.ref, keylist_built,
         State#state.kl_total}),

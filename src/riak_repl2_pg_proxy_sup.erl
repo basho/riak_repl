@@ -5,6 +5,8 @@
 
 -behaviour(supervisor).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 -export([start_link/0, set_leader/2, started/1, start_proxy/1, make_remote/1, stop_proxy/2]).
 
@@ -34,12 +36,12 @@ set_leader(Node, _Pid) ->
     end.
 
 start_proxy(Remote) ->
-    lager:debug("Starting pg_proxy for ~p", [Remote]),
+    ?LOG_DEBUG("Starting pg_proxy for ~p", [Remote]),
     Childspec = make_remote(Remote),
     supervisor:start_child({?MODULE, node()}, Childspec).
 
 stop_proxy(Node, Remote) ->
-    lager:debug("Stopping pg_proxy for ~p", [Remote]),    
+    ?LOG_DEBUG("Stopping pg_proxy for ~p", [Remote]),    
     _ = supervisor:terminate_child({?MODULE, Node}, Remote),
     _ = supervisor:delete_child({?MODULE, Node}, Remote).
 
@@ -52,7 +54,7 @@ init(_) ->
 
 make_remote(Remote) ->
     Name = riak_repl_util:make_pg_proxy_name(Remote),
-    lager:debug("make_remote ~p", [Name]),
+    ?LOG_DEBUG("make_remote ~p", [Name]),
     {Name, {riak_repl2_pg_proxy, start_link, [Name]},
         transient, ?SHUTDOWN, worker, [riak_repl2_pg_proxy, pg_proxy]}.
 

@@ -5,6 +5,8 @@
 -behaviour(gen_server).
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -130,7 +132,7 @@ rt_dirty() ->
     case Stat > 0 andalso Stat < 5 of
         true ->
             %% the coordinator might not be up yet
-            lager:debug("Notifying coordinator of rt_dirty"),
+            ?LOG_DEBUG("Notifying coordinator of rt_dirty"),
             % notify the coordinator at a later time, hopefully
             % after the fscoordinator is started. If it's not, then just
             % log a warning.
@@ -140,7 +142,7 @@ rt_dirty() ->
                         riak_repl2_fscoordinator:node_dirty(node())
                       catch
                         _:_ ->
-                         lager:debug("Failed to notify coordinator of rt_dirty status")
+                         ?LOG_DEBUG("Failed to notify coordinator of rt_dirty status")
                       end
             end),
             ok;
@@ -165,14 +167,14 @@ init([]) ->
     schedule_report_bw(),
     case is_rt_dirty() of
         true ->
-            lager:warning("RT marked as dirty upon startup"),
+            ?LOG_WARNING("RT marked as dirty upon startup"),
             ok = folsom_metrics:notify_existing_metric({?APP, rt_dirty}, {inc, 1}, counter),
             % let the coordinator know about the dirty state when the node
             % comes back up
-            lager:debug("Notifying coordinator of rt_dirty state"),
+            ?LOG_DEBUG("Notifying coordinator of rt_dirty state"),
             riak_repl2_fscoordinator:node_dirty(node());
         false ->
-            lager:debug("RT is NOT dirty")
+            ?LOG_DEBUG("RT is NOT dirty")
     end,
     {ok, ok}.
 
@@ -306,19 +308,19 @@ touch_rt_dirty_file() ->
     DirtyRTFile = rt_dirty_filename(),
     ok = filelib:ensure_dir(DirtyRTFile),
     case file:write_file(DirtyRTFile, "") of
-        ok -> lager:debug("RT dirty file written to ~p", [DirtyRTFile]);
-        ER -> lager:warning("Can't write to file ~p due to ~p",[DirtyRTFile,
+        ok -> ?LOG_DEBUG("RT dirty file written to ~p", [DirtyRTFile]);
+        ER -> ?LOG_WARNING("Can't write to file ~p due to ~p",[DirtyRTFile,
                                                                 ER])
     end.
 
 remove_rt_dirty_file() ->
     DirtyRTFile = rt_dirty_filename(),
     case file:delete(DirtyRTFile) of
-        ok -> lager:debug("RT dirty flag cleared");
+        ok -> ?LOG_DEBUG("RT dirty flag cleared");
         {error, Reason} ->
-            %% this is a lager:debug because each fullsync
+            %% this is a ?LOG_DEBUG because each fullsync
             %% would display this warning.
-            lager:debug("Can't clear RT dirty flag: ~p",
+            ?LOG_DEBUG("Can't clear RT dirty flag: ~p",
                                        [Reason])
     end.
 
@@ -333,7 +335,7 @@ is_rt_dirty() ->
     case file:read_file_info(DirtyRTFile) of
         {error, enoent} -> false;
         {error, Reason} ->
-                  lager:warning("Error reading RT dirty file: ~p", [Reason]),
+                  ?LOG_WARNING("Error reading RT dirty file: ~p", [Reason]),
                   %% assume it's not there
                   false;
         {ok, _Data} -> true

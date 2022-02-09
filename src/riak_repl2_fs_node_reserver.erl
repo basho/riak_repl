@@ -2,6 +2,9 @@
 %% account the running sinks and how many reservations there are for that node.
 -module(riak_repl2_fs_node_reserver).
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -95,7 +98,7 @@ handle_call({reserve, Partition}, _From, State) ->
             Reserved2 = [{Partition, Tref} | State#state.reservations],
             {reply, ok, State#state{reservations = Reserved2}};
         true ->
-            lager:info("Node busy for partition ~p. running=~p reserved=~p max=~p",
+            ?LOG_INFO("Node busy for partition ~p. running=~p reserved=~p max=~p",
                         [Partition, Running, Reserved, Max]),
             {reply, busy, State}
     end;
