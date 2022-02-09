@@ -168,16 +168,6 @@ overload_protection_start_test_() ->
 overload_test_() ->
     {foreach,
      fun() ->
-        % if you want lager started, and you're using bash, you can put
-        % ENABLE_LAGER=TRUE in front of whatever you're using to run the tests
-        % (make test, rebar eunit) and it will turn on lager for you.
-        case os:getenv("ENABLE_LAGER") of
-            false ->
-                ok;
-            _ ->
-                application:start(lager),
-                lager:set_loglevel(lager_console_backend, debug)
-        end,
         riak_repl_test_util:abstract_stats(),
         riak_repl2_rtq:start_link([{overload_threshold, 5}, {overload_recover, 1}]),
         riak_repl2_rtq_overload_counter:start_link([{report_interval, 1000}]),

@@ -71,10 +71,12 @@ eqc_test_() ->
     {timeout, 60, ?_assertEqual(true, eqc:quickcheck(eqc:testing_time(30, ?QC_OUT(prop_cluster_conn_state_transition()))))}.
 
 setup() ->
-    riak_repl_test_util:start_lager().
+    error_logger:tty(false),
+    ok.
 
-cleanup(Apps) ->
-    riak_repl_test_util:stop_apps(Apps).
+cleanup(ok) ->
+    error_logger:tty(true),
+    ok.
 
 %% ====================================================================
 %% EQC Properties
