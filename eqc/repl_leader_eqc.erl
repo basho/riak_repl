@@ -58,10 +58,6 @@ testcase() ->
     [].
 
 prop_main() ->
-    ?SETUP(fun() ->
-                   ok = application:start(ranch),
-                   fun() -> ok = application:stop(ranch) end
-           end,
     ?FORALL(Cmds, commands(?MODULE),
             begin
                 %% Setup
@@ -86,7 +82,7 @@ prop_main() ->
                     stop_slave_driver(),
                     net_kernel:stop()
                 end
-            end)).
+            end).
 
 %
 %% ====================================================================
