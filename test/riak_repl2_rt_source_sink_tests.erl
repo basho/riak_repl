@@ -22,6 +22,7 @@
 }).
 
 setup() ->
+    io:format(user, "Commence overall setup~n", []),
     error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
@@ -34,6 +35,7 @@ setup() ->
     {ok, _} = riak_repl2_rtq:start_link(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     {ok, TCPMon} = riak_core_tcp_mon:start_link(),
+    io:format(user, "Completed overall setup~n", []),
     #connection_tests{tcp_mon = TCPMon, rt = RT}.
 
 cleanup(State) ->
@@ -44,8 +46,8 @@ cleanup(State) ->
     %% riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     [kill_proc(P) || P <- [TCPMon, RT, riak_repl2_rtq]],
     riak_repl_test_util:stop_test_ring(),
-    % process_flag(trap_exit, false),
-    meck:unload().
+    meck:unload(),
+    process_flag(trap_exit, false).
 
 kill_proc(undefined) ->
     ok;
@@ -115,12 +117,14 @@ v2_to_v2_comms(_State) ->
      end}]}.
 
 v2_to_v2_comms_setup() ->
+    io:format(user, "Commence v2 setup~n", []),
     {ok, _ListenPid} = start_sink(?VER2),
     {ok, {Source, Sink}} = start_source(?VER2),
     meck:new(poolboy, [passthrough]),
     meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
                                            spawn(fun() -> ok end)
                                    end),
+    io:format(user, "Completed v2 setup~n", []),
     {Source, Sink}.
 
 v2_to_v2_comms_cleanup({Source, Sink}) ->
