@@ -44,7 +44,7 @@ cleanup(State) ->
     %% riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     [kill_proc(P) || P <- [TCPMon, RT, riak_repl2_rtq]],
     riak_repl_test_util:stop_test_ring(),
-    process_flag(trap_exit, false),
+    % process_flag(trap_exit, false),
     meck:unload().
 
 kill_proc(undefined) ->
@@ -202,7 +202,7 @@ connection_test_teardown_pids(Source, Sink) ->
     %% unlink(Sink),
     process_flag(trap_exit, true),
     [kill_proc(P) || P <- [Source, Sink]],
-    process_flag(trap_exit, false),
+    % process_flag(trap_exit, false),
     ok.
     %% riak_repl2_rtsource_conn:stop(Source),
     %% riak_repl2_rtsink_conn:stop(Sink),
