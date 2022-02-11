@@ -23,7 +23,7 @@
 
 setup() ->
     io:format(user, "Commence overall setup~n", []),
-    error_logger:tty(false),
+    % error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
     abstract_stats(),
