@@ -22,7 +22,6 @@
 }).
 
 setup() ->
-    io:format(user, "Commence overall setup~n", []),
     error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
@@ -117,7 +116,6 @@ v2_to_v2_comms(_State) ->
      end}]}.
 
 v2_to_v2_comms_setup() ->
-    io:format(user, "Commence v2 setup~n", []),
     {ok, ListenPid} = start_sink(?VER2),
     io:format(user, "Sink listener started ~w~n", [ListenPid]),
     {ok, {Source, Sink}} = start_source(?VER2),
@@ -126,7 +124,6 @@ v2_to_v2_comms_setup() ->
     meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
                                            spawn(fun() -> ok end)
                                    end),
-    io:format(user, "Completed v2 setup~n", []),
     {Source, Sink}.
 
 v2_to_v2_comms_cleanup({Source, Sink}) ->
@@ -258,18 +255,14 @@ start_sink(Version) ->
     meck:expect(riak_core_service_mgr, sync_register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
-        io:format(user, "Sink listening - send msg~n", []),
         TellMe ! sink_listening,
-        io:format(user, "Accept~n", []),
         {ok, Socket} = gen_tcp:accept(Listen),
         io:format(user, "Start source cluster~n", []),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link({ok, ?PROTOCOL(Version)}, "source_cluster"),
         %unlink(Pid),
         io:format(user, "Set transport~n", []),
         ok = riak_repl2_rtsink_conn:set_socket(Pid, Socket, gen_tcp),
-        io:format(user, "Transport set - send msg~n", []),
         TellMe ! {transport_set, gen_tcp},
-        io:format(user, "Assign controlling process~n", []),
         ok = gen_tcp:controlling_process(Socket, Pid),
         TellMe ! {sink_started, Pid}
     end),
@@ -293,31 +286,25 @@ start_source(NegotiatedVer) ->
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
-            io:format(user, "ClientSpec ~w~n", [ClientSpec]),
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
-            io:format(user, "Socket ~w~n", [Socket]),
             ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, []),
             io:format(user, "Connected~n", [])
         end),
         {ok, make_ref()}
     end),
     
-    io:format(user, "Starting rtsource_conn~n", []),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
     ok = 
         receive
-            {transport_set, Transport} ->
-                io:format(user, "Sink has transport set to ~w~n", [Transport]),
+            {transport_set, _Transport} ->
                 ok
         after 1000 ->
             io:format(user, "Transport set timeout~n", []),
             {error, timeout}
         end,
     %unlink(SourcePid),
-    io:format(user, "Awaiting receive of sink started~n", []),
     receive
         {sink_started, SinkPid} ->
-            io:format(user, "Pids received~n", []),
             {ok, {SourcePid, SinkPid}};
         Unexpected ->
             io:format(user, "Unexpected receive ~w~n", [Unexpected]),
