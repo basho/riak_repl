@@ -292,14 +292,21 @@ start_source(NegotiatedVer) ->
         end),
         {ok, make_ref()}
     end),
-    io:format(user, "Starting rtseource_conn~n", []),
+    io:format(user, "Starting rtsource_conn~n", []),
+    timer:sleep(10),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
+    timer:sleep(10),
     %unlink(SourcePid),
     io:format(user, "Awaiting receive~n", []),
     receive
         {sink_started, SinkPid} ->
-            {ok, {SourcePid, SinkPid}}
-    after 1000 ->
+            io:format(user, "Pids received~n", []),
+            {ok, {SourcePid, SinkPid}};
+        Unexpected ->
+            io:format(user, "Unexpected receive ~w~n", [Unexpected]),
+            {error, Unexpected}
+     after 1000 ->
+        io:format(user, "Receive timeout~n", []),
         {error, timeout}
     end.
 
