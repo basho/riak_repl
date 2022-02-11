@@ -293,7 +293,7 @@ start_source(NegotiatedVer) ->
         {ok, make_ref()}
     end),
     io:format(user, "Starting rtsource_conn~n", []),
-    timer:sleep(10),
+    % timer:sleep(10),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
     timer:sleep(10),
     %unlink(SourcePid),
