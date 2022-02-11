@@ -303,7 +303,6 @@ start_source(NegotiatedVer) ->
     end),
     
     io:format(user, "Starting rtsource_conn~n", []),
-    timer:sleep(10),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
     ok = 
         receive
@@ -314,9 +313,8 @@ start_source(NegotiatedVer) ->
             io:format(user, "Transport set timeout~n", []),
             {error, timeout}
         end,
-    % timer:sleep(10),
     %unlink(SourcePid),
-    io:format(user, "Awaiting receive~n", []),
+    io:format(user, "Awaiting receive of sink started~n", []),
     receive
         {sink_started, SinkPid} ->
             io:format(user, "Pids received~n", []),
