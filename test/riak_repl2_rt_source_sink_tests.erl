@@ -288,7 +288,9 @@ start_source(NegotiatedVer) ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
             io:format(user, "ClientSpec ~w~n", [ClientSpec]),
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
-            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, [])
+            io:format(user, "Socket ~w~n", [Socket]),
+            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, []),
+            io:format(user, "Connected~n", [])
         end),
         {ok, make_ref()}
     end),
