@@ -118,8 +118,10 @@ v2_to_v2_comms(_State) ->
 
 v2_to_v2_comms_setup() ->
     io:format(user, "Commence v2 setup~n", []),
-    {ok, _ListenPid} = start_sink(?VER2),
+    {ok, ListenPid} = start_sink(?VER2),
+    io:format(user, "Sink listener started ~w~n", [ListenPid]),
     {ok, {Source, Sink}} = start_source(?VER2),
+    io:format(user, "Source ~w Sink ~w started~n", [Source, Sink]),
     meck:new(poolboy, [passthrough]),
     meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
                                            spawn(fun() -> ok end)
