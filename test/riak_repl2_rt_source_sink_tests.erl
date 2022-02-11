@@ -23,7 +23,7 @@
 
 setup() ->
     io:format(user, "Commence overall setup~n", []),
-    % error_logger:tty(false),
+    error_logger:tty(false),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
     abstract_stats(),
@@ -258,12 +258,19 @@ start_sink(Version) ->
     meck:expect(riak_core_service_mgr, sync_register_service, fun(HostSpec, _Strategy) ->
         {_Proto, {TcpOpts, _Module, _StartCB, _CBArg}} = HostSpec,
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
+        io:format(user, "Sink listening - send msg~n", []),
         TellMe ! sink_listening,
+        io:format(user, "Accept~n", []),
         {ok, Socket} = gen_tcp:accept(Listen),
+        io:format(user, "Start source cluster~n", []),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link({ok, ?PROTOCOL(Version)}, "source_cluster"),
         %unlink(Pid),
-        ok = gen_tcp:controlling_process(Socket, Pid),
+        io:format(user, "Set transport~n", []),
         ok = riak_repl2_rtsink_conn:set_socket(Pid, Socket, gen_tcp),
+        io:format(user, "Transport set - send msg~n", []),
+        TellMe ! {transport_set, gen_tcp},
+        io:format(user, "Assign controlling process~n", []),
+        ok = gen_tcp:controlling_process(Socket, Pid),
         TellMe ! {sink_started, Pid}
     end),
     Pid = proc_lib:spawn_link(?MODULE, listen_sink, []),
@@ -294,9 +301,19 @@ start_source(NegotiatedVer) ->
         end),
         {ok, make_ref()}
     end),
+    
     io:format(user, "Starting rtsource_conn~n", []),
     timer:sleep(10),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
+    ok = 
+        receive
+            {transport_set, Transport} ->
+                io:format(user, "Sink has transport set to ~w~n", [Transport]),
+                ok
+        after 1000 ->
+            io:format(user, "Transport set timeout~n", []),
+            {error, timeout}
+        end,
     % timer:sleep(10),
     %unlink(SourcePid),
     io:format(user, "Awaiting receive~n", []),
@@ -307,7 +324,7 @@ start_source(NegotiatedVer) ->
         Unexpected ->
             io:format(user, "Unexpected receive ~w~n", [Unexpected]),
             {error, Unexpected}
-     after 1000 ->
+    after 1000 ->
         io:format(user, "Receive timeout~n", []),
         {error, timeout}
     end.
