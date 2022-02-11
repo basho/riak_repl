@@ -286,13 +286,16 @@ start_source(NegotiatedVer) ->
     meck:expect(riak_core_connection_mgr, connect, fun(_ServiceAndRemote, ClientSpec) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
+            io:format(user, "ClientSpec ~w~n", [ClientSpec]),
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
             ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, [])
         end),
         {ok, make_ref()}
     end),
+    io:format(user, "Starting rtseource_conn~n", []),
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
     %unlink(SourcePid),
+    io:format(user, "Awaiting receive~n", []),
     receive
         {sink_started, SinkPid} ->
             {ok, {SourcePid, SinkPid}}
