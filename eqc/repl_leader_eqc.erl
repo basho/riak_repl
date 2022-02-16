@@ -562,7 +562,11 @@ mock_repl_controller() ->
 start_leader(Candidates, Workers) ->
     ?DBG("Starting repl on ~p\n", [node()]),
 
-    application:start(ranch),
+    ok = application:start(crypto),
+    ok = application:start(asn1),
+    ok = application:start(public_key),
+    ok = application:start(ssl),
+    ok = application:start(ranch),
     %% Set up the application config so multiple leaders do not
     %% tread on one anothers toes
     application:load(riak_repl),
