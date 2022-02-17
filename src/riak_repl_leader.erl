@@ -15,6 +15,9 @@
 -behaviour(gen_server).
 
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -type overflow() :: non_neg_integer().
 -type clients_per_node() :: non_neg_integer().
 
@@ -318,7 +321,7 @@ handle_info({'DOWN', Mref, process, _Object, _Info}, State) ->
 handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
     {noreply, maybe_start_helper(State)};
 handle_info({'EXIT', Pid, Reason}, State=#state{helper_pid=Pid}) ->
-    lager:warning(
+    ?LOG_WARNING(
       "Replication leader helper exited unexpectedly: ~p",
       [Reason]),
     {noreply, maybe_start_helper(State)}.
@@ -340,7 +343,7 @@ become_leader(Leader, State) ->
             %% we can get here if a non-leader node goes down
             %% so we want to make sure any missing clients are started
             ensure_sites(Leader),
-            lager:info("Re-elected as replication leader");
+            ?LOG_INFO("Re-elected as replication leader");
         _ ->
             riak_repl_stats:elections_elected(),
             riak_repl_stats:elections_leader_changed(),
@@ -348,7 +351,7 @@ become_leader(Leader, State) ->
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
             ensure_sites(Leader),
-            lager:info("Elected as replication leader")
+            ?LOG_INFO("Elected as replication leader")
     end,
     NewState.
 
@@ -360,15 +363,15 @@ new_leader(Leader, LeaderPid, State0) ->
             %% this node is surrendering leadership
             leader_change(State0#state.i_am_leader, false), % will close connections
             riak_repl_stats:elections_leader_changed(),
-            lager:info("Replication leadership surrendered to ~p", [Leader]),
+            ?LOG_INFO("Replication leadership surrendered to ~p", [Leader]),
             %% reset the mailbox size to 0 until we poll it again
             State#state{elected_mbox_size = 0};
         Leader ->
-            lager:info("Replication leader kept as ~p", [Leader]),
+            ?LOG_INFO("Replication leader kept as ~p", [Leader]),
             State;
         _NewLeader ->
             riak_repl_stats:elections_leader_changed(),
-            lager:info("Replication leader set to ~p", [Leader]),
+            ?LOG_INFO("Replication leader set to ~p", [Leader]),
             %% reset the mailbox size to 0 until we poll it again
             State#state{elected_mbox_size = 0}
     end,
@@ -455,7 +458,7 @@ ensure_sites(Leader) ->
             riak_repl_client_sup:ensure_sites(Ring);
         _ when InverseConnections == true ->
             %% inverse connections are incompatible with client balancing
-            lager:info("Inverse connections enabled; clients will all be "
+            ?LOG_INFO("Inverse connections enabled; clients will all be "
                 "run on the leader"),
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             riak_repl_client_sup:ensure_sites(Ring);
@@ -466,7 +469,7 @@ ensure_sites(Leader) ->
                 [] ->
                     ok;
                 _ ->
-                    lager:warning("Some nodes failed to respond to replication"
+                    ?LOG_WARNING("Some nodes failed to respond to replication"
                         "client querying ~p", [DeadNodes])
             end,
 

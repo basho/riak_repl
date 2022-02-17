@@ -8,6 +8,8 @@
 
 -behaviour(gen_server).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 -export([start/0, start_link/0, push/2, push/3]).
 
@@ -68,7 +70,7 @@ handle_cast({push, NumItems, Bin}, State) ->
     handle_cast({push, NumItems, Bin, []}, State);
 
 handle_cast({push, NumItems, _Bin, _Meta}, State = #state{nodes=[]}) ->
-    lager:warning("No available nodes to proxy ~p objects to~n", [NumItems]),
+    ?LOG_WARNING("No available nodes to proxy ~p objects to~n", [NumItems]),
     catch(riak_repl_stats:rt_source_errors()),
     {noreply, State};
 handle_cast({push, NumItems, W1BinObjs, Meta}, State) ->
@@ -76,7 +78,7 @@ handle_cast({push, NumItems, W1BinObjs, Meta}, State) ->
     %% object format, then downconvert the items (if needed) before pushing.
     [Node | Nodes] = State#state.nodes,
     PeerWireVer = wire_version_of_node(Node, State#state.versions),
-    lager:debug("Proxying ~p items to ~p with wire version ~p", [NumItems, Node, PeerWireVer]),
+    ?LOG_DEBUG("Proxying ~p items to ~p with wire version ~p", [NumItems, Node, PeerWireVer]),
     BinObjs = riak_repl_util:maybe_downconvert_binary_objs(W1BinObjs, PeerWireVer),
     case meta_support(Node, State#state.meta_support) of
         true ->
@@ -89,7 +91,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'DOWN', _Ref, _, {riak_repl2_rtq, Node}, _}, State) ->
-    lager:info("rtq proxy target ~p is down", [Node]),
+    ?LOG_INFO("rtq proxy target ~p is down", [Node]),
     {noreply, State#state{nodes=State#state.nodes -- [Node]}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -130,7 +132,7 @@ get_peer_meta_support(Nodes) ->
             Bool when is_boolean(Bool) ->
                 {Node, Bool};
             LolWut ->
-                lager:warning("Could not get a definitive result when querying ~p about it's rtq_meta support: ~p", [Node, LolWut]),
+                ?LOG_WARNING("Could not get a definitive result when querying ~p about it's rtq_meta support: ~p", [Node, LolWut]),
                 {Node, false}
         end
     end,

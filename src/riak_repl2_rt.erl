@@ -4,6 +4,8 @@
 
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 %% @doc Realtime replication
 %%
 %% High level responsibility...
@@ -153,7 +155,7 @@ get_sink_pids() ->
 
 %% Realtime replication post-commit hook
 postcommit(RObj) ->
-    lager:debug("maybe a mutate happened?~n    ~p", [RObj]),
+    ?LOG_DEBUG("maybe a mutate happened?~n    ~p", [RObj]),
     case riak_repl_util:repl_helper_send_realtime(RObj, riak_client:new(node(), undefined)) of
         %% always put the objects onto the shared queue in the new format; we'll
         %% down-convert if we have to before sending them to the RT sinks (based
@@ -224,7 +226,7 @@ handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
     {noreply, State#state{sinks = Sinks2}};
 handle_info(Msg, State) ->
     %%TODO: Log unhandled message - e.g. timed out status result
-    lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
+    ?LOG_WARNING("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
 
 terminate(_Reason, _State) ->

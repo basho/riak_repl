@@ -18,6 +18,9 @@
 -module(riak_repl2_rtq).
 
 -behaviour(gen_server).
+
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 -export([start_link/0,
          start_link/1,
@@ -166,7 +169,7 @@ set_max_bytes(MaxBytes) ->
 push(NumItems, Bin, Meta) ->
     case should_drop() of
         true ->
-            lager:debug("rtq overloaded"),
+            ?LOG_DEBUG("rtq overloaded"),
             riak_repl2_rtq_overload_counter:drop();
         false ->
              gen_server:cast(?SERVER, {push, NumItems, Bin, Meta})
@@ -466,11 +469,11 @@ maybe_flip_overload(State) ->
     {message_queue_len, MsgQLen} = erlang:process_info(self(), message_queue_len),
     if
         Overloaded andalso MsgQLen =< Recover ->
-            lager:info("Recovered from overloaded condition"),
+            ?LOG_INFO("Recovered from overloaded condition"),
             ets:insert(?overload_ets, {overloaded, false}),
             State#state{overloaded = false};
         (not Overloaded) andalso MsgQLen > Overload ->
-            lager:warning("Realtime queue mailbox size of ~p is greater than ~p indicating overload; objects will be dropped until size is less than or equal to ~p", [MsgQLen, Overload, Recover]),
+            ?LOG_WARNING("Realtime queue mailbox size of ~p is greater than ~p indicating overload; objects will be dropped until size is less than or equal to ~p", [MsgQLen, Overload, Recover]),
             % flip the rt_dirty flag on
             riak_repl_stats:rt_source_errors(),
             ets:insert(?overload_ets, {overloaded, true}),
@@ -547,7 +550,7 @@ pull(Name, DeliverFun, State = #state{qtab = QTab, qseq = QSeq, cs = Cs}) ->
                 {value, C, Cs2} ->
                     [maybe_pull(QTab, QSeq, C, CsNames, DeliverFun) | Cs2];
                 false ->
-                    lager:error("Consumer ~p pulled from RTQ, but was not registered", [Name]),
+                    ?LOG_ERROR("Consumer ~p pulled from RTQ, but was not registered", [Name]),
                     deliver_error(DeliverFun, not_registered)
             end,
     State#state{cs = UpdCs}.
@@ -647,14 +650,15 @@ cleanup(_QTab, '$end_of_table', State) ->
     State;
 cleanup(QTab, Seq, State) ->
     case ets:lookup(QTab, Seq) of
-        [] -> cleanup(QTab, ets:prev(QTab, Seq), State);
+        [] ->
+            cleanup(QTab, ets:prev(QTab, Seq), State);
         [{_, _, Bin, _Meta}] ->
-           ShrinkSize = ets_obj_size(Bin, State),
-           NewState = update_q_size(State, -ShrinkSize),
-           ets:delete(QTab, Seq),
-           cleanup(QTab, ets:prev(QTab, Seq), NewState);
+            ShrinkSize = ets_obj_size(Bin, State),
+            NewState = update_q_size(State, -ShrinkSize),
+            ets:delete(QTab, Seq),
+            cleanup(QTab, ets:prev(QTab, Seq), NewState);
         _ ->
-            lager:warning("Unexpected object in RTQ")
+            ?LOG_WARNING("Unexpected object in RTQ")
     end.
 
 ets_obj_size(Obj, #state{word_size = WordSize}) when is_binary(Obj) ->
@@ -706,7 +710,7 @@ trim_q_entries(QTab, MaxBytes, Cs, State) ->
     {Cs2, State2, Entries, Objects} = trim_q_entries(QTab, MaxBytes, Cs, State, 0, 0),
     if
         Entries + Objects > 0 ->
-            lager:debug("Dropped ~p objects in ~p entries due to reaching maximum queue size of ~p bytes", [Objects, Entries, MaxBytes]);
+            ?LOG_DEBUG("Dropped ~p objects in ~p entries due to reaching maximum queue size of ~p bytes", [Objects, Entries, MaxBytes]);
         true ->
             ok
     end,
@@ -756,8 +760,8 @@ is_queue_empty(Name, QSeq, Cs) ->
                 true -> false;
                 false -> true
             end;
-
-        false -> lager:error("Unknown queue")
+        false ->
+            ?LOG_ERROR("Unknown queue")
     end.
 
 

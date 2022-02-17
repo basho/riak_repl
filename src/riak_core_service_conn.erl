@@ -7,6 +7,8 @@
 
 -include("riak_core_connection.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 % external api; generally used by ranch
 -export([start_link/4]).
 % gen_fsm
@@ -27,7 +29,7 @@
 %% ===============
 
 start_link(Listener, Socket, Transport, InArgs) ->
-    lager:debug("Start_link dispatch_service"),
+    ?LOG_DEBUG("Start_link dispatch_service"),
     % to avoid a race condition with ranch, we need to do a little
     % song and dance with the init and start up.
     % in short, the start_link doesn't return until the init is complete,
@@ -101,7 +103,7 @@ handle_info({TransOk, Socket, Data}, wait_for_hello, State = #state{socket = Soc
                     {next_state, wait_for_protocol_versions, State2}
             end;
         _Else ->
-            lager:debug("Invalid hello: ~p", [Data]),
+            ?LOG_DEBUG("Invalid hello: ~p", [Data]),
             {stop, {error, invalid_hello}, State}
     end;
 
@@ -116,7 +118,7 @@ handle_info({TransOk, Socket, Data}, wait_for_protocol_versions, State = #state{
                 {ok, {ClientProto, Major, ClientMinor, MyMinor}, Rest} ->
                     ok = Transport:send(Socket, term_to_binary({ok, {ClientProto, {Major, MyMinor, ClientMinor}}})),
                     Negotiated = {{ok, {ClientProto, {Major, MyMinor}, {Major, ClientMinor}}}, Rest},
-                    lager:debug("What I'm sending to the start_negotiated_service: ~p", [Negotiated]),
+                    ?LOG_DEBUG("What I'm sending to the start_negotiated_service: ~p", [Negotiated]),
                     start_negotiated_service(Socket, State#state.transport, Negotiated, State#state.remote_caps);
                 {error, _} = ChosenError ->
                     Transport:send(Socket, term_to_binary(ChosenError)),
@@ -130,11 +132,11 @@ handle_info({TransOk, Socket, Data}, wait_for_protocol_versions, State = #state{
     end;
 
 handle_info({TransError, Socket, Error}, _StateName, State = #state{socket = Socket, transport_msgs = {_, _, TransError}}) ->
-    lager:warning("Socket error: ~p", [Error]),
+    ?LOG_WARNING("Socket error: ~p", [Error]),
     {stop, Error, State};
 
 handle_info({TransClosed, Socket}, _StateName, State = #state{socket = Socket, transport_msgs = {_, TransClosed, _}}) ->
-    lager:debug("Socket closed"),
+    ?LOG_DEBUG("Socket closed"),
     {stop, normal, State}.
 
 %% ===============
@@ -142,7 +144,7 @@ handle_info({TransClosed, Socket}, _StateName, State = #state{socket = Socket, t
 %% ===============
 
 terminate(Why, StateName, _State) ->
-    lager:debug("Exiting while in state ~s due to ~p", [StateName, Why]),
+    ?LOG_DEBUG("Exiting while in state ~s due to ~p", [StateName, Why]),
     ok.
 
 %% ===============
@@ -163,15 +165,15 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
     TheirName = proplists:get_value(clustername, TheirCaps),
     _Res = case {MySSL, TheirSSL} of
         {true, false} ->
-            lager:warning("~p requested SSL, but ~p doesn't support it",
+            ?LOG_WARNING("~p requested SSL, but ~p doesn't support it",
                 [MyName, TheirName]),
             {error, no_ssl};
         {false, true} ->
-            lager:warning("~p requested SSL but ~p doesn't support it",
+            ?LOG_WARNING("~p requested SSL but ~p doesn't support it",
                 [TheirName, MyName]),
             {error, no_ssl};
         {true, true} ->
-            lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
+            ?LOG_INFO("~p and ~p agreed to use SSL", [MyName, TheirName]),
             case riak_core_ssl_util:maybe_use_ssl(riak_core) of
                 false ->
                     {ranch_tcp, Socket};
@@ -184,7 +186,7 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
                     end
             end;
         {false, false} ->
-            lager:info("~p and ~p agreed to not use SSL", [MyName, TheirName]),
+            ?LOG_INFO("~p and ~p agreed to not use SSL", [MyName, TheirName]),
             {Transport, Socket}
     end.
 
@@ -194,8 +196,8 @@ start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}},
                          Props) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
-    lager:debug("Setting user options on service side; ~p", [Options]),
-    lager:debug("negotiated protocols: ~p", [NegotiatedProtocols]),
+    ?LOG_DEBUG("Setting user options on service side; ~p", [Options]),
+    ?LOG_DEBUG("negotiated protocols: ~p", [NegotiatedProtocols]),
     Transport:setopts(Socket, Options),
 
     %% call service body function for matching protocol. The callee should start
@@ -206,35 +208,35 @@ start_negotiated_service(Socket, Transport,
             gen_server:cast(riak_core_service_manager, {service_up_event, Pid, ClientProto}),
             {stop, normal, undefined};
         Error ->
-            lager:debug("service dispatch of ~p:~p failed with ~p",
+            ?LOG_DEBUG("service dispatch of ~p:~p failed with ~p",
                              [Module, Function, Error]),
-            lager:error("service dispatch of ~p:~p failed with ~p",
+            ?LOG_ERROR("service dispatch of ~p:~p failed with ~p",
                         [Module, Function, Error]),
             {stop, Error, undefined}
     end.
 
 choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
-    lager:debug("choose_version: client proto = ~p, HostProtocols = ~p",
+    ?LOG_DEBUG("choose_version: client proto = ~p, HostProtocols = ~p",
                      [_CProtocol, HostProtocols]),
     %% first, see if the host supports the subprotocol
     case [H || {{HostProto,_Versions},_Rest}=H <- HostProtocols, ClientProto == HostProto] of
         [] ->
             %% oops! The host does not support this sub protocol type
-            lager:error("Failed to find host support for protocol: ~p, HostProtocols = ~p", [ClientProto, HostProtocols]),
-            lager:debug("choose_version: no common protocols"),
+            ?LOG_ERROR("Failed to find host support for protocol: ~p, HostProtocols = ~p", [ClientProto, HostProtocols]),
+            ?LOG_DEBUG("choose_version: no common protocols"),
             {error,protocol_not_supported};
         [{{_HostProto,HostVersions},Rest}=_Matched | _DuplicatesIgnored] ->
-            lager:debug("choose_version: unsorted = ~p clientversions = ~p",
+            ?LOG_DEBUG("choose_version: unsorted = ~p clientversions = ~p",
                              [_Matched, ClientVersions]),
             CommonVers = [{CM,CN,HN} || {CM,CN} <- ClientVersions, {HM,HN} <- HostVersions, CM == HM],
-            lager:debug("common versions = ~p", [CommonVers]),
+            ?LOG_DEBUG("common versions = ~p", [CommonVers]),
             %% sort by major version, highest to lowest, and grab the top one.
             case lists:reverse(lists:keysort(1,CommonVers)) of
                 [] ->
                     %% oops! No common major versions for Proto.
-                    lager:debug("Failed to find a common major version for protocol: ~p",
+                    ?LOG_DEBUG("Failed to find a common major version for protocol: ~p",
                                      [ClientProto]),
-                    lager:error("Failed to find a common major version for protocol: ~p", [ClientProto]),
+                    ?LOG_ERROR("Failed to find a common major version for protocol: ~p", [ClientProto]),
                     {error,protocol_version_not_supported,Rest};
                 [{Major,CN,HN}] ->
                     {ok, {ClientProto,Major,CN,HN},Rest};

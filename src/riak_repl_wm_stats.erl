@@ -33,6 +33,9 @@
          jsonify_stats/2
         ]).
 -include_lib("webmachine/include/webmachine.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -75,7 +78,7 @@ forbidden(RD, Ctx) ->
 
 produce_body(ReqData, Ctx) ->
     Stats = get_stats(),
-    lager:debug("STATS = ~p", [Stats]),
+    ?LOG_DEBUG("STATS = ~p", [Stats]),
     Body = mochijson2:encode({struct,
                               Stats
                               }),
@@ -186,7 +189,7 @@ jsonify_stats([{K, {{Year, Month, Day}, {Hour, Min, Second}} = DateTime } | T], 
 jsonify_stats([{K,V}|T], Acc) ->
     jsonify_stats(T, [{K,V}|Acc]);
 jsonify_stats([KV|T], Acc) ->
-    lager:error("Could not encode stats: ~p", [KV]),
+    ?LOG_ERROR("Could not encode stats: ~p", [KV]),
     jsonify_stats(T, Acc).
 -ifdef(TEST).
 

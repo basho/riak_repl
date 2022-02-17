@@ -39,6 +39,8 @@
 
 -include("riak_core_connection.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -87,7 +89,7 @@
 start_link() ->
     ServiceAddr = case app_helper:get_env(riak_core, cluster_mgr) of
         undefined ->
-            lager:error("cluster_mgr is not configured for riak_core in
+            ?LOG_ERROR("cluster_mgr is not configured for riak_core in
                 app.config, defaulting to {\"127.0.0.1\", 0}."),
             {"127.0.0.1", 0};
         Res ->
@@ -101,12 +103,12 @@ start_link() ->
 start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
     case valid_host_ip(IP) of
         false ->
-            lager:debug("Service Manager won't start with invalid IP: ~p", [IP]),
-            lager:warning("Service Manager won't start with invalid IP: ~p", [IP]),
+            ?LOG_DEBUG("Service Manager won't start with invalid IP: ~p", [IP]),
+            ?LOG_WARNING("Service Manager won't start with invalid IP: ~p", [IP]),
             {error, invalid_ip};
         true ->
-            lager:debug("Starting Core Service Manager at ~p", [{IP,Port}]),
-            lager:info("Starting Core Service Manager at ~p", [{IP,Port}]),
+            ?LOG_DEBUG("Starting Core Service Manager at ~p", [{IP,Port}]),
+            ?LOG_INFO("Starting Core Service Manager at ~p", [{IP,Port}]),
             Args = [{IP,Port}],
             Options = [],
             gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options)
@@ -199,7 +201,7 @@ handle_call({unregister_service, ProtocolId}, _From, State) ->
     {reply, ok, State#state{services=NewDict}};
 
 handle_call(_Unhandled, _From, State) ->
-    lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
+    ?LOG_DEBUG("Unhandled gen_server call: ~p", [_Unhandled]),
     {reply, {error, unhandled}, State}.
 
 handle_cast({register_service, Protocol, Strategy}, State) ->
@@ -223,7 +225,7 @@ handle_cast({register_stats_fun, Fun}, State) ->
 %%     {noreply, State#state{status_notifiers=Notifiers}};
 
 handle_cast({service_up_event, Pid, ProtocolId}, State) ->
-    lager:debug("Service up event: ~p", [ProtocolId]),
+    ?LOG_DEBUG("Service up event: ~p", [ProtocolId]),
     erlang:send_after(500, self(), status_update_timer),
     Ref = erlang:monitor(process, Pid), %% arrange for us to receive 'DOWN' when Pid terminates
     ServiceStats = incr_count_for_protocol_id(ProtocolId, 1, State#state.service_stats),
@@ -231,13 +233,13 @@ handle_cast({service_up_event, Pid, ProtocolId}, State) ->
     {noreply, State#state{service_stats=ServiceStats, refs=Refs}};
 
 handle_cast({service_down_event, _Pid, ProtocolId}, State) ->
-    lager:debug("Service down event: ~p", [ProtocolId]),
+    ?LOG_DEBUG("Service down event: ~p", [ProtocolId]),
     erlang:send_after(500, self(), status_update_timer),
     ServiceStats = incr_count_for_protocol_id(ProtocolId, -1, State#state.service_stats),
     {noreply, State#state{service_stats = ServiceStats}};
 
 handle_cast(_Unhandled, _State) ->
-    lager:debug("Unhandled gen_server cast: ~p", [_Unhandled]),
+    ?LOG_DEBUG("Unhandled gen_server cast: ~p", [_Unhandled]),
     {error, unhandled}. %% this will crash the server
 
 handle_info(status_update_timer, State) ->
@@ -261,7 +263,7 @@ handle_info({'DOWN', Ref, process, Pid, _Reason}, State) ->
     {noreply, State#state{refs=Refs2}};
 
 handle_info(_Unhandled, State) ->
-    lager:debug("Unhandled gen_server info: ~p", [_Unhandled]),
+    ?LOG_DEBUG("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -288,7 +290,7 @@ incr_count_for_protocol_id(ProtocolId, Incr, ServiceStatus) ->
 %% Host callback function, called by ranch for each accepted connection by way of
 %% of the ranch:start_listener() call above, specifying this module.
 start_link(Listener, Socket, Transport, SubProtocols) ->
-    lager:debug("Start_link dispatch_service"),
+    ?LOG_DEBUG("Start_link dispatch_service"),
     {ok, spawn_link(?MODULE, dispatch_service, [Listener, Socket, Transport, SubProtocols])}.
 
 %% Body of the main dispatch loop. This is instantiated once for each connection
@@ -298,7 +300,7 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     %% tell ranch "we've got it. thanks pardner"
     {ok, _} = ranch:handshake(Listener),
     %% set some starting options for the channel; these should match the client
-    lager:debug("setting system options on service side: ~p", [?CONNECT_OPTIONS]),
+    ?LOG_DEBUG("setting system options on service side: ~p", [?CONNECT_OPTIONS]),
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
@@ -315,11 +317,11 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
                     Services = gen_server:call(?SERVER, get_services),
                     SubProtocols = [Protocol ||
                         {_Key,{Protocol,_Strategy}} <- Services],
-                    lager:debug("started dispatch_service with protocols: ~p",
+                    ?LOG_DEBUG("started dispatch_service with protocols: ~p",
                         [SubProtocols]),
                     Negotiated = negotiate_proto_with_client(NewSocket, NewTransport,
                         SubProtocols),
-                    lager:debug("negotiated = ~p", [Negotiated]),
+                    ?LOG_DEBUG("negotiated = ~p", [Negotiated]),
                     start_negotiated_service(NewSocket, NewTransport, Negotiated,
                         TheirCaps)
             end;
@@ -334,15 +336,15 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
     TheirName = proplists:get_value(clustername, TheirCaps),
     _Res = case {MySSL, TheirSSL} of
         {true, false} ->
-            lager:warning("~p requested SSL, but ~p doesn't support it",
+            ?LOG_WARNING("~p requested SSL, but ~p doesn't support it",
                 [MyName, TheirName]),
             {error, no_ssl};
         {false, true} ->
-            lager:warning("~p requested SSL but ~p doesn't support it",
+            ?LOG_WARNING("~p requested SSL but ~p doesn't support it",
                 [TheirName, MyName]),
             {error, no_ssl};
         {true, true} ->
-            lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
+            ?LOG_INFO("~p and ~p agreed to use SSL", [MyName, TheirName]),
             case riak_core_ssl_util:maybe_use_ssl(riak_core) of
                 false ->
                     {ranch_tcp, Socket};
@@ -355,14 +357,14 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
                     end
             end;
         {false, false} ->
-            lager:info("~p and ~p agreed to not use SSL", [MyName, TheirName]),
+            ?LOG_INFO("~p and ~p agreed to not use SSL", [MyName, TheirName]),
             {Transport, Socket}
     end.
 
 %% start user's module:function and transfer socket to it's process.
 start_negotiated_service(_Socket, _Transport, {error, Reason}, _Props) ->
-    lager:debug("service dispatch failed with ~p", [{error, Reason}]),
-    lager:error("service dispatch failed with ~p", [{error, Reason}]),
+    ?LOG_DEBUG("service dispatch failed with ~p", [{error, Reason}]),
+    ?LOG_ERROR("service dispatch failed with ~p", [{error, Reason}]),
     {error, Reason};
 %% Note that the callee is responsible for taking ownership of the socket via
 %% Transport:controlling_process(Socket, Pid),
@@ -370,8 +372,8 @@ start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}},
                          Props) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
-    lager:debug("Setting user options on service side; ~p", [Options]),
-    lager:debug("negotiated protocols: ~p", [NegotiatedProtocols]),
+    ?LOG_DEBUG("Setting user options on service side; ~p", [Options]),
+    ?LOG_DEBUG("negotiated protocols: ~p", [NegotiatedProtocols]),
     Transport:setopts(Socket, Options),
 
     %% call service body function for matching protocol. The callee should start
@@ -382,9 +384,9 @@ start_negotiated_service(Socket, Transport,
             gen_server:cast(?SERVER, {service_up_event, Pid, ClientProto}),
             {ok, Pid};
         Error ->
-            lager:debug("service dispatch of ~p:~p failed with ~p",
+            ?LOG_DEBUG("service dispatch of ~p:~p failed with ~p",
                              [Module, Function, Error]),
-            lager:error("service dispatch of ~p:~p failed with ~p",
+            ?LOG_ERROR("service dispatch of ~p:~p failed with ~p",
                         [Module, Function, Error]),
             Error
     end.
@@ -400,7 +402,7 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
             {ClientProto,Versions} = erlang:binary_to_term(PrefsBin),
             case choose_version({ClientProto,Versions}, HostProtocols) of
                 {error, Reason} ->
-                    lager:error("Failed to negotiate protocol ~p from client because ~p",
+                    ?LOG_ERROR("Failed to negotiate protocol ~p from client because ~p",
                                 [ClientProto, Reason]),
                     Transport:send(Socket, erlang:term_to_binary({error,Reason})),
                     {error, Reason};
@@ -408,40 +410,40 @@ negotiate_proto_with_client(Socket, Transport, HostProtocols) ->
                     Transport:send(Socket, erlang:term_to_binary({ok,{ClientProto,{Major,HN,CN}}})),
                     {{ok,{ClientProto,{Major,HN},{Major,CN}}}, Rest};
                 {error, Reason, Rest} ->
-                    lager:error("Failed to negotiate protocol ~p from client because ~p",
+                    ?LOG_ERROR("Failed to negotiate protocol ~p from client because ~p",
                                 [ClientProto, Reason]),
                     %% notify client it failed to negotiate
                     Transport:send(Socket, erlang:term_to_binary({error,Reason})),
                     {{error, Reason}, Rest}
             end;
         {error, Reason} ->
-            lager:error("Failed to receive protocol request from client. Error = ~p",
+            ?LOG_ERROR("Failed to receive protocol request from client. Error = ~p",
                         [Reason]),
             {error, connection_failed}
     end.
 
 choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
-    lager:debug("choose_version: client proto = ~p, HostProtocols = ~p",
+    ?LOG_DEBUG("choose_version: client proto = ~p, HostProtocols = ~p",
                      [_CProtocol, HostProtocols]),
     %% first, see if the host supports the subprotocol
     case [H || {{HostProto,_Versions},_Rest}=H <- HostProtocols, ClientProto == HostProto] of
         [] ->
             %% oops! The host does not support this sub protocol type
-            lager:error("Failed to find host support for protocol: ~p", [ClientProto]),
-            lager:debug("choose_version: no common protocols"),
+            ?LOG_ERROR("Failed to find host support for protocol: ~p", [ClientProto]),
+            ?LOG_DEBUG("choose_version: no common protocols"),
             {error,protocol_not_supported};
         [{{_HostProto,HostVersions},Rest}=_Matched | _DuplicatesIgnored] ->
-            lager:debug("choose_version: unsorted = ~p clientversions = ~p",
+            ?LOG_DEBUG("choose_version: unsorted = ~p clientversions = ~p",
                              [_Matched, ClientVersions]),
             CommonVers = [{CM,CN,HN} || {CM,CN} <- ClientVersions, {HM,HN} <- HostVersions, CM == HM],
-            lager:debug("common versions = ~p", [CommonVers]),
+            ?LOG_DEBUG("common versions = ~p", [CommonVers]),
             %% sort by major version, highest to lowest, and grab the top one.
             case lists:reverse(lists:keysort(1,CommonVers)) of
                 [] ->
                     %% oops! No common major versions for Proto.
-                    lager:debug("Failed to find a common major version for protocol: ~p",
+                    ?LOG_DEBUG("Failed to find a common major version for protocol: ~p",
                                      [ClientProto]),
-                    lager:error("Failed to find a common major version for protocol: ~p", [ClientProto]),
+                    ?LOG_ERROR("Failed to find a common major version for protocol: ~p", [ClientProto]),
                     {error,protocol_version_not_supported,Rest};
                 [{Major,CN,HN}] ->
                     {ok, {ClientProto,Major,CN,HN},Rest};
@@ -454,7 +456,7 @@ choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
 %% client -> server : Hello {1,0} [Capabilities]
 %% server -> client : Ack {1,0} [Capabilities]
 exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
-    lager:debug("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO]),
+    ?LOG_DEBUG("exchange_handshakes: waiting for ~p from client", [?CTRL_HELLO]),
     case Transport:recv(Socket, 0, ?CONNECTION_SETUP_TIMEOUT) of
         {ok, Hello} ->
             %% read their hello
@@ -468,12 +470,12 @@ exchange_handshakes_with(client, Socket, Transport, MyCaps) ->
                     %% tell other side we are failing them
                     Error = {error, bad_handshake},
                     Transport:send(Socket, erlang:term_to_binary(Error)),
-                    lager:error("Control protocol handshake with client got unexpected hello: ~p",
+                    ?LOG_ERROR("Control protocol handshake with client got unexpected hello: ~p",
                                 [Msg]),
                     Error
             end;
         {error, Reason} ->
-            lager:error("Failed to exchange handshake with client. Error = ~p", [Reason]),
+            ?LOG_ERROR("Failed to exchange handshake with client. Error = ~p", [Reason]),
             {error, Reason}
     end.
 
@@ -516,7 +518,7 @@ start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
                                     {num_acceptors, MaxListeners}],
                                 riak_core_service_conn,
                                 SubProtocols),
-    lager:info("Service manager: listening on ~s:~p", [IP, Port]),
+    ?LOG_INFO("Service manager: listening on ~s:~p", [IP, Port]),
     {ok, Pid}.
 
 %% @doc Register a service, and store.

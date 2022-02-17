@@ -4,6 +4,8 @@
 -export([get_matching_address/2, determine_netmask/2, mask_address/2,
         maybe_apply_nat_map/3, apply_reverse_nat_map/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -59,7 +61,7 @@ cidr(<<X:1/bits, Rest/bits>>, Acc) ->
 %%      erlang-questions.
 mask_address(Addr={_, _, _, _}, Maskbits) ->
     B = list_to_binary(tuple_to_list(Addr)),
-    lager:debug("address as binary: ~w ~w", [B,Maskbits]),
+    ?LOG_DEBUG("address as binary: ~w ~w", [B,Maskbits]),
     <<Subnet:Maskbits, _Host/bitstring>> = B,
     Subnet;
 mask_address(_, _) ->
@@ -120,12 +122,12 @@ get_matching_address(IP, CIDR, MyIPs) ->
                     %% Both addresses are either internal or external.
                     %% We'll have to assume the user knows what they're
                     %% doing
-                    lager:debug("returning specific listen IP ~p",
+                    ?LOG_DEBUG("returning specific listen IP ~p",
                             [ListenIP]),
                     {ListenIP, Port};
                 false ->
                     %% we should never get here if things are configured right
-                    lager:warning("NAT detected, do you need to define a"
+                    ?LOG_WARNING("NAT detected, do you need to define a"
                         " nat-map?"),
                     undefined
             end
@@ -135,7 +137,7 @@ get_matching_address(IP, CIDR, MyIPs) ->
 find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
     %% CIDR is now too small to meaningfully return a result
     %% blindly return *anything* that is close, I guess?
-    lager:warning("Unable to find an approximate match for ~s/~b,"
+    ?LOG_WARNING("Unable to find an approximate match for ~s/~b,"
         "trying to guess one.",
         [inet_parse:ntoa(MyIP), MyCIDR]),
 
@@ -152,14 +154,14 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
                     end, Attrs),
                 case V4Attrs of
                     [] ->
-                        lager:debug("no valid IPs for ~s", [_IF]),
+                        ?LOG_DEBUG("no valid IPs for ~s", [_IF]),
                         Acc;
                     _ ->
-                        lager:debug("IPs for ~s : ~p", [_IF, V4Attrs]),
+                        ?LOG_DEBUG("IPs for ~s : ~p", [_IF, V4Attrs]),
                         IP = proplists:get_value(addr, V4Attrs),
                         case is_rfc1918(MyIP) == is_rfc1918(IP) of
                             true ->
-                                lager:debug("wildly guessing that  ~p is close"
+                                ?LOG_DEBUG("wildly guessing that  ~p is close"
                                     "to ~p", [IP, MyIP]),
                                 {IP, Port};
                             false ->
@@ -169,11 +171,11 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) when MyCIDR < MaxDepth ->
         end, undefined, NonLoopbackIPs),
     case Res of
         undefined ->
-            lager:warning("Unable to guess an appropriate local IP to match"
+            ?LOG_WARNING("Unable to guess an appropriate local IP to match"
                 " ~s/~b", [inet_parse:ntoa(MyIP), MyCIDR]),
             Res;
         {IP, _Port} ->
-            lager:notice("Guessed ~s to match ~s/~b",
+            ?LOG_NOTICE("Guessed ~s to match ~s/~b",
                 [inet_parse:ntoa(IP), inet_parse:ntoa(MyIP), MyCIDR]),
             Res
     end;
@@ -189,10 +191,10 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) ->
                     end, Attrs),
                 case V4Attrs of
                     [] ->
-                        lager:debug("no valid IPs for ~s", [_IF]),
+                        ?LOG_DEBUG("no valid IPs for ~s", [_IF]),
                         Acc;
                     _ ->
-                        lager:debug("IPs for ~s : ~p", [_IF, V4Attrs]),
+                        ?LOG_DEBUG("IPs for ~s : ~p", [_IF, V4Attrs]),
                         IP = proplists:get_value(addr, V4Attrs),
                         case {mask_address(IP, MyCIDR),
                                 mask_address(MyIP, MyCIDR)}  of
@@ -200,16 +202,16 @@ find_best_ip(MyIPs, MyIP, Port, MyCIDR, MaxDepth) ->
                                 %% the 172.16/12 is a pain in the ass
                                 case is_rfc1918(IP) == is_rfc1918(MyIP) of
                                     true ->
-                                        lager:debug("matched IP ~p for ~p", [IP,
+                                        ?LOG_DEBUG("matched IP ~p for ~p", [IP,
                                                 MyIP]),
                                         {IP, Port};
                                     false ->
                                         Acc
                                 end;
                             {_A, _B} ->
-                                lager:debug("IP ~p with CIDR ~p masked as ~p",
+                                ?LOG_DEBUG("IP ~p with CIDR ~p masked as ~p",
                                         [IP, MyCIDR, _A]),
-                                lager:debug("IP ~p with CIDR ~p masked as ~p",
+                                ?LOG_DEBUG("IP ~p with CIDR ~p masked as ~p",
                                         [MyIP, MyCIDR, _B]),
                                 Acc
                         end
@@ -267,17 +269,17 @@ expand_hostnames({External, {Host, InternalPort}}, Acc) when is_list(Host) ->
     %% resolve it via /etc/hosts
     case inet_gethost_native:gethostbyname(Host) of
         {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
-            lager:debug("locally resolved ~p to ~p", [Host, Addresses]),
+            ?LOG_DEBUG("locally resolved ~p to ~p", [Host, Addresses]),
             [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
             case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
-                    lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
+                    ?LOG_DEBUG("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, {Addr, InternalPort}} || Addr <- Addresses] ++ Acc;
                 Res2 ->
-                    lager:warning("Failed to resolve ~p locally: ~p", [Host, Res]),
-                    lager:warning("Failed to resolve ~p remotely: ~p", [Host, Res2]),
+                    ?LOG_WARNING("Failed to resolve ~p locally: ~p", [Host, Res]),
+                    ?LOG_WARNING("Failed to resolve ~p remotely: ~p", [Host, Res2]),
                     Acc
             end
     end;
@@ -285,17 +287,17 @@ expand_hostnames({External, Host}, Acc) when is_list(Host) ->
     %% resolve it via /etc/hosts
     case inet_gethost_native:gethostbyname(Host) of
         {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
-            lager:debug("locally resolved ~p to ~p", [Host, Addresses]),
+            ?LOG_DEBUG("locally resolved ~p to ~p", [Host, Addresses]),
             [{External, Addr} || Addr <- Addresses] ++ Acc;
         Res ->
             %% resolve it via the configured nameserver
             case inet_res:gethostbyname(Host) of
                 {ok, {hostent, _Domain, _, inet, 4, Addresses}} ->
-                    lager:debug("remotely resolved ~p to ~p", [Host, Addresses]),
+                    ?LOG_DEBUG("remotely resolved ~p to ~p", [Host, Addresses]),
                     [{External, Addr} || Addr <- Addresses] ++ Acc;
                 Res2 ->
-                    lager:warning("Failed to resolve ~p locally: ~p", [Host, Res]),
-                    lager:warning("Failed to resolve ~p remotely: ~p", [Host, Res2]),
+                    ?LOG_WARNING("Failed to resolve ~p locally: ~p", [Host, Res]),
+                    ?LOG_WARNING("Failed to resolve ~p remotely: ~p", [Host, Res2]),
                     Acc
             end
     end;

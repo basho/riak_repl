@@ -6,6 +6,9 @@
 
 -module(riak_repl2_fscoordinator_serv).
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
 
@@ -89,10 +92,10 @@ start_service(Socket, Transport, Proto, _Args, Props) ->
 init({Socket, Transport, OkProto, _Props}) ->
     Max = app_helper:get_env(riak_repl, max_fssink_node, ?DEFAULT_MAX_SINKS_NODE),
     {ok, Proto} = OkProto,
-    lager:info("Starting fullsync coordinator server (sink) with
+    ?LOG_INFO("Starting fullsync coordinator server (sink) with
                max_fssink_node=~p", [Max]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord_srv", Transport, Socket),
-    lager:debug("Keeping stats for " ++ SocketTag),
+    ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coordsrv,
                                        SocketTag}, Transport),
     {ok, #state{socket = Socket, transport = Transport, proto = Proto }}.
@@ -121,12 +124,12 @@ handle_cast(_Msg, State) ->
 %% @hidden
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
-    lager:info("Fullsync sink connect closed"),
+    ?LOG_INFO("Fullsync sink connect closed"),
     {stop, normal, State};
 
 handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
-    lager:error("Fullsync sink connection closed unexpectedly"),
+    ?LOG_ERROR("Fullsync sink connection closed unexpectedly"),
     {stop, normal, State};
 
 handle_info({Proto, Socket, Data}, #state{socket = Socket,
@@ -184,7 +187,7 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                                     %% there's no NAT configured for this IP!
                                     %% location_down is the closest thing we
                                     %% can reply with.
-                                    lager:warning("There's no NAT mapping for"
+                                    ?LOG_WARNING("There's no NAT mapping for"
                                         "~p:~b to an external IP on node ~p",
                                         [ListenIP, Port, Node]),
                                     case AnyaCompat of
@@ -209,7 +212,7 @@ handle_protocol_msg({whereis, Partition, ConnIP, ConnPort}, State) ->
                     end
             end;
         busy ->
-            lager:debug("node_reserver returned location_busy for partition ~p on node ~p", [Partition, Node]),
+            ?LOG_DEBUG("node_reserver returned location_busy for partition ~p on node ~p", [Partition, Node]),
             case AnyaCompat of
                 true -> {location_busy, Partition};
                 false -> {location_busy, Partition, Node}
@@ -235,7 +238,7 @@ get_node_ip_port(Node, NormIP) ->
     {ok, IfAddrs} = inet:getifaddrs(),
     case riak_repl2_ip:determine_netmask(IfAddrs, NormIP) of
         undefined ->
-            lager:warning("Can't determine netmask for ~p, please ensure you have NAT configured correctly.",
+            ?LOG_WARNING("Can't determine netmask for ~p, please ensure you have NAT configured correctly.",
                           [NormIP]),
             {error, ip_not_local};
         CIDR ->
@@ -245,11 +248,11 @@ get_node_ip_port(Node, NormIP) ->
                         {ok, {_RemoteIP, Port}} ->
                             {ok, {ListenIP, Port}};
                         RpcElse ->
-                            lager:error("Unable to query node ~p for it's cluster manager port due to ~p", [Node, RpcElse]),
+                            ?LOG_ERROR("Unable to query node ~p for it's cluster manager port due to ~p", [Node, RpcElse]),
                             {error, remote_node_not_reachable}
                     end;
                 Else ->
-                    lager:error("Unable to get matching address for ~p/~p from ~p due to ~p", [NormIP, CIDR, Node, Else]),
+                    ?LOG_ERROR("Unable to get matching address for ~p/~p from ~p due to ~p", [NormIP, CIDR, Node, Else]),
                     Else
             end
     end.

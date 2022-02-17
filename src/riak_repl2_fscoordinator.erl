@@ -40,6 +40,8 @@
 -module(riak_repl2_fscoordinator).
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -209,7 +211,7 @@ node_dirty(Node) ->
     %%  2) running - don't clear these out when fullsync finishes
     case riak_core_cluster_mgr:get_leader() of
         undefined ->
-            lager:debug("rt_dirty status updated locally, but not registered with leader");
+            ?LOG_DEBUG("rt_dirty status updated locally, but not registered with leader");
         Leader ->
             Fullsyncs = riak_repl2_fscoordinator_sup:started(Leader),
             [riak_repl2_fscoordinator:node_dirty(Pid, Node) ||
@@ -218,7 +220,7 @@ node_dirty(Node) ->
 
 node_dirty(Pid, Node) ->
     gen_server:call(Pid, {node_dirty, Node}, infinity),
-    lager:debug("Node ~p marked dirty and needs a fullsync",[Node]).
+    ?LOG_DEBUG("Node ~p marked dirty and needs a fullsync",[Node]).
 
 node_clean(Node) ->
     Leader = riak_core_cluster_mgr:get_leader(),
@@ -228,7 +230,7 @@ node_clean(Node) ->
 
 node_clean(Pid, Node) ->
     gen_server:call(Pid, {node_clean, Node}, infinity),
-    lager:debug("Node ~p marked clean",[Node]).
+    ?LOG_DEBUG("Node ~p marked clean",[Node]).
 
 
 %% ------------------------------------------------------------------
@@ -263,7 +265,7 @@ init(Cluster) ->
             _ = riak_repl_util:schedule_cluster_fullsync(Cluster),
             {ok, refresh_stats(#state{other_cluster = Cluster, connection_ref = Ref})};
         {error, Error} ->
-            lager:error("Error connecting to remote with message: ~p", [Error]),
+            ?LOG_ERROR("Error connecting to remote with message: ~p", [Error]),
             {stop, Error}
     end.
 
@@ -318,17 +320,17 @@ handle_call({node_dirty, Node}, _From,
                 dirty_nodes_during_fs=DirtyDuringFS}) ->
     NewState =
         case is_fullsync_in_progress(State) of
-          true -> lager:debug("Node dirty during fullsync from ~p ", [Node]),
+          true -> ?LOG_DEBUG("Node dirty during fullsync from ~p ", [Node]),
                   NewDirty = ordsets:add_element(Node, DirtyDuringFS),
                   State#state{dirty_nodes_during_fs = NewDirty};
-          false -> lager:debug("Node dirty from ~p ", [Node]),
+          false -> ?LOG_DEBUG("Node dirty from ~p ", [Node]),
                    NewDirty = ordsets:add_element(Node, DirtyNodes),
                    State#state{dirty_nodes = NewDirty}
         end,
     {reply, ok, NewState};
 
 handle_call({node_clean, Node}, _From, State = #state{dirty_nodes=DirtyNodes}) ->
-    lager:debug("Marking ~p clean after fullsync", [Node]),
+    ?LOG_DEBUG("Marking ~p clean after fullsync", [Node]),
     NewDirtyNodes = ordsets:del_element(Node, DirtyNodes),
     NewState = State#state{dirty_nodes=NewDirtyNodes},
     {reply, ok, NewState};
@@ -338,9 +340,9 @@ handle_call(_Request, _From, State) ->
 
 %% @hidden
 handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
-    lager:info("Fullsync coordinator connected to ~p", [State#state.other_cluster]),
+    ?LOG_INFO("Fullsync coordinator connected to ~p", [State#state.other_cluster]),
     SocketTag = riak_repl_util:generate_socket_tag("fs_coord", Transport, Socket),
-    lager:debug("Keeping stats for " ++ SocketTag),
+    ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, coord,
                                        SocketTag}, Transport),
 
@@ -356,7 +358,7 @@ handle_cast({connected, Socket, Transport, _Endpoint, _Proto}, State) ->
     {noreply, State2};
 
 handle_cast({connect_failed, _From, Why}, State) ->
-    lager:warning("Fullsync remote connection to ~p failed due to ~p, retrying",
+    ?LOG_WARNING("Fullsync remote connection to ~p failed due to ~p, retrying",
                   [State#state.other_cluster, Why]),
     {stop, connect_failed, State};
 
@@ -366,12 +368,12 @@ handle_cast(start_fullsync, #state{socket=undefined} = State) ->
 handle_cast(start_fullsync,  State) ->
     case is_fullsync_in_progress(State) of
         true ->
-            lager:notice("Fullsync already in progress; ignoring start"),
+            ?LOG_NOTICE("Fullsync already in progress; ignoring start"),
             {noreply, State};
         false ->
             MaxSource = app_helper:get_env(riak_repl, max_fssource_node, ?DEFAULT_SOURCE_PER_NODE),
             MaxCluster = app_helper:get_env(riak_repl, max_fssource_cluster, ?DEFAULT_SOURCE_PER_CLUSTER),
-            lager:info("Starting fullsync (source) with max_fssource_node=~p and max_fssource_cluster=~p",
+            ?LOG_INFO("Starting fullsync (source) with max_fssource_node=~p and max_fssource_cluster=~p",
                        [MaxSource, MaxCluster]),
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             N = largest_n(Ring),
@@ -422,7 +424,7 @@ handle_cast(_Msg, State) ->
 %% @hidden
 handle_info({'EXIT', Pid, Cause},
             #state{socket=Socket, transport=Transport}=State) when Cause =:= normal; Cause =:= shutdown ->
-    lager:debug("fssource ~p exited normally", [Pid]),
+    ?LOG_DEBUG("fssource ~p exited normally", [Pid]),
     PartitionEntry = lists:keytake(Pid, #partition_info.running_source, State#state.running_sources),
     case PartitionEntry of
         false ->
@@ -448,11 +450,11 @@ handle_info({'EXIT', Pid, Cause},
     end;
 
 handle_info({soft_exit, Pid, Cause}, State) ->
-    lager:info("fssource ~p soft exit with reason ~p", [Pid, Cause]),
+    ?LOG_INFO("fssource ~p soft exit with reason ~p", [Pid, Cause]),
     handle_abnormal_exit(soft_exit, Pid, Cause, State);
 
 handle_info({'EXIT', Pid, Cause}, State) ->
-    lager:info("fssource ~p exited abnormally: ~p", [Pid, Cause]),
+    ?LOG_INFO("fssource ~p exited abnormally: ~p", [Pid, Cause]),
     handle_abnormal_exit('EXIT', Pid, Cause, State);
 
 handle_info({Partition, whereis_timeout}, State) ->
@@ -470,7 +472,7 @@ handle_info({Partition, whereis_timeout}, State) ->
 
 handle_info({Erred, Socket, _Reason}, #state{socket = Socket} = State) when
     Erred =:= tcp_error; Erred =:= ssl_error ->
-    lager:error("Connection closed unexpectedly with message: ~p", [Erred]),
+    ?LOG_ERROR("Connection closed unexpectedly with message: ~p", [Erred]),
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, {connection_error, Erred}, State};
 
@@ -483,7 +485,7 @@ handle_info({_Proto, Socket, Data}, #state{socket = Socket} = State) when is_bin
 
 handle_info({Closed, Socket}, #state{socket = Socket} = State) when
     Closed =:= tcp_closed; Closed =:= ssl_closed ->
-    lager:info("Fullsync coordinator connection closed with cluster: ~p", [State#state.other_cluster]),
+    ?LOG_INFO("Fullsync coordinator connection closed with cluster: ~p", [State#state.other_cluster]),
     % Yes I do want to die horribly; my supervisor should restart me.
     {stop, connection_closed, State};
 
@@ -510,7 +512,7 @@ handle_info(refresh_stats, State) ->
     {noreply, State2};
 
 handle_info({'DOWN', Mon, process, Pid, Why}, #state{stat_cache = #stat_cache{worker = {Pid, Mon}} = StatCache} = State) ->
-    lager:notice("Stat gathering worker process ~p unexpected exit: ~p", [Pid, Why]),
+    ?LOG_NOTICE("Stat gathering worker process ~p unexpected exit: ~p", [Pid, Why]),
     StatCache1 = StatCache#stat_cache{worker = undefined},
     StatCache2 = refresh_stats(StatCache1, State#state.running_sources),
     {noreply, State#state{stat_cache = StatCache2}};
@@ -547,7 +549,7 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
 
     case ExitType of
         soft_exit ->
-            lager:debug("putting partition ~p in purgatory due to soft exit of ~p", [Index, Pid]),
+            ?LOG_DEBUG("putting partition ~p in purgatory due to soft exit of ~p", [Index, Pid]),
             _ = flush_exit_message(Pid),
             State4 = start_up_reqs(State3),
             SoftRetryLimit = app_helper:get_env(riak_repl, max_fssource_soft_retries, ?DEFAULT_SOURCE_SOFT_RETRIES),
@@ -559,7 +561,7 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
                     {noreply, State4#state{purgatory = Purgatory, soft_retry_exits = SoftRetryCount}};
 
                 SoftRetryLimit < ErrorCount ->
-                    lager:info("Discarding partition ~p since it has reached the soft exit retry limit of ~p",
+                    ?LOG_INFO("Discarding partition ~p since it has reached the soft exit retry limit of ~p",
                                [Partition#partition_info.index, SoftRetryLimit]),
 
                     ErrorExits1 = State4#state.error_exits + 1,
@@ -577,13 +579,13 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
             end;
 
         'EXIT' ->
-            lager:debug("Incrementing retries for partition ~p due to error exit of ~p", [Index, Pid]),
+            ?LOG_DEBUG("Incrementing retries for partition ~p due to error exit of ~p", [Index, Pid]),
             RetryLimit = app_helper:get_env(riak_repl, max_fssource_retries,
                                             ?DEFAULT_SOURCE_RETRIES),
 
             if
                 ErrorCount > RetryLimit ->
-                    lager:warning("fssource dropping partition: ~p, ~p failed"
+                    ?LOG_WARNING("fssource dropping partition: ~p, ~p failed"
                                 "retries", [Partition, RetryLimit]),
                     ErrorExits = State#state.error_exits + 1,
                     State4 = State3#state{ error_exits = ErrorExits},
@@ -591,7 +593,7 @@ handle_abnormal_exit(ExitType, Pid, _Cause, {value, PartitionWithSource, Running
                     maybe_complete_fullsync(Running, State4#state{dropped = Dropped});
                 true -> %% have not run out of retries yet
                     % reset for retry later
-                    lager:info("fssource rescheduling partition: ~p",
+                    ?LOG_INFO("fssource rescheduling partition: ~p",
                                 [Partition]),
                     PQueue2 = queue:in(Partition, PQueue),
                     RetryExits = State3#state.retry_exits + 1,
@@ -633,12 +635,12 @@ handle_socket_msg({location, Partition, {Node, Ip, Port}}, #state{whereis_waitin
             start_up_reqs(State3)
     end;
 handle_socket_msg({location_busy, Partition}, #state{whereis_waiting = Waiting} = State) ->
-    lager:debug("anya location_busy, partition = ~p", [Partition]),
+    ?LOG_DEBUG("anya location_busy, partition = ~p", [Partition]),
     case lists:keytake(Partition, #partition_info.index, Waiting) of
         false ->
             State;
         {value, PartitionInfo, Waiting2} ->
-            lager:info("anya Partition ~p is too busy on cluster ~p at node ~p",
+            ?LOG_INFO("anya Partition ~p is too busy on cluster ~p at node ~p",
                        [Partition, State#state.other_cluster, PartitionInfo#partition_info.node]),
             Tref = PartitionInfo#partition_info.whereis_tref,
             _ = erlang:cancel_timer(Tref),
@@ -655,7 +657,7 @@ handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Wai
         false ->
             State;
         {value, PartitionInfo, Waiting2} ->
-            lager:info("Partition ~p is too busy on cluster ~p at node ~p", [Partition, State#state.other_cluster, Node]),
+            ?LOG_INFO("Partition ~p is too busy on cluster ~p at node ~p", [Partition, State#state.other_cluster, Node]),
             Tref = PartitionInfo#partition_info.whereis_tref,
             _ = erlang:cancel_timer(Tref),
 
@@ -670,12 +672,12 @@ handle_socket_msg({location_busy, Partition, Node}, #state{whereis_waiting = Wai
     end;
 
 handle_socket_msg({location_down, Partition}, #state{whereis_waiting=Waiting} = State) ->
-    lager:warning("anya location_down, partition = ~p", [Partition]),
+    ?LOG_WARNING("anya location_down, partition = ~p", [Partition]),
     case lists:keytake(Partition, #partition_info.index, Waiting) of
         false ->
             State;
         {value, PartitionInfo, Waiting2} ->
-            lager:info("Partition ~p is unavailable on cluster ~p",
+            ?LOG_INFO("Partition ~p is unavailable on cluster ~p",
                 [Partition, State#state.other_cluster]),
             Tref = PartitionInfo#partition_info.whereis_tref,
             _ = erlang:cancel_timer(Tref),
@@ -694,12 +696,12 @@ handle_socket_msg({location_down, Partition, _Node}, #state{whereis_waiting=Wait
             Tref = PartitionInfo#partition_info.whereis_tref,
             _ = erlang:cancel_timer(Tref),
             RetryLimit = app_helper:get_env(riak_repl, max_reserve_retries, ?DEFAULT_RESERVE_RETRIES),
-            lager:info("Partition ~p is unavailable on cluster ~p", [Partition, State#state.other_cluster]),
+            ?LOG_INFO("Partition ~p is unavailable on cluster ~p", [Partition, State#state.other_cluster]),
             State2 = State#state{whereis_waiting = Waiting2},
             {RetriedCount, State3} = increment_error_dict(PartitionInfo, #state.reserve_retries, State2),
             State4 = case RetriedCount of
                 N when N > RetryLimit, is_integer(N) ->
-                    lager:warning("Fullsync dropping partition ~p, ~p location_down failed retries", [PartitionInfo#partition_info.index, RetryLimit]),
+                    ?LOG_WARNING("Fullsync dropping partition ~p, ~p location_down failed retries", [PartitionInfo#partition_info.index, RetryLimit]),
                     Dropped = [Partition | State#state.dropped],
                     #state{retry_exits = RetryExits,
                            error_exits = ErrorExits} = State,
@@ -775,7 +777,7 @@ send_next_whereis_req(State) ->
                     % not.  Another possiblity is another fullsync is in resource
                     % contention with use.  In either case, we just need to try
                     % again later.
-                    lager:debug("No partition available to start, no events outstanding, trying again later"),
+                    ?LOG_DEBUG("No partition available to start, no events outstanding, trying again later"),
                     erlang:send_after(?RETRY_WHEREIS_INTERVAL, self(), send_next_whereis_req),
                     {defer, State#state{partition_queue = Queue}};
 
@@ -792,7 +794,7 @@ send_next_whereis_req(State) ->
                     PartitionInfo2 = P#partition_info{whereis_tref = Tref},
                     Waiting2 = [PartitionInfo2 | Waiting],
                     {ok, {PeerIP, PeerPort}} = Transport:peername(Socket),
-                    lager:debug("Sending whereis request for partition ~p", [P]),
+                    ?LOG_DEBUG("Sending whereis request for partition ~p", [P]),
                     Transport:send(Socket,
                         term_to_binary({whereis, Pval, PeerIP, PeerPort})),
                     {ok, State#state{partition_queue = Queue, whereis_waiting =
@@ -805,11 +807,11 @@ send_next_whereis_req(State) ->
 determine_best_partition(State) ->
     #state{partition_queue = Queue, busy_nodes = Busies, whereis_waiting = Waiting} = State,
     SeedPart = queue:out(Queue),
-    lager:debug("Starting partition search"),
+    ?LOG_DEBUG("Starting partition search"),
     determine_best_partition(SeedPart, Busies, Waiting, queue:new()).
 
 determine_best_partition({empty, _Q}, _Business, _Waiting, AccQ) ->
-    lager:debug("No partition in the queue that will not exceed a limit; will try again later."),
+    ?LOG_DEBUG("No partition in the queue that will not exceed a limit; will try again later."),
     % there is no best partition, try again later
     {undefined, AccQ};
 
@@ -880,15 +882,15 @@ start_fssource(PartitionVal, Ip, Port, State) ->
         {error, Reason} ->
             case Reason of
                 {already_started, OtherPid} ->
-                    lager:info("A fullsync for partition ~p is already in"
+                    ?LOG_INFO("A fullsync for partition ~p is already in"
                         " progress for ~p", [Partition,
                             riak_repl2_fssource:cluster_name(OtherPid)]);
                 {{max_concurrency, Lock},_ChildSpec} ->
-                    lager:debug("Fullsync for partition ~p postponed"
+                    ?LOG_DEBUG("Fullsync for partition ~p postponed"
                                  " because ~p is at max_concurrency",
                                  [Partition, Lock]);
                 _ ->
-                    lager:error("Failed to start fullsync for partition ~p :"
+                    ?LOG_ERROR("Failed to start fullsync for partition ~p :"
                         " ~p", [Partition, Reason])
             end,
             #state{transport = Transport, socket = Socket} = State,
@@ -965,7 +967,7 @@ schedule_stat_refresh(StatCache) ->
 
 %% @private Exported just to be able to spawn with arguments more nicely.
 refresh_stats_worker(ReportTo, Sources) ->
-    lager:debug("Gathering source data for ~p", [Sources]),
+    ?LOG_DEBUG("Gathering source data for ~p", [Sources]),
     SourceStats = gather_source_stats(Sources),
     Time = riak_core_util:moment(),
     Self = self(),
@@ -984,7 +986,7 @@ gather_source_stats([PartitionInfo | Tail], Acc) ->
             gather_source_stats(Tail, [{riak_repl_util:safe_pid_to_list(Pid), Stats} | Acc])
     catch
         exit:Y ->
-            lager:notice("getting source info failed due to exit:~p", [Y]),
+            ?LOG_NOTICE("getting source info failed due to exit:~p", [Y]),
             gather_source_stats(Tail, [{riak_repl_util:safe_pid_to_list(Pid), []} | Acc])
     end.
 
@@ -1008,7 +1010,7 @@ maybe_complete_fullsync(Running, State) ->
     case {EmptyRunning, QEmpty, PurgatoryEmpty, Waiting} of
         {true, true, true, []} ->
             MyClusterName = riak_core_connection:symbolic_clustername(),
-            lager:info("Fullsync complete from ~s to ~s",
+            ?LOG_INFO("Fullsync complete from ~s to ~s",
                        [MyClusterName, State#state.other_cluster]),
             % clear the "rt dirty" stat if it's set,
             % otherwise, don't do anything
@@ -1046,27 +1048,27 @@ notify_rt_dirty_nodes(State = #state{dirty_nodes = DirtyNodes,
                                      DirtyNodesDuringFS}) ->
     State1 = case ordsets:size(DirtyNodes) > 0 of
         true ->
-            lager:debug("Notifying dirty nodes after fullsync"),
+            ?LOG_DEBUG("Notifying dirty nodes after fullsync"),
             % notify all nodes in case some weren't registered with the coord
             AllNodesList = riak_core_node_watcher:nodes(riak_repl),
             NodesToNotify = lists:subtract(AllNodesList,
                                            ordsets:to_list(DirtyNodesDuringFS)),
-            lager:debug("Notifying nodes ~p", [ NodesToNotify]),
+            ?LOG_DEBUG("Notifying nodes ~p", [ NodesToNotify]),
             _ = rpc:multicall(NodesToNotify, riak_repl_stats, clear_rt_dirty, []),
             State#state{dirty_nodes=ordsets:new()};
         false ->
-            lager:debug("No dirty nodes before fullsync started"),
+            ?LOG_DEBUG("No dirty nodes before fullsync started"),
             State
     end,
     case ordsets:size(DirtyNodesDuringFS) > 0 of
         true ->
-            lager:debug("Nodes marked dirty during fullsync"),
+            ?LOG_DEBUG("Nodes marked dirty during fullsync"),
             % move dirty_nodes_during_fs to dirty_nodes so they will be
             % cleaned out during the next fullsync
             State#state{dirty_nodes = DirtyNodesDuringFS,
                           dirty_nodes_during_fs = ordsets:new()};
         false ->
-            lager:debug("No nodes marked dirty during fullsync"),
+            ?LOG_DEBUG("No nodes marked dirty during fullsync"),
             State1
         end.
 

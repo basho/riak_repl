@@ -12,6 +12,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0,
          add_remote_connection/1, remove_remote_connection/1,
          connections/0, is_connected/1
@@ -27,16 +29,16 @@ start_link() ->
 add_remote_connection(Remote) ->
     case is_connected(Remote) of
         false ->
-            lager:info("Connecting to remote cluster: ~p", [Remote]),
+            ?LOG_INFO("Connecting to remote cluster: ~p", [Remote]),
             ChildSpec = make_remote(Remote),
             supervisor:start_child(?MODULE, ChildSpec);
         _ ->
-            lager:debug("Already connected to remote cluster: ~p", [Remote]),
+            ?LOG_INFO("Already connected to remote cluster: ~p", [Remote]),
             ok
     end.
 
 remove_remote_connection(Remote) ->
-    lager:debug("Disconnecting from remote cluster at: ~p", [Remote]),
+    ?LOG_DEBUG("Disconnecting from remote cluster at: ~p", [Remote]),
     %% remove supervised cluster connection
     _ = supervisor:terminate_child(?MODULE, Remote),
     _ = supervisor:delete_child(?MODULE, Remote),

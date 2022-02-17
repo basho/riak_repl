@@ -7,6 +7,8 @@
 -include("riak_repl.hrl").
 -include("riak_repl_aae_fullsync.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 
 %% gen_server callbacks
@@ -43,7 +45,7 @@ init_sync(AAEWorker) ->
 %%%===================================================================
 
 init([ClusterName, Transport, Socket, OwnerPid]) ->
-    lager:info("Starting AAE fullsync sink worker with Socket ~w", [Socket]),
+    ?LOG_INFO("Starting AAE fullsync sink worker with Socket ~w", [Socket]),
     {ok, #state{clustername=ClusterName, socket=Socket, transport=Transport, owner=OwnerPid}}.
 
 handle_call(init_sync, _From, State=#state{transport=Transport, socket=Socket}) ->
@@ -90,22 +92,22 @@ handle_info({'DOWN', _, _, _, _}, State) ->
     {stop, tree_down, State};
 
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("AAE sink connection to ~p closed", [State#state.clustername]),
+    ?LOG_INFO("AAE sink connection to ~p closed", [State#state.clustername]),
     {stop, {tcp_closed, Socket}, State};
 handle_info({tcp_error, Socket, Reason}, State) ->
-    lager:error("AAE sink connection to ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("AAE sink connection to ~p closed unexpectedly: ~p",
                 [State#state.clustername, Reason]),
     {stop, {tcp_error, Socket, Reason}, State};
 handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("AAE sink ssl connection to ~p closed", [State#state.clustername]),
+    ?LOG_INFO("AAE sink ssl connection to ~p closed", [State#state.clustername]),
     {stop, {ssl_closed, Socket}, State};
 handle_info({ssl_error, Socket, Reason}, State) ->
-    lager:error("AAE sink ssl connection to ~p closed unexpectedly with: ~p",
+    ?LOG_ERROR("AAE sink ssl connection to ~p closed unexpectedly with: ~p",
                 [State#state.clustername, Reason]),
     {stop, {ssl_error, Socket, Reason}, State};
 handle_info({Error, Socket, Reason},
             State=#state{socket=MySocket}) when Socket == MySocket ->
-    lager:info("AAE sink connection to ~p closed unexpectedly: ~p",
+    ?LOG_INFO("AAE sink connection to ~p closed unexpectedly: ~p",
                [State#state.clustername, {Socket, Error, Reason}]),
     {stop, {Socket, Error, Reason}, State};
 handle_info(_Info, State) ->

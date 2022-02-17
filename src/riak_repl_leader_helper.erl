@@ -28,6 +28,8 @@
          handle_cast/3, handle_DOWN/3, handle_info/2, terminate/2,
          code_change/4]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(LEADER_OPTS, [{vardir, VarDir}, {bcast_type, all}]).
 
 -record(state, {leader_mod,   % module name of replication leader
@@ -105,7 +107,7 @@ handle_cast(refresh_leader, State, _E) ->
 handle_DOWN(Node, State, _Election) ->
     %% only seems to fire when non-leader candidate nodes go down.  not useful for
     %% replication purposes.
-    lager:info("Replication candidate node ~p down", [Node]),
+    ?LOG_INFO("Replication candidate node ~p down", [Node]),
     {ok, State}.
 
 handle_info(_Info, State) ->

@@ -41,7 +41,6 @@
 -define(CONSOLE_RPC_TIMEOUT, 5000).
 -define(RETRY_AAE_LOCKED_INTERVAL, 1000).
 -define(DEFAULT_FULLSYNC_STRATEGY, keylist). %% keylist | aae
--define(LOG_USER_CMD(Msg, Params), lager:notice("[user] " ++ Msg, Params)).
 %% the following are keys for bucket types related meta data
 -define(BT_META_TYPED_BUCKET, typed_bucket).
 -define(BT_META_TYPE, bucket_type).

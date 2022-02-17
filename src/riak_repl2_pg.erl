@@ -5,6 +5,8 @@
 
 -module(riak_repl2_pg).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% @doc Riak CS Proxy-get
 %%
 %%
@@ -79,8 +81,8 @@ ensure_pg(WantEnabled0) ->
         [] ->
             [];
         _ ->
-            lager:debug("proxy_get ToEnable : ~p", [ToEnable]),
-            lager:debug("proxy_get ToDisable: ~p", [ToDisable]),
+            ?LOG_DEBUG("proxy_get ToEnable : ~p", [ToEnable]),
+            ?LOG_DEBUG("proxy_get ToDisable: ~p", [ToDisable]),
             _ = [riak_repl2_pg_block_provider_sup:enable(Remote) ||
                 Remote <- ToEnable],
             _ = [riak_repl2_pg_block_provider_sup:disable(Remote) ||
@@ -104,7 +106,7 @@ handle_call(status, _From, State) ->
     {reply, Status, State}.
 
 handle_cast(Msg, State) ->
-    lager:warning("Proxy-get received an unknown cast: ~p", [Msg]),
+    ?LOG_WARNING("Proxy-get received an unknown cast: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({'DOWN', _MRef, process, SinkPid, _Reason}, 
@@ -112,7 +114,7 @@ handle_info({'DOWN', _MRef, process, SinkPid, _Reason},
     Sinks2 = Sinks -- [SinkPid],
     {noreply, State#state{sinks = Sinks2}};
 handle_info(Msg, State) ->
-    lager:warning("unhandled message - e.g. timed out status result: ~p", Msg),
+    ?LOG_WARNING("unhandled message - e.g. timed out status result: ~p", Msg),
     {noreply, State}.
 
 terminate(_Reason, _State) ->

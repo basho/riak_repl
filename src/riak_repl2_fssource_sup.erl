@@ -2,6 +2,9 @@
 %% Copyright 2007-2012 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_fssource_sup).
 -behaviour(supervisor).
+
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0, enable/3, disable/2, enabled/0, enabled/1]).
 -export([init/1]).
 
@@ -12,13 +15,13 @@ start_link() ->
 
 %%TODO: Rename enable/disable something better - start/stop is a bit overloaded
 enable(Node, Partition, IP) ->
-    lager:info("Starting replication fullsync source for ~p from ~p to ~p",
+    ?LOG_INFO("Starting replication fullsync source for ~p from ~p to ~p",
         [Partition, Node, IP]),
     ChildSpec = make_childspec(Partition, IP),
     supervisor:start_child({?MODULE, Node}, ChildSpec).
 
 disable(Node, Partition) ->
-    lager:info("Stopping replication fullsync source for ~p", [Partition]),
+    ?LOG_INFO("Stopping replication fullsync source for ~p", [Partition]),
     _ = supervisor:terminate_child({?MODULE, Node}, Partition),
     _ = supervisor:delete_child({?MODULE, Node}, Partition).
 

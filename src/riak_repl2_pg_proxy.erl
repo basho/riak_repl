@@ -20,6 +20,8 @@
 
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?MODULE).
 
 -record(state, {
@@ -47,7 +49,7 @@ start_link(ProxyName) ->
 %%%===================================================================
 
 init(ProxyName) ->
-    lager:debug("Registering pg_proxy ~p", [ProxyName]),
+    ?LOG_DEBUG("Registering pg_proxy ~p", [ProxyName]),
     erlang:register(ProxyName, self()),
     {ok, #state{}}.
 
@@ -55,7 +57,7 @@ handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
             #state{pg_pids=RequesterPids} = State) ->
     case RequesterPids of
         [] ->
-            lager:warning("No proxy_get node registered"),
+            ?LOG_WARNING("No proxy_get node registered"),
             {reply, {error, no_proxy_get_node}, State};
         [{_RNode, RPid, _} | T] ->
             try gen_server:call(RPid, {proxy_get, Bucket, Key, GetOptions}, ?LONG_TIMEOUT) of
@@ -74,7 +76,7 @@ handle_call({proxy_get, Bucket, Key, GetOptions}, _From,
 
 handle_call({register, ClusterName, RequesterNode, RequesterPid},
             _From, State = #state{pg_pids = RequesterPids}) ->
-    lager:info("registered node for cluster name ~p ~p ~p", [ClusterName,
+    ?LOG_INFO("registered node for cluster name ~p ~p ~p", [ClusterName,
                                                              RequesterNode,
                                                              RequesterPid]),
     Monitor = erlang:monitor(process, RequesterPid),

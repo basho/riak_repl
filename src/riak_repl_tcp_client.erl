@@ -13,6 +13,8 @@
 
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 
 -compile({nowarn_deprecated_function, 
@@ -80,7 +82,7 @@ init([SiteName]) ->
             %% Do not start
             {stop, {site_not_in_ring, SiteName}};
         Site ->
-            lager:info("Starting replication site ~p to ~p",
+            ?LOG_INFO("Starting replication site ~p to ~p",
                 [Site#repl_site.name, [Host++":"++integer_to_list(Port) ||
                         {Host, Port} <- Site#repl_site.addrs]]),
             Listeners = Site#repl_site.addrs,
@@ -146,7 +148,7 @@ handle_call(_Event, _From, State) ->
 handle_cast(_Event, State) ->
     {noreply, State}.
 handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} = State) ->
-    lager:info("Connected to replication site ~p at ~p:~p",
+    ?LOG_INFO("Connected to replication site ~p at ~p:~p",
         [State#state.sitename, IPAddr, Port]),
     ok = riak_repl_util:configure_socket(Transport, Socket),
     Transport:send(Socket, State#state.sitename),
@@ -176,25 +178,25 @@ handle_info({connected, Transport, Socket}, #state{listener={_, IPAddr, Port}} =
     end,
     recv_peerinfo(NewState);
 handle_info({connect_failed, Reason}, State) ->
-    lager:debug("Failed to connect to site ~p: ~p", [State#state.sitename,
+    ?LOG_DEBUG("Failed to connect to site ~p: ~p", [State#state.sitename,
             Reason]),
     NewState = do_async_connect(State),
     {noreply, NewState};
 handle_info({tcp_closed, Socket}, #state{socket = Socket} = State) ->
-    lager:info("Connection to site ~p closed", [State#state.sitename]),
+    ?LOG_INFO("Connection to site ~p closed", [State#state.sitename]),
     {stop, normal, State};
 handle_info({tcp_closed, _Socket}, State) ->
     %% Ignore old sockets - e.g. after a redirect
     {noreply, State};
 handle_info({ssl_closed, Socket}, #state{socket = Socket} = State) ->
-    lager:info("Connection to site ~p closed", [State#state.sitename]),
+    ?LOG_INFO("Connection to site ~p closed", [State#state.sitename]),
     {stop, normal, State};
 handle_info({tcp_error, Socket, Reason}, #state{socket = Socket} = State) ->
-    lager:error("Connection to site ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("Connection to site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({ssl_error, Socket, Reason}, #state{socket = Socket} = State) ->
-    lager:error("Connection to site ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("Connection to site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({Proto, Socket, Data},
@@ -209,7 +211,7 @@ handle_info({Proto, Socket, Data},
         {proxy_get_resp, Ref, Resp} ->
             case lists:keytake(Ref, 1, State#state.proxy_gets) of
                 false ->
-                    lager:info("got unexpected proxy_get_resp message"),
+                    ?LOG_INFO("got unexpected proxy_get_resp message"),
                     {noreply, State};
                 {value, {Ref, From}, ProxyGets} ->
                     %% send the response to the patiently waiting client
@@ -331,7 +333,7 @@ do_async_connect(#state{pending=[], sitename=SiteName} = State) ->
 
     %% Start the retry timer
     RetryTimeout = app_helper:get_env(riak_repl, client_retry_timeout, 30000),
-    lager:debug("Failed to connect to any listener for site ~p, retrying in ~p"
+    ?LOG_DEBUG("Failed to connect to any listener for site ~p, retrying in ~p"
         " milliseconds", [State#state.sitename, RetryTimeout]),
     erlang:send_after(RetryTimeout, self(), try_connect),
     State#state{pending=Listeners};
@@ -396,7 +398,7 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                 {peerinfo, _, [ssl_required]} when Proto == tcp, NeedSSL /= false ->
                     case riak_repl_util:upgrade_client_to_ssl(Socket) of
                         {ok, SSLSocket} ->
-                            lager:info("Upgraded replication connection to SSL"),
+                            ?LOG_INFO("Upgraded replication connection to SSL"),
                             Transport = ranch_ssl,
                             %% re-send peer info
                             _ = send(Transport, SSLSocket, {peerinfo, State#state.my_pi,
@@ -408,7 +410,7 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                             recv_peerinfo(State#state{socket=SSLSocket,
                                     transport=Transport});
                         {error, Reason} ->
-                            lager:error("Unable to comply with request to "
+                            ?LOG_ERROR("Unable to comply with request to "
                                 "upgrade connection with site ~p to SSL: ~p",
                                 [State#state.sitename, Reason]),
                             _ = riak_repl_client_sup:stop_site(State#state.sitename),
@@ -416,7 +418,7 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                     end;
                 {peerinfo, _, [ssl_required]} ->
                     %% other side wants SSL, but we aren't configured for it
-                    lager:error("Site ~p requires SSL to connect",
+                    ?LOG_ERROR("Site ~p requires SSL to connect",
                         [State#state.sitename]),
                     _ = riak_repl_client_sup:stop_site(State#state.sitename),
                     {stop, normal, State};
@@ -427,14 +429,14 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                     handle_peerinfo(State, TheirPeerInfo, Capability);
                 PeerInfo when element(1, PeerInfo) == peerinfo ->
                     %% SSL was required, but not provided by the other side
-                    lager:error("Server for site ~p does not support SSL, refusing "
+                    ?LOG_ERROR("Server for site ~p does not support SSL, refusing "
                         "to connect", [State#state.sitename]),
                     _ = riak_repl_client_sup:stop_site(State#state.sitename),
                     {stop, normal, State};
                 {redirect, IPAddr, Port} ->
                     case lists:member({IPAddr, Port}, State#state.listeners) of
                         false ->
-                            lager:info("Redirected IP ~p not in listeners ~p",
+                            ?LOG_INFO("Redirected IP ~p not in listeners ~p",
                                 [{IPAddr, Port}, State#state.listeners]);
                         _ ->
                             ok
@@ -445,13 +447,13 @@ recv_peerinfo(#state{transport=T,socket=Socket, listener={_, ConnIP, _Port}} = S
                     {noreply, State#state{pending=[{IPAddr, Port} |
                                 State#state.pending]}};
                 Other ->
-                    lager:error("Expected peer_info from ~p, but got something else: ~p.",
+                    ?LOG_ERROR("Expected peer_info from ~p, but got something else: ~p.",
                         [State#state.sitename, Other]),
                     {stop, normal, State}
             end;
         _ ->
             %% the server will wait for 60 seconds for gen_leader to stabilize
-            lager:error("Timed out waiting for peer info from ~p.",
+            ?LOG_ERROR("Timed out waiting for peer info from ~p.",
                 [State#state.sitename]),
             {stop, normal, State}
     end.
@@ -465,7 +467,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
-                    lager:info("Inverting connection"),
+                    ?LOG_INFO("Inverting connection"),
                     self() ! {tcp, Socket, term_to_binary({peerinfo,
                                 TheirPeerInfo, Capability})},
                     put(inverted, true),
@@ -484,7 +486,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                         [?LEGACY_STRATEGY]),
                     Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
                     StratMod = riak_repl_util:strategy_module(Strategy, client),
-                    lager:info("Using fullsync strategy ~p with site ~p.", [StratMod,
+                    ?LOG_INFO("Using fullsync strategy ~p with site ~p.", [StratMod,
                             State#state.sitename]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
@@ -524,7 +526,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport,
                             cluster_name=ClusterName}}
             end;
         false ->
-            lager:error("Invalid peer info for site ~p, "
+            ?LOG_ERROR("Invalid peer info for site ~p, "
                 "ring sizes do not match.", [SiteName]),
             _ = riak_repl_client_sup:stop_site(SiteName),
             {stop, normal, State}
@@ -584,18 +586,18 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
     %% the repl configs are such that we're bi-directional).
     OurReplConfig = riak_repl_ring:get_repl_config(OurRing),
     MyListenAddrs = get_all_listener_addrs(OurReplConfig),
-    lager:debug("MyListenAddrs = ~p~n", [MyListenAddrs]),
+    ?LOG_DEBUG("MyListenAddrs = ~p~n", [MyListenAddrs]),
 
     %% IP addresses that the remote server listens on.
     TheirListenAddrs = get_public_listener_addrs(TheirReplConfig, ConnectedIP),
-    lager:debug("TheirListenAddrs = ~p~n", [TheirListenAddrs]),
+    ?LOG_DEBUG("TheirListenAddrs = ~p~n", [TheirListenAddrs]),
 
     %% IP address that this client wants to connect to for RemoteSiteName
     RemoteSiteAddrs = case riak_repl_ring:get_site(OurRing, RemoteSiteName) of
                           undefined -> [];
                           #repl_site{addrs=Addrs} -> Addrs
                       end,
-    lager:debug("RemoteSiteAddrs = ~p~n", [RemoteSiteAddrs]),
+    ?LOG_DEBUG("RemoteSiteAddrs = ~p~n", [RemoteSiteAddrs]),
 
     %% We want to remove both stale IPs (that are no longer valid) and
     %% our own (in case they leaked in, to avoid connecting to ourself).
@@ -606,7 +608,7 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
     MyLeakedInAddrs = [ A || {IP, _Port}=A <- RemoteSiteAddrs,
                              lists:keymember(IP, 1, MyListenAddrs)],
     ToRemove = StaleAddrs ++ MyLeakedInAddrs,
-    lager:debug("ToRemove = ~p~n", [ToRemove]),
+    ?LOG_DEBUG("ToRemove = ~p~n", [ToRemove]),
 
     %% We want to add new addresses that the remote server listens on,
     %% but never ones that we are listening on!
@@ -614,7 +616,7 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
     ToAdd = [ A || {IP, _Port}=A <- TheirListenAddrs,
                    (not lists:member(A, RemoteSiteAddrs)), %% ensure "new"
                    (not lists:keymember(IP, 1, MyListenAddrs))],  %% not ourself
-    lager:debug("ToAdd = ~p~n", [ToAdd]),
+    ?LOG_DEBUG("ToAdd = ~p~n", [ToAdd]),
 
     %% Do the add first in order to ensure we don't put ourself in the Addr list;
     %% ToRemove is the one that may contain our leaked address and will remove it
@@ -625,14 +627,14 @@ rewrite_config_site_ips_pure(TheirReplConfig, OurRing, RemoteSiteName, Connected
         _ ->
             RingAdds = lists:foldl(
                          fun(A,R) ->
-                                 lager:info("Adding ~p for site ~p~n",[A,RemoteSiteName]),
+                                 ?LOG_INFO("Adding ~p for site ~p~n",[A,RemoteSiteName]),
                                  riak_repl_ring:add_site_addr(R, RemoteSiteName, A)
                          end,
                          OurRing,
                          ToAdd),
             OurNewRing = lists:foldl(
                            fun(A,R) ->
-                                   lager:info("Removing ~p from site ~p~n",[A,RemoteSiteName]),
+                                   ?LOG_INFO("Removing ~p from site ~p~n",[A,RemoteSiteName]),
                                    riak_repl_ring:del_site_addr(R, RemoteSiteName, A)
                            end,
                            RingAdds,

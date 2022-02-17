@@ -11,6 +11,8 @@
 -module(riak_repl2_leader).
 -behaviour(gen_server).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% API
 -export([start_link/0,
          set_candidates/2,
@@ -185,7 +187,7 @@ handle_info({'DOWN', _Mref, process, _Object, _Info}, State) ->
 handle_info({'EXIT', Pid, killed}, State=#state{helper_pid={killed,Pid}}) ->
     {noreply, maybe_start_helper(State)};
 handle_info({'EXIT', Pid, Reason}, State=#state{helper_pid=Pid}) ->
-    lager:warning(
+    ?LOG_WARNING(
       "Replication leader Mark II helper exited unexpectedly: ~p",
       [Reason]),
     {noreply, maybe_start_helper(State)}.
@@ -207,12 +209,12 @@ become_leader(Leader, State) ->
             NewState = State,
             %% we can get here if a non-leader node goes down
             %% so we want to make sure any missing clients are started
-            lager:debug("LeaderII: ~p re-elected as replication leader", [Leader]);
+            ?LOG_DEBUG("LeaderII: ~p re-elected as replication leader", [Leader]);
         _ ->
             %% newly the leader
             NewState1 = State#state{i_am_leader = true, leader_node = Leader},
             NewState = remonitor_leader(undefined, NewState1),
-            lager:info("Leader2: ~p elected as replication leader", [Leader])
+            ?LOG_INFO("Leader2: ~p elected as replication leader", [Leader])
     end,
     NewState.
 

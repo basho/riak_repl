@@ -37,6 +37,8 @@
 
 -include("riak_core_connection.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -76,7 +78,7 @@ set_symbolic_clustername(ClusterName) ->
             riak_core_ring_manager:ring_trans(fun riak_core_connection:set_symbolic_clustername/2,
                                               ClusterName);
         {error, Reason} ->
-            lager:error("Can't set symbolic clustername because: ~p", [Reason])
+            ?LOG_ERROR("Can't set symbolic clustername because: ~p", [Reason])
     end.
 
 symbolic_clustername(Ring) ->
@@ -91,7 +93,7 @@ symbolic_clustername() ->
         {ok, Ring} ->
             symbolic_clustername(Ring);
         {error, Reason} ->
-            lager:error("Can't read symbolic clustername because: ~p", [Reason]),
+            ?LOG_ERROR("Can't read symbolic clustername because: ~p", [Reason]),
             "undefined"
     end.
 
@@ -138,7 +140,7 @@ sync_connect(IPPort, ClientSpec) ->
         ignore ->
             {error, could_not_connect};
         Else ->
-            lager:debug("start returned ~p", [Else]),
+            ?LOG_DEBUG("start returned ~p", [Else]),
             Else
     end.
 
@@ -184,7 +186,7 @@ init({IP, Port, Protocol, ProtoVers, SocketOptions, Mod, ModArgs}) ->
                            port = Port},
             {ok, wait_for_capabilities, State};
         Else ->
-            lager:warning("Could not connect ~p:~p due to ~p", [IP, Port, Else]),
+            ?LOG_WARNING("Could not connect ~p:~p due to ~p", [IP, Port, Else]),
             ignore
     end.
 
@@ -224,7 +226,7 @@ handle_info({_Transport, Socket, Data}, wait_for_capabilities, State = #state{so
                     {next_state, wait_for_protocol, State2}
             end;
         Else ->
-            lager:warning("Invalid response from remote server: ~p", [Else]),
+            ?LOG_WARNING("Invalid response from remote server: ~p", [Else]),
             {stop, {invalid_response, Else}, State}
     end;
 
@@ -243,12 +245,12 @@ handle_info({_TransTag, Socket, Data}, wait_for_protocol, State = #state{socket 
                                            State#state.remote_capabilities),
             {stop, normal, State};
         Else ->
-            lager:warning("Invalid version returned: ~p", [Else]),
+            ?LOG_WARNING("Invalid version returned: ~p", [Else]),
             {stop, Else, State}
     end;
 
 handle_info({_LikelyClose, Socket}, _StateName, State = #state{socket = Socket}) ->
-    lager:debug("Socket closed"),
+    ?LOG_DEBUG("Socket closed"),
     {stop, socket_closed, State}.
 
 terminate(_Why, _StateName, _State) ->
@@ -266,23 +268,23 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
     TheirName = proplists:get_value(clustername, TheirCaps),
     case {MySSL, TheirSSL} of
         {true, false} ->
-            lager:warning("~p requested SSL, but ~p doesn't support it",
+            ?LOG_WARNING("~p requested SSL, but ~p doesn't support it",
                 [MyName, TheirName]),
             {error, no_ssl};
         {false, true} ->
-            lager:warning("~p requested SSL but ~p doesn't support it",
+            ?LOG_WARNING("~p requested SSL but ~p doesn't support it",
                 [TheirName, MyName]),
             {error, no_ssl};
         {false, false} ->
-            lager:info("~p and ~p agreed to not use SSL", [MyName, TheirName]),
+            ?LOG_INFO("~p and ~p agreed to not use SSL", [MyName, TheirName]),
             {Transport, Socket};
         {true, true} ->
-            lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
+            ?LOG_INFO("~p and ~p agreed to use SSL", [MyName, TheirName]),
             case riak_core_ssl_util:upgrade_client_to_ssl(Socket, riak_core) of
                 {ok, SSLSocket} ->
                     {ranch_ssl, SSLSocket};
                 {error, Reason} ->
-                    lager:error("Error negotiating SSL between ~p and ~p: ~p",
+                    ?LOG_ERROR("Error negotiating SSL between ~p and ~p: ~p",
                         [MyName, TheirName, Reason]),
                     {error, Reason}
             end

@@ -3,10 +3,14 @@
 -module(riak_repl).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -export([start/0, stop/0]).
 -export([install_hook/0, uninstall_hook/0]).
 -export([fixup/2]).
 -export([conditional_hook/3]).
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -46,7 +50,7 @@ fixup(_Bucket, BucketProps) ->
     case proplists:get_value(repl, BucketProps) of
         Val when (Val==true orelse Val==realtime orelse Val==both),
                  RTEnabled == true  ->
-            lager:debug("Hooks for repl modes = ~p", [riak_repl_util:get_hooks_for_modes()]),
+            ?LOG_DEBUG("Hooks for repl modes = ~p", [riak_repl_util:get_hooks_for_modes()]),
             UpdPostcommit = CleanPostcommit ++ riak_repl_util:get_hooks_for_modes(),
 
             {ok, lists:keystore(postcommit, 1, BucketProps, 

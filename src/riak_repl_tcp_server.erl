@@ -20,6 +20,8 @@
 
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 
 -compile({nowarn_deprecated_function, 
@@ -140,17 +142,17 @@ handle_info({repl, RObj}, State=#state{transport=Transport, socket=Socket}) when
             {noreply, State}
     end;
 handle_info({tcp_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for site ~p closed", [State#state.sitename]),
+    ?LOG_INFO("Connection for site ~p closed", [State#state.sitename]),
     {stop, normal, State};
 handle_info({tcp_error, _Socket, Reason}, State) ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("Connection for site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({ssl_closed, Socket}, State=#state{socket=Socket}) ->
-    lager:info("Connection for site ~p closed", [State#state.sitename]),
+    ?LOG_INFO("Connection for site ~p closed", [State#state.sitename]),
     {stop, normal, State};
 handle_info({ssl_error, _Socket, Reason}, State) ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("Connection for site ~p closed unexpectedly: ~p",
         [State#state.sitename, Reason]),
     {stop, normal, State};
 handle_info({Proto, Socket, Data},
@@ -191,14 +193,14 @@ handle_info(init_ack, State=#state{transport=Transport, socket=Socket}) ->
         {error, Reason} ->
             riak_repl_stats:server_connect_errors(),
             %% debug to avoid DOS logging
-            lager:debug("Failed to receive site name banner from replication"
+            ?LOG_DEBUG("Failed to receive site name banner from replication"
                 "client: ~p", [Reason]),
             {stop, normal, State}
     end;
 handle_info(send_peerinfo, State) ->
     send_peerinfo(State);
 handle_info(election_timeout, #state{election_timeout=Timer} = State) when is_reference(Timer) ->
-    lager:error("Timed out waiting for a leader to be elected"),
+    ?LOG_ERROR("Timed out waiting for a leader to be elected"),
     {stop, normal, State};
 handle_info(election_wait, State) ->
     send_peerinfo(State);
@@ -246,7 +248,7 @@ handle_msg(keepalive_ack, State) ->
     %% noop
     {noreply, State};
 handle_msg({proxy_get, Ref, Bucket, Key, Options}, State) ->
-    lager:debug("Got proxy_get for ~p:~p", [Bucket, Key]),
+    ?LOG_DEBUG("Got proxy_get for ~p:~p", [Bucket, Key]),
     %% do this GET in a worker?
     C = State#state.client,
     Res = C:get(Bucket, Key, Options),
@@ -262,7 +264,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
             case app_helper:get_env(riak_repl, inverse_connection) == true
                 andalso get(inverted) /= true of
                 true ->
-                    lager:info("Inverting connection"),
+                    ?LOG_INFO("Inverting connection"),
                     riak_repl_leader:rm_receiver_pid(self()),
                     self() ! {tcp, Socket, term_to_binary({peerinfo,
                                 TheirPI, Capability})},
@@ -283,7 +285,7 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                         [?LEGACY_STRATEGY]),
                     Strategy = riak_repl_util:choose_strategy(ServerStrats, ClientStrats),
                     StratMod = riak_repl_util:strategy_module(Strategy, server),
-                    lager:info("Using fullsync strategy ~p.", [StratMod]),
+                    ?LOG_INFO("Using fullsync strategy ~p.", [StratMod]),
                     {ok, WorkDir} = riak_repl_fsm_common:work_dir(Transport, Socket, SiteName),
                     {ok, FullsyncWorker} = StratMod:start_link(SiteName,
                         Transport, {self(), Socket}, WorkDir, State#state.client, {1,0}),
@@ -314,14 +316,14 @@ handle_peerinfo(#state{sitename=SiteName, transport=Transport, socket=Socket, my
                     case app_helper:get_env(riak_repl, fullsync_on_connect, true) of
                         true ->
                             FullsyncWorker ! start_fullsync,
-                            lager:info("Full-sync on connect"),
+                            ?LOG_INFO("Full-sync on connect"),
                             {noreply, State1#state{keepalive_time=KeepaliveTime}};
                         false ->
                             {noreply, State1#state{keepalive_time=KeepaliveTime}}
                     end
             end;
         false ->
-            lager:error("Invalid peer info, ring sizes do not match."),
+            ?LOG_ERROR("Invalid peer info, ring sizes do not match."),
             {stop, normal, State}
     end.
 
@@ -380,13 +382,13 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                                     send_peerinfo(State#state{socket=SSLSocket,
                                                               transport=ranch_ssl});
                                 {error, Reason} ->
-                                    lager:error("Unable to negotiate SSL for "
+                                    ?LOG_ERROR("Unable to negotiate SSL for "
                                                 "replication connection to ~p: ~p",
                                                 [SiteName, Reason]),
                                     {stop, normal, State}
                             end;
                         _ ->
-                            lager:error("Client does not support SSL; "
+                            ?LOG_ERROR("Client does not support SSL; "
                                         "closing connection to ~p",
                                         [SiteName]),
                             %% sleep for a really long time so the
@@ -413,11 +415,11 @@ send_peerinfo(#state{transport=Transport, socket=Socket, sitename=SiteName} = St
                             send(Transport, Socket, {redirect, Ip, Port});
                         Other ->
                             Transport:close(Socket),
-                            lager:error("Received unknown peer data: ~p",[Other])
+                            ?LOG_ERROR("Received unknown peer data: ~p",[Other])
                     end;
                 {error, closed} ->
                     Transport:close(Socket),
-                    lager:error("Peer info tcp error")
+                    ?LOG_ERROR("Peer info tcp error")
             end,
             {stop, normal, State}
     end.

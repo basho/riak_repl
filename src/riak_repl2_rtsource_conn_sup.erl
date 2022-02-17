@@ -2,6 +2,9 @@
 %% Copyright 2007-2012 Basho Technologies, Inc. All Rights Reserved.
 -module(riak_repl2_rtsource_conn_sup).
 -behaviour(supervisor).
+
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0, enable/1, disable/1, enabled/0]).
 -export([init/1]).
 
@@ -12,12 +15,12 @@ start_link() ->
 
 %%TODO: Rename enable/disable something better - start/stop is a bit overloaded
 enable(Remote) ->
-    lager:info("Starting replication realtime source ~p", [Remote]),
+    ?LOG_INFO("Starting replication realtime source ~p", [Remote]),
     ChildSpec = make_remote(Remote),
     supervisor:start_child(?MODULE, ChildSpec).
 
 disable(Remote) ->
-    lager:info("Stopping replication realtime source ~p", [Remote]),
+    ?LOG_INFO("Stopping replication realtime source ~p", [Remote]),
     _ = supervisor:terminate_child(?MODULE, Remote),
     _ = supervisor:delete_child(?MODULE, Remote).
 

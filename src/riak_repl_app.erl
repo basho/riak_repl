@@ -15,6 +15,8 @@
 -include("riak_core_cluster.hrl").
 -include("riak_core_connection.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -define(TRACE(_Stmt),ok).
@@ -62,10 +64,10 @@ start(_Type, _StartArgs) ->
     %% skip Riak CS blocks
     case riak_repl_util:proxy_get_active() of
         true ->
-            lager:info("REPL CS block skip enabled"),
+            ?LOG_INFO("REPL CS block skip enabled"),
             riak_core:register([{repl_helper, riak_repl_cs}]);
         false ->
-            lager:info("REPL CS block skip disabled")
+            ?LOG_INFO("REPL CS block skip disabled")
     end,
 
     ok = riak_api_pb_service:register(riak_repl_pb_get, 128, 129),
@@ -134,7 +136,7 @@ start(_Type, _StartArgs) ->
 %% @spec stop(State :: term()) -> ok
 %% @doc The application:stop callback for riak_repl.
 stop(_State) ->
-    lager:info("Stopped application riak_repl"),
+    ?LOG_INFO("Stopped application riak_repl"),
     ok.
 
 ensure_dirs() ->
@@ -194,17 +196,15 @@ cluster_mgr_members({IP, Port}, Nodes) ->
     Map = riak_repl_ring:get_nat_map(Ring),
     %% apply the NAT map
     RealIP = riak_repl2_ip:maybe_apply_nat_map(NormIP, Port, Map),
-    lager:debug("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
+    ?LOG_DEBUG("normIP is ~p, after nat map ~p", [NormIP, RealIP]),
     case riak_repl2_ip:determine_netmask(MyIPs, RealIP) of
         undefined ->
-            lager:warning("Connected IP not present locally, must be NAT. Returning ~p",
+            ?LOG_WARNING("Connected IP not present locally, must be NAT. Returning ~p",
                          [{IP,Port}]),
             %% might as well return the one IP we know will work
             [{node(), {IP, Port}}];
         CIDR ->
-            ?TRACE(lager:notice("CIDR is ~p", [CIDR])),
-            %AddressMask = riak_repl2_ip:mask_address(NormIP, MyMask),
-            %?TRACE(lager:notice("address mask is ~p", [AddressMask])),
+            ?TRACE(?LOG_NOTICE("CIDR is ~p", [CIDR])),
             {Results, BadNodes} = rpc:multicall(Nodes, riak_repl2_ip,
                 get_matching_address, [RealIP, CIDR]),
             % when this code was written, a multicall will list the results
@@ -225,7 +225,7 @@ cluster_mgr_members({IP, Port}, Nodes) ->
                                     %% there's no NAT configured for this IP!
                                     %% location_down is the closest thing we
                                     %% can reply with.
-                                    lager:warning("There's no NAT mapping for"
+                                    ?LOG_WARNING("There's no NAT mapping for"
                                         "~p:~b to an external IP (node: ~p)",
                                         [XIP, XPort, XNode]),
                                     Acc;
@@ -236,7 +236,7 @@ cluster_mgr_members({IP, Port}, Nodes) ->
                             end
                     end, [], Results2),
                     Results3 = NatRes ++ [ {Node, unreachable} || Node <- BadNodes ],
-                    lager:debug("nat: ~p -> ~p", [Results2, Results3]),
+                    ?LOG_DEBUG("nat: ~p -> ~p", [Results2, Results3]),
                     Results3
             end
     end.
@@ -247,7 +247,7 @@ maybe_retry_ip_rpc(Results, Nodes, BadNodes, Args) ->
     MaybeRetry = fun
         ({{badrpc, {'EXIT', {undef, _StrackTrace}}}, Node}) ->
             RPCResult = riak_core_util:safe_rpc(Node, riak_repl_app, get_matching_address, Args),
-            lager:debug("rpc to get_matching_address: ~p", [RPCResult]),
+            ?LOG_DEBUG("rpc to get_matching_address: ~p", [RPCResult]),
             {Node, RPCResult};
         ({Result, Node}) ->
             {Node, Result}
@@ -282,7 +282,7 @@ name_this_cluster() ->
 %% Persist the named cluster and it's members to the repl ring metadata.
 %% TODO: an empty Members list means "delete this cluster name"
 cluster_mgr_write_cluster_members_to_ring(ClusterName, Members) ->
-    lager:debug("Saving cluster to the ring: ~p of ~p", [ClusterName, Members]),
+    ?LOG_DEBUG("Saving cluster to the ring: ~p of ~p", [ClusterName, Members]),
     riak_core_ring_manager:ring_trans(fun riak_repl_ring:set_clusterIpAddrs/2,
                                       {ClusterName, Members}).
 
@@ -303,7 +303,7 @@ register_cluster_name_locator() ->
     Locator = fun(ClusterName, _Policy) ->
                       Ring = get_ring(),
                       Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
-                      lager:debug("located members for cluster ~p: ~p", [ClusterName, Addrs]),
+                      ?LOG_DEBUG("located members for cluster ~p: ~p", [ClusterName, Addrs]),
                       {ok,Addrs}
               end,
     ok = riak_core_connection_mgr:register_locator(?CLUSTER_NAME_LOCATOR_TYPE, Locator),
@@ -333,31 +333,31 @@ prep_stop(_State) ->
 
         %% the repl bucket hook will check to see if the queue is running and deliver to
         %% another node if it's shutting down
-        lager:info("Redirecting realtime replication traffic"),
+        ?LOG_INFO("Redirecting realtime replication traffic"),
         riak_repl2_rtq:shutdown(),
 
-        lager:info("Stopping application riak_repl - marked service down.\n", []),
+        ?LOG_INFO("Stopping application riak_repl - marked service down.\n", []),
 
         case riak_repl_migration:start_link() of
             {ok, _Pid} ->
-                lager:info("Started migration server"),
+                ?LOG_INFO("Started migration server"),
                 riak_repl_migration:migrate_queue();
             {error, _} ->
-                lager:error("Can't start replication migration server")
+                ?LOG_ERROR("Can't start replication migration server")
         end,
         %% stop it cleanly, don't just kill it
         riak_repl2_rtq:stop()
        catch
         Type:Reason ->
-            lager:error("Stopping application riak_api - ~p:~p.\n", [Type, Reason])
+            ?LOG_ERROR("Stopping application riak_api - ~p:~p.\n", [Type, Reason])
        end,
        Stats = riak_repl_stats:get_stats(),
        SourceErrors = proplists:get_value(rt_source_errors, Stats, 0),
        SinkErrors = proplists:get_value(rt_sink_errors, Stats, 0),
        % Setting these to debug as I'm not sure they are entirely accurate
-       lager:debug("There were ~p rt_source_errors upon shutdown",
+       ?LOG_DEBUG("There were ~p rt_source_errors upon shutdown",
                   [SourceErrors]),
-       lager:debug("There were ~p rt_sink_errors upon shutdown",
+       ?LOG_DEBUG("There were ~p rt_sink_errors upon shutdown",
                   [SinkErrors]),
     stopping.
 

@@ -4,17 +4,20 @@
 -author('Andy Gross <andy@basho.com>').
 -behaviour(supervisor).
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_link/0, init/1, stop/1]).
 -export([start_site/1, stop_site/1, running_site_procs/0,
         running_site_procs_rpc/0, ensure_sites/1]).
 
 start_site(SiteName) ->
-    lager:info("Starting replication site ~p", [SiteName]),
+    ?LOG_INFO("Starting replication site ~p", [SiteName]),
     ChildSpec = make_site(SiteName),
     supervisor:start_child(?MODULE, ChildSpec).
 
 stop_site(SiteName) ->
-    lager:info("Stopping replication site ~p", [SiteName]),
+    ?LOG_INFO("Stopping replication site ~p", [SiteName]),
     _ = supervisor:terminate_child(?MODULE, SiteName),
     _ = supervisor:delete_child(?MODULE, SiteName).
 

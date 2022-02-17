@@ -52,6 +52,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?CLUSTER_MANAGER_SERVER).
 -define(MAX_CONS, 20).
 -define(CLUSTER_POLLING_INTERVAL, 10 * 1000).
@@ -203,7 +205,7 @@ set_gc_interval(Interval) ->
 %%% gen_server callbacks
 %%%===================================================================
 init(Defaults) ->
-    lager:debug("Cluster Manager: starting"),
+    ?LOG_DEBUG("Cluster Manager: starting"),
     %% start our cluster_mgr service if not already started.
     case riak_core_service_mgr:is_registered(?CLUSTER_PROTO_ID) of
         false ->
@@ -308,7 +310,7 @@ handle_call({get_known_ipaddrs_of_cluster, {name, ClusterName}}, _From, State) -
             Members = members_of_cluster(ClusterName, State),
             BalancerFun = State#state.balancer_fun,
             RebalancedMembers = BalancerFun(Members),
-            lager:debug("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
+            ?LOG_DEBUG("Rebalancer: ~p -> ~p", [Members, RebalancedMembers]),
             {reply, {ok, Members},
              State#state{clusters=add_ips_to_cluster(ClusterName, RebalancedMembers,
                                                      State#state.clusters)}};
@@ -399,7 +401,7 @@ handle_cast({cluster_updated, OldName, NewName, Members, Addr, Remote}, State) -
     end;
 
 handle_cast(_Unhandled, _State) ->
-    lager:debug("Unhandled gen_server cast: ~p", [_Unhandled]),
+    ?LOG_DEBUG("Unhandled gen_server cast: ~p", [_Unhandled]),
     {error, unhandled}. %% this will crash the server
 
 %% it is time to poll all clusters and get updated member lists
@@ -425,7 +427,7 @@ handle_info(connect_to_clusters, State) ->
     {noreply, State};
 
 handle_info(_Unhandled, State) ->
-    lager:debug("Unhandled gen_server info: ~p", [_Unhandled]),
+    ?LOG_DEBUG("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -451,7 +453,7 @@ register_defaults(Defaults, State) ->
         [] ->
             State;
         [MembersFun, AllMembersFun, SaveFun, RestoreFun] ->
-            lager:debug("Registering default cluster manager functions."),
+            ?LOG_DEBUG("Registering default cluster manager functions."),
             State#state{member_fun=MembersFun,
                         all_member_fun=AllMembersFun,
                         save_members_fun=SaveFun,
@@ -471,20 +473,20 @@ is_ok_to_connect(NewName, Remote, CheckConnected) ->
     case NewName of
         "undefined" ->
             %% Don't connect to clusters that haven't been named yet
-            lager:warning("ClusterManager: dropping connection ~p to undefined clustername",
+            ?LOG_WARNING("ClusterManager: dropping connection ~p to undefined clustername",
                           [Remote]),
             remove_remote_connection(Remote),
             false;
         MyClusterName ->
             %% We somehow got connected to a cluster that is named the same as
             %% us; could be ourself. Hard to tell. Drop it and log a warning.
-            lager:warning("ClusterManager: dropping connection ~p to identically named cluster: ~p",
+            ?LOG_WARNING("ClusterManager: dropping connection ~p to identically named cluster: ~p",
                           [Remote, NewName]),
             remove_remote_connection(Remote),
             false;
         _SomeName when AlreadyConnected == true ->
             %% We are already connected to that cluster
-            lager:warning("ClusterManager: dropping connection ~p because already connected to ~p",
+            ?LOG_WARNING("ClusterManager: dropping connection ~p because already connected to ~p",
                           [Remote, NewName]),
             remove_remote_connection(Remote),
             false;
@@ -527,7 +529,7 @@ ensure_valid_ip_addresses(Members) ->
                          case is_valid_member(Member) of
                              true -> true;
                              false ->
-                                 lager:warning("Cluster Manager: ignoring bad remote IP address: ~p",
+                                 ?LOG_WARNING("Cluster Manager: ignoring bad remote IP address: ~p",
                                                [Member]),
                                  false
                          end
@@ -546,11 +548,11 @@ save_cluster(NewName, OldMembers, ReturnedMembers, State) ->
                 [] ->
                     %% oh boo. All bad addresses? Don't overwrite what
                     %% we already know with [].
-                    lager:warning("Cluster Manager: skipped update of ~p with all bad members: ~p",
+                    ?LOG_WARNING("Cluster Manager: skipped update of ~p with all bad members: ~p",
                                   [NewName, Members]);
                 _ ->
                     persist_members_to_ring(State, NewName, Members),
-                    lager:info("Cluster Manager: updated ~p with members: ~p OldMembers ~p",
+                    ?LOG_INFO("Cluster Manager: updated ~p with members: ~p OldMembers ~p",
                                [NewName, Members, OldMembers])
             end
     end,
@@ -563,7 +565,7 @@ save_cluster(NewName, OldMembers, ReturnedMembers, State) ->
 %% remove aliased connections, and try to ensure that IP addresses only
 %% appear in one cluster.
 update_cluster_members(_OldName, _NewName, [], _Addr, _Remote, State) ->
-    lager:warning("Cluster Manager: got empty list of addresses for remote ~p", [_Remote]),
+    ?LOG_WARNING("Cluster Manager: got empty list of addresses for remote ~p", [_Remote]),
     State;
 update_cluster_members(_OldName, NewName, Members, _Addr, {cluster_by_addr, _CAddr}=Remote, State) ->
     %% This was a connection by host:ip, replace with cluster connection
@@ -575,7 +577,7 @@ update_cluster_members(_OldName, NewName, Members, _Addr, {cluster_by_addr, _CAd
 update_cluster_members(OldName, NewName, Members, _Addr, {cluster_by_name, CName}, State)
   when CName =/= NewName ->
     %% Remote cluster changed names since last time we spoke to it
-    lager:warning("Remote cluster changed its name from ~p to ~p", [OldName, NewName]),
+    ?LOG_WARNING("Remote cluster changed its name from ~p to ~p", [OldName, NewName]),
     State1 = remove_remote(CName, State),
     ensure_remote_connection({cluster_by_name, NewName}),
     save_cluster(NewName, [], Members, State1);
@@ -585,12 +587,12 @@ update_cluster_members(OldName, NewName, Members, _Addr, _Remote, State) ->
     save_cluster(NewName, OldMembers, Members, State).
 
 collect_garbage(State0) ->
-    lager:debug("ClusterManager: GC - cleaning out old empty cluster connections."),
+    ?LOG_DEBUG("ClusterManager: GC - cleaning out old empty cluster connections."),
     %% remove clusters that have no member IP addrs from our view
     State1 = orddict:fold(fun(Name, Cluster, State) ->
                                   case Cluster#cluster.members of
                                       [] ->
-                                          lager:debug("ClusterManager: GC - cluster ~p has no members.",
+                                          ?LOG_DEBUG("ClusterManager: GC - cluster ~p has no members.",
                                                     [Name]),
                                           remove_remote(Name, State);
                                       _ ->
@@ -653,19 +655,19 @@ remove_remote_connection(Remote) ->
     end.
 
 proxy_cast(_Cast, _State = #state{leader_node=Leader}) when Leader == undefined ->
-    lager:debug("proxy_cast: leader is undefined. dropping cast: ~p", [_Cast]),
+    ?LOG_DEBUG("proxy_cast: leader is undefined. dropping cast: ~p", [_Cast]),
     ok;
 proxy_cast(Cast, _State = #state{leader_node=Leader}) ->
-    lager:debug("proxy_cast: casting to leader ~p: ~p", [Leader, Cast]),
+    ?LOG_DEBUG("proxy_cast: casting to leader ~p: ~p", [Leader, Cast]),
     gen_server:cast({?SERVER, Leader}, Cast).
 
 %% Make a proxy call to the leader. If there is no leader elected or the request fails,
 %% it will return the NoLeaderResult supplied.
 proxy_call(_Call, NoLeaderResult, State = #state{leader_node=Leader}) when Leader == undefined ->
-    lager:debug("proxy_call: leader is undefined. dropping call: ~p", [_Call]),
+    ?LOG_DEBUG("proxy_call: leader is undefined. dropping call: ~p", [_Call]),
     {reply, NoLeaderResult, State};
 proxy_call(Call, NoLeaderResult, State = #state{leader_node=Leader}) ->
-    lager:debug("proxy_call: call to leader ~p: ~p", [Leader, Call]),
+    ?LOG_DEBUG("proxy_call: call to leader ~p: ~p", [Leader, Call]),
     Reply = try gen_server:call({?SERVER, Leader}, Call, ?PROXY_CALL_TIMEOUT) of
                 R -> R
             catch
@@ -701,7 +703,7 @@ connect_to_targets(Targets) ->
 
 %% start being a cluster manager leader
 become_leader(State, LeaderNode) when State#state.is_leader == false ->
-    lager:info("ClusterManager: ~p becoming the leader", [LeaderNode]),
+    ?LOG_INFO("ClusterManager: ~p becoming the leader", [LeaderNode]),
     %% start leading and tell ourself to connect to known clusters in a bit.
     %% Wait enough time for the ring to be stable
     %% so that the call into the repl_ring handler won't crash.
@@ -709,26 +711,26 @@ become_leader(State, LeaderNode) when State#state.is_leader == false ->
     erlang:send_after(5000, self(), connect_to_clusters),
     State#state{is_leader = true};
 become_leader(State, LeaderNode) ->
-    lager:debug("ClusterManager: ~p still the leader", [LeaderNode]),
+    ?LOG_DEBUG("ClusterManager: ~p still the leader", [LeaderNode]),
     State.
 
 %% stop being a cluster manager leader
 become_proxy(State, LeaderNode) when State#state.is_leader == true ->
-    lager:info("ClusterManager: ~p becoming a proxy to ~p", [node(), LeaderNode]),
+    ?LOG_INFO("ClusterManager: ~p becoming a proxy to ~p", [node(), LeaderNode]),
     %% stop leading
     %% remove any outbound connections
     case riak_core_cluster_conn_sup:connections() of
         [] ->
             ok;
         Connections ->
-            lager:debug("ClusterManager: proxy is removing connections to remote clusters:"),
+            ?LOG_DEBUG("ClusterManager: proxy is removing connections to remote clusters:"),
             _ = [riak_core_cluster_conn_sup:remove_remote_connection(Remote)
              || {Remote, _Pid} <- Connections],
             ok
     end,
     State#state{is_leader = false};
 become_proxy(State, LeaderNode) ->
-    lager:debug("ClusterManager: ~p still a proxy to ~p", [node(), LeaderNode]),
+    ?LOG_DEBUG("ClusterManager: ~p still a proxy to ~p", [node(), LeaderNode]),
     State.
 
 persist_members_to_ring(State, ClusterName, Members) ->
@@ -750,7 +752,7 @@ connect_to_persisted_clusters(State) ->
         true ->
             Fun = State#state.restore_targets_fun,
             ClusterTargets = Fun(),
-            lager:debug("Cluster Manager will connect to clusters: ~p", 
+            ?LOG_DEBUG("Cluster Manager will connect to clusters: ~p", 
                         [ClusterTargets]),
             connect_to_targets(ClusterTargets);
         _ ->

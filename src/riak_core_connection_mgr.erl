@@ -26,6 +26,8 @@
 
 -include("riak_core_connection.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -219,7 +221,7 @@ stop() ->
 
 init([]) ->
     process_flag(trap_exit, true),
-    lager:debug("Starting"),
+    ?LOG_DEBUG("Starting"),
     {ok, #state{is_paused = false, locators = initialize_locators()}}.
 
 handle_call(is_paused, _From, State) ->
@@ -238,14 +240,14 @@ handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
     State2 = State#state{pending = lists:keystore(Reference, #req.ref,
                                                   State#state.pending,
                                                   Request)},
-    lager:debug("Starting connect request to ~p, ref is ~p", [Target, Reference]),
+    ?LOG_DEBUG("Starting connect request to ~p, ref is ~p", [Target, Reference]),
     %% reset backoff for all endpoints to expedite connection against
     %% existing endpoint
     ok = reset_backoff(),
     {reply, {ok, Reference}, start_request(Request, State2)};
 
 handle_call({get_endpoint_backoff, Addr}, _From, State) ->
-    lager:debug("backing off ~p", [Addr]),
+    ?LOG_DEBUG("backing off ~p", [Addr]),
     {reply, {ok, get_endpoint_backoff(Addr, State#state.endpoints)}, State};
 
 handle_call({register_locator, Type, Fun}, _From,
@@ -288,7 +290,7 @@ handle_call({get_connection_errors, Addr}, _From, State = #state{endpoints=Endpo
         {ok, E} ->
             {reply, E#ep.failures, State};
         error ->
-            lager:notice("Endpoint ~p is not stored in the endpoint list.", [Addr]),
+            ?LOG_NOTICE("Endpoint ~p is not stored in the endpoint list.", [Addr]),
             {reply, [], State}
     end;
 
@@ -297,7 +299,7 @@ handle_call({filter_blacklisted_ipaddrs, Addrs}, _From, State=#state{ endpoints=
     {reply, Answer, State};
 
 handle_call(_Unhandled, _From, State) ->
-    lager:debug("Unhandled gen_server call: ~p", [_Unhandled]),
+    ?LOG_DEBUG("Unhandled gen_server call: ~p", [_Unhandled]),
     {reply, {error, unhandled}, State}.
 
 handle_cast(pause, State) ->
@@ -323,7 +325,7 @@ handle_cast({conmgr_no_endpoints, _Ref}, State) ->
 
 %% helper process says it failed to reach an address.
 handle_cast({endpoint_failed, Addr, Reason, ProtocolId}, State) ->
-    lager:debug("Failing endpoint ~p for protocol ~p with reason ~p", [Addr, ProtocolId, Reason]),
+    ?LOG_DEBUG("Failing endpoint ~p for protocol ~p with reason ~p", [Addr, ProtocolId, Reason]),
     %% mark connection as black-listed and start timer for reset
     {noreply, fail_endpoint(Addr, Reason, ProtocolId, State)}.
 
@@ -358,7 +360,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
     %% Work out which endpoint it was
     case lists:keytake(From, #req.pid, Pending) of
         false ->
-            lager:error("Connection Manager exiting because linked process ~p exited for reason: ~p",
+            ?LOG_ERROR("Connection Manager exiting because linked process ~p exited for reason: ~p",
                         [From, Reason]),
             exit({linked, From, Reason});
         {value, #req{cur = Cur, ref = Ref}=Req, Pending2} ->
@@ -367,7 +369,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                 ok ->
                     %% update the stats module
                     Stat = conn_success,
-                    lager:debug("Trying for stats update, the connect_endpoint"),
+                    ?LOG_DEBUG("Trying for stats update, the connect_endpoint"),
                     riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
                     %% riak_core_connection set up and handlers called
                     {noreply, connect_endpoint(Cur, State#state{pending = Pending2})};
@@ -376,7 +378,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                     %% helper process has been cancelled and has exited nicely.
                     %% update the stats module
                     Stat = conn_cancelled,
-                    lager:debug("Trying for stats update"),
+                    ?LOG_DEBUG("Trying for stats update"),
                     riak_core_connection_mgr_stats:update(Stat, Cur, ProtocolId),
                     %% toss out the cancelled request from pending.
                     {noreply, State#state{pending = Pending2}};
@@ -389,12 +391,12 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
                             %% oops. that request was cancelled. No retry
                             {noreply, State#state{pending = Pending2}};
                         _ ->
-                            lager:debug("Scheduling retry"),
+                            ?LOG_DEBUG("Scheduling retry"),
                             {noreply, schedule_retry(?EXHAUSTED_ENDPOINTS_RETRY_INTERVAL, Ref, State)}
                     end;
 
                 Reason -> % something bad happened to the connection, reuse the request
-                    lager:debug("handle_info: EP failed on ~p for ~p. removed Ref ~p",
+                    ?LOG_DEBUG("handle_info: EP failed on ~p for ~p. removed Ref ~p",
                                      [Cur, Reason, Ref]),
                     State2 = fail_endpoint(Cur, Reason, ProtocolId, State),
                     %% the connection helper will not retry. It's up the caller.
@@ -403,7 +405,7 @@ handle_info({'EXIT', From, Reason}, State = #state{pending = Pending}) ->
             end
     end;
 handle_info(_Unhandled, State) ->
-    lager:error("Unhandled gen_server info: ~p", [_Unhandled]),
+    ?LOG_ERROR("Unhandled gen_server info: ~p", [_Unhandled]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -423,7 +425,7 @@ identity_locator([Ips], _Policy) ->
 
 %% close the pending connection and cancel the request
 disconnect_from_target(Target, State = #state{pending = Pending}) ->
-    lager:debug("Disconnecting from: ~p", [Target]),
+    ?LOG_DEBUG("Disconnecting from: ~p", [Target]),
     case lists:keyfind(Target, #req.target, Pending) of
         false ->
             %% already gone!
@@ -431,12 +433,12 @@ disconnect_from_target(Target, State = #state{pending = Pending}) ->
         Req ->
             case get_cancellation_interval() of
                 undefined ->
-                    lager:warning("Cancelled connection ~p will not be removed because
+                    ?LOG_WARNING("Cancelled connection ~p will not be removed because
                         cm_cancellation_interval is set to undefined", [Req#req.target]);
                 Interval when is_integer(Interval) ->
                     erlang:send_after(Interval,self(),{remove_cancelled_connection,Req#req.ref});
                 Error ->
-                    lager:error("Unsupported cm_cancellation_interval: ~p", [Error])
+                    ?LOG_ERROR("Unsupported cm_cancellation_interval: ~p", [Error])
             end,
             %% The helper process will discover the cancellation when it asks if it
             %% should connect to an endpoint.
@@ -464,7 +466,7 @@ schedule_retry(Interval, Ref, State = #state{pending = Pending}) ->
     case lists:keyfind(Ref, #req.ref, Pending) of
         false ->
             %% this should never happen
-            lager:error("ConnectionManager: failed to find connection ref while scheduling retry."),
+            ?LOG_ERROR("ConnectionManager: failed to find connection ref while scheduling retry."),
             State;
         Req ->
             case Req#req.state of
@@ -491,14 +493,14 @@ start_request(Req = #req{ref=Ref, target=Target, spec=ClientSpec, strategy=Strat
             gen_server:cast(?SERVER, {conmgr_no_endpoints, Ref}),
             Interval = app_helper:get_env(riak_core, connmgr_no_endpoint_retry,
                                          ?DEFAULT_RETRY_NO_ENDPOINTS),
-            lager:debug("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
+            ?LOG_DEBUG("Connection Manager located no endpoints for: ~p. Will retry.", [Target]),
             %% schedule a retry and exit
             schedule_retry(Interval, Ref, State);
         {ok, EpAddrs } ->
-            lager:debug("Connection Manager located endpoints: ~p", [EpAddrs]),
+            ?LOG_DEBUG("Connection Manager located endpoints: ~p", [EpAddrs]),
             AllEps = update_endpoints(EpAddrs, State#state.endpoints),
             TryAddrs = filter_blacklisted_endpoints(EpAddrs, AllEps),
-            lager:debug("Connection Manager trying endpoints: ~p", [TryAddrs]),
+            ?LOG_DEBUG("Connection Manager trying endpoints: ~p", [TryAddrs]),
             Pid = spawn_link(
                     fun() -> exit(try connection_helper(Ref, ClientSpec, Strategy, TryAddrs)
                                   catch T:R -> {exception, {T, R}}
@@ -544,13 +546,13 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
-    lager:debug("Holding off ~p seconds before trying ~p at ~p",
+    ?LOG_DEBUG("Holding off ~p seconds before trying ~p at ~p",
                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
         true ->
-            lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
-            lager:debug("Attempting riak_core_connection:sync_connect/2"),
+            ?LOG_DEBUG("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
+            ?LOG_DEBUG("Attempting riak_core_connection:sync_connect/2"),
             case riak_core_connection:sync_connect(Addr, Protocol) of
                 ok ->
                     ok;
@@ -561,7 +563,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             end;
         _ ->
             %% connection request has been cancelled
-            lager:debug("Ignoring connection to: ~p at ~p because it was cancelled",
+            ?LOG_DEBUG("Ignoring connection to: ~p at ~p because it was cancelled",
                        [ProtocolId, string_of_ipport(Addr)]),
             {ok, cancelled}
     end.
@@ -576,7 +578,7 @@ locate_endpoints({Type, Name}, Strategy, Locators) ->
                     Addrs
             end;
         error ->
-            lager:warning("Unknown target: ~p ~p", [Name, Strategy]),
+            ?LOG_WARNING("Unknown target: ~p ~p", [Name, Strategy]),
             {error, {unknown_target_type, Type}}
     end.
 
@@ -648,7 +650,7 @@ fail_request(Reason, #req{ref = Ref, spec = Spec},
              State = #state{pending = Pending}) ->
     %% Tell the module it failed
     {Proto, {_TcpOptions, Module,Args}} = Spec,
-    lager:debug("module ~p getting connect_failed", [Module]),
+    ?LOG_DEBUG("module ~p getting connect_failed", [Module]),
     Module:connect_failed(Proto, {error, Reason}, Args),
     %% Remove the request from the pending list
     State#state{pending = lists:keydelete(Ref, #req.ref, Pending)}.
@@ -688,7 +690,7 @@ get_ring() ->
 cluster_by_name_locator(ClusterName, _Policy) ->
     Ring = get_ring(),
     Addrs = riak_repl_ring:get_clusterIpAddrs(Ring, ClusterName),
-    lager:debug("located members for cluster ~p: ~p",
+    ?LOG_DEBUG("located members for cluster ~p: ~p",
                 [ClusterName, Addrs]),
     {ok, Addrs}.
 

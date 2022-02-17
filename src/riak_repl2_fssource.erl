@@ -1,6 +1,8 @@
 -module(riak_repl2_fssource).
 -include("riak_repl.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(gen_server).
 
 -compile({nowarn_deprecated_function, 
@@ -78,7 +80,7 @@ soft_link(Pid) ->
             true
     catch
         _What:Reason ->
-            lager:debug("Could not create soft link to ~p from ~p due to ~p", [Pid, self(), Reason]),
+            ?LOG_DEBUG("Could not create soft link to ~p from ~p due to ~p", [Pid, self(), Reason]),
             {error, Reason}
     end.
 
@@ -118,10 +120,10 @@ init([Partition, IP, Owner]) ->
 handle_call({connected, Socket, Transport, _Endpoint, Proto, Props},
             _From, State=#state{ip=IP, partition=Partition, strategy=RequestedStrategy}) ->
     Cluster = proplists:get_value(clustername, Props),
-    lager:info("Fullsync connection to ~p for ~p",[IP, Partition]),
+    ?LOG_INFO("Fullsync connection to ~p for ~p",[IP, Partition]),
 
     SocketTag = riak_repl_util:generate_socket_tag("fs_source", Transport, Socket),
-    lager:debug("Keeping stats for " ++ SocketTag),
+    ?LOG_DEBUG("Keeping stats for " ++ SocketTag),
     riak_core_tcp_mon:monitor(Socket, {?TCP_MON_FULLSYNC_APP, source,
                                        SocketTag}, Transport),
 
@@ -184,7 +186,7 @@ handle_call(stop_fullsync, _From, State=#state{fullsync_worker=FSW,
 handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                                                socket=Socket,
                                                strategy=Strategy}) ->
-    lager:debug("Sending status to ~p", [FSW]),
+    ?LOG_DEBUG("Sending status to ~p", [FSW]),
     Res = case is_pid(FSW) of
         true ->
             % try/catch because there may be a message in the pid's
@@ -195,7 +197,7 @@ handle_call(legacy_status, _From, State=#state{fullsync_worker=FSW,
                     SyncSendRes
             catch
                 What:Why ->
-                    lager:notice("Error getting fullsync worker ~p status: ~p:~p", [FSW, What, Why]),
+                    ?LOG_NOTICE("Error getting fullsync worker ~p status: ~p:~p", [FSW, What, Why]),
                     []
             end;
         false ->
@@ -221,16 +223,16 @@ handle_call(cluster_name, _From, State) ->
     end,
     {reply, Name, State};
 handle_call({soft_link, NewOwner}, _From, State) ->
-    lager:debug("Changing soft_link from ~p to ~p", [State#state.owner, NewOwner]),
+    ?LOG_DEBUG("Changing soft_link from ~p to ~p", [State#state.owner, NewOwner]),
     State2 = State#state{owner = NewOwner},
     {reply, true, State2};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
 handle_cast(not_responsible, State=#state{partition=Partition}) ->
-    lager:info("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
-    lager:info("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
-    lager:info("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
+    ?LOG_INFO("Fullsync of partition ~p stopped because AAE trees can't be compared.", [Partition]),
+    ?LOG_INFO("Probable cause is one or more differing bucket n_val properties between source and sink clusters."),
+    ?LOG_INFO("Restarting fullsync connection for partition ~p with keylist strategy.", [Partition]),
     Strategy = keylist,
     case connect(State#state.ip, Strategy, Partition) of
         {ok, State2} ->
@@ -240,11 +242,11 @@ handle_cast(not_responsible, State=#state{partition=Partition}) ->
     end;
 handle_cast(fullsync_complete, State=#state{partition=Partition}) ->
     %% sent from AAE fullsync worker
-    lager:info("Fullsync for partition ~p complete.", [Partition]),
+    ?LOG_INFO("Fullsync for partition ~p complete.", [Partition]),
     {stop, normal, State};
 handle_cast({connect_failed, _Pid, Reason},
      State = #state{cluster = Cluster}) ->
-     lager:warning("Fullsync replication connection to cluster ~p failed ~p",
+     ?LOG_WARNING("Fullsync replication connection to cluster ~p failed ~p",
         [Cluster, Reason]),
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -252,11 +254,11 @@ handle_cast(_Msg, State) ->
 
 handle_info({Closed, Socket}, State=#state{socket=Socket})
         when Closed == tcp_closed; Closed == ssl_closed ->
-    lager:info("Connection for site ~p closed", [State#state.cluster]),
+    ?LOG_INFO("Connection for site ~p closed", [State#state.cluster]),
     {stop, normal, State};
 handle_info({Error, _Socket, Reason}, State)
         when Error == tcp_error; Error == ssl_error ->
-    lager:error("Connection for site ~p closed unexpectedly: ~p",
+    ?LOG_ERROR("Connection for site ~p closed unexpectedly: ~p",
         [State#state.cluster, Reason]),
     {stop, normal, State};
 handle_info({Proto, Socket, Data},
@@ -274,7 +276,7 @@ handle_info({Proto, Socket, Data},
             {noreply, State}
     end;
 handle_info({soft_exit, Pid, Reason}, State = #state{fullsync_worker = Pid}) ->
-    lager:debug("Fullsync worker exited normally, but really wanted it to be ~p", [Reason]),
+    ?LOG_DEBUG("Fullsync worker exited normally, but really wanted it to be ~p", [Reason]),
     maybe_soft_exit(Reason, State);
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -343,7 +345,7 @@ maybe_exchange_caps(_, Caps, Socket, Transport) ->
 %% Start a connection to the remote sink node at IP, using the given fullsync strategy,
 %% for the given partition. The protocol version will be determined from the strategy.
 connect(IP, Strategy, Partition) ->
-    lager:debug("Connecting to remote ~p for partition ~p", [IP, Partition]),
+    ?LOG_DEBUG("Connecting to remote ~p for partition ~p", [IP, Partition]),
     TcpOptions = [{keepalive, true},
                   {nodelay, true},
                   {packet, 4},
@@ -359,7 +361,7 @@ connect(IP, Strategy, Partition) ->
             {ok, #state{strategy = Strategy, ip = IP,
                         connection_ref = Ref, partition=Partition}};
         {error, Reason}->
-            lager:warning("Error connecting to remote ~p for partition ~p", [IP, Partition]),
+            ?LOG_WARNING("Error connecting to remote ~p for partition ~p", [IP, Partition]),
             {error, Reason}
     end.
 

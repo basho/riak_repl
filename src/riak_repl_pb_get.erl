@@ -6,6 +6,8 @@
 -include_lib("riak_pb/include/riak_kv_pb.hrl").
 -include_lib("riak_pb/include/riak_pb_kv_codec.hrl").
 
+-include_lib("kernel/include/logger.hrl").
+
 -behaviour(riak_api_pb_service).
 
 -export([init/0,
@@ -33,7 +35,7 @@
 -spec init() -> any().
 init() ->
     {ok, C} = riak:local_client(),
-    lager:debug("Riak repl pb get init"),
+    ?LOG_DEBUG("Riak repl pb get init"),
 
     % get the current repl modes and stash them in the state
     % I suppose riak_repl_pb_get would need to be restarted if these values
@@ -59,7 +61,7 @@ encode(Msg) ->
 %% @doc Return Cluster Id of the local cluster
 process(<<Code:8, Data/binary>>, State) ->
     Msg = riak_pb_codec:decode(Code, Data),
-    lager:debug("Got tunnelled message ~p", [Msg]),
+    ?LOG_DEBUG("Got tunnelled message ~p", [Msg]),
     process(Msg, State);
 
 process(rpbreplgetclusteridreq, State) ->
@@ -72,7 +74,7 @@ process(rpbreplgetclusteridreq, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ClusterId = lists:flatten(
         io_lib:format("~p", [riak_core_ring:cluster_name(Ring)])),
-    lager:debug("Repl PB: returning cluster id ~p", [ClusterId]),
+    ?LOG_DEBUG("Repl PB: returning cluster id ~p", [ClusterId]),
     {reply, #rpbreplgetclusteridresp{cluster_id = ClusterId}, State};
 %% @doc Return Key/Value pair, derived from the KV version
 process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
@@ -89,13 +91,13 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
 
     case riak_core_metadata:get({<<"replication">>, <<"cluster-mapping">>}, CName0) of
         undefined ->
-            lager:info("Using non-mapped cluster_id: ~s", [CName0]),
+            ?LOG_INFO("Using non-mapped cluster_id: ~s", [CName0]),
             CName = CName0;
         MappedToClusterId ->
-            lager:info("Using mapped cluster_id: ~s", [MappedToClusterId]),
+            ?LOG_INFO("Using mapped cluster_id: ~s", [MappedToClusterId]),
             CName = MappedToClusterId
     end,
-    lager:info("doing replicated GET using cluster id ~p", [CName]),
+    ?LOG_INFO("doing replicated GET using cluster id ~p", [CName]),
 
     GetOptions = make_option(deletedvclock, DeletedVClock) ++
         make_option(r, R) ++
@@ -113,7 +115,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
             {reply, #rpbgetresp{vclock = pbify_rpbvc(TombstoneVClock)}, State};
         {error, notfound} ->
             %% find connection by cluster_id
-            lager:debug("CName = ~p", [ CName ]),
+            ?LOG_DEBUG("CName = ~p", [ CName ]),
             Modes = State#state.repl_modes,
             Repl12Enabled = riak_repl_util:mode_12_enabled(Modes),
             Repl13Enabled = riak_repl_util:mode_13_enabled(Modes),
@@ -121,7 +123,7 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 case Repl12Enabled of
                     true ->
                         CNames12 = get_client_cluster_names_12(),
-                        lager:debug("CNames12 = ~p", [ CNames12 ]),
+                        ?LOG_DEBUG("CNames12 = ~p", [ CNames12 ]),
                         proxy_get_12(CName, CNames12, B, K, GetOptions);
                     false ->
                         notconnected
@@ -130,24 +132,24 @@ process(#rpbreplgetreq{bucket=B, key=K, r=R0, pr=PR0, notfound_ok=NFOk,
                 case Repl13Enabled of
                     true ->
                         CNames13 = get_client_cluster_names_13(),
-                        lager:debug("CNames13 = ~p", [ CNames13 ]),
+                        ?LOG_DEBUG("CNames13 = ~p", [ CNames13 ]),
                         proxy_get_13(State, CName, CNames13, B, K, GetOptions);
                     false ->
                         notconnected
                 end,
-            lager:debug("Result12 = ~p", [ Result12 ]),
-            lager:debug("Result13 = ~p", [ Result13 ]),
+            ?LOG_DEBUG("Result12 = ~p", [ Result12 ]),
+            ?LOG_DEBUG("Result13 = ~p", [ Result13 ]),
             Result =
                 case {Result12, Result13} of
                     {notconnected, Value} -> Value;
                     {Value, notconnected} -> Value;
                     {_, Value} ->
-                        lager:warning("proxy_get received a result from multiple versions of replication for cluster ~p", [CName]),
+                        ?LOG_WARNING("proxy_get received a result from multiple versions of replication for cluster ~p", [CName]),
                         Value %% default to 1.3 if both are valid
                 end,
             case Result of
                 notconnected ->
-                    lager:info("not connected to cluster ~p", [CName]),
+                    ?LOG_INFO("not connected to cluster ~p", [CName]),
                     %% not connected to that cluster, return notfound
                     {reply, #rpbgetresp{}, State};
                 {ok, O} ->
@@ -177,7 +179,7 @@ proxy_get_12(CName, CNames, B, K, GetOptions) ->
         false ->
             notconnected;
         {ClientPid, _ClusterID} ->
-            lager:debug("Using 1.2 proxy_get (A)"),
+            ?LOG_DEBUG("Using 1.2 proxy_get (A)"),
             riak_repl_tcp_client:proxy_get(ClientPid, B, K,
                                            GetOptions)
     end.
@@ -198,7 +200,7 @@ proxy_get_13(State, CName, CNames, B, K, GetOptions) ->
                             Result
                     catch
                         _:Error ->
-                            lager:debug("proxy_get_13 failed: ~p",
+                            ?LOG_DEBUG("proxy_get_13 failed: ~p",
                                         [Error]),
                             notconnected
                     end;

@@ -34,6 +34,7 @@ setup() ->
     {ok, _} = riak_repl2_rtq:start_link(),
     riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     {ok, TCPMon} = riak_core_tcp_mon:start_link(),
+    io:format(user, "Completed overall setup~n", []),
     #connection_tests{tcp_mon = TCPMon, rt = RT}.
 
 cleanup(State) ->
@@ -44,8 +45,8 @@ cleanup(State) ->
     %% riak_repl_test_util:kill_and_wait(riak_core_tcp_mon),
     [kill_proc(P) || P <- [TCPMon, RT, riak_repl2_rtq]],
     riak_repl_test_util:stop_test_ring(),
-    process_flag(trap_exit, false),
-    meck:unload().
+    meck:unload(),
+    process_flag(trap_exit, false).
 
 kill_proc(undefined) ->
     ok;
@@ -115,8 +116,10 @@ v2_to_v2_comms(_State) ->
      end}]}.
 
 v2_to_v2_comms_setup() ->
-    {ok, _ListenPid} = start_sink(?VER2),
+    {ok, ListenPid} = start_sink(?VER2),
+    io:format(user, "Sink listener started ~w~n", [ListenPid]),
     {ok, {Source, Sink}} = start_source(?VER2),
+    io:format(user, "Source ~w Sink ~w started~n", [Source, Sink]),
     meck:new(poolboy, [passthrough]),
     meck:expect(poolboy, checkout, fun(_ServName, _SomeBool, _Timeout) ->
                                            spawn(fun() -> ok end)
@@ -202,7 +205,7 @@ connection_test_teardown_pids(Source, Sink) ->
     %% unlink(Sink),
     process_flag(trap_exit, true),
     [kill_proc(P) || P <- [Source, Sink]],
-    process_flag(trap_exit, false),
+    % process_flag(trap_exit, false),
     ok.
     %% riak_repl2_rtsource_conn:stop(Source),
     %% riak_repl2_rtsink_conn:stop(Sink),
@@ -254,10 +257,13 @@ start_sink(Version) ->
         {ok, Listen} = gen_tcp:listen(?SINK_PORT, [binary, {reuseaddr, true} | TcpOpts]),
         TellMe ! sink_listening,
         {ok, Socket} = gen_tcp:accept(Listen),
+        io:format(user, "Start source cluster~n", []),
         {ok, Pid} = riak_repl2_rtsink_conn:start_link({ok, ?PROTOCOL(Version)}, "source_cluster"),
         %unlink(Pid),
-        ok = gen_tcp:controlling_process(Socket, Pid),
+        io:format(user, "Set transport~n", []),
         ok = riak_repl2_rtsink_conn:set_socket(Pid, Socket, gen_tcp),
+        TellMe ! {transport_set, gen_tcp},
+        ok = gen_tcp:controlling_process(Socket, Pid),
         TellMe ! {sink_started, Pid}
     end),
     Pid = proc_lib:spawn_link(?MODULE, listen_sink, []),
@@ -281,16 +287,30 @@ start_source(NegotiatedVer) ->
         spawn_link(fun() ->
             {_Proto, {TcpOpts, Module, Pid}} = ClientSpec,
             {ok, Socket} = gen_tcp:connect("localhost", ?SINK_PORT, [binary | TcpOpts]),
-            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, [])
+            ok = Module:connected(Socket, gen_tcp, {"localhost", ?SINK_PORT}, ?PROTOCOL(NegotiatedVer), Pid, []),
+            io:format(user, "Connected~n", [])
         end),
         {ok, make_ref()}
     end),
+    
     {ok, SourcePid} = riak_repl2_rtsource_conn:start_link("sink_cluster"),
+    ok = 
+        receive
+            {transport_set, _Transport} ->
+                ok
+        after 1000 ->
+            io:format(user, "Transport set timeout~n", []),
+            {error, timeout}
+        end,
     %unlink(SourcePid),
     receive
         {sink_started, SinkPid} ->
-            {ok, {SourcePid, SinkPid}}
+            {ok, {SourcePid, SinkPid}};
+        Unexpected ->
+            io:format(user, "Unexpected receive ~w~n", [Unexpected]),
+            {error, Unexpected}
     after 1000 ->
+        io:format(user, "Receive timeout~n", []),
         {error, timeout}
     end.
 

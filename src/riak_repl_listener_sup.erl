@@ -3,13 +3,17 @@
 -module(riak_repl_listener_sup).
 -author('Andy Gross <andy@basho.com>').
 -include("riak_repl.hrl").
+
+-include_lib("kernel/include/logger.hrl").
+
 -export([start_listener/1, ensure_listeners/1, close_all_connections/0,
         server_pids/0]).
+
 
 start_listener(Listener = #repl_listener{listen_addr={IP, Port}}) ->
     case riak_repl_util:valid_host_ip(IP) of
         true ->
-            lager:info("Starting replication listener on ~s:~p",
+            ?LOG_INFO("Starting replication listener on ~s:~p",
                 [IP, Port]),
             {ok, RawAddress} = inet_parse:address(IP),
             ranch:start_listener(Listener,
@@ -20,7 +24,7 @@ start_listener(Listener = #repl_listener{listen_addr={IP, Port}}) ->
                                     riak_repl_tcp_server,
                                     []);
         _ ->
-            lager:error("Cannot start replication listener "
+            ?LOG_ERROR("Cannot start replication listener "
                 "on ~s:~p - invalid address.",
                 [IP, Port])
     end.
@@ -48,7 +52,7 @@ ensure_listeners(Ring) ->
     _ = [start_listener(Listener) || Listener <- ToStart],
     lists:foreach(fun(Listener) ->
                 {IP, Port} = Listener#repl_listener.listen_addr,
-                lager:info("Stopping replication listener on ~s:~p",
+                ?LOG_INFO("Stopping replication listener on ~s:~p",
                     [IP, Port]),
                 ranch:stop_listener(Listener)
         end, ToStop),

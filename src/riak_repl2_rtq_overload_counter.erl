@@ -4,6 +4,8 @@
 -module(riak_repl2_rtq_overload_counter).
 -behavior(gen_server).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(DEFAULT_INTERVAL, 5000).
 
 -record(state, {
@@ -63,7 +65,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(report_drops, State) ->
-    lager:debug("reporting drops: ~p", [State#state.drops]),
+    ?LOG_DEBUG("reporting drops: ~p", [State#state.drops]),
     riak_repl2_rtq:report_drops(State#state.drops),
     {noreply, State#state{drops = 0, timer = undefined}};
 

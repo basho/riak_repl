@@ -36,7 +36,6 @@ setup() ->
     application:load(sasl),
     application:set_env(sasl, sasl_error_logger, {file, "rt_source_eqc_sasl.log"}),
     error_logger:tty(false),
-    application:start(lager),
     riak_repl_test_util:stop_test_ring(),
     riak_repl_test_util:start_test_ring(),
     riak_repl_test_util:abstract_gen_tcp(),
