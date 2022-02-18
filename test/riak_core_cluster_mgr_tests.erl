@@ -401,8 +401,7 @@ sync_paths([D | Tail], Node) ->
     end.
 
 start_setup_node(Name, Host) ->
-    Opts = [{monitor_master, true}],
-    case ct_slave:start(Host, Name, Opts) of
+    case peer:start_link(#{host => Host, name => Name}) of
         {ok, SlaveNode} = O ->
             % to get io:formats and such (body snatch the user proc!)
             User = rpc:call(SlaveNode, erlang, whereis, [user]),
@@ -414,7 +413,7 @@ start_setup_node(Name, Host) ->
     end.
 
 teardown_nodes({Started, _Master}, Slaves) ->
-    [ct_slave:stop(S) || S <- Slaves, is_atom(S)],
+    [peer:stop(S) || S <- Slaves, is_atom(S)],
     case Started of
         kept ->
             ok;
