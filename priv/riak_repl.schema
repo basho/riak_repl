@@ -157,7 +157,7 @@
 %% Enterprise 2.0+.
 {mapping, "mdc.fullsync.use_bg_manager", "riak_repl.fullsync_use_background_manager", [
     {datatype, {enum, [true, false]}},
-    {level, advanced},
+    hidden,
     {default, false}
 ]}.
 
