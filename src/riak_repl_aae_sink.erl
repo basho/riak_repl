@@ -138,9 +138,11 @@ process_msg(?MSG_GET_AAE_BUCKET, {Level,BucketNum,IndexN}, State=#state{tree_pid
     ResponseMsg = riak_kv_index_hashtree:exchange_bucket(IndexN, Level, BucketNum, TreePid),
     send_reply(ResponseMsg, State);
 
-process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State=#state{tree_pid=TreePid}) ->
-    ResponseMsg = riak_kv_index_hashtree:exchange_segment(IndexN, SegmentNum, TreePid),
-    send_reply(ResponseMsg, State);
+process_msg(?MSG_GET_AAE_SEGMENT, {SegmentNum,IndexN}, State) ->
+    riak_repl_stats:aae_segments_requested(),
+    State#state.sender !
+        {?MSG_GET_AAE_SEGMENT, {SegmentNum, IndexN, State#state.tree_pid}},
+    {noreply, State};
 
 %% no reply
 process_msg(?MSG_PUT_OBJ, {fs_diff_obj, BObj}, State) ->
@@ -207,7 +209,15 @@ sender_init(Transport, Socket) ->
     sender_loop({Transport, Socket}).
 
 sender_loop(State={Transport, Socket}) ->
-    receive Msg ->
+    receive 
+        {?MSG_GET_AAE_SEGMENT, {SegmentNum, IndexN, TreePid}} ->
+            KeysHashes =
+                riak_kv_index_hashtree:exchange_segment(
+                    IndexN, SegmentNum, TreePid),
+            riak_repl_stats:keys_hashes_returned(length(KeysHashes)),
+            DataBin = term_to_binary(KeysHashes),
+            ok = Transport:send(Socket, <<?MSG_REPLY:8, DataBin/binary>>);
+        Msg ->
             ok = Transport:send(Socket, Msg)
     end,
     ?MODULE:sender_loop(State).
