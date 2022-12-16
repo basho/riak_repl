@@ -43,7 +43,9 @@
          clear_rt_dirty/0,
          touch_rt_dirty_file/0,
          remove_rt_dirty_file/0,
-         is_rt_dirty/0]).
+         is_rt_dirty/0,
+         aae_segments_requested/0,
+         keys_hashes_returned/1]).
 
 -define(APP, riak_repl).
 
@@ -108,6 +110,12 @@ elections_elected() ->
 
 elections_leader_changed() ->
     increment_counter(elections_leader_changed).
+
+aae_segments_requested() ->
+    increment_counter(aae_segments_requested).
+
+keys_hashes_returned(Length) ->
+    increment_counter(keys_hashes_returned, Length).
 
 %% If any source errors are detected, write a file out to persist this status
 %% across restarts
@@ -214,7 +222,9 @@ stats() ->
      {last_server_bytes_recv, gauge},
      {rt_source_errors, counter},
      {rt_sink_errors, counter},
-     {rt_dirty, counter}].
+     {rt_dirty, counter},
+     {aae_segments_requested, counter},
+     {keys_hashes_returned, counter}].
 
 increment_counter(Name) ->
     increment_counter(Name, 1).
@@ -429,11 +439,24 @@ test_check_stats() ->
         {server_tx_kbps,[]},
         {rt_source_errors,1},
         {rt_sink_errors, 1},
-        {rt_dirty, 2}],
+        {rt_dirty, 2},
+        {aae_segments_requested, 0},
+        {keys_hashes_returned, 0}],
     Result = get_stats(),
 
     ?assertEqual(Expected,
-        [{K1, V} || {K1, V} <- Result, {K2, _} <- Expected, K1 == K2]).
+        [{K1, V} || {K1, V} <- Result, {K2, _} <- Expected, K1 == K2]),
+            
+    riak_repl_stats:aae_segments_requested(),
+    riak_repl_stats:keys_hashes_returned(100),
+    
+    UpdResult = get_stats(),
+    ?assertMatch(
+        {aae_segments_requested, 1},
+        lists:keyfind(aae_segments_requested, 1, UpdResult)),
+    ?assertMatch(
+        {keys_hashes_returned, 100},
+        lists:keyfind(keys_hashes_returned, 1, UpdResult)).
 
 
 test_report() ->
