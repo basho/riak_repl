@@ -401,20 +401,20 @@ sync_paths([D | Tail], Node) ->
     end.
 
 start_setup_node(Name, Host) ->
-    Opts = [{monitor_master, true}],
-    case ct_slave:start(Host, Name, Opts) of
-        {ok, SlaveNode} = O ->
+    case start_peer(Name, Host) of
+        {ok, PeerNode} = O ->
             % to get io:formats and such (body snatch the user proc!)
-            User = rpc:call(SlaveNode, erlang, whereis, [user]),
+            User = rpc:call(PeerNode, erlang, whereis, [user]),
             exit(User, kill),
-            rpc:call(SlaveNode, slave, pseudo, [node(), [user]]),
+            rpc:call(PeerNode, slave, pseudo, [node(), [user]]),
             O;
         {error, Cause, Node} ->
             {error, {Node, Cause}}
     end.
 
-teardown_nodes({Started, _Master}, Slaves) ->
-    [ct_slave:stop(S) || S <- Slaves, is_atom(S)],
+
+teardown_nodes({Started, _Master}, Peers) ->
+    [stop_peer(P) || P <- Peers, is_atom(P)],
     case Started of
         kept ->
             ok;
@@ -581,5 +581,25 @@ ctrlServiceProcess(Socket, Transport, MyVer, RemoteVer, Args) ->
                       [Other]),
             {error, bad_cluster_mgr_message}
     end.
+
+-ifdef(otp25).
+
+start_peer(Name, Host) ->
+    Opts = [{name, Name}, {host, Host}],
+    ct_peer:start_link(Opts).
+
+stop_peer(Peer) ->
+    ct_peer:stop(Peer).
+
+-else.
+
+start_peer(Name, Host) ->
+    Opts = [{monitor_master, true}],
+    ct_slave:start(Host, Name, Opts).
+
+stop_peer(Peer) ->
+    ct_slave:stop(Peer).
+
+-endif.
 
 -endif.

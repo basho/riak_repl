@@ -4,6 +4,7 @@
 
 -define(SETUP_ENV, application:set_env(riak_repl, rtq_max_bytes, 10*1024*1024)).
 -define(CLEAN_ENV, application:unset_env(riak_repl, rtq_max_bytes)).
+-define(MYSTERY_SLEEP, 1500).
 
 rtq_trim_test() ->
     %% make sure the queue is 10mb
@@ -225,11 +226,11 @@ overload_test_() ->
             [riak_repl2_rtq:push(1, term_to_binary([<<"object">>])) || _ <- lists:seq(1,5)],
             % msq queue = 7, drops = 5
             unblock_rtq_pull(),
-            timer:sleep(1200),
+            timer:sleep(?MYSTERY_SLEEP),
             % msg queue = 0, totol objects dropped = 5
             riak_repl2_rtq:push(1, term_to_binary([<<"object">>])),
             Seq1 = pull(5),
-            timer:sleep(1200),
+            timer:sleep(?MYSTERY_SLEEP),
             Seq2 = pull(1),
             ?assertEqual(Seq1 + 1 + 5, Seq2),
             Status = riak_repl2_rtq:status(),
