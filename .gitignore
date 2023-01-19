@@ -24,3 +24,4 @@ data/*
 .rebar3/erlcinfo
 test/*.beam
 log/*.log
+riak_repl2_leader*
