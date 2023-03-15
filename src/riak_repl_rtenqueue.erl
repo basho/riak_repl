@@ -42,7 +42,7 @@
       Bucket::riak_object:bucket(),
       Key::riak_object:key(),
       Options::riak_kv_get_fsm:options(),
-      Client::riak_client:client(),
+      Client::riak_client:riak_client(),
       Error::{error, Reason},
       Reason::term().
 rt_enqueue(Bucket, Key, Options, Client) ->
@@ -55,7 +55,7 @@ rt_enqueue(Bucket, Key, Options, Client) ->
     end.
 
 %% @private used by rt_equeue, once the object has been got.
--spec rt_enqueue_object(riak_object:object()) ->
+-spec rt_enqueue_object(riak_object:riak_object()) ->
                                ok | {error, ErrReason::term()}.
 rt_enqueue_object(Object) ->
     BucketProps = get_bucket_props(Object),
